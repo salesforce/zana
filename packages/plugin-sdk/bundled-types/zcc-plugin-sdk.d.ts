@@ -996,7 +996,7 @@ declare module '@zana-ai/zcc-plugin-sdk/app' {
     pinTab?(item: ZccPinnedItem): boolean;
     /** Remove this plugin's tab for `itemKey`. */
     unpinTab?(itemKey: string): void;
-    /** Whether this plugin has a tab pinned for `itemKey` in the current project. */
+    /** Whether this plugin has a tab pinned for `itemKey`, in any project. */
     isPinned?(itemKey: string): boolean;
     /** Called when this plugin's pinned tabs change. Returns an unsubscribe. */
     onPinnedChange?(callback: () => void): () => void;

@@ -28,7 +28,7 @@ import { useApplicationTabs } from '../lib/application-tabs.js';
 import { useSetupPages, setupPath } from './setup/setup-pages.js';
 import { ApplicationTabs } from './ApplicationTabs.js';
 import { usePluginAppModules } from '../plugins/plugin-app-loader.js';
-import { usePinnedItemOverrides } from '../plugins/plugin-pinned-tabs.js';
+import { REFUSAL_MESSAGES, usePinnedItemOverrides } from '../plugins/plugin-pinned-tabs.js';
 import { applicationTabId, type PluginApplicationTab } from '../lib/application-tabs.js';
 
 const row = (id: string, projectId = 'p', extra: Partial<ThreadListItem> = {}): ThreadListItem => ({ id, projectId, title: `Thread ${id}`, providerId: 'fake', status: 'idle', hostId: 'local', environmentId: null, createdAt: 1, cwd: null, branchName: null, isWorktree: false, ...extra });
@@ -618,8 +618,9 @@ it('does not reopen a closed plugin tab for an unknown project, and reports a re
   const closedTab = useApplicationTabs.getState().closed[0]!;
   act(() => { useApplicationTabs.setState({ open: Array.from({ length: 10 }, (_, i) => pin(`k${i}`, { pluginId: 'test-plugin' })) }); });
   fireEvent.click(document.querySelector('.titlebar-threads-reopen')!);
-  expect(h.toast).toHaveBeenCalledWith('Too many pinned tabs. Unpin one first.', 'error');
-  expect(closedTab.kind).toBe('plugin');
+  expect(h.toast).toHaveBeenCalledWith(REFUSAL_MESSAGES['plugin-cap'], 'error');
+  expect(useApplicationTabs.getState().closed).toContainEqual(closedTab);
+  expect(useApplicationTabs.getState().open).toHaveLength(10);
 });
 
 it('moves arrow, Home and End focus across thread, setup and plugin tabs and drags to reorder them', () => {

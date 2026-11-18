@@ -270,8 +270,9 @@ it('rejects invalid plugin tab input', () => {
   expect(parsePluginApplicationTab(plugin('a', { projectId: 'q' }), 'p')).toBeNull();
 });
 
-it('refuses a plugin write that pushes serialized rows over the limit', () => {
-  // Wide rows: 20 tabs of ~full width fit, so shrink the budget by inflating via many chars.
+it('keeps maximal plugin rows within the serialized budget and the tab caps', () => {
+  // Parser bounds make 20 maximal rows (~1.3k chars each) fit well under the budget,
+  // so the count caps are what refuse; the size guard is a backstop for future field growth.
   const wide = (i: number, pluginId: string) =>
     plugin(`${i}`.padEnd(256, 'k'), {
       pluginId,
@@ -281,20 +282,14 @@ it('refuses a plugin write that pushes serialized rows over the limit', () => {
     });
   let state = empty();
   let refusal: string | undefined;
-  for (let i = 0; i < MAX_PLUGIN_TABS && !refusal; i++) {
-    const r = tryOpenApplicationTab(
-      state,
-      wide(i, `${i % 2 ? 'a' : 'b'}`.padEnd(128, 'p'))
-    );
-    refusal = r.refusal;
+  for (let i = 0; i < MAX_PLUGIN_TABS + 1; i++) {
+    const r = tryOpenApplicationTab(state, wide(i, `${i % 2 ? 'a' : 'b'}`.padEnd(128, 'p')));
+    if (r.refusal) refusal = r.refusal;
     state = r.state;
   }
-  const size = JSON.stringify(
-    state.open.map((t) => ({ ...t }))
-  ).length;
-  expect(size).toBeLessThanOrEqual(MAX_PLUGIN_ROWS_CHARS + 100);
-  // Whether or not the cap is reached with these maxima, no state exceeds the limit.
-  expect(refusal === undefined || refusal === 'size').toBe(true);
+  expect(refusal).toBe('plugin-total-cap');
+  expect(state.open).toHaveLength(MAX_PLUGIN_TABS);
+  expect(JSON.stringify(state.open).length).toBeLessThanOrEqual(MAX_PLUGIN_ROWS_CHARS);
 });
 
 it('remembers closed plugin tabs within one shared cap and restores them from history', () => {

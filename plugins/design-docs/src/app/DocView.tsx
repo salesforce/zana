@@ -265,12 +265,13 @@ export function DocView({
   useEffect(() => {
     if (kind === 'doc' && missing) reportPinned?.(docId, { available: false });
   }, [contextNavigate, kind, docId, missing]); // eslint-disable-line react-hooks/exhaustive-deps
-  const agentOpened = useRef(false);
+  const agentOpenedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!openAgent || !data || doc.error || agentOpened.current) return;
-    agentOpened.current = true;
+    // The page is reused across pinned docs, and `data` can still be the previous doc's while the next loads.
+    if (!openAgent || !data || data.id !== docId || doc.error || agentOpenedFor.current === docId) return;
+    agentOpenedFor.current = docId;
     activateDocAgent(contextNavigate, data);
-  }, [openAgent, data, doc.error, contextNavigate]);
+  }, [openAgent, data, docId, doc.error, contextNavigate]);
   const latest = useRef({ onDeleted, title: data?.title ?? '' });
   latest.current = { onDeleted, title: data?.title ?? latest.current.title };
 

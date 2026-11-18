@@ -35,6 +35,7 @@ import { usePluginAppModules } from '../plugins/plugin-app-loader.js';
 import {
   getItemState,
   getTabDisplayTitle,
+  REFUSAL_MESSAGES,
   usePinnedItemOverrides
 } from '../plugins/plugin-pinned-tabs.js';
 import { usePluginPinResolver } from '../plugins/plugin-pin-resolver.js';
@@ -397,7 +398,7 @@ export function ApplicationTabs({
               if (refusal && refusal !== 'invalid')
                 useUi
                   .getState()
-                  .pushToast('Too many pinned tabs. Unpin one first.', 'error');
+                  .pushToast(REFUSAL_MESSAGES[refusal], 'error');
               else if (!refusal) activate(lastClosed);
             }
           : undefined

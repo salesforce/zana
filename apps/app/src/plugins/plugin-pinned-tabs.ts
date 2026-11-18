@@ -104,7 +104,7 @@ const hasTransientActivation = () =>
   typeof navigator !== 'undefined' &&
   (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation?.isActive === true;
 
-const REFUSAL_MESSAGES = {
+export const REFUSAL_MESSAGES = {
   'plugin-total-cap': 'Too many pinned tabs. Unpin one first.',
   'plugin-cap': 'This plugin has too many pinned tabs. Unpin one first.',
   size: 'Pinned tab is too large to save. Unpin one first.'

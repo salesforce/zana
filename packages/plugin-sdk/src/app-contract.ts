@@ -1023,7 +1023,7 @@ export interface ZccNavigate {
   /**
    * Pin an item of this page as a top-bar tab. Call it only from a click or key
    * handler: the host requires transient user activation. The host binds the
-   * plugin and page, and takes the project from the current selection. Pinning
+   * plugin and page, and takes the project from `projectId` when it is registered (or the window's locked project), else the current selection. Pinning
    * the same item again keeps one tab. False without a user gesture, for
    * invalid input, an unknown project, over the tab caps (20 plugin tabs in
    * total, 10 per plugin; the host shows an error toast), in a plugin view
@@ -1032,7 +1032,7 @@ export interface ZccNavigate {
   pinTab?(item: ZccPinnedItem): boolean;
   /** Remove this plugin's tab for `itemKey`. Never touches another plugin's tabs or deletes the item. */
   unpinTab?(itemKey: string): void;
-  /** Whether this plugin has a tab pinned for `itemKey` in the current project. */
+  /** Whether this plugin has a tab pinned for `itemKey`, in any project. */
   isPinned?(itemKey: string): boolean;
   /** Called when this plugin's pinned tabs change, including a close by the user. Returns an unsubscribe. */
   onPinnedChange?(callback: () => void): () => void;
