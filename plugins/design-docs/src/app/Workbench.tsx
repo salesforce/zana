@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
 import { useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { PopoverPicklist, type PopoverPicklistOption } from '@zana-ai/zcc-ui/popover-picklist';
 import {
@@ -29,17 +29,18 @@ import {
 } from 'lucide-react';
 import { STATUS_LABELS, DOC_STATUSES, type DesignDocSummary, type DocStatus } from '../shared/contract.js';
 import { MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
-import { MAX_SUMMARY_LENGTH, MAX_TITLE_LENGTH } from '../shared/limits.js';
+import { MAX_LIST_LIMIT, MAX_SUMMARY_LENGTH, MAX_TITLE_LENGTH } from '../shared/limits.js';
 import { draftDocAgent, showDocAgent } from './Agents.js';
-import { defaultAgentProject, errorMessage, toast, useApi, type DocSyncState, type ProjectInfo, type TemplateInfo } from './api.js';
+import { defaultAgentProject, errorMessage, toast, useApi, type DocSyncState, type ProjectInfo, type TemplateInfo, type UnassignedProject } from './api.js';
 import { effectiveSyncState, needsAttention, SYNC_STATE_LABEL, useDocSyncStatuses } from './sync-status.js';
 import type { DocLocation } from './content.js';
 import { RenameStaleNotice, useDocActions, useTitleRename, type RenameStale } from './DocActions.js';
 import { ProjectMark } from './ProjectMark.js';
-import { anyOpen, buildSections, collapseAll, collapseAllHint, expandAll, groupHint, parseCollapsed, toggleCollapsed, type ListSection } from './doc-sections.js';
+import { anyOpen, buildSections, collapseAll, collapseAllHint, expandAll, groupHint, parseCollapsed, pruneCollapsed, toggleCollapsed, type ListSection } from './doc-sections.js';
 import { DocView } from './DocView.js';
 import { useDocs, useNow, usePersistentState, useProjects, useRemovedProjects, useTemplates, useUnassignedDocs, useUnassignedProjects } from './hooks.js';
 import { UNASSIGNED_LABEL, UnassignedProjectsDialog } from './UnassignedProjects.js';
+import { buildUnassignedGroups, OTHER_KEY, type LabelSource, type UnassignedGroup } from './unassigned-groups.js';
 import { SyncButton, usePeerSync, type PeerSync } from './PeerSettings.js';
 import { SettingsToggle, SettingsView } from './Settings.js';
 import { markSeen, parseSeen, unseenAgentEdit } from './seen.js';
@@ -293,12 +294,29 @@ function DocRow({
   );
 }
 
+/** A peer-supplied name shortened for a chip; the full text stays in the tooltip. */
+function shorten(text: string, max = 24): string {
+  const points = Array.from(text);
+  return points.length > max ? `${points.slice(0, max - 1).join('')}…` : text;
+}
+const basisText = (basis: 'tag' | 'name' | null) => (basis === 'tag' ? 'matched by tag' : 'matched by name');
+const countText = (n: number, capped: boolean) => (capped ? `${n}+` : String(n));
+const docsText = (n: number, capped: boolean) => `${countText(n, capped)} ${n === 1 && !capped ? 'doc' : 'docs'}`;
+
+function groupAriaLabel(group: UnassignedGroup): string {
+  const count = docsText(group.docs.length, group.capped);
+  if (group.foreignProjectId === null) return `${group.label}, ${count}`;
+  if (group.pending) return `Loading project name, from another computer, ${count}`;
+  return `${group.label}${group.suggestedName ? `, suggested: ${group.suggestedName}` : ''}, from another computer, ${count}`;
+}
+
+const UNASSIGNED_SECTION: ListSection = { key: 'unassigned', kind: 'project', label: UNASSIGNED_LABEL, entries: [], count: 0 };
 const SECTION_ICONS = { pinned: Pin, 'needs-me': MessageSquare } as const;
 
-function SectionHead({ section, open, onToggle }: { section: ListSection; open: boolean; onToggle(): void }) {
+function SectionHead({ section, open, onToggle, count, buttonRef }: { section: ListSection; open: boolean; onToggle(): void; count?: string; buttonRef?: Ref<HTMLButtonElement> }) {
   const Glyph = section.kind === 'pinned' || section.kind === 'needs-me' ? SECTION_ICONS[section.kind] : null;
   return (
-    <button type="button" className={`dd-list-section dd-list-section-${section.kind}`} aria-expanded={open} onClick={onToggle}>
+    <button ref={buttonRef} type="button" className={`dd-list-section dd-list-section-${section.kind}`} aria-expanded={open} onClick={onToggle}>
       <ChevronDown size={12} aria-hidden className="dd-list-section-caret" />
       {Glyph ? <Glyph size={11} aria-hidden /> : null}
       {section.kind === 'project' ? (
@@ -317,7 +335,7 @@ function SectionHead({ section, open, onToggle }: { section: ListSection; open: 
           Here
         </span>
       ) : null}
-      <span className="dd-list-section-count">{section.count}</span>
+      <span className="dd-list-section-count">{count ?? section.count}</span>
     </button>
   );
 }
@@ -393,7 +411,32 @@ function DocList({
     api.docCounts().then((value) => { if (live) setTotals(value); }, () => { if (live) setTotals(null); });
     return () => { live = false; };
   }, [api, docs.data]);
-  const unassignedList = inUnassignedScope ? unassignedDocs.data ?? [] : [];
+  // Keep the previous list while a new query loads, so the section does not flash empty.
+  const lastUnassigned = useRef<DesignDocSummary[]>([]);
+  if (unassignedDocs.data) lastUnassigned.current = unassignedDocs.data;
+  const unassignedList = useMemo(
+    () => (inUnassignedScope ? unassignedDocs.data ?? (unassignedDocs.loading ? lastUnassigned.current : []) : []),
+    [inUnassignedScope, unassignedDocs.data, unassignedDocs.loading]
+  );
+  // Label metadata is held until both lists have settled, so a mapped group never flickers to its first-title label.
+  const heldProjects = useRef<UnassignedProject[] | null>(null);
+  const listsSettled = !unassignedProjects.loading && !unassignedDocs.loading;
+  if (listsSettled && unassignedProjects.data) heldProjects.current = unassignedProjects.data;
+  const labelProjects = listsSettled ? unassignedProjects.data : heldProjects.current ?? unassignedProjects.data;
+  const labelSource: LabelSource = labelProjects ? 'ready' : unassignedProjects.error ? 'failed' : unassignedProjects.loading ? 'loading' : 'ready';
+  const localNames = useMemo(() => projects.map((project) => project.name), [projects]);
+  const groups = useMemo(
+    () => buildUnassignedGroups(unassignedList, labelProjects ?? [], localNames, { cap: MAX_LIST_LIMIT, labels: labelSource }),
+    [unassignedList, labelProjects, localNames, labelSource]
+  );
+  const [otherOpen, setOtherOpen] = useState(false); // "Other" stays closed until explicitly opened; session only
+  const unassignedCapped = unassignedList.length >= MAX_LIST_LIMIT;
+  const toggleRefs = useRef(new Map<string, HTMLButtonElement>());
+  const mapRefs = useRef(new Map<string, HTMLButtonElement>());
+  const unassignedHead = useRef<HTMLButtonElement | null>(null);
+  const listScroll = useRef<HTMLDivElement | null>(null);
+  const [mappingFocus, setMappingFocus] = useState<string | null>(null);
+  const [restore, setRestore] = useState<{ key: string; order: string[] } | null>(null);
   const unassignedOpen = !(debounced ? new Set<string>() : parseCollapsed(collapsedRaw)).has('unassigned');
   const visible = useMemo(() => {
     const all = docs.data ?? [];
@@ -425,11 +468,41 @@ function DocList({
   // Searching shows every match, even inside collapsed sections.
   const collapsed = useMemo(() => (debounced ? new Set<string>() : parseCollapsed(collapsedRaw)), [debounced, collapsedRaw]);
   const searching = debounced.length > 0;
+  const hasOther = groups.some((group) => group.key === OTHER_KEY);
   const sectionKeys = useMemo(
-    () => [...sections.map((section) => section.key), ...(unassignedList.length ? ['unassigned'] : [])],
-    [sections, unassignedList.length]
+    () => [
+      ...sections.map((section) => section.key),
+      ...(unassignedList.length ? ['unassigned', ...groups.filter((group) => group.key !== OTHER_KEY).map((group) => group.key)] : [])
+    ],
+    [sections, unassignedList.length, groups]
   );
-  const someOpen = anyOpen(sectionKeys, collapsedRaw);
+  const someOpen = anyOpen(sectionKeys, collapsedRaw, hasOther && otherOpen);
+  const groupOpen = (group: UnassignedGroup) => searching || (group.key === OTHER_KEY ? otherOpen : !collapsed.has(group.key));
+  const toggleGroup = (group: UnassignedGroup) => {
+    if (searching) return; // the display ignores collapsed state while searching, so nothing is persisted
+    if (group.key === OTHER_KEY) setOtherOpen((value) => !value);
+    else setCollapsedRaw(pruneCollapsed(toggleCollapsed(collapsedRaw, group.key), null));
+  };
+  // Forget subgroup keys of mapped projects, but only from a complete, unfiltered, settled project list.
+  const pruneIds = useMemo(() => {
+    const list = unassignedProjects.data;
+    const trusted = list && !unassignedProjects.loading && !unassignedProjects.error && !unassignedDocs.loading && list.length < MAX_LIST_LIMIT;
+    return trusted && inUnassignedScope && status === 'active' && !query.trim() && !debounced ? new Set(list.map((item) => item.foreignProjectId)) : null;
+  }, [unassignedProjects.data, unassignedProjects.loading, unassignedProjects.error, unassignedDocs.loading, inUnassignedScope, status, query, debounced]);
+  useEffect(() => {
+    if (!pruneIds) return;
+    const next = pruneCollapsed(collapsedRaw, pruneIds);
+    if (next !== collapsedRaw) setCollapsedRaw(next);
+  }, [pruneIds, collapsedRaw, setCollapsedRaw]);
+  // After the mapping dialog closes: the originating button, else the next subgroup, else the section header, else the list.
+  useEffect(() => {
+    if (mapping || !restore) return;
+    const from = restore.order.indexOf(restore.key);
+    const next = restore.order.slice(from + 1).map((key) => toggleRefs.current.get(key)).find((el) => el?.isConnected);
+    const target = [mapRefs.current.get(restore.key), next, unassignedHead.current, listScroll.current].find((el) => el?.isConnected);
+    setRestore(null);
+    target?.focus();
+  }, [mapping, restore]);
   const collapseHint = collapseAllHint({ projectFilter: !!projectFilter, grouped, searching, someOpen });
   const projectLabel = (doc: DesignDocSummary, section: ListSection) => {
     if (section.kind === 'project') return null;
@@ -561,12 +634,15 @@ function DocList({
               hint={collapseHint}
               disabled={!byProject || searching}
               size={13}
-              onClick={() => setCollapsedRaw(someOpen ? collapseAll(sectionKeys) : expandAll())}
+              onClick={() => {
+                setCollapsedRaw(someOpen ? collapseAll(sectionKeys) : expandAll());
+                setOtherOpen(!someOpen);
+              }}
             />
           </>
         ) : null}
       </div>
-      <div className="dd-list-scroll">
+      <div className="dd-list-scroll" ref={listScroll} tabIndex={-1}>
         {docs.error ? <div className="dd-banner dd-banner-error">{docs.error}</div> : null}
         {!docs.data && docs.loading ? (
           <div className="dd-center">
@@ -593,13 +669,65 @@ function DocList({
         {unassignedList.length ? (
           <section className="dd-list-group dd-list-unassigned" aria-label={UNASSIGNED_LABEL}>
             <SectionHead
+              buttonRef={unassignedHead}
               section={{ key: 'unassigned', kind: 'recent', label: UNASSIGNED_LABEL, entries: [], count: unassignedList.length }}
+              count={countText(unassignedList.length, unassignedCapped)}
               open={unassignedOpen}
               onToggle={() => setCollapsedRaw(toggleCollapsed(collapsedRaw, 'unassigned'))}
             />
             {unassignedOpen ? (
               <>
-                {unassignedList.map((doc) => row(doc, { key: 'unassigned', kind: 'project', label: UNASSIGNED_LABEL, entries: [], count: 0 }, false))}
+                {groups.map((group) => {
+                  const open = groupOpen(group);
+                  const peer = group.foreignProjectId !== null;
+                  const basis = basisText(group.suggestionBasis);
+                  return (
+                    <div key={group.key} role="group" aria-label={groupAriaLabel(group)} aria-busy={group.pending || undefined} className="dd-list-subgroup">
+                      <div className="dd-list-subhead">
+                        <button
+                          ref={(el) => { if (el) toggleRefs.current.set(group.key, el); else toggleRefs.current.delete(group.key); }}
+                          type="button"
+                          className="dd-list-subtoggle"
+                          title={group.pending ? undefined : [group.label, peer ? 'From another computer; not a local Project' : null, group.suggestedName ? `Suggested Project: ${group.suggestedName} (${basis})` : null].filter(Boolean).join('\n')}
+                          aria-expanded={open}
+                          onClick={() => toggleGroup(group)}
+                        >
+                          <ChevronDown size={11} aria-hidden className="dd-list-section-caret" />
+                          {group.pending ? (
+                            <>
+                              <span className="dd-skel" aria-hidden="true" />
+                              <span className="dd-vh">Loading project name</span>
+                            </>
+                          ) : (
+                            <span className="dd-list-sublabel" dir="auto" title={group.label}>{group.label}</span>
+                          )}
+                          {group.suggestedName ? (
+                            <span className="dd-list-chip" title={`Suggested Project, ${basis}`}>suggested: {shorten(group.suggestedName)}</span>
+                          ) : null}
+                          {peer ? <span className="dd-list-chip" title="From another computer; not a local Project">peer</span> : null}
+                        </button>
+                        {group.suggestedName && peer ? (
+                          <button
+                            ref={(el) => { if (el) mapRefs.current.set(group.key, el); else mapRefs.current.delete(group.key); }}
+                            type="button"
+                            className="dd-map-short"
+                            title={`Opens the mapping dialog; ${basis}`}
+                            aria-label={`Map ${group.label} docs to ${group.suggestedName}, ${basis}`}
+                            onClick={() => {
+                              setRestore({ key: group.key, order: groups.map((item) => item.key) });
+                              setMappingFocus(group.foreignProjectId);
+                              setMapping(true);
+                            }}
+                          >
+                            Map to {shorten(group.suggestedName)}
+                          </button>
+                        ) : null}
+                        <span className="dd-list-section-count">{countText(group.docs.length, group.capped)}</span>
+                      </div>
+                      {open ? <div className="dd-list-subbody">{group.docs.map((doc) => row(doc, UNASSIGNED_SECTION, false))}</div> : null}
+                    </div>
+                  );
+                })}
                 <div className="dd-list-actions">
                   <button type="button" className="btn dd-head-btn" onClick={() => setMapping(true)}>
                     <FolderOpen size={12} aria-hidden /> Map to a Project…
@@ -608,13 +736,19 @@ function DocList({
               </>
             ) : null}
           </section>
+        ) : searching && inUnassignedScope && !unassignedDocs.loading && (unassignedProjects.data?.length ?? 0) > 0 ? (
+          <div className="dd-list-empty dd-muted">No matching docs from peers.</div>
         ) : null}
       </div>
       {mapping ? (
         <UnassignedProjectsDialog
           unassigned={unassignedProjects.data ?? []}
           projects={projects}
-          onClose={() => setMapping(false)}
+          focusForeignId={mappingFocus ?? undefined}
+          onClose={() => {
+            setMapping(false);
+            setMappingFocus(null);
+          }}
           onChanged={() => {
             unassignedProjects.reload();
             unassignedDocs.reload();

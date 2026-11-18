@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DesignDocSummary } from '../shared/contract.js';
-import { anyOpen, buildSections, collapseAll, collapseAllHint, expandAll, groupHint, parseCollapsed, toggleCollapsed } from './doc-sections.js';
+import { anyOpen, buildSections, collapseAll, collapseAllHint, expandAll, groupHint, MAX_COLLAPSED_KEYS, parseCollapsed, pruneCollapsed, toggleCollapsed } from './doc-sections.js';
 
 const actor = { kind: 'user' as const, label: 'You', threadId: null };
 
@@ -130,5 +130,26 @@ describe('control hints', () => {
     expect(collapseAllHint({ ...base, searching: true })).toBe('Clear search to collapse or expand sections');
     expect(collapseAllHint(base)).toBe('Collapse all sections');
     expect(collapseAllHint({ ...base, someOpen: false })).toBe('Expand all sections');
+  });
+
+  it('counts an externally held section as open', () => {
+    expect(anyOpen(['a'], '["a"]')).toBe(false);
+    expect(anyOpen(['a'], '["a"]', true)).toBe(true);
+  });
+
+  it('prunes only vanished subgroup keys, and only with a trusted live set', () => {
+    const raw = JSON.stringify(['pinned', 'unassigned', 'unassigned:keep', 'unassigned:gone', 'project:x']);
+    expect(JSON.parse(pruneCollapsed(raw, new Set(['keep'])))).toEqual(['pinned', 'unassigned', 'unassigned:keep', 'project:x']);
+    expect(pruneCollapsed(raw, new Set(['keep', 'gone']))).toBe(raw);
+    expect(pruneCollapsed(raw, null)).toBe(raw);
+    expect(pruneCollapsed('not json', new Set())).toBe('not json');
+  });
+
+  it('evicts the oldest keys beyond the cap', () => {
+    const keys = Array.from({ length: MAX_COLLAPSED_KEYS + 3 }, (_, i) => `unassigned:k${i}`);
+    const pruned = JSON.parse(pruneCollapsed(JSON.stringify(keys), null)) as string[];
+    expect(pruned).toHaveLength(MAX_COLLAPSED_KEYS);
+    expect(pruned[0]).toBe('unassigned:k3');
+    expect(pruned.at(-1)).toBe(`unassigned:k${MAX_COLLAPSED_KEYS + 2}`);
   });
 });
