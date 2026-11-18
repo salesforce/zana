@@ -29,7 +29,7 @@ describe('Config pages are searchable (values, options, synonyms)', () => {
     expect(top('shift insert')).toContain('terminal.ctrl-v-paste');
     expect(top('pagers')).toContain('terminal.wheel-scroll');
     expect(top('dracula')).toContain('terminal.theme');
-    expect(top('yolo')).toContain('composer.full-access');
+    expect(top('yolo')).toContain('composer.default-permissions');
     expect(top('hint cards')).toContain('inbox.show-guidance');
     expect(top('hotkeys')).toContain('keyboard.all-shortcuts');
     expect(top('cookies logged in')).toContain('browser.import-intro');

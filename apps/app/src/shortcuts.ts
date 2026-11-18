@@ -127,11 +127,11 @@ export function installShortcuts(): () => void {
       ui.exitProjectFocus();
       return;
     }
-    // cmd+j — toggle Scheduler. Round-trip back to Home when already on
-    // scheduler so it works as a single key from anywhere.
+    // cmd+j — toggle Scheduler. From the Scheduler, returns to the view that
+    // was open before it (store.toggleScheduler), like cmd+i with the Inbox.
     if (e.key === 'j' && !e.shiftKey) {
       e.preventDefault();
-      ui.setNav(ui.nav === 'scheduler' ? 'home' : 'scheduler');
+      ui.toggleScheduler();
       return;
     }
     // cmd+/ or cmd+? — keyboard shortcuts help

@@ -5,12 +5,49 @@ import { useThreadPermissionMode } from './useThreadPermissionMode.js';
 import { FULL_ACCESS_BY_DEFAULT_KEY } from '../../../lib/composer-permission-preference.js';
 import { writeBooleanPreference } from '../../../lib/boolean-preference.js';
 import { ComposerSession, resetComposerSessions } from '../../composer/composer-session.js';
+import { useData } from '../../../store.js';
 
 afterEach(cleanup);
-beforeEach(() => { localStorage.clear(); resetComposerSessions(); });
+beforeEach(() => { localStorage.clear(); resetComposerSessions(); useData.setState({ defaultThreadPermissionMode: null }); });
 const modes = ['accept-edits', 'auto', 'full'];
 
 describe('thread permission selection', () => {
+  it.each(['accept-edits', 'auto', 'full'] as const)('uses shared %s in both composer sessions', mode => {
+    useData.setState({ defaultThreadPermissionMode: mode });
+    const modern = renderHook(() => useThreadPermissionMode({ session: new ComposerSession(), settingKey: 'modern.permissionMode', supportedModes: modes }));
+    const cli = renderHook(() => useThreadPermissionMode({ session: new ComposerSession(), settingKey: 'cli.permissionMode', supportedModes: modes }));
+    expect(modern.result.current.permissionMode).toBe(mode);
+    expect(cli.result.current.permissionMode).toBe(mode);
+  });
+  it('updates untouched defaults but keeps saved and existing thread policies', () => {
+    const fresh = renderHook(() => useThreadPermissionMode({ supportedModes: modes }));
+    const existing = renderHook(() => useThreadPermissionMode({ threadId: 'old', initialPermissionMode: 'auto', supportedModes: modes }));
+    act(() => useData.setState({ defaultThreadPermissionMode: 'full' }));
+    expect(fresh.result.current.permissionMode).toBe('full');
+    expect(existing.result.current.permissionMode).toBe('auto');
+    act(() => fresh.result.current.setPermissionMode('accept-edits'));
+    act(() => useData.setState({ defaultThreadPermissionMode: 'auto' }));
+    expect(fresh.result.current.permissionMode).toBe('accept-edits');
+  });
+  it('uses a supported restriction and blocks unsupported shared defaults', () => {
+    useData.setState({ defaultThreadPermissionMode: 'auto' });
+    const view = renderHook(useThreadPermissionMode, { initialProps: { supportedModes: ['accept-edits'] } });
+    expect(view.result.current.permissionMode).toBe('accept-edits');
+    expect(view.result.current.selectionError).toBeNull();
+    view.rerender({ supportedModes: ['full'] });
+    expect(view.result.current.permissionMode).toBe('auto');
+    expect(view.result.current.selectionError).toMatch(/default permission policy is unavailable/);
+    act(() => view.result.current.setPermissionMode('full'));
+    expect(view.result.current.selectionError).toBeNull();
+  });
+  it('retains the shared preference as providers load and restores legacy Full only when cleared', () => {
+    writeBooleanPreference(FULL_ACCESS_BY_DEFAULT_KEY, true);
+    useData.setState({ defaultThreadPermissionMode: 'accept-edits' });
+    const view = renderHook(() => useThreadPermissionMode({ supportedModes: [] }));
+    expect(view.result.current.permissionMode).toBe('accept-edits');
+    act(() => useData.setState({ defaultThreadPermissionMode: null }));
+    expect(view.result.current.permissionMode).toBe('full');
+  });
   it('restores an explicit policy across remount and ignores late defaults', () => {
     const session = new ComposerSession();
     const view = renderHook(() => useThreadPermissionMode({ session, threadId: 'one', initialPermissionMode: 'auto', supportedModes: modes }));

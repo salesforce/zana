@@ -1,5 +1,7 @@
 import type { ProjectIcon } from '@zana-ai/zcc-domain';
 import type { ProjectColor } from '@zana-ai/zcc-domain/project-colors';
+import type { PluginSshConnections } from './ssh-connections.js';
+export type { PluginSshConnections, PluginSshConnectionProvider, PluginSshIdentity } from './ssh-connections.js';
 export { PROJECT_ICONS, type ProjectIcon } from '@zana-ai/zcc-domain';
 /**
  * Server-side plugin API — the `zcc` object handed to a plugin's server factory:
@@ -1421,6 +1423,8 @@ export interface PluginStatusApi {
 }
 
 export interface ZccPluginApi {
+  /** Prepare provider authentication before explicit SSH Connect/Repair. Background retries never invoke it. */
+  readonly sshConnections: PluginSshConnections;
   readonly pluginId: string;
   readonly log: PluginLogger;
   readonly settings: PluginSettings;

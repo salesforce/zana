@@ -6,7 +6,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HOST_RPC_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/host-rpc';
-import { listHosts } from '@zana-ai/zcc-db';
+import { listHosts, upsertHost, updateHostSshIdentity } from '@zana-ai/zcc-db';
+import { SshPreparationError } from '../plugins/ssh-connection-providers.js';
 import { handleHostsApi } from './hosts-api.js';
 import { startProductServer, type ProductServer } from './product-server.js';
 
@@ -56,6 +57,35 @@ async function start(envUrl?: string) {
 }
 
 describe('hosts API', () => {
+  it('prepares explicit SSH, project and repair requests before installing, using server-owned identities', async () => {
+    const dataDir = await start();
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [{ id: 'managed-project', name: 'Managed', path: '/placeholder', createdAt: 1, lastActiveAt: 1, remote: { host: 'managed-alias', user: 'sfwork', remotePath: '/repo' } }] }));
+    const prepare = vi.fn(async (_remote: unknown, _signal: AbortSignal, notify: (name: string) => void) => { notify('Workspace fixture'); throw new SshPreparationError('Complete workspace sign-in before retrying.'); });
+    server!.ctx.plugins = { prepareSshConnection: prepare } as never;
+    upsertHost(server!.ctx.db, { name: 'Primary', hostKeyHash: 'a'.repeat(64), isPrimary: true });
+    const remote = upsertHost(server!.ctx.db, { name: 'Remote', hostKeyHash: 'b'.repeat(64) });
+    updateHostSshIdentity(server!.ctx.db, remote.id, { host: 'managed-alias', user: 'sfwork' });
+    for (const [path, body] of [
+      ['bootstrap', { ssh: { host: 'managed-alias' } }],
+      ['bootstrap', { projectId: 'managed-project' }],
+      [`${remote.id}/repair`, {}]
+    ] as const) {
+      const response = await fetch(`${server!.url}api/v1/hosts/${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      const events = (await response.text()).trim().split('\n').map(line => JSON.parse(line));
+      expect(events).toContainEqual(expect.objectContaining({ type: 'stage', stage: 'prepare', status: 'running' }));
+      expect(events.at(-1)).toMatchObject({ type: 'error', code: 'connection_preparation_failed' });
+      expect(events.some(event => event.stage === 'install' || event.stage === 'ssh')).toBe(false);
+    }
+    expect(prepare.mock.calls.map(([identity]) => identity)).toEqual([
+      { host: 'managed-alias' }, { host: 'managed-alias', user: 'sfwork' }, { host: 'managed-alias', user: 'sfwork' }
+    ]);
+    const invalid = await fetch(`${server!.url}api/v1/hosts/bootstrap`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ssh: { host: '-bad' } }) });
+    expect(await invalid.text()).toContain('invalid_ssh'); expect(prepare).toHaveBeenCalledTimes(3);
+    vi.spyOn(server!.ctx.hostHub, 'connectedHostIds').mockReturnValue([remote.id]);
+    const reused = await fetch(`${server!.url}api/v1/hosts/bootstrap`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ssh: { host: 'managed-alias', user: 'sfwork' } }) });
+    expect(await reused.text()).toContain('already connected'); expect(prepare).toHaveBeenCalledTimes(3);
+    delete server!.ctx.plugins;
+  });
   it('mints a join code without inserting a host row', async () => {
     await start();
     const minted = await fetch(`${server!.url}api/v1/hosts/join-codes`, {
