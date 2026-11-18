@@ -60,6 +60,18 @@ describe('GET /api/v1/peer-links', () => {
     expect(JSON.stringify(body)).not.toContain('link-key');
   });
 
+  it('returns per-link connection diagnostics when the peer-link service has them, and omits the key otherwise', async () => {
+    const s = await start();
+    seed(s);
+    const without = await fetch(url('/peer-links')).then(r => r.json()) as { diagnostics?: unknown };
+    expect(without.diagnostics).toBeUndefined();
+    const entry = { peerInstanceId: 'p1', role: 'inviter', phase: 'linked', side: 'server', state: 'disconnected', reason: 'ssh-down', paused: false,
+      forwarderBlocked: 'EADDRINUSE', tunnel: { up: false, downForMs: 5000 }, session: null, retries: 1 };
+    (s.ctx as unknown as { peerLinks: unknown }).peerLinks = { diagnostics: () => [entry], dispose: () => undefined, whenIdle: async () => undefined };
+    const body = await fetch(url('/peer-links')).then(r => r.json()) as { diagnostics?: unknown[] };
+    expect(body.diagnostics).toEqual([entry]);
+  });
+
   it('marks a use-less forward host unclaimed so it can be removed', async () => {
     const s = await start();
     upsertHost(s.ctx.db, { name: 'laptop', hostKeyHash: 'a', isPrimary: true });

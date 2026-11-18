@@ -71,6 +71,7 @@ async function handleAdmittedPeer(request: IncomingMessage, response: ServerResp
   const lifetime = new AbortController();
   const abort = () => { if (!response.writableEnded) disconnected.abort(); };
   response.once('close', abort);
+  const startedAt = Date.now();
   const signal = AbortSignal.any([lease.signal, disconnected.signal, AbortSignal.timeout(30_000)]);
   let cancel: (() => void) | undefined;
   try {
@@ -103,7 +104,19 @@ async function handleAdmittedPeer(request: IncomingMessage, response: ServerResp
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(encoded);
     }
-  } catch {
+  } catch (error) {
+    // Which of the three sources cancelled it: the sender cannot tell, and a lease abort means pairing state moved under a live request.
+    if (signal.aborted) {
+      const cause = lease.signal.aborted ? 'lease' : disconnected.signal.aborted ? 'disconnect' : 'timeout';
+      // The error that surfaced with the abort (often the commit failure that aborted the lease, not the abort itself).
+      const surfaced = (error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').slice(0, 160);
+      console.warn(`[zcc] peer request cancelled plugin=${pluginId} method=${peerMethod} pair=${lease.grant.pairId} cause=${cause} elapsedMs=${Date.now() - startedAt} error=${surfaced}`);
+    }
+    else {
+      // The sender only gets a fixed code. The receiver's own error text is local, so it may be logged (bounded) to say what refused.
+      const reason = (error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').slice(0, 160);
+      console.warn(`[zcc] peer request rejected plugin=${pluginId} method=${peerMethod} pair=${lease.grant.pairId} elapsedMs=${Date.now() - startedAt} reason=${reason}`);
+    }
     if (!response.destroyed) sendJson(response, signal.aborted ? 409 : 400,
       { ok: false, code: signal.aborted ? 'peer-request-cancelled' : 'peer-request-rejected' });
   } finally {

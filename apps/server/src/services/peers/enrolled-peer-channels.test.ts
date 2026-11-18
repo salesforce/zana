@@ -61,3 +61,21 @@ it('unregister keeps an in-flight newer generation but removes the persisted enr
   expect(f.channels.current(f.remote)).toBeNull();
   expect(await f.channels.unregister(f.remote, original.hostId)).toBe(false);
 });
+
+it('logs who displaced whom only when a re-registration changes host, key or capability, with hash prefixes only', async () => {
+  const f = await fixture();
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const original = f.channel();
+  await f.channels.register(original);
+  await f.channels.register(original);
+  expect(warn).not.toHaveBeenCalled();
+  const rotated = f.channel(undefined, original.hostId);
+  await f.channels.register(rotated);
+  expect(warn).toHaveBeenCalledTimes(1);
+  const line = String(warn.mock.calls[0]![0]);
+  expect(line).toContain(`key ${channelHash(original).slice(0, 8)} -> ${channelHash(rotated).slice(0, 8)}`);
+  expect(line).toContain(`host ${original.hostId} -> ${original.hostId}`);
+  expect(line).not.toContain(original.hostKey);
+  expect(line).not.toMatch(/[a-f0-9]{32}/);
+  warn.mockRestore();
+});

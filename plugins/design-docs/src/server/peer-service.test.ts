@@ -1038,3 +1038,55 @@ describe('peer protocol negotiation', () => {
     expect(a.sync.version('repo', a.sync.head('repo', doc.id)!)!.operation.kind).toBe('delete');
   });
 });
+
+describe('private draft awaiting the other computer\'s consent', () => {
+  it('receiver answers consent-required as a normal result and stages nothing', async () => {
+    const a = fixture('a'), b = fixture('b'); a.pair(); b.pair();
+    a.store.create({ title: 'Private draft', template: 'blank' }, user);
+    a.sync.prepareManual();
+    const intent = a.sync.readyIntents('repo')[0]!, transfer = a.service.createTransfer(intent, 1);
+    await expect(b.service.receiveTransfer('transfer', 'machine-a', transfer, fence())).resolves.toEqual({ stage: 'consent-required' });
+    expect(b.db.prepare('SELECT COUNT(*) AS n FROM sync_transfers').get()).toEqual({ n: 0 });
+    // The refusal is visible in the receiver's own diagnostics, so no database query is needed to see why.
+    expect(b.sync.peerDiagnostics()[0]!.consent).toMatchObject({ knownHeads: 0, refused: { count: 1, lastDocId: expect.any(String) },
+      inbound: { waiting: 0, accepted: 0 }, outbound: { waiting: 0, accepted: 0 } });
+  });
+
+  it('sender holds the draft as waiting with a consent hint, then delivers once the other computer chooses Sync now', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const a = fixture('a'), b = fixture('b'); a.pair(); b.pair();
+    const doc = a.store.create({ title: 'Private draft', template: 'blank' }, user);
+    a.sync.prepareManual();
+    const summary = await a.service.deliverPending(transport(a, b));
+    expect(summary).toMatchObject({ attempted: 1, synced: 0, waiting: 1, failed: 0 });
+    const diagnostics = a.sync.peerDiagnostics()[0]!;
+    expect(diagnostics.fault).toMatchObject({ code: 'consent' });
+    expect(diagnostics.fault!.hint).toContain('Sync now');
+    // The sender's own diagnostics say why: the head is named by a waiting session and the other computer has not accepted it.
+    expect(diagnostics.consent).toMatchObject({ queued: { total: 1, namedByOutbound: 1 }, outbound: { waiting: 1 },
+      lastAnswer: { outcome: 'not-accepted' } });
+    expect(b.store.find(doc.id)).toBeNull();
+    // The other computer's user chooses Sync now: its own consent completes the two-sided handshake.
+    b.sync.prepareManual();
+    expect(await a.service.syncNow(transport(a, b))).toMatchObject({ synced: 1 });
+    expect(b.store.find(doc.id)).not.toBeNull();
+    info.mockRestore();
+  });
+
+  it('delivers a draft written after several earlier Sync now presses once the other computer syncs', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const a = fixture('a'), b = fixture('b'); a.pair(); b.pair();
+    a.store.create({ title: 'First draft', template: 'blank' }, user);
+    await a.service.syncNow(transport(a, b));
+    await a.service.syncNow(transport(a, b));
+    const last = a.store.create({ title: 'Third draft', template: 'blank' }, user);
+    await a.service.syncNow(transport(a, b));
+    // Three presses left three waiting sessions; the newest names the new draft and must not sit behind the oldest.
+    expect((a.db.prepare("SELECT COUNT(*) AS n FROM sync_manual_sessions WHERE direction = 'out' AND state = 'waiting'").get() as { n: number }).n).toBeGreaterThan(1);
+    expect(b.store.find(last.id)).toBeNull();
+    b.sync.prepareManual();
+    await a.service.syncNow(transport(a, b));
+    expect(b.store.find(last.id)).not.toBeNull();
+    info.mockRestore();
+  });
+});

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { PeerConnection, PeerLink, PeerLinkHookFailure, PeerLinkState, RemovePeerLinkResult, RepairPeerLinkResponse } from '@zana-ai/zcc-server-contract';
+import type { PeerLinkDiagnostic, PeerConnection, PeerLink, PeerLinkHookFailure, PeerLinkState, RemovePeerLinkResult, RepairPeerLinkResponse } from '@zana-ai/zcc-server-contract';
 import type { PluginAppEntry } from '@zana-ai/zcc-domain/product';
 import { peerConnections, peerLinks, product, type PeerLeftover } from '../../lib/product-client.js';
 import { SearchTarget } from './MachineCard.js';
@@ -7,12 +7,15 @@ import { AddComputer } from './peers/AddComputer.js';
 import { JoinComputer } from './peers/JoinComputer.js';
 import { PeerDialog } from './peers/PeerDialog.js';
 import { ActiveUseConfirm, HookFailureDialog, RemovePluginsConfirm } from './peers/RemovalDialogs.js';
+import { copyText } from '../../lib/copy-text.js';
+import { formatPeerDiagnostics } from './peers/format-peer-diagnostics.js';
 import { LeftoverAccess, StuckStateActions, forceRemoveText, type StuckAction } from './peers/StuckState.js';
 import './peers-settings.css';
 
 const TERMINAL_CONNECTION_STATES = new Set<PeerConnection['state']>(['ready', 'denied', 'cancelled', 'expired', 'failed']);
 const CANCELLABLE_CONNECTION_STATES = new Set<PeerConnection['state']>(['open', 'redeeming', 'reserved']);
 const CONNECTION_POLL_MS = 2000;
+const COPIED_LABEL_MS = 2000;
 
 
 const STATE_LABELS: Record<PeerLinkState, string> = {
@@ -94,6 +97,8 @@ export function PeersSettingsView() {
   const [links, setLinks] = useState<PeerLink[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [flow, setFlow] = useState<Flow | null>(null);
+  const [diagnostics, setDiagnostics] = useState<PeerLinkDiagnostic[]>([]);
+  const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const disposed = useRef(false);
   const [connections, setConnections] = useState<PeerConnection[]>([]);
@@ -123,7 +128,7 @@ export function PeersSettingsView() {
   const load = useCallback(async (keepError = false) => {
     try {
       const body = await peerLinks.list();
-      if (!disposed.current) { setLinks(Array.isArray(body?.links) ? body.links : []); if (!keepError) setError(null); }
+      if (!disposed.current) { setLinks(Array.isArray(body?.links) ? body.links : []); setDiagnostics(Array.isArray(body?.diagnostics) ? body.diagnostics : []); if (!keepError) setError(null); }
     } catch (failure) {
       if (!disposed.current) setError(errorText(failure));
     }
@@ -165,6 +170,12 @@ export function PeersSettingsView() {
     if (previous !== null && previous !== connectionStates) void load(true);
   }, [connectionStates, load]);
 
+  const copyDiagnostics = () => {
+    void copyText(formatPeerDiagnostics(links ?? [], diagnostics)).then(() => {
+      setCopied(true);
+      setTimeout(() => { if (!disposed.current) setCopied(false); }, COPIED_LABEL_MS);
+    }, () => setError('Could not copy diagnostics.'));
+  };
   const groups = links ? groupLinks(links) : [];
   const hasPeerPlugin = plugins?.some((plugin) => plugin.enabled && plugin.peers) ?? false;
   const refreshAll = useCallback(() => { void loadConnections(); void load(true); }, [loadConnections, load]);
@@ -239,6 +250,7 @@ export function PeersSettingsView() {
       <div className="peers-actions peers-page-actions">
         <button type="button" className="btn primary" onClick={() => setPanel(panel === 'add' ? null : 'add')}>Add computer</button>
         <button type="button" className="btn" onClick={() => setPanel(panel === 'join' ? null : 'join')}>Join computer</button>
+        <button type="button" className="btn" onClick={copyDiagnostics}>{copied ? 'Copied' : 'Copy diagnostics'}</button>
       </div>
       {panel === 'add' && <PeerDialog title="Add a computer"><AddComputer connections={connections} onChange={refreshAll} onClose={() => setPanel(null)} /></PeerDialog>}
       {panel === 'join' && <PeerDialog title="Join computer"><JoinComputer connections={connections} onChange={refreshAll} onClose={() => setPanel(null)} /></PeerDialog>}

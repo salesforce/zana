@@ -1,6 +1,16 @@
 import { canonicalPeerHash, validateDocumentClosure, PeerProtocolError, type PeerDocumentClosure } from '../shared/peer-contract.js';
 import { MAX_PEER_HISTORY_ROWS } from '../shared/peer-limits.js';
 
+/** Match SQLite BINARY collation, independently of machine locale. */
+export const utf8Order = (a: string, b: string): number => Buffer.compare(Buffer.from(a), Buffer.from(b));
+
+/** These collections are keyed sets; history order remains causal and must not change. */
+export function orderedProjection(closure: PeerDocumentClosure): PeerDocumentClosure {
+  return { ...closure, files: [...closure.files].sort((a, b) => utf8Order(a.path, b.path)),
+    comments: [...closure.comments].sort((a, b) => utf8Order(a.id, b.id)),
+    threads: [...closure.threads].sort((a, b) => utf8Order(a.thread_id, b.thread_id)) };
+}
+
 /** Preserve every branch's causal order, even when common UI rows were pruned. */
 export function mergeHistory(histories: PeerDocumentClosure['history'][], preferred?: PeerDocumentClosure['history']): PeerDocumentClosure['history'] {
   const rows = new Map<string, PeerDocumentClosure['history'][number]>(), children = new Map<string, Set<string>>(), incoming = new Map<string, number>();
@@ -98,9 +108,9 @@ export function mergeDocument(base: PeerDocumentClosure, local: PeerDocumentClos
   let history: PeerDocumentClosure['history'] = [];
   try { history = mergeHistory([base.history, local.history, remote.history]); }
   catch (error) { conflicts.push(error instanceof Error ? error.message : 'invalid merged history'); }
-  const candidate = { doc, files: files.sort((a, b) => a.path.localeCompare(b.path)), history,
-    comments: mergeRows([base.comments, local.comments, remote.comments], (row) => row.id, 'comment').sort((a, b) => a.id.localeCompare(b.id)),
-    threads: mergeRows([base.threads, local.threads, remote.threads], (row) => row.thread_id, 'thread').sort((a, b) => a.thread_id.localeCompare(b.thread_id)) };
+  const candidate = orderedProjection({ doc, files, history,
+    comments: mergeRows([base.comments, local.comments, remote.comments], (row) => row.id, 'comment'),
+    threads: mergeRows([base.threads, local.threads, remote.threads], (row) => row.thread_id, 'thread') });
   if (conflicts.length) return { candidate: null, conflicts };
   try { return { candidate: validateDocumentClosure(candidate), conflicts: [] }; }
   catch (error) { return { candidate: null, conflicts: [error instanceof Error ? error.message : 'invalid merged document'] }; }
@@ -112,8 +122,10 @@ export interface TextMergeResult {
 }
 
 /**
- * Accept only independently changed line ranges. Ambiguous overlap remains a
- * visible fork rather than guessing at author intent.
+ * Accept only independently changed line ranges. Each side contributes one
+ * contiguous range from its first to last changed line, not a diff-hunk set.
+ * Adjacent replacements merge; insertions touching either boundary conflict.
+ * Ambiguous overlap remains a visible fork rather than guessing at author intent.
  */
 export function mergeText(base: string, local: string, remote: string): TextMergeResult {
   if (local === remote) return { content: local, conflicts: [] };

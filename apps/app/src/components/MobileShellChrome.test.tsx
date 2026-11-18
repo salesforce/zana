@@ -96,6 +96,10 @@ it('tracks keyboard resize and pan, then releases viewport listeners on desktop'
   });
   expect(style.getPropertyValue('--mobile-viewport-height')).toBe('390px');
   expect(style.getPropertyValue('--mobile-viewport-top')).toBe('150px');
+  expect(document.documentElement.dataset.mobileKeyboard).toBe('true');
+  act(() => { viewport.height = 844; viewport.dispatchEvent(new Event('resize')); });
+  expect(document.documentElement.dataset.mobileKeyboard).toBeUndefined();
+  act(() => { viewport.height = 390; viewport.dispatchEvent(new Event('resize')); });
   act(() => {
     viewport.offsetTop = 210;
     viewport.dispatchEvent(new Event('scroll'));
@@ -104,6 +108,7 @@ it('tracks keyboard resize and pan, then releases viewport listeners on desktop'
   act(() => { narrow = false; listener(); });
   expect(style.getPropertyValue('--mobile-viewport-height')).toBe('');
   expect(style.getPropertyValue('--mobile-viewport-top')).toBe('');
+  expect(document.documentElement.dataset.mobileKeyboard).toBeUndefined();
   expect(remove).toHaveBeenCalledWith('resize', expect.any(Function));
   expect(remove).toHaveBeenCalledWith('scroll', expect.any(Function));
   viewport.dispatchEvent(new Event('scroll'));

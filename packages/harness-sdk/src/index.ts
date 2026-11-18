@@ -50,7 +50,8 @@ export type {
   HarnessSessionReference
 } from './session.js';
 
-export type { HarnessStatusAdapter, HarnessStatusMode, HarnessInteractionEvent } from './status.js';
+export type { HarnessStatusAdapter, HarnessStatusMode, HarnessInteractionEvent, HarnessApiErrorSignal } from './status.js';
+export { API_ERROR_RETRYABLE_KINDS, isRetryableApiErrorKind } from './status.js';
 export type { HarnessVerificationDefinition } from './verification.js';
 export type { HarnessHistoryAdapter, HarnessHistoryScope, HarnessHistoryConversation, HarnessHistoryTranscript } from './history.js';
 

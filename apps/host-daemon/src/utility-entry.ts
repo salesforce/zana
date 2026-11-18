@@ -3,7 +3,7 @@ import { shutdownPortableCommands } from '@zana-ai/zcc-agent-process-utils';
 import { startHostDaemon } from './daemon.js';
 import { createLocalPtyTerminalManager } from './local-pty-host.js';
 import { startEnrolledHostDaemon, type EnrolledHostDaemon } from './enroll-runtime.js';
-import { PluginCapabilitiesChangedMessageSchema, SERVER_RUNTIME_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/runtime';
+import { DesktopHostEnrollmentSchema, PluginCapabilitiesChangedMessageSchema, SERVER_RUNTIME_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/runtime';
 import { rebuildPluginServers } from './mcp-config.js';
 import { randomUUID } from 'node:crypto';
 
@@ -12,8 +12,9 @@ interface ParentPortLike {
   postMessage(message: unknown): void;
 }
 
-const parentPort = (process as unknown as { parentPort?: ParentPortLike }).parentPort;
-if (!parentPort) throw new Error('host utility entry requires an Electron utility process');
+const utilityParentPort = (process as unknown as { parentPort?: ParentPortLike }).parentPort;
+if (!utilityParentPort) throw new Error('host utility entry requires an Electron utility process');
+const parentPort: ParentPortLike = utilityParentPort;
 
 let close: (() => Promise<void>) | null = null;
 let enrolled: EnrolledHostDaemon | null = null;
@@ -22,7 +23,25 @@ let terminalManager: ReturnType<typeof createLocalPtyTerminalManager> | null = n
 // flight. node-pty's macOS helper owns its own session, so reclaim PTYs on the
 // synchronous process-exit path as a final backstop against orphaned terminals.
 process.once('exit', () => terminalManager?.close());
-parentPort.on('message', async ({ data }) => {
+// EventEmitter does not await async listeners. Serialize lifecycle transitions
+// so retries/relaunch/stop cannot race the auth write or steal our own lock.
+let lifecycle: Promise<void> = Promise.resolve();
+let stopping = false;
+let enrollmentAbort: AbortController | undefined;
+parentPort.on('message', ({ data }) => {
+  const message = data as { type?: string; protocolVersion?: number } | null;
+  if (message?.type === 'stop' && message.protocolVersion === SERVER_RUNTIME_PROTOCOL_VERSION) {
+    // Cancel detached probes and an in-flight handshake before queued cleanup.
+    stopping = true;
+    shutdownPortableCommands();
+    enrollmentAbort?.abort();
+  }
+  if (!['start', 'enroll', 'relaunch', 'stop'].includes(message?.type ?? '')) return handleMessage(data);
+  const next = lifecycle.then(() => handleMessage(data));
+  lifecycle = next.catch(() => undefined);
+  return next;
+});
+async function handleMessage(data: unknown): Promise<void> {
   if (!data || typeof data !== 'object') return;
   const message = data as {
     type?: string;
@@ -36,7 +55,9 @@ parentPort.on('message', async ({ data }) => {
     ghBinary?: string;
     provenance?: 'tunnel' | 'non-tunnel';
     replaceEnrollment?: boolean;
+    desktopEnrollment?: unknown;
   };
+  if (stopping && message.type !== 'stop') return;
   if (
     (message.type === 'start' || message.type === 'enroll' || message.type === 'relaunch' || message.type === 'stop')
     && message.protocolVersion !== SERVER_RUNTIME_PROTOCOL_VERSION
@@ -89,15 +110,22 @@ parentPort.on('message', async ({ data }) => {
       parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, message: error instanceof Error ? error.message : String(error) });
     }
   }
+  if (message.type === 'enroll' && enrolled) {
+    parentPort.postMessage({ type: 'enrolled', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, hostId: enrolled.hostId });
+    return;
+  }
   if (message.type === 'enroll' && message.serverUrl && message.token && message.dataDir && !enrolled) {
     try {
+      enrollmentAbort = new AbortController();
       enrolled = await startEnrolledHostDaemon({
         dataDir: message.dataDir,
         serverUrl: message.serverUrl,
         token: message.token,
         provenance: message.provenance === 'tunnel' ? 'tunnel' : 'non-tunnel',
         replaceEnrollment: message.replaceEnrollment === true,
-        stealLock: true
+        stealLock: true,
+        signal: enrollmentAbort.signal,
+        ...(message.desktopEnrollment === undefined ? {} : { desktopEnrollment: DesktopHostEnrollmentSchema.parse(message.desktopEnrollment) })
       });
       parentPort.postMessage({
         type: 'enrolled',
@@ -114,6 +142,7 @@ parentPort.on('message', async ({ data }) => {
   }
   if (message.type === 'relaunch' && message.serverUrl && message.token && message.dataDir) {
     try {
+      enrollmentAbort = new AbortController();
       await enrolled?.close();
       enrolled = null;
       enrolled = await startEnrolledHostDaemon({
@@ -122,7 +151,9 @@ parentPort.on('message', async ({ data }) => {
         token: message.token,
         stealLock: true,
         provenance: message.provenance === 'tunnel' ? 'tunnel' : 'non-tunnel',
-        replaceEnrollment: message.replaceEnrollment === true
+        replaceEnrollment: message.replaceEnrollment === true,
+        signal: enrollmentAbort.signal,
+        ...(message.desktopEnrollment === undefined ? {} : { desktopEnrollment: DesktopHostEnrollmentSchema.parse(message.desktopEnrollment) })
       });
       parentPort.postMessage({
         type: 'enrolled',
@@ -138,13 +169,10 @@ parentPort.on('message', async ({ data }) => {
     }
   }
   if (message.type === 'stop' && message.protocolVersion === SERVER_RUNTIME_PROTOCOL_VERSION) {
-    // Electron's utility-process kill deadline cannot run Node exit hooks.
-    // Cancel detached probes before any potentially slow daemon cleanup.
-    shutdownPortableCommands();
     await enrolled?.close();
     enrolled = null;
     await close?.();
     parentPort.postMessage({ type: 'stopped', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION });
     process.exit(0);
   }
-});
+}

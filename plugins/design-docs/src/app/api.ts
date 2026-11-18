@@ -3,6 +3,7 @@
  * Every call goes through the host's `useRpc()` client, so the server still
  * validates and attributes every mutation.
  */
+import type { DocCounts, PeerDiagnostics, SyncQueueEntry } from '../shared/sync-diagnostics.js';
 import { useMemo } from 'react';
 import { useRpc, type HarnessRoutingEditorProps, type PluginHarnessOverride } from '@zana-ai/zcc-plugin-sdk/app';
 import type {
@@ -14,7 +15,7 @@ import type {
   DesignDocRevision,
   DesignDocSummary,
   DocStatus,
-  PeerConflictPage, PeerConflictReview, PeerConflictFile, PeerResolutionChoice,
+  PeerConflictPage, PeerConflictReview, PeerConflictFile, PeerResolutionChoice, PeerConflictChoices,
   TextEdit
 } from '../shared/contract.js';
 import type { PageFile } from '../shared/frame-protocol.js';
@@ -174,10 +175,14 @@ export interface DesignDocsApi {
   syncNow(): Promise<SyncSummary>;
   /** Sync state of every doc (or one) against the other computers; `[]` when sync is not set up. */
   docSyncStatuses(doc?: string): Promise<DocSyncStatus[]>;
+  /** Per computer queue, last errors and this computer's doc counts (owner UI only). */
+  syncDiagnostics(): Promise<SyncDiagnostics>;
+  /** One total over every project and status, unmapped included. */
+  docCounts(): Promise<DocCounts>;
   peerConflicts(doc: string, cursor?: string): Promise<PeerConflictPage>;
   peerConflictReview(doc: string, remoteHead: string): Promise<PeerConflictReview>;
   peerConflictFile(doc: string, remoteHead: string, path: string): Promise<PeerConflictFile>;
-  resolvePeerConflict(doc: string, args: { expectedHead: string; remoteHead: string; choice: PeerResolutionChoice }): Promise<{ head: string }>;
+  resolvePeerConflict(doc: string, args: { expectedHead: string; remoteHead: string; choice?: PeerResolutionChoice; choices?: PeerConflictChoices }): Promise<{ head: string }>;
   list(args?: ListArgs): Promise<DesignDocSummary[]>;
   get(doc: string, kind?: DocKind): Promise<DesignDocDetail>;
   create(args: CreateArgs): Promise<DesignDocDetail>;
@@ -213,8 +218,13 @@ export interface DesignDocsApi {
 }
 
 export interface SyncSummary { attempted: number; synced: number; blocked: number; waiting?: number; needsChoice?: number; failed?: number }
-export type DocSyncState = 'up-to-date' | 'unsent' | 'waiting' | 'needs-choice' | 'failed';
-export interface DocSyncStatus { docId: string; state: DocSyncState; computers: number }
+export type DocSyncState = 'up-to-date' | 'unsent' | 'waiting' | 'needs-choice' | 'failed' | 'unknown';
+export interface SyncDiagnostics { peers: PeerDiagnostics[]; queue: SyncQueueEntry[]; counts: DocCounts }
+export interface DocSyncStatus {
+  docId: string; state: DocSyncState; computers: number; differences?: string[];
+  /** Bounded, redacted reason of the newest failed or retried delivery; absent from older servers. */
+  lastError?: string | null; lastErrorAt?: number | null;
+}
 
 export interface PeerStatus {
   configured: boolean;
@@ -271,6 +281,8 @@ export function createApi(call: Call): DesignDocsApi {
     removePeer: (replicaId) => typed('removePeer', { replicaId }),
     syncNow: () => typed('syncNow'),
     docSyncStatuses: (doc) => typed('docSyncStatuses', doc ? { doc } : undefined),
+    syncDiagnostics: () => typed('syncDiagnostics'),
+    docCounts: () => typed('docCounts'),
     peerConflicts: (doc, cursor) => typed('peerConflicts', { doc, cursor }),
     peerConflictReview: (doc, remoteHead) => typed('peerConflictReview', { doc, remoteHead }),
     peerConflictFile: (doc, remoteHead, path) => typed('peerConflictFile', { doc, remoteHead, path }),

@@ -19,6 +19,9 @@ body:has(.app-shell[data-mobile='true']) .palette.launch-modal {
 body:has(.app-shell[data-mobile='true']) .launch-modal .launch-panel { gap: 8px; }
 body:has(.app-shell[data-mobile='true']) .launch-modal .launch-scroll { overflow-y: auto; }
 
+/* With the keyboard up the composer needs every row; the harness hint returns when it closes. */
+html[data-mobile-keyboard='true'] body:has(.app-shell[data-mobile='true']) .thread-default-hint { display: none; }
+
 /* Leave room for the phone header and keep actions inside the keyboard viewport.
    Settings can scroll; attaching several screenshots must not grow the card. */
 body:has(.app-shell[data-mobile='true']) .thread-command-card {

@@ -108,7 +108,7 @@ const CLAUDE_ADAPTER: TrustedHarnessAdapter = {
     ],
     terminatesAtDoubleDash: true
   },
-  status: { mode: 'osc', interactionHook: claudeInteractionHook },
+  status: { mode: 'osc', apiErrorSignal: 'hook', interactionHook: claudeInteractionHook },
   legacyRouting: claudeLegacyRouting,
   evidence: [
     ...['haiku', 'sonnet', 'opus', 'fable'].flatMap((id) => [

@@ -81,6 +81,20 @@ export function isDeletionClosure(closure: PeerDocumentClosure): boolean {
   return closure.deleted !== undefined;
 }
 export interface PeerVersion { operation: PeerOperation; closure: PeerDocumentClosure }
+
+/** User-visible content, independent of replica bookkeeping and local project mapping. */
+export function documentContent(closure: PeerDocumentClosure): Record<string, unknown> {
+  const { status, title, summary, tags, entry_path } = closure.doc;
+  const order = (a: string, b: string) => Buffer.compare(Buffer.from(a), Buffer.from(b));
+  return { status, title, summary, tags, entry_path, deleted: closure.deleted !== undefined,
+    files: closure.files.map(({ path, content, encoding }) => ({ path, content, encoding })).sort((a, b) => order(a.path, b.path)),
+    comments: closure.comments.map(({ created_at: _created, resolved_at: _resolved, ...comment }) => comment).sort((a, b) => order(a.id, b.id)),
+    threads: closure.threads.map(row => row.thread_id).sort(order) };
+}
+
+export function contentEquals(left: PeerDocumentClosure, right: PeerDocumentClosure): boolean {
+  return canonicalPeerHash(documentContent(left)) === canonicalPeerHash(documentContent(right));
+}
 export interface PeerAppliedReceipt {
   sessionId: string; scopeHash: string; checkpointHash: string;
   stage: PeerReceiptStage; heads: Record<string, string>; appliedHeads: Record<string, string>;
@@ -138,6 +152,20 @@ export class PeerProtocolError extends Error {
   constructor(readonly code: 'invalid' | 'limit' | 'conflict', message: string) {
     super(message);
     this.name = 'PeerProtocolError';
+  }
+}
+
+/** Receipt stage a receiver returns, as a normal answer, when a private draft still needs this computer's own consent. */
+export const CONSENT_REQUIRED_STAGE = 'consent-required';
+
+/**
+ * A private draft head arrived before both computers consented. It is a normal "not yet" answer, not a protocol fault:
+ * throwing it out of a commit callback would abort the pair's grant lease and reach the sender as an offline-looking 409.
+ */
+export class ManualConsentRequiredError extends PeerProtocolError {
+  constructor(readonly docId: string | null = null, message = 'bilateral manual consent missing for frozen head') {
+    super('invalid', message);
+    this.name = 'ManualConsentRequiredError';
   }
 }
 

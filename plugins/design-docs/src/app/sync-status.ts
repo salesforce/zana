@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { classifyDelivery } from '../shared/sync-classify.js';
 import { useApi, type DocSyncStatus, type DocSyncState, type SyncSummary } from './api.js';
 
 /** Plain words for sync state. "Computer" is the only device word: the app cannot know which is a laptop or desktop. */
 export const SYNC_STATE_LABEL: Record<DocSyncState, string> = {
+  unknown: 'Checking',
   'up-to-date': 'Synced',
   unsent: 'Not sent to other computers yet',
   waiting: 'Waiting for another computer',
@@ -11,12 +13,22 @@ export const SYNC_STATE_LABEL: Record<DocSyncState, string> = {
 };
 
 export const SYNC_STATE_HELP: Record<DocSyncState, string> = {
+  unknown: 'The other computer\'s content is not available here yet. Sync to check whether the copies differ.',
   'up-to-date': 'Your other computers have the latest version.',
-  unsent: 'This doc has changes your other computers have not received. Use Sync Now to send them.',
+  unsent: 'This doc has changes your other computers have not received. Drafts are sent only when the owner syncs.',
   waiting: 'Another computer is offline or still catching up. Changes send automatically when it is ready.',
   'needs-choice': 'This doc was edited on two computers. Open Peer conflicts and choose which version to keep.',
   failed: 'Sending failed. Try Sync Now again; if it keeps failing, check that the other computer is open and connected.'
 };
+
+/**
+ * The state to show for a doc. The server already classifies with `classifyDelivery`; applying it here too keeps a
+ * `waiting` row that carries a real error from an older server from reading as harmless.
+ */
+export function effectiveSyncState(status: DocSyncStatus): DocSyncState {
+  if (status.state === 'waiting' && status.lastError && classifyDelivery(status.lastError) === 'failed') return 'failed';
+  return status.state;
+}
 
 /** States worth a mark in the doc list; "synced" and "not shared yet" stay quiet. */
 export function needsAttention(state: DocSyncState | undefined): boolean {

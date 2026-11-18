@@ -74,6 +74,29 @@ const ENROLL_BUDGET_MS = 45_000, NOTICE_MS = 5_000, REPLY_DELAY_MS = 1_000, CONT
 const LABEL_MAX = 80;
 
 export type PeerLinkState = 'connected' | 'reconnecting' | 'disconnected';
+/** Short, address-free description of a forwarder acquire failure: an error code or the message with hosts, ports and paths removed. */
+export function forwarderFailureText(error: unknown): string {
+  if (!(error instanceof Error)) return 'acquire failed';
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === 'string' && /^[A-Z0-9_]{3,32}$/.test(code)) return code;
+  const text = error.message
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b(?::\d+)?/g, '[addr]')
+    .replace(/\[[0-9a-f:]+\](?::\d+)?/gi, '[addr]')
+    .replace(/(?:\/[\w.@-]+){2,}/g, '[path]')
+    .replace(/\b[\w.-]+:\d{2,5}\b/g, '[addr]')
+    .replace(/\b\d{4,5}\b/g, '[port]')
+    .replace(/\s+/g, ' ').trim();
+  return (text || 'acquire failed').slice(0, 160);
+}
+
+export interface PeerLinkDiagnostic {
+  peerInstanceId: string; peerName?: string; role: string; phase: string; side: 'server' | 'client'; state: string; reason?: string; paused: boolean;
+  /** Bounded text when this inviter link's forwarder was blocked at startup; null otherwise. */
+  forwarderBlocked: string | null;
+  tunnel: { up: boolean; downForMs: number | null; failure?: string } | null;
+  session: { connected: boolean; downForMs: number | null; openForMs: number | null } | null;
+  retries: number;
+}
 export type PeerLinkReason = 'ssh-down' | 'peer-offline' | 'paused' | 'revoked';
 export type PeerLinkFailure = 'expired' | 'fenced' | 'conflict' | 'unreachable';
 /** The reasons a repair may report; mirrors `repairPeerLinkResponseSchema` so a response always parses. */
@@ -247,6 +270,8 @@ export class PeerLinks implements PeerLinksControlPort {
   private readonly send: BootstrapSend;
   /** Inviter links whose forwarder port F could not be kept (a squatter holds it): fail closed, their authorized_keys lines are gone. */
   private readonly forwarderBlocked = new Set<string>();
+  /** Why each blocked forwarder was blocked (bounded text), for the Peers diagnostics copy. */
+  private readonly forwarderBlockReason = new Map<string, string>();
   private sweeping: Promise<void> | undefined;
   private disposed = false;
 
@@ -1230,6 +1255,7 @@ export class PeerLinks implements PeerLinksControlPort {
   private async releaseTransport(rec: Rec): Promise<void> {
     const ssh = this.options.ssh;
     this.forwarderBlocked.delete(rec.invitationId);
+    this.forwarderBlockReason.delete(rec.invitationId);
     if (rec.ssh.side === 'server') {
       await ssh.authorizedKeys.remove(rec.invitationId).catch(() => undefined);
       await ssh.forwarder.release(rec.invitationId).catch(() => undefined);
@@ -1326,6 +1352,20 @@ export class PeerLinks implements PeerLinksControlPort {
     return this.records().filter(rec => rec.peer && (!peerInstanceId || rec.peer === peerInstanceId)).map(rec => this.project(rec));
   }
 
+  /** Per link: the connection facts behind `state`/`reason`, for support. No keys, codes, ports or routes. */
+  diagnostics(): PeerLinkDiagnostic[] {
+    const now = this.now(), age = (since: number | undefined) => since === undefined ? null : Math.max(0, now - since);
+    return this.records().filter(rec => rec.peer).slice(0, 64).map(rec => {
+      const view = this.project(rec), tunnel = this.tunnels.get(rec.invitationId), entry = this.live.get(rec.invitationId);
+      return { peerInstanceId: rec.peer!, ...(rec.peerName ? { peerName: rec.peerName } : {}), role: rec.role, phase: rec.phase, side: rec.ssh.side,
+        state: view.state, ...('reason' in view && view.reason ? { reason: view.reason } : {}), paused: !!rec.paused,
+        forwarderBlocked: this.forwarderBlocked.has(rec.invitationId) ? (this.forwarderBlockReason.get(rec.invitationId) ?? 'blocked') : null,
+        tunnel: tunnel ? { up: tunnel.up, downForMs: age(tunnel.downSince), ...(tunnel.failure ? { failure: String(tunnel.failure) } : {}) } : null,
+        session: entry ? { connected: entry.connected, downForMs: age(entry.downSince), openForMs: age(entry.openedAt) } : null,
+        retries: this.retries.get(`found:${rec.invitationId}`) ?? this.retries.get(`pull:${rec.invitationId}`) ?? 0 };
+    });
+  }
+
   private project(rec: Rec): PeerLinkView {
     const phase: PeerLinkViewPhase = rec.phase === 'pre-consent' ? 'pending' : rec.phase === 'activating' ? 'enrolled' : rec.phase;
     const base = { pairingId: rec.pairingId ?? rec.invitationId, peerInstanceId: rec.peer!, ...(rec.pluginId !== undefined ? { pluginId: rec.pluginId, scope: rec.scope } : {}), role: rec.role,
@@ -1400,7 +1440,11 @@ export class PeerLinks implements PeerLinksControlPort {
     try {
       const port = await ssh.forwarder.acquire(rec.invitationId);
       if (port !== rec.ssh.targetPort) { await ssh.forwarder.release(rec.invitationId).catch(() => undefined); throw new Error('forwarder port moved'); }
-    } catch {
+    } catch (error) {
+      // Silent before: the link then reads `ssh-down` with no trace of why (port held by another Zana, lease lost, port moved).
+      const why = forwarderFailureText(error);
+      this.forwarderBlockReason.set(rec.invitationId, why);
+      console.warn(`[zcc] peer link ${rec.invitationId.slice(0, 8)} forwarder blocked: ${why}`);
       await this.blockForwarder(rec);
       return false;
     }

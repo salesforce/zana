@@ -333,8 +333,8 @@ jobs:
           echo "::error::SHELL=$SHELL is missing or cannot run in the e2e container; terminal specs need a working shell."
           exit 1
 
-      - name: Install tmux for native PTY coverage
-        run: apt-get update && apt-get install -y --no-install-recommends tmux
+      - name: Install tmux for native PTY coverage and an sshd for the peer data-boundary spec
+        run: apt-get update && apt-get install -y --no-install-recommends tmux openssh-server openssh-client
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 

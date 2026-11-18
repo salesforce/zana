@@ -26,6 +26,7 @@ export function boundarySpecs(paths) {
     // OBL-004: the native tool policy relay, hook route and runtime channel. 2.3.4 shipped
     // denying every Claude PTY tool call because no spec drove this path.
     if (/native-tool|harness\/(claude\/hooks|codex\/provider)|services\/mcp\/mcp-server|utility-entry|runtime-supervisor|fixtures\/plugins\/platform-hooks-probe/.test(path)) add('native-tool-policy-pty', 'platform-hooks-probe-fixture');
+    if (/enroll-runtime|machine-auth|desktop-host-enrollment|enroll-host-utility|utility-entry|runtime-supervisor|static-host/.test(path)) add('desktop-enrollment-port-churn', 'runtime-recovery');
     // #421: StopFailure hook, resume service, wiring, IPC and the Settings section.
     if (/harness\/claude\/(hooks|interaction-hooks)|followups\/api-error-resume|api-error-resume-wiring|ipc\/api-error-resume|ApiErrorResumeSection/.test(path)) add('api-error-resume');
     // #416: a Squad engineer that stops on an API error is nudged, restarted, then handed to the user.

@@ -384,3 +384,28 @@ it('channel registration route accepts only a sealed, enroll-token-keyed channel
   await bad.run({ enrollToken: 't', productInstanceId: randomUUID() } as unknown as ProductHttpContext);
   expect(bad.res.writeHead.mock.calls[0]![0]).toBe(403);
 });
+
+it.each([
+  ['no channel registered for sender', (f: Awaited<ReturnType<typeof linkFixture>>) => { f.ctx.peerChannels.remote = vi.fn(async () => undefined) as never; }],
+  ['not link-capable', (f: Awaited<ReturnType<typeof linkFixture>>) => { f.ctx.peerChannels.remote = vi.fn(async () => ({ ...f.channel, capability: 'other' })) as never; }],
+  ['!= recipient host', (f: Awaited<ReturnType<typeof linkFixture>>) => { f.ctx.peerChannels.remote = vi.fn(async () => ({ ...f.channel, hostId: randomUUID() })) as never; }],
+] as const)('a mutual packet whose enrollment is missing is a 403 and logs the cause: %s', async (cause, break_) => {
+  const f = await linkFixture('peer.forward');
+  break_(f);
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const call = request(JSON.stringify(sealControl(consentInput(), f.identities, f.key)));
+  await call.run(f.ctx);
+  expect(call.res.writeHead.mock.calls[0]![0]).toBe(403);
+  expect(warn.mock.calls.some(c => String(c[0]).includes('mutual enrollment missing') && String(c[0]).includes(cause))).toBe(true);
+  warn.mockRestore();
+});
+
+it('a mutual packet from an unknown sender host is a 403 and logs the cause', async () => {
+  const f = await linkFixture('peer.forward');
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const call = request(JSON.stringify(sealControl(consentInput(), { ...f.identities, senderHostId: randomUUID() }, f.key)));
+  await call.run(f.ctx);
+  expect(call.res.writeHead.mock.calls[0]![0]).toBe(403);
+  expect(warn.mock.calls.some(c => String(c[0]).includes('unknown'))).toBe(true);
+  warn.mockRestore();
+});

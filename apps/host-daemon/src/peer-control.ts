@@ -10,7 +10,16 @@ import { posixPermissions } from './posix-permissions.js';
 const REGISTER_ROUTE = '/api/v1/peer-channel-register';
 const MAX_ACTIVE_CONTROL_REQUESTS = 4;
 const REGISTRATION_TIMEOUT_MS = 5000;
+const FAILURE_WARNING_INTERVAL_MS = 60_000;
 const active = new Set<AbortController>();
+
+type FailureWarning = { peer: string; operation: string; branch: string; reason: string; suppressed: number; timer: ReturnType<typeof setTimeout> };
+
+/** Logging must never replace the sanitized failure returned to a peer. */
+function diagnosticReason(error: unknown): string {
+  try { return error instanceof Error ? error.message : String(error); }
+  catch { return 'unknown failure'; }
+}
 async function enrollmentToken(dataDir: string): Promise<string> {
   const file = await open(join(await realpath(dataDir), 'host-enroll.token'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
@@ -40,6 +49,7 @@ export class PeerControlForwarder {
   private capability: 'execution' | 'peer.forward' = 'peer.forward';
   private readonly controllers = new Set<AbortController>();
   private readonly completions = new Set<Promise<void>>();
+  private readonly failureWarnings = new Map<string, FailureWarning>();
   private closed = false;
   /** expectedRemoteId pins an introduced link to the app it was installed for; a different hello never registers. */
   constructor(private readonly options: { localAppDataDir?: string; hostId: string; hostKey: string; expectedRemoteId?: string }) {}
@@ -52,10 +62,12 @@ export class PeerControlForwarder {
   }
   private async target(signal: AbortSignal): Promise<{ port: number; instanceId: string }> {
     signal.throwIfAborted();
-    if (!this.options.localAppDataDir || !this.remoteId || !this.linkCapable()) throw new Error('peer control unavailable');
+    if (!this.options.localAppDataDir || !this.remoteId || !this.linkCapable()) throw new Error('peer control unavailable: link-not-capable');
     const target = await createStoredLocalPeerControlResolver(this.options.localAppDataDir)(signal);
     signal.throwIfAborted();
-    if (!target || target.instanceId === this.remoteId) throw new Error('peer control local destination unavailable');
+    // Two different conditions, named so the daemon log says which one fired (the peer still sees one sanitized error).
+    if (!target) throw new Error('peer control local destination unavailable: no-local-target');
+    if (target.instanceId === this.remoteId) throw new Error('peer control local destination unavailable: target-is-remote');
     return target;
   }
   private async post(target: { port: number }, route: string, input: unknown, signal: AbortSignal): Promise<{ status: number; body: string }> {
@@ -93,16 +105,50 @@ export class PeerControlForwarder {
   }
   async forward(input: unknown): Promise<{ status: number; body: string }> {
     const command = PeerControlCommandSchema.parse(input);
+    let branch = 'target';
     return this.run(command.timeoutMs, 'forward', async signal => {
       const target = await this.target(signal);
+      branch = 'destination';
       if (command.packet.senderId !== this.remoteId || command.packet.recipientId !== target.instanceId || command.packet.recipientHostId !== this.options.hostId) {
         throw new Error('peer control destination mismatch');
       }
+      branch = 'registration';
       await this.register(target, signal);
+      branch = 'request';
       return this.post(target, PEER_CONTROL_ROUTE, command.packet, signal);
-    });
+    }, () => branch);
   }
-  private async run<T>(timeoutMs: number, operation: string, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  private failureWarningKey(peer: string, operation: string, branch: string, reason: string): string {
+    return `${peer}\0${operation}\0${branch}\0${reason}`;
+  }
+  private reportSuppressed(warning: FailureWarning): void {
+    if (!warning.suppressed) return;
+    try { console.warn(`[peer-control] peer=${warning.peer} operation=${warning.operation} branch=${warning.branch} reason=${warning.reason} suppressed=${warning.suppressed}`); }
+    catch { /* Diagnostic logging cannot change the peer-facing failure. */ }
+  }
+  private warnFailure(operation: string, branch: string, error: unknown): void {
+    const peer = this.remoteId ?? 'unknown', reason = diagnosticReason(error);
+    const key = this.failureWarningKey(peer, operation, branch, reason);
+    const existing = this.failureWarnings.get(key);
+    if (existing) { existing.suppressed++; return; }
+    const warning: FailureWarning = { peer, operation, branch, reason, suppressed: 0, timer: undefined as never };
+    warning.timer = setTimeout(() => {
+      this.failureWarnings.delete(key);
+      this.reportSuppressed(warning);
+    }, FAILURE_WARNING_INTERVAL_MS);
+    warning.timer.unref?.();
+    this.failureWarnings.set(key, warning);
+    try { console.warn(`[peer-control] peer=${peer} operation=${operation} branch=${branch} reason=${reason}`); }
+    catch { /* Diagnostic logging cannot change the peer-facing failure. */ }
+  }
+  private clearFailureWarnings(): void {
+    for (const warning of this.failureWarnings.values()) {
+      clearTimeout(warning.timer);
+      this.reportSuppressed(warning);
+    }
+    this.failureWarnings.clear();
+  }
+  private async run<T>(timeoutMs: number, operation: string, work: (signal: AbortSignal) => Promise<T>, branch = () => operation): Promise<T> {
     if (this.closed || active.size >= MAX_ACTIVE_CONTROL_REQUESTS) throw new HostCommandError('peer_control_unavailable', 'peer control unavailable');
     const controller = new AbortController(); active.add(controller); this.controllers.add(controller);
     let complete!: () => void;
@@ -112,7 +158,7 @@ export class PeerControlForwarder {
     try { return await work(controller.signal); }
     catch (error) {
       // Cause stays in the daemon log only; the peer sees the sanitized error.
-      console.warn(`[peer-control] ${operation} failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.warnFailure(operation, branch(), error);
       throw new HostCommandError('peer_control_failed', 'peer control unavailable or not authorized');
     }
     finally {
@@ -121,6 +167,6 @@ export class PeerControlForwarder {
     }
   }
   cancelAll(): void { for (const controller of this.controllers) controller.abort(); }
-  close(): void { this.closed = true; this.cancelAll(); }
+  close(): void { this.closed = true; this.cancelAll(); this.clearFailureWarnings(); }
   async whenIdle(): Promise<void> { while (this.completions.size) await Promise.all(this.completions); }
 }

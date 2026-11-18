@@ -81,6 +81,8 @@ base profile → AppConfig globals → ProjectSettings → PERSONA → per-tab e
 
 Persona settings take priority over ProjectSettings. Per-tab Agent choices remain the final layer.
 
+This chain is the order command-line arguments are emitted, so for a repeated option the last one wins. It is not one order for every setting: provider, model, role and execution state resolve first-defined (Agent, Persona, Project, Global, native default), tools combine, and launch options and notifications have their own orders. The in-app order strips and help text are generated from `packages/domain/src/setting-precedence.ts`; change that table, not the prose.
+
 ---
 
 ## Team

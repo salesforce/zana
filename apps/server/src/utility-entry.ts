@@ -1,4 +1,5 @@
 import { prepareThreadReads } from './services/threads/thread-reads.js';
+import { desktopHostEnrollment } from './desktop-host-enrollment.js';
 import { presentAppConfig } from './http/public-app-url.js';
 import { discoverProjectCli } from './services/launch/cli-discovery.js';
 import { createProductCliCallbackAuthority } from './services/launch/cli-callback-authority.js';
@@ -72,6 +73,7 @@ delete process.env.ZCC_PRODUCT_SERVER_CREDENTIAL;
 const peerKeyProvider = consumePeerBootKey();
 
 let close: (() => Promise<void>) | null = null;
+let localServerUrl: string | null = null;
 let version = '';
 let terminalExecution: TerminalExecutionService | null = null;
 let terminalSessions: TerminalSessionService | null = null;
@@ -200,6 +202,7 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
         diagnostics
       });
       close = host.close;
+      localServerUrl = host.url;
       terminalExecution = createTerminalExecutionService({
         hostUrl: message.hostUrl,
         token: message.hostToken,
@@ -263,6 +266,12 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
   if (message.type === 'request') {
     if (Date.parse(message.deadlineAt) <= Date.now()) {
       parentPort.postMessage({ type: 'error', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id, message: 'server runtime request expired' });
+      return;
+    }
+    if (message.operation === 'desktop-host-enrollment') {
+      if (!productContext || !localServerUrl) throw new Error('Desktop server is unavailable');
+      parentPort.postMessage({ type: 'result', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, id: message.id,
+        value: desktopHostEnrollment(productContext, localServerUrl) });
       return;
     }
     if (message.operation === 'app-version') {

@@ -123,3 +123,59 @@ it('relaxes only tunnel ports, not protocol or path', () => {
   expect(sameEnrolledServer(url, 'https://127.0.0.1:42000', 'tunnel')).toBe(false);
   expect(sameEnrolledServer(url, 'http://127.0.0.1:42000/t/other', 'tunnel')).toBe(false);
 });
+
+const desktopId = '33333333-3333-4333-8333-333333333333';
+const desktopEnrollment = (serverUrl = 'http://127.0.0.1:42000') => ({
+  serverInstanceId: desktopId, serverUrl,
+  host: { hostId: oldId, hostKeyHash: createHash('sha256').update('old-key').digest('hex') }
+});
+it('migrates legacy desktop enrollment across port changes without rotating identity', async () => {
+  const f = fixture('non-tunnel');
+  for (const serverUrl of ['http://127.0.0.1:42000', 'http://127.0.0.1:43000', 'http://127.0.0.1:8780']) {
+    const daemon = await startEnrolledHostDaemon({ dataDir: f.dataDir, serverUrl, token, desktopEnrollment: desktopEnrollment(serverUrl) });
+    expect(readHostAuth(f.dataDir)).toMatchObject({ desktopServerId: desktopId, serverUrl, hostId: oldId, hostKey: 'old-key', provenance: 'non-tunnel' });
+    await daemon.close();
+  }
+  expect(deps.enroll).not.toHaveBeenCalled();
+});
+it.each(['missing-host', 'wrong-host', 'wrong-key', 'wrong-instance', 'tunnel', 'remote', 'missing-url', 'path', 'query', 'credentials'])(
+  'refuses unverified desktop migration (%s) before sending saved credentials', async failure => {
+    const f = fixture('non-tunnel'), proof = desktopEnrollment();
+    const auth = readHostAuth(f.dataDir)!;
+    if (failure === 'missing-host') proof.host = null as never;
+    if (failure === 'wrong-host') proof.host.hostId = newId;
+    if (failure === 'wrong-key') proof.host.hostKeyHash = 'a'.repeat(64);
+    if (failure === 'wrong-instance') auth.desktopServerId = newId;
+    if (failure === 'tunnel') auth.provenance = 'tunnel';
+    if (failure === 'remote') auth.serverUrl = 'https://other.example';
+    if (failure === 'missing-url') delete auth.serverUrl;
+    if (failure === 'path') auth.serverUrl += '/another-server';
+    if (failure === 'query') auth.serverUrl += '/?server=other';
+    if (failure === 'credentials') auth.serverUrl = 'http://user:pass@127.0.0.1:41000';
+    writeHostAuth(f.dataDir, auth); const before = f.snapshot();
+    await expect(startEnrolledHostDaemon({ dataDir: f.dataDir, serverUrl: proof.serverUrl, token, desktopEnrollment: proof })).rejects.toThrow('re-pair');
+    expect(f.snapshot()).toEqual(before); expect(deps.connect).not.toHaveBeenCalled(); expect(deps.enroll).not.toHaveBeenCalled();
+  }
+);
+it('binds desktop evidence to the actual listener address even at first enrollment', async () => {
+  const f = fixture('non-tunnel');
+  await expect(startEnrolledHostDaemon({ dataDir: f.dataDir, serverUrl: 'http://127.0.0.1:49999', token, desktopEnrollment: desktopEnrollment() })).rejects.toThrow('address');
+  expect(deps.connect).not.toHaveBeenCalled(); expect(deps.enroll).not.toHaveBeenCalled();
+});
+it.each(['hello', 'authentication', 'cancel'])('does not change enrollment or rotate keys after desktop migration %s failure', async failure => {
+  const f = fixture('non-tunnel'), controller = new AbortController();
+  deps.connect.mockImplementationOnce(() => {
+    if (failure === 'cancel') controller.abort();
+    return { ready: failure === 'cancel' ? Promise.resolve() : Promise.reject(failure === 'authentication' ? new HostAuthenticationError('rejected') : new Error('hello failed')), close: vi.fn(async () => {}) };
+  });
+  await expect(startEnrolledHostDaemon({ dataDir: f.dataDir, serverUrl: desktopEnrollment().serverUrl,
+    token, desktopEnrollment: desktopEnrollment(), signal: controller.signal })).rejects.toThrow();
+  expect(f.snapshot()).toEqual(f.before); expect(deps.enroll).not.toHaveBeenCalled(); expect(deps.release).toHaveBeenCalledOnce();
+});
+it('records the persistent desktop server identity on fresh enrollment', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'zcc-desktop-fresh-')); dirs.push(dataDir);
+  const daemon = await startEnrolledHostDaemon({ dataDir, serverUrl: desktopEnrollment().serverUrl, token,
+    desktopEnrollment: { ...desktopEnrollment(), host: null } });
+  expect(readHostAuth(dataDir)).toMatchObject({ desktopServerId: desktopId, hostId: newId, hostKey: 'new-key', provenance: 'non-tunnel' });
+  await daemon.close();
+});

@@ -158,14 +158,22 @@ export function useDismiss(open: boolean, onClose: () => void) {
   return ref;
 }
 
-/** A button-anchored popover; the anchor and the panel share one dismiss boundary. */
+const POPOVER_EDGE = 4;
+
+/**
+ * A button-anchored popover; the anchor and the panel share one dismiss boundary.
+ * `fixed` places the panel in viewport coordinates, right-aligned to the anchor but kept inside the window and flipped
+ * above it when there is no room below. Use it where an ancestor scrolls or clips (a narrow pane): an absolutely
+ * positioned panel wider than that pane is cut off at its edge.
+ */
 export function Popover({
   open,
   onClose,
   anchor,
   children,
   align = 'end',
-  className = ''
+  className = '',
+  fixed = false
 }: {
   open: boolean;
   onClose(): void;
@@ -173,13 +181,42 @@ export function Popover({
   children: ReactNode;
   align?: 'start' | 'end';
   className?: string;
+  fixed?: boolean;
 }) {
   const ref = useDismiss(open, onClose);
+  const panel = useRef<HTMLDivElement | null>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  const [place, setPlace] = useState<{ top: number; left: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!open || !fixed || !ref.current || !panel.current) { setPlace(null); return; }
+    const anchorBox = ref.current.getBoundingClientRect();
+    const { width, height } = panel.current.getBoundingClientRect();
+    const below = anchorBox.bottom + POPOVER_EDGE;
+    const top = below + height + POPOVER_EDGE > window.innerHeight ? Math.max(POPOVER_EDGE, anchorBox.top - POPOVER_EDGE - height) : below;
+    const left = Math.max(POPOVER_EDGE, Math.min(anchorBox.right - width, window.innerWidth - width - POPOVER_EDGE));
+    setPlace({ top, left });
+    // The panel no longer follows its anchor once placed, so scrolling or resizing closes it.
+    const close = (event: Event) => {
+      if (!(event.target instanceof Node && panel.current?.contains(event.target))) closeRef.current();
+    };
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [open, fixed, ref]);
   return (
     <div className="dd-pop-anchor" ref={ref}>
       {anchor}
       {open ? (
-        <div className={`dd-pop dd-pop-${align} ${className}`} role="dialog">
+        <div
+          ref={panel}
+          className={`dd-pop ${fixed ? 'dd-pop-fixed' : `dd-pop-${align}`} ${className}`}
+          style={fixed ? (place ?? { visibility: 'hidden' }) : undefined}
+          role="dialog"
+        >
           {children}
         </div>
       ) : null}

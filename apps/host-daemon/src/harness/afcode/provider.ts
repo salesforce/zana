@@ -36,7 +36,7 @@ const AFCODE_ADAPTER: TrustedHarnessAdapter = {
   },
   // Claude-like TUI: OSC titles still classify via AgentStatusTracker, and
   // output-activity ignores control-only idle frames so the session can settle.
-  status: { mode: 'output-activity' }, evidence: []
+  status: { mode: 'output-activity', apiErrorSignal: 'none' }, evidence: []
 };
 
 export class AfcodeProvider extends BaseLaunchProvider {

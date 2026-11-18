@@ -4,8 +4,30 @@ import type { LaunchProvider } from './launch-provider.js';
 
 const MAX_VALUE_LENGTH = 256;
 
-function value(label: string, raw: string | undefined): SessionMetadataValue {
-  return { label, ...(raw ? { value: raw.slice(0, MAX_VALUE_LENGTH) } : {}) };
+const SOURCE_LABELS: Readonly<Record<string, string>> = {
+  'per-tab': 'Agent',
+  Agent: 'Agent',
+  persona: 'Persona',
+  Persona: 'Persona',
+  project: 'Project',
+  Project: 'Project',
+  global: 'Global',
+  Global: 'Global',
+  'native-default': 'Native default'
+};
+
+/** Map any of the three resolver vocabularies to one display label. */
+export function metadataSourceLabel(source: string | undefined): string | undefined {
+  return source ? SOURCE_LABELS[source] : undefined;
+}
+
+function value(label: string, raw: string | undefined, source?: string): SessionMetadataValue {
+  const sourceLabel = raw ? metadataSourceLabel(source) : undefined;
+  return {
+    label,
+    ...(raw ? { value: raw.slice(0, MAX_VALUE_LENGTH) } : {}),
+    ...(sourceLabel ? { source: sourceLabel } : {})
+  };
 }
 
 /**
@@ -38,10 +60,10 @@ export function launchMetadataSnapshot(input: {
     : input.execution.state;
 
   const values: SessionMetadataValue[] = [];
-  if (input.axes.includes('provider') && provider?.label) values.push(value('Provider', provider.label));
-  if (input.axes.includes('model') && model?.label) values.push(value('Model', model.label));
-  if (input.axes.includes('role') && role?.label) values.push(value('Role', role.label));
-  if (input.axes.includes('execution') && execution) values.push(value('Execution', execution));
+  if (input.axes.includes('provider') && provider?.label) values.push(value('Provider', provider.label, input.model.providerTargetId ? input.model.source : undefined));
+  if (input.axes.includes('model') && model?.label) values.push(value('Model', model.label, input.model.source));
+  if (input.axes.includes('role') && role?.label) values.push(value('Role', role.label, input.role.source));
+  if (input.axes.includes('execution') && execution) values.push(value('Execution', execution, input.execution.source));
 
   return {
     observedAt: input.observedAt,

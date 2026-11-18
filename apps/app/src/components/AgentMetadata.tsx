@@ -13,7 +13,7 @@ export function AgentMetadata({ metadata }: { metadata?: SessionMetadataSnapshot
             {section.values.map((field) => (
               <div key={field.label}>
                 <dt>{field.label}</dt>
-                <dd>{field.value ?? 'Unavailable'}</dd>
+                <dd>{field.value ?? 'Unavailable'}{field.value && field.source ? <span className="agent-metadata-source"> ({field.source})</span> : null}</dd>
               </div>
             ))}
           </dl>

@@ -55,8 +55,14 @@ export async function handlePeerControlApi(req: IncomingMessage, res: ServerResp
     }
     if (rejectsMutualPacket(ctx.peerLinks, packet)) { sendJson(res, 403, { error: NOT_CONSENTED }); return true; }
     const channel = await ctx.peerChannels.remote(packet.senderId), host = getHost(ctx.db, packet.senderHostId);
-    if (!channel || !linkCapable(channel.capability) || channel.hostId !== packet.recipientHostId ||
-      !host || host.destroyedAt || host.enrollmentCapability !== channel.capability) throw new Error('mutual enrollment missing');
+    // Each branch gets its own log-only cause (the client still sees one 403) so a missing enrollment is attributable.
+    const missing = !channel ? 'no channel registered for sender'
+      : !linkCapable(channel.capability) ? `channel capability ${channel.capability} not link-capable`
+      : channel.hostId !== packet.recipientHostId ? `channel host ${channel.hostId} != recipient host ${packet.recipientHostId}`
+      : !host ? `sender host ${packet.senderHostId} unknown`
+      : host.destroyedAt ? `sender host ${packet.senderHostId} destroyed`
+      : host.enrollmentCapability !== channel.capability ? `host capability ${host.enrollmentCapability} != channel ${channel.capability}` : null;
+    if (missing || !channel || !host) throw new Error(`mutual enrollment missing: ${missing ?? 'unknown'}`);
     // The sender's own connector into this app; only the sealed sessionless operations may arrive without it.
     const session = ctx.hostHub.getSession(host.id);
     const assertEnrollment = async () => {
@@ -69,7 +75,7 @@ export async function handlePeerControlApi(req: IncomingMessage, res: ServerResp
     };
     key = controlKey(channelHash(channel), host.hostKeyHash);
     const input = ControlInputSchema.parse(openControl(packet, key));
-    if (!session && !SESSIONLESS_OPERATIONS.has(input.operation)) throw new Error('mutual enrollment missing');
+    if (!session && !SESSIONLESS_OPERATIONS.has(input.operation)) throw new Error(`mutual enrollment missing: no connected session for sender host ${host.id} (operation ${input.operation})`);
     if (packet.issuedAt <= Date.now() - 60_000 || packet.issuedAt > Date.now() + 10_000 ||
       !await ctx.peerControlReplay.consumeAuthenticated({ pairId: packet.senderHostId, senderId: packet.senderId, epoch: 1,
         nonce: packet.nonce, issuedAt: packet.issuedAt })) throw new Error('peer control replay');

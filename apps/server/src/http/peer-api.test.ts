@@ -69,8 +69,8 @@ async function fixture() {
     const envelope = (await sender.signRequest('pair-a', { pluginId: 'plugin-a', scope: grant.scope, method: 'handshake', body: Buffer.from(body) }))!;
     return { envelope, body };
   }
-  function send(packet: { envelope: PeerRequestEnvelope; body: string }, target = url, method = 'POST') {
-    return fetch(target, { method, headers: { 'content-type': 'application/json',
+  function send(packet: { envelope: PeerRequestEnvelope; body: string }, target = url, method = 'POST', signal?: AbortSignal) {
+    return fetch(target, { signal, method, headers: { 'content-type': 'application/json',
       'x-zcc-peer-envelope': Buffer.from(JSON.stringify(packet.envelope)).toString('base64url') }, body: packet.body });
   }
   return { sender, get pairs() { return pairs; }, dispatchPeer, handled, url, packet, send,
@@ -149,13 +149,70 @@ describe('peer API canonical authorization', () => {
       await new Promise<void>(resolve => value.signal.addEventListener('abort', () => resolve(), { once: true }));
       return value.commitSync(committed);
     });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const response = peer.send(await peer.packet());
     await ready;
     await peer.pairs.revoke('pair-a');
     expect((await response).status).toBe(409);
     expect(request.signal.aborted).toBe(true);
+    const lines = warn.mock.calls.map(call => String(call[0]));
+    // The sender only sees 409; these say which source cancelled and which path aborted the lease.
+    expect(lines.some(line => /peer request cancelled plugin=\S+ method=\S+ pair=pair-a cause=lease elapsedMs=\d+/.test(line))).toBe(true);
+    expect(lines.some(line => line.includes('peer leases aborted why=revoke-start') && line.includes('pairs=pair-a'))).toBe(true);
+    warn.mockRestore();
     expect(committed).not.toHaveBeenCalled();
     expect((await peer.send(await peer.packet())).status).toBe(401);
+  });
+
+  it('a handler that throws without any cancellation is a 400 rejection and logs its reason', async () => {
+    const peer = await fixture();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    peer.dispatchPeer.mockImplementation(async () => { throw new Error('bilateral manual consent missing'); });
+    expect((await peer.send(await peer.packet())).status).toBe(400);
+    const lines = warn.mock.calls.map(call => String(call[0]));
+    expect(lines.some(line => line.includes('peer request rejected') && line.includes('reason=bilateral manual consent missing'))).toBe(true);
+    expect(lines.some(line => line.includes('peer request cancelled'))).toBe(false);
+    warn.mockRestore();
+  });
+
+  it('logs a non-Error rejection reason as text', async () => {
+    const peer = await fixture();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    peer.dispatchPeer.mockImplementation(async () => { throw 'plain   refusal'; });
+    expect((await peer.send(await peer.packet())).status).toBe(400);
+    expect(warn.mock.calls.some(call => String(call[0]).includes('reason=plain refusal'))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('attributes a cancelled request to a timeout and to a sender disconnect', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const timeout = new AbortController();
+    const spy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal);
+    const peer = await fixture();
+    peer.dispatchPeer.mockImplementation(async (_plugin, _method, value) => {
+      timeout.abort();
+      await new Promise<void>(resolve => value.signal.aborted ? resolve() : value.signal.addEventListener('abort', () => resolve(), { once: true }));
+      throw 'aborted by timer';
+    });
+    expect((await peer.send(await peer.packet())).status).toBe(409);
+    spy.mockRestore();
+    expect(warn.mock.calls.some(call => /cause=timeout /.test(String(call[0])))).toBe(true);
+
+    warn.mockClear();
+    let entered!: () => void;
+    const ready = new Promise<void>(resolve => { entered = resolve; });
+    peer.dispatchPeer.mockImplementation(async (_plugin, _method, value) => {
+      entered();
+      await new Promise<void>(resolve => value.signal.addEventListener('abort', () => resolve(), { once: true }));
+      return 'late';
+    });
+    const client = new AbortController();
+    const pending = peer.send(await peer.packet(), peer.url, 'POST', client.signal).catch(() => undefined);
+    await ready;
+    client.abort();
+    await pending;
+    await vi.waitFor(() => expect(warn.mock.calls.some(call => /cause=disconnect /.test(String(call[0])))).toBe(true));
+    warn.mockRestore();
   });
 
   it('rejects declared async commits before invoking mutation', async () => {

@@ -6,7 +6,7 @@
 import { assertRegisteredProject } from './project-guard.js';
 import type { HarnessOverrideScope, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import { agentActionById, buildAgentPrompt, MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
-import { isDocStatus, type CommentStatus, type DocActor, type TextEdit } from '../shared/contract.js';
+import { isDocStatus, type CommentStatus, type DocActor, type PeerConflictChoices, type TextEdit } from '../shared/contract.js';
 import type { PageFile } from '../shared/frame-protocol.js';
 import { normalizeDocPath } from '../shared/paths.js';
 import { buildPublishPrompt, parsePublishTarget, PublishTargetError } from '../shared/publish.js';
@@ -256,6 +256,15 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
       return deps.peerSync?.docSyncStatuses(doc) ?? [];
     },
 
+    docCounts: () => store.counts(),
+
+    // Owner-only by construction: RPC is the app's own UI channel, never an agent's.
+    syncDiagnostics: () => ({
+      peers: deps.peerSync?.peerDiagnostics() ?? [],
+      queue: deps.peerSync?.queuedDeliveries(undefined, 200) ?? [],
+      counts: store.counts()
+    }),
+
     syncNow: async () => {
       if (!deps.peerSync) throw new DesignDocError('invalid', 'peer sync is unavailable');
       const result = await deps.peerSync.syncNow(deps.sdk.peers);
@@ -286,9 +295,12 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
     resolvePeerConflict: (raw) => {
       const input = asInput(raw), doc = store.summary(requiredString(input, 'doc'));
       if (!deps.peerSync) throw new DesignDocError('invalid', 'peer sync is unavailable');
-      if (input.choice !== 'merge' && input.choice !== 'local' && input.choice !== 'remote') throw new DesignDocError('invalid', 'invalid peer resolution choice');
+      if (input.choice !== undefined && input.choice !== 'merge' && input.choice !== 'local' && input.choice !== 'remote') throw new DesignDocError('invalid', 'invalid peer resolution choice');
+      if (input.choice === undefined && (typeof input.choices !== 'object' || input.choices === null || Array.isArray(input.choices))) {
+        throw new DesignDocError('invalid', 'choice or choices is required');
+      }
       const head = deps.peerSync.resolveConflict({ docId: doc.id, expectedHead: requiredString(input, 'expectedHead'),
-        remoteHead: requiredString(input, 'remoteHead'), choice: input.choice }, UI_USER);
+        remoteHead: requiredString(input, 'remoteHead'), ...(input.choice === undefined ? { choices: input.choices as PeerConflictChoices } : { choice: input.choice }) }, UI_USER);
       return { head };
     },
 
