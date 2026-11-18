@@ -16,42 +16,17 @@
  */
 import { test, expect } from './fixtures/app.js';
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
+import { hasLine, plainLines, windowsBash, windowsBashConfig, windowsBashSkipReason } from './fixtures/terminal-lines.js';
 
-/**
- * The steps drive bash. On Windows they use Git Bash: `ZCC_E2E_BASH`, else
- * the default Git for Windows install path.
- */
-const WINDOWS_BASH = process.env.ZCC_E2E_BASH ?? 'C:/Program Files/Git/bin/bash.exe';
-const windowsBash = process.platform === 'win32' && existsSync(WINDOWS_BASH);
-
-test.use({ e2e: true, initialConfig: { tmuxScope: 'off', ...(windowsBash ? { shell: WINDOWS_BASH } : {}) } });
+test.use({ e2e: true, initialConfig: { tmuxScope: 'off', ...windowsBashConfig } });
 
 /** Distance from the screen's edge to a point inside the first or last cell. */
 const EDGE_INSET = 4;
 /** Clipboard text a step sets first, so "unchanged" is a real check. */
 const SENTINEL = 'clipboard-before-step';
-
-/**
- * The backlog as plain lines: ANSI/OSC sequences and carriage returns removed.
- * Windows ConPTY repaints lines with cursor and erase codes and pads them with
- * spaces, so matching a raw `MARKER\r\n` is not reliable there.
- */
-function plainLines(raw: string): string[] {
-  return raw
-    // eslint-disable-next-line no-control-regex
-    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
-    // eslint-disable-next-line no-control-regex
-    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
-    .replace(/\r/g, '')
-    .split('\n')
-    .map((line) => line.trimEnd());
-}
-
-/** True once a whole output line equals `marker`. */
-const hasLine = (raw: string, marker: string) => plainLines(raw).includes(marker);
 
 interface Shell {
   screen: Locator;
@@ -187,7 +162,7 @@ async function checkSettingOff(page: Page, shell: Shell, cb: ReturnType<typeof c
 }
 
 test('terminal: a finished mouse selection copies to the clipboard, Ctrl+C still interrupts, and the setting turns it off', async ({ app }) => {
-  test.skip(process.platform === 'win32' && !windowsBash, `the spec drives bash; set ZCC_E2E_BASH to Git Bash (not found at ${WINDOWS_BASH})`);
+  test.skip(process.platform === 'win32' && !windowsBash, windowsBashSkipReason);
   const { window: page } = app;
   const cb = clipboard(app.electron);
   const projectDir = mkdtempSync(join(tmpdir(), 'zcc-copy-on-select-'));
@@ -220,6 +195,7 @@ test('terminal: a finished mouse selection copies to the clipboard, Ctrl+C still
   } finally {
     if (sessionId) await page.evaluate((id) => window.cc.terminals.close(id), sessionId).catch(() => {});
     await page.evaluate((id) => window.cc.projects.remove(id), projectId).catch(() => {});
-    rmSync(projectDir, { recursive: true, force: true });
+    // The shell can hold its cwd here for a moment after close (EPERM on Windows).
+    rmSync(projectDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 });
