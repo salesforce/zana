@@ -107,4 +107,25 @@ describe('sidebar mode', () => {
     spy.mockRestore();
     setSpy.mockRestore();
   });
+
+  it('installSidebarCollapseBehaviorSync follows other windows and stops after dispose', async () => {
+    vi.resetModules();
+    const mod = await import('../store.js');
+    const off = mod.installSidebarCollapseBehaviorSync();
+    expect(mod.useUi.getState().sidebarCollapseBehavior).toBe('two-state');
+    localStorage.setItem('zcc.sidebarCollapseBehavior', 'three-state');
+    window.dispatchEvent(new StorageEvent('storage', { key: 'zcc.sidebarCollapseBehavior' }));
+    expect(mod.useUi.getState().sidebarCollapseBehavior).toBe('three-state');
+    // Unrelated keys are ignored.
+    localStorage.setItem('zcc.sidebarCollapseBehavior', 'two-state');
+    window.dispatchEvent(new StorageEvent('storage', { key: 'other' }));
+    expect(mod.useUi.getState().sidebarCollapseBehavior).toBe('three-state');
+    // storage.clear() (null key) resets to the default.
+    window.dispatchEvent(new StorageEvent('storage', { key: null }));
+    expect(mod.useUi.getState().sidebarCollapseBehavior).toBe('two-state');
+    off();
+    localStorage.setItem('zcc.sidebarCollapseBehavior', 'three-state');
+    window.dispatchEvent(new StorageEvent('storage', { key: 'zcc.sidebarCollapseBehavior' }));
+    expect(mod.useUi.getState().sidebarCollapseBehavior).toBe('two-state');
+  });
 });

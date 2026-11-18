@@ -23,7 +23,8 @@ vi.mock('../MobileAgentsBack', () => ({ MobileAgentsBack: () => null }));
 
 import { SidebarTriggerOverlay } from '../SidebarTriggerOverlay.js';
 
-const mount = () => render(<MemoryRouter><SidebarTriggerOverlay /></MemoryRouter>);
+const mount = (mode?: 'expanded' | 'rail' | 'hidden') =>
+  render(<MemoryRouter><SidebarTriggerOverlay mode={mode} /></MemoryRouter>);
 afterEach(() => { cleanup(); h.mode = 'expanded'; h.behavior = 'three-state'; vi.clearAllMocks(); });
 
 describe('SidebarTriggerOverlay two-state (default behavior)', () => {
@@ -51,5 +52,12 @@ describe('SidebarTriggerOverlay three-state cycle', () => {
     mount();
     fireEvent.contextMenu(screen.getByRole('button', { name: 'Collapse sidebar' }));
     expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('shows the rendered mode, not the stored one, when a pane forces the sidebar expanded', () => {
+    h.mode = 'rail';
+    mount('expanded');
+    const btn = screen.getByRole('button', { name: 'Collapse sidebar' });
+    expect(btn.getAttribute('aria-expanded')).toBe('true');
   });
 });

@@ -90,6 +90,7 @@ import {
   isUpdateBannerVisible,
   visibleTerminals,
   installInboxCrossWindowSync,
+  installSidebarCollapseBehaviorSync,
   useFavoriteAgents,
   mergeFavoritesFromMain,
   ptyFavoriteKeys,
@@ -483,6 +484,7 @@ function AppShell() {
     // this re-hydrates them when another window writes (e.g. a per-project
     // window marks an entry read, the main window reflects it immediately).
     const offInboxSync = installInboxCrossWindowSync();
+    const offCollapseBehaviorSync = installSidebarCollapseBehaviorSync();
     const offData = product.terminals.onData((id) => {
       const ui = useUi.getState();
       const data = useData.getState();
@@ -658,6 +660,7 @@ function AppShell() {
       offFocusInboxEntry();
       offDeepLinks();
       offInboxSync();
+      offCollapseBehaviorSync();
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
       offWake();
@@ -926,7 +929,9 @@ function AppShell() {
       )}
       <SidebarTriggerOverlay
         collapsed={mobileNavigation.isCompact ? sidebarCollapsed : undefined}
-        mode={sidebarMode}
+        // Display the mode actually rendered (Settings/Plugins show rail expanded);
+        // the click still cycles from the stored mode.
+        mode={effectiveMode}
         onToggle={mobileNavigation.isCompact
           ? () => mobileNavigation.setDrawerOpen(!mobileNavigation.drawerOpen)
           : undefined}

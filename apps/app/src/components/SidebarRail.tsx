@@ -291,7 +291,7 @@ export function SidebarRail({
           onClick={() => dismissMobileNav?.()}
         >
           <Settings size={16} strokeWidth={1.7} aria-hidden="true" />
-          {!collapsed && !rail && <span>Settings</span>}
+          {!collapsed && <span>Settings</span>}
         </Link>
         <button
           ref={moreButton}

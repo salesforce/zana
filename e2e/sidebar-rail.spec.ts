@@ -68,6 +68,8 @@ test('the keyboard shortcut cycles the sidebar and Settings shows the rail expan
   await win.locator('aside.sidebar--rail').getByRole('link', { name: 'Settings', exact: true }).click();
   await expect(shell(win)).not.toHaveClass(/sidebar-is-rail/);
   await expect.poll(() => win.evaluate(() => localStorage.getItem('zcc.sidebarMode'))).toBe('rail');
+  // The trigger reflects the expanded sidebar actually rendered on Settings.
+  await expect(win.getByTestId('sidebar-trigger-overlay').getByRole('button', { name: 'Collapse sidebar' })).toHaveAttribute('aria-expanded', 'true');
 
   await win.keyboard.press(chord);
   await expect.poll(() => win.evaluate(() => localStorage.getItem('zcc.sidebarMode'))).toBe('hidden');

@@ -41,7 +41,8 @@ export function installShortcuts(): () => void {
     const activeTabId = projectId ? ui.selectedTabId[projectId] : undefined;
     const activeIdx = activeTabId ? tabs.findIndex((t) => t.id === activeTabId) : -1;
 
-    // cmd+shift+b — sidebar expanded <-> rail. Works without a selected project.
+    // cmd+shift+b — cycle the sidebar per Customize navigation > Collapsed behavior
+    // (expanded <-> hidden by default, or expanded -> rail -> hidden). Works without a selected project.
     if (shortcutForCommand('sidebar.rail.toggle', e)) {
       e.preventDefault();
       ui.cycleSidebarMode();

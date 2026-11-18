@@ -161,6 +161,22 @@ export function readSidebarCollapseBehavior(): SidebarCollapseBehavior {
   return readLocalStorageItem(SIDEBAR_COLLAPSE_BEHAVIOR_KEY) === 'three-state' ? 'three-state' : 'two-state';
 }
 
+/**
+ * The behavior is one global localStorage value shared by every window but
+ * read once at store creation; follow writes from other windows. Install once
+ * at app init and call the disposer on shutdown.
+ */
+export function installSidebarCollapseBehaviorSync(): () => void {
+  if (typeof window === 'undefined') return () => {};
+  const onStorage = (e: StorageEvent) => {
+    if (e.key !== null && e.key !== SIDEBAR_COLLAPSE_BEHAVIOR_KEY) return;
+    const next = readSidebarCollapseBehavior();
+    if (useUi.getState().sidebarCollapseBehavior !== next) useUi.setState({ sidebarCollapseBehavior: next });
+  };
+  window.addEventListener('storage', onStorage);
+  return () => window.removeEventListener('storage', onStorage);
+}
+
 /** New key first, then the legacy collapsed flag ('1' → hidden), else expanded. */
 export function readSidebarMode(): SidebarMode {
   const v = readLocalStorageItem(sidebarModeKey());

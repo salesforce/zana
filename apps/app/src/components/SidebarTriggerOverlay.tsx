@@ -1,5 +1,4 @@
 import { Menu, PanelLeft, PanelLeftClose, PanelLeftOpen, Plus, Search } from 'lucide-react';
-import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUi } from '../store.js';
 import { useCompactLayout } from '../hooks/useCompactLayout.js';
@@ -17,6 +16,18 @@ import { MobileAgentsBack } from './MobileAgentsBack.js';
  * controls between independent route headers. When collapsed, search / new
  * chat / unread threads join the same overlay.
  */
+/** Label naming what the next click does. Rail -> hidden only exists in three-state. */
+function nextStateLabel({ collapsed, sidebarMode, threeState, overridden }: {
+  collapsed: boolean;
+  sidebarMode: 'expanded' | 'rail' | 'hidden';
+  threeState: boolean;
+  overridden: boolean;
+}): string {
+  if (!collapsed) return 'Collapse sidebar';
+  if (!overridden && threeState && sidebarMode === 'rail') return 'Hide sidebar';
+  return 'Expand sidebar';
+}
+
 export function SidebarTriggerOverlay({
   collapsed: collapsedOverride,
   mode: modeOverride,
@@ -36,12 +47,7 @@ export function SidebarTriggerOverlay({
   const threeState = useUi((s) => s.sidebarCollapseBehavior) === 'three-state';
   const setPaletteOpen = useUi((s) => s.setPaletteOpen);
   const navigate = useNavigate();
-  const label =
-    collapsedOverride !== undefined || !threeState || sidebarMode !== 'rail'
-      ? collapsed
-        ? 'Expand sidebar'
-        : 'Collapse sidebar'
-      : 'Hide sidebar';
+  const label = nextStateLabel({ collapsed, sidebarMode, threeState, overridden: collapsedOverride !== undefined });
   useEnsureThreads();
   return (
     <div className="sidebar-trigger-overlay" data-testid="sidebar-trigger-overlay">

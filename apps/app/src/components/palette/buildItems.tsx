@@ -233,45 +233,25 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
         onClose();
       }
     },
-    {
-      key: 'action:sidebar-expanded',
+    ...(
+      [
+        ['expanded', 'Expanded', undefined],
+        ['rail', 'Rail', shortcutLabelForCommand('sidebar.rail.toggle') ?? undefined],
+        ['hidden', 'Hidden', undefined]
+      ] as const
+    ).map(([mode, name, hint]) => ({
+      key: `action:sidebar-${mode}`,
       icon: <PanelLeft size={14} />,
-      label: 'Sidebar: Expanded',
-      hint: undefined,
+      label: `Sidebar: ${name}`,
+      hint,
       keywords: ['sidebar', 'navigation', 'rail', 'collapse', 'expand', 'hide'],
-      category: 'Actions',
-      source: 'core',
+      category: 'Actions' as const,
+      source: 'core' as const,
       run: () => {
-        useUi.getState().setSidebarMode('expanded');
+        useUi.getState().setSidebarMode(mode);
         onClose();
       }
-    },
-    {
-      key: 'action:sidebar-rail',
-      icon: <PanelLeft size={14} />,
-      label: 'Sidebar: Rail',
-      hint: shortcutLabelForCommand('sidebar.rail.toggle') ?? undefined,
-      keywords: ['sidebar', 'navigation', 'rail', 'collapse', 'expand', 'hide'],
-      category: 'Actions',
-      source: 'core',
-      run: () => {
-        useUi.getState().setSidebarMode('rail');
-        onClose();
-      }
-    },
-    {
-      key: 'action:sidebar-hidden',
-      icon: <PanelLeft size={14} />,
-      label: 'Sidebar: Hidden',
-      hint: undefined,
-      keywords: ['sidebar', 'navigation', 'rail', 'collapse', 'expand', 'hide'],
-      category: 'Actions',
-      source: 'core',
-      run: () => {
-        useUi.getState().setSidebarMode('hidden');
-        onClose();
-      }
-    },
+    })),
     {
       key: 'action:refresh-models',
       icon: <RotateCw size={14} />,
