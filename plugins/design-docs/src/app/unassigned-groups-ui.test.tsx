@@ -115,6 +115,9 @@ describe('Unassigned subgroups', () => {
     const region = await section();
     const alpha = await within(region).findByRole('group', { name: /^Alpha Svc/ });
     expect(within(alpha).getByText('suggested: App').getAttribute('title')).toBe('Suggested Project, matched by name');
+    // The whole toggle also carries the tooltip, so hovering anywhere on the heading explains the chips.
+    const toggle = alpha.querySelector('.dd-list-subtoggle')!;
+    expect(toggle.getAttribute('title')).toBe('Alpha Svc\nFrom another computer; not a local Project\nSuggested Project: App (matched by name)');
     const button = within(alpha).getByRole('button', { name: 'Map Alpha Svc docs to App, matched by name' });
     expect(button.getAttribute('title')).toContain('matched by name');
     expect(button.tagName).toBe('BUTTON');

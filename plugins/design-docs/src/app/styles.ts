@@ -542,16 +542,16 @@ export const DESIGN_DOCS_STYLES = `
 .dd-list-section-pinned { color: var(--accent-blue); }
 .dd-list-section-needs-me { color: var(--accent-gold); }
 /* Peer-project subgroups of the Unassigned section. */
-.dd-list-subhead { display: flex; align-items: center; gap: 4px; padding: 2px 6px 2px 14px; color: var(--text-dim); font-size: 11.5px; }
+.dd-list-subhead { position: relative; display: flex; align-items: center; gap: 4px; padding: 2px 6px 2px 14px; color: var(--text-dim); font-size: 11.5px; }
 .dd-list-subhead:hover { background: var(--bg-hover, color-mix(in srgb, var(--text-primary) 6%, transparent)); }
-.dd-list-subtoggle { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 5px; flex: 1 1 auto; min-width: 0; cursor: pointer; padding: 3px 0; }
+.dd-list-subtoggle { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 5px; flex: 1 1 auto; flex-wrap: wrap; row-gap: 2px; min-width: 0; cursor: pointer; padding: 3px 0; }
 .dd-list-subtoggle:focus-visible, .dd-map-short:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
 .dd-list-subtoggle[aria-expanded='false'] .dd-list-section-caret { transform: rotate(-90deg); }
-.dd-list-sublabel { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); font-weight: 600; }
+.dd-list-sublabel { flex: 0 1 auto; min-width: min(8ch, 100%); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); font-weight: 600; }
 .dd-list-chip { flex: 0 0 auto; padding: 0 7px; border-radius: 9px; background: color-mix(in srgb, var(--accent-blue) 12%, transparent); color: var(--text-dim); font-size: 10.5px; line-height: 16px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dd-map-short { flex: 0 1 auto; min-width: 0; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: inherit; font-size: 10.5px; color: var(--accent-blue); border: 1px solid var(--accent-blue); border-radius: 4px; background: none; padding: 0 6px; cursor: pointer; opacity: 0; pointer-events: none; }
+.dd-map-short { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); z-index: 1; max-width: calc(100% - 28px); background: var(--bg-elevated); box-shadow: 0 0 0 4px var(--bg-elevated); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: inherit; font-size: 10.5px; color: var(--accent-blue); border: 1px solid var(--accent-blue); border-radius: 4px; padding: 0 6px; line-height: 16px; cursor: pointer; opacity: 0; pointer-events: none; }
 .dd-list-subhead:hover .dd-map-short, .dd-list-subhead:focus-within .dd-map-short, .dd-map-short:focus-visible { opacity: 1; pointer-events: auto; }
-@media (pointer: coarse) { .dd-map-short { opacity: 1; pointer-events: auto; } }
+@media (pointer: coarse) { .dd-list-subhead { flex-wrap: wrap; } .dd-map-short { position: static; transform: none; box-shadow: none; opacity: 1; pointer-events: auto; flex: 0 0 auto; margin-left: 28px; } }
 .dd-list-subbody { margin-left: 18px; border-left: 2px dashed var(--border); }
 .dd-skel { display: inline-block; flex: 0 0 auto; width: 11ch; height: 0.9em; border-radius: 4px; background: linear-gradient(90deg, var(--bg-elevated) 25%, var(--border) 50%, var(--bg-elevated) 75%); background-size: 200% 100%; animation: dd-skel-shimmer 1.2s linear infinite; }
 @keyframes dd-skel-shimmer { to { background-position: -200% 0; } }

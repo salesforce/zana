@@ -689,6 +689,7 @@ function DocList({
                           ref={(el) => { if (el) toggleRefs.current.set(group.key, el); else toggleRefs.current.delete(group.key); }}
                           type="button"
                           className="dd-list-subtoggle"
+                          title={group.pending ? undefined : [group.label, peer ? 'From another computer; not a local Project' : null, group.suggestedName ? `Suggested Project: ${group.suggestedName} (${basis})` : null].filter(Boolean).join('\n')}
                           aria-expanded={open}
                           onClick={() => toggleGroup(group)}
                         >
