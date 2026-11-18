@@ -94,13 +94,13 @@ import {
   useFavoriteAgents,
   mergeFavoritesFromMain,
   ptyFavoriteKeys,
-  type PendingLaunch,
-  type SidebarMode
+  type PendingLaunch
 } from './store.js';
 import { useFavoriteCount } from './hooks/useAgentCards.js';
 import { useCompactLayout } from './hooks/useCompactLayout.js';
 import { useIsCompactViewport } from './hooks/useIsCompactViewport.js';
 import { focusInboxEntry } from './lib/inboxNavigation.js';
+import { resolveSidebarShellState } from './lib/sidebar-shell-state.js';
 import { projectDefaultLaunch } from './lib/launchProfile.js';
 import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
 import { ShellTitlebarTitle } from './components/TitlebarProjectButton.js';
@@ -783,18 +783,17 @@ function AppShell() {
     ? (nav === 'extensions' ? (({ skills: 'Skills', mcp: 'MCP servers', marketplace: 'Browse plugins' } as Record<string, string>)[route.extensionsTab ?? ''] ?? 'Plugins') : mobileTitles[nav] ?? modules.find((module) => module.id === nav)?.title ?? desktopTitle)
     : desktopTitle;
 
-  // Settings / Plugins list text-only categories: show them expanded while rail
-  // is selected, without writing state. Compact layout never gets rail.
-  const effectiveMode: SidebarMode = mobileNavigation.isCompact
-    ? 'expanded'
-    : sidebarMode === 'rail' && (shellLayout.rail === 'settings' || shellLayout.rail === 'extensions')
-      ? 'expanded'
-      : sidebarMode;
-  const railVariant: 'expanded' | 'rail' = effectiveMode === 'rail' ? 'rail' : 'expanded';
+  // Settings / Plugins show rail expanded; compact never gets rail (see helper).
+  const { effectiveMode, railVariant, railClass, overlayCollapsed } = resolveSidebarShellState({
+    isCompact: mobileNavigation.isCompact,
+    sidebarMode,
+    shellRail: shellLayout.rail,
+    sidebarCollapsed
+  });
 
   return (
     <div
-      className={`app-shell nav-${nav} shell-rail-${shellLayout.rail} ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''} ${effectiveMode === 'rail' ? 'sidebar-is-rail' : ''} scoped-no-list ${
+      className={`app-shell nav-${nav} shell-rail-${shellLayout.rail} ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''} ${railClass} scoped-no-list ${
         updateBannerVisible ? 'has-update-banner' : ''
       }${!mobileNavigation.isCompact ? ' shell-inset' : ''}`}
       data-mobile={mobileNavigation.isCompact}
@@ -928,7 +927,7 @@ function AppShell() {
         />
       )}
       <SidebarTriggerOverlay
-        collapsed={mobileNavigation.isCompact ? sidebarCollapsed : undefined}
+        collapsed={overlayCollapsed}
         // Display the mode actually rendered (Settings/Plugins show rail expanded);
         // the click still cycles from the stored mode.
         mode={effectiveMode}

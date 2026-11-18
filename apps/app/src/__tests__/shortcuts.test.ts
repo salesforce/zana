@@ -398,6 +398,19 @@ describe('shortcuts: Mod+Shift+B toggles the navigation rail', () => {
     expect(uiState.cycleSidebarMode).toHaveBeenCalledTimes(1);
   });
 
+  it('focuses the sidebar trigger after cycling when a DOM is available', () => {
+    const focus = vi.fn();
+    vi.stubGlobal('document', { querySelector: vi.fn(() => ({ focus })) });
+    try {
+      kb.press('b', { meta: true, shift: true });
+      expect(focus).toHaveBeenCalledTimes(1);
+      vi.stubGlobal('document', { querySelector: vi.fn(() => null) });
+      expect(() => kb.press('b', { meta: true, shift: true })).not.toThrow();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('leaves plain Mod+B to the explorer toggle', () => {
     uiState.selectedProjectId = undefined; // explorer toggle returns early without a project
     kb.press('b', { meta: true });

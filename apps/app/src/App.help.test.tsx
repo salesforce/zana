@@ -393,3 +393,60 @@ it.each([
   render(<MemoryRouter initialEntries={[url]}><App /></MemoryRouter>);
   expect((await screen.findByTestId('location')).textContent).toBe(expected);
 });
+
+it('reflects the sidebar mode on the shell and forces rail expanded on Settings', async () => {
+  fixtures.compact = false;
+  const shell = () => document.querySelector('.app-shell')!;
+  const mount = (path: string) => render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
+  try {
+    store.useUi.setState({ sidebarMode: 'hidden', sidebarCollapsed: true });
+    let view = mount('/');
+    expect(shell().className).toContain('sidebar-is-collapsed');
+    expect(shell().className).not.toContain('sidebar-is-rail');
+    view.unmount();
+
+    store.useUi.setState({ sidebarMode: 'rail', sidebarCollapsed: false });
+    view = mount('/');
+    expect(shell().className).toContain('sidebar-is-rail');
+    expect(shell().className).not.toContain('sidebar-is-collapsed');
+    view.unmount();
+
+    fixtures.nav = 'settings';
+    view = mount('/settings');
+    expect(shell().className).toContain('shell-rail-settings');
+    expect(shell().className).not.toContain('sidebar-is-rail');
+    expect(store.useUi.getState().sidebarMode).toBe('rail'); // override is not persisted
+    view.unmount();
+  } finally {
+    fixtures.nav = 'home';
+    store.useUi.setState({ sidebarMode: 'expanded', sidebarCollapsed: false });
+  }
+});
+
+it('renders the project-scoped rail in a project window and when a project is focused', async () => {
+  fixtures.compact = false;
+  const scope = await import('./lib/windowScope.js');
+  const project = { id: 'p-rail', name: 'Rail project', path: '/tmp/rail-project', createdAt: 0, lastActiveAt: 0 };
+  store.useData.setState({ projects: [project] });
+  store.useUi.setState({ sidebarMode: 'rail', sidebarCollapsed: false });
+  const spy = vi.spyOn(scope, 'getScopedProjectId').mockReturnValue('p-rail');
+  try {
+    // Scoped window: the project rail shows with the rail class.
+    let view = render(<MemoryRouter><App /></MemoryRouter>);
+    expect(document.querySelector('.app-shell')!.className).toContain('sidebar-is-rail');
+    view.unmount();
+
+    // Main window drilled into a project on a focus-rail destination.
+    spy.mockReturnValue(null);
+    fixtures.nav = 'projects';
+    store.useUi.setState({ focusedProjectId: 'p-rail' });
+    view = render(<MemoryRouter><App /></MemoryRouter>);
+    expect(document.querySelector('.app-shell')!.className).toContain('sidebar-is-rail');
+    view.unmount();
+  } finally {
+    spy.mockRestore();
+    fixtures.nav = 'home';
+    store.useData.setState({ projects: [] });
+    store.useUi.setState({ sidebarMode: 'expanded', sidebarCollapsed: false, focusedProjectId: null });
+  }
+});
