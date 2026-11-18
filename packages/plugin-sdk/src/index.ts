@@ -9,6 +9,7 @@ export { PROJECT_ICONS, type ProjectIcon } from '@zana-ai/zcc-domain';
  */
 
 export const PLUGIN_SDK_VERSION = '0.1.0';
+export type { PluginSshConnections, PluginSshConnectionProvider, PluginSshIdentity } from './ssh-connections.js';
 /** Integer contract version; `engines.zccPluginSdk` ranges gate against this major. */
 export const PLUGIN_SDK_API_MAJOR = 1;
 

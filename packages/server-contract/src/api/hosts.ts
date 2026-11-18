@@ -359,6 +359,7 @@ export const hostBootstrapErrorEventSchema = z.object({
   pairingCommand: z.string().min(1).optional(),
 });
 export const hostBootstrapStageSchema = z.enum([
+  "prepare",
   "ssh",
   "tunnel",
   "install",

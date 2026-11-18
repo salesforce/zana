@@ -5,6 +5,28 @@ package whose `package.json` carries a `zcc` block. After install it is
 **full-trust in-process code on the server**. It never receives host-daemon
 tokens.
 
+### Foreground SSH connection preparation
+
+An integration that manages SSH aliases can register one `zcc.sshConnections`
+provider per plugin generation. The server chooses it by calling `owns(remote,
+signal)` with a validated SSH identity. Ownership must be read-only, use local
+state, and finish within five seconds. It must never open authentication.
+
+For explicit bootstrap or machine repair, the selected provider's
+`prepare(remote, signal)` runs before SSH installation. It returns
+`{ status: 'ready' }` or `{ status: 'blocked', message: 'Public recovery advice' }`.
+Only this explicit public message is displayed; thrown exception text is hidden.
+Preparation has a six-minute deadline, is serialized per plugin, and is cancelled
+when the request closes or the plugin generation ends. Honor the signal and stop
+child processes on cancellation. Do not enroll a machine or call bootstrap/repair
+recursively from this callback. Background host recovery never calls preparation;
+already-connected bootstrap requests reuse their connection without sign-in.
+Multiple matching providers fail before authentication. Plugins supporting older
+hosts should feature-detect this API and retain their foreground Connect flow.
+
+`createFakePluginHost().harness.sshConnections` exposes the registered provider
+and its generation signal for tests.
+
 ```ts
 import { definePluginApp } from '@zana-ai/zcc-plugin-sdk/app';
 import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';

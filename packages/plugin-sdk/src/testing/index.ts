@@ -124,6 +124,8 @@ export interface FakePluginHarness {
     /** Call the registered provider the way the host would. Rejects when none is registered. */
     resolve(): Promise<unknown>;
   };
+  /** Current connection provider and generation cancellation signal. */
+  sshConnections: { provider: import('../ssh-connections.js').PluginSshConnectionProvider | null; signal: AbortSignal };
   /** The current `zcc.status` message, or null once the plugin calls `configured()`. */
   needsConfiguration: string | null;
   setSettings(values: Record<string, PluginSettingValue | undefined>): void;
@@ -308,6 +310,8 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
   const disposeHooks: Array<() => void | Promise<void>> = [];
   let needsConfiguration: string | null = null;
   let stale = false;
+  const connectionLifetime = new AbortController();
+  const sshConnections: FakePluginHarness['sshConnections'] = { provider: null, signal: connectionLifetime.signal };
   const remoteEnvironmentState: { provider: (() => unknown) | null; refreshCount: number } = {
     provider: null,
     refreshCount: 0
@@ -335,6 +339,12 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
   });
 
   const api: ZccPluginApi = {
+    sshConnections: { register(provider) {
+      assertLive();
+      if (sshConnections.provider) throw new Error('SSH connection provider already registered');
+      if (!provider || typeof provider.owns !== 'function' || typeof provider.prepare !== 'function') throw new Error('Invalid SSH connection provider');
+      sshConnections.provider = provider;
+    } },
     pluginId,
     log: {
       debug: () => undefined,
@@ -1197,8 +1207,11 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
         /* keep current host */
       }
     },
+    sshConnections,
     async dispose() {
       stale = true;
+      connectionLifetime.abort();
+      sshConnections.provider = null;
       for (const hook of [...disposeHooks].reverse()) {
         try {
           await hook();

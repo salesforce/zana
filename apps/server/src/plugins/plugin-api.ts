@@ -189,6 +189,7 @@ export interface PluginHostEvent {
   kind: 'plugin.host.worker-exited' | 'plugin.host.signal'; signal?: string; payload?: unknown;
 }
 export interface PluginHandle {
+  readonly sshConnection: { provider: import('@zana-ai/zcc-plugin-sdk/server').PluginSshConnectionProvider | null; lifetime: AbortSignal };
   /** Host-owned teardown that must finish before plugin state can be snapshotted. */
   onQuiesce(hook: () => void | Promise<void>): void;
   providerDeclarations: PluginProviderDeclaration[];
@@ -451,6 +452,7 @@ export function createPluginApi(
   let sharedDatabase: PluginDatabase | null = null;
   let sharedSqlite: ReturnType<typeof createSqliteDatabase> | null = null;
   const storageLifecycle = new AbortController();
+  const sshConnection: PluginHandle['sshConnection'] = { provider: null, lifetime: storageLifecycle.signal };
   const assertLive = (): void => {
     if (stale) throw new Error(`plugin context is stale: ${pluginId}`);
   };
@@ -722,6 +724,14 @@ export function createPluginApi(
   });
 
   const api: ZccPluginApi = {
+    sshConnections: {
+      register(provider) {
+        assertLive();
+        if (sshConnection.provider) throw new Error('SSH connection provider already registered');
+        if (!provider || typeof provider.owns !== 'function' || typeof provider.prepare !== 'function') throw new Error('Invalid SSH connection provider');
+        sshConnection.provider = provider;
+      }
+    },
     pluginId,
     log: {
       debug: (message) => emitLog('debug', message),
@@ -2226,6 +2236,7 @@ export function createPluginApi(
   };
   return {
     api,
+    sshConnection,
     onQuiesce(hook: () => void | Promise<void>) { quiesceHooks.push(hook); },
     providerDeclarations,
     extraSkillRoots,

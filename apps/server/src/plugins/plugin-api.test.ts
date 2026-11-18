@@ -19,6 +19,20 @@ import {
   validatePluginRequestInput
 } from './plugin-api.js';
 
+it('binds one SSH connection provider to its plugin generation and aborts it on disposal', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'plugin-ssh-provider-'));
+  const handle = createPluginApi('sample', dir);
+  const provider = { owns: async () => true, prepare: async () => ({ status: 'ready' as const }) };
+  try {
+    expect(() => handle.api.sshConnections.register({} as never)).toThrow('Invalid');
+    handle.api.sshConnections.register(provider);
+    expect(handle.sshConnection.provider).toBe(provider);
+    expect(() => handle.api.sshConnections.register(provider)).toThrow('already registered');
+    await handle.dispose(); expect(handle.sshConnection.lifetime.aborted).toBe(true);
+    expect(() => handle.api.sshConnections.register(provider)).toThrow('stale');
+  } finally { await handle.dispose(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 it('reports declaration metadata without touching saved values', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'plugin-settings-metadata-'));
   const handle = createPluginApi('sample', dir);
