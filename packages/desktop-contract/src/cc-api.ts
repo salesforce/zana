@@ -183,7 +183,7 @@ import type {
   PendingInteractionResolution
 } from '@zana-ai/zcc-domain/thread-runtime';
 
-export type HostBootstrapStage = 'ssh' | 'tunnel' | 'install' | 'wait' | 'register' | 'connected';
+export type HostBootstrapStage = 'prepare' | 'ssh' | 'tunnel' | 'install' | 'wait' | 'register' | 'connected';
 
 export type HostBootstrapEvent =
   | { type: 'log'; text: string }

@@ -6,6 +6,7 @@
 
 declare module '@zana-ai/zcc-plugin-sdk' {
   export type { PluginProviderUsageResult, ZccPluginApi, PluginSettingValue, PluginProviderDeclaration, PluginProviderHandle, PluginProviderCapabilities, PluginProviderReasoningLevel, PluginProviderStrings } from '@zana-ai/zcc-plugin-sdk/server';
+  export type { PluginSshConnections, PluginSshConnectionProvider, PluginSshIdentity } from '@zana-ai/zcc-plugin-sdk/server';
 
   export type { PluginSdk, PluginSdkInbox, PluginSdkInboxEntry, PluginSdkInboxSearchArgs, PluginSdkInboxSearchResult, PluginSdkInboxReport, PluginSdkAssistant } from '@zana-ai/zcc-plugin-sdk/server';
   export type { PluginNotificationSoundProviderRegistration, PluginAgentsViewProps, PluginFleetMember, PluginFleetSchedule, PluginFleetExecution } from '@zana-ai/zcc-plugin-sdk/app';
@@ -553,7 +554,20 @@ export type PluginSdkInbox = PluginSdk['inbox'];
   export type PluginPersonaInput = { id?: string; [key: string]: unknown };
   export type PluginTeamInput = { id?: string; [key: string]: unknown };
 
+  export interface PluginSshIdentity {
+    readonly host: string;
+    readonly user?: string;
+    readonly proxyJump?: string;
+  }
+  export interface PluginSshConnectionProvider {
+    owns(remote: PluginSshIdentity, signal: AbortSignal): boolean | Promise<boolean>;
+    prepare(remote: PluginSshIdentity, signal: AbortSignal): Promise<{ status: 'ready' } | { status: 'blocked'; message: string }>;
+  }
+  export interface PluginSshConnections {
+    register(provider: PluginSshConnectionProvider): void;
+  }
   export interface ZccPluginApi {
+    readonly sshConnections: PluginSshConnections;
     readonly pluginId: string;
     readonly log: { debug(m: string): void; info(m: string): void; warn(m: string): void; error(m: string): void };
     readonly settings: {

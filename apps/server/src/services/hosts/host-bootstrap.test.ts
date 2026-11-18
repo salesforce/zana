@@ -522,6 +522,15 @@ describe('bootstrap and repair routing', () => {
     expect(stagesOf(events).some((stage) => stage.startsWith('install:failed'))).toBe(true);
   });
 
+  it.each(['Connection closed by UNKNOWN port 65535', 'Connection to UNKNOWN port 65535 closed.',
+    'failed to get authentication JWT: failed to open browser url', 'failed to establish connection to proxy: dial tcp: lookup proxy: no such host'])
+  ('does not mark SSH passed after a proxy failure: %s', async diagnostic => {
+    const f = flow('no_origin'); f.install.mockRejectedValueOnce(new Error(diagnostic));
+    const events = await bootstrapHostForProject(f.ctx, 'project');
+    expect(stagesOf(events)).toContain(`ssh:failed:${diagnostic}`);
+    expect(stagesOf(events)).not.toContain('ssh:passed');
+  });
+
   it('rejects repair of an unknown, primary or identity-less host', async () => {
     const f = flow();
     expect((await repairHost(f.ctx, 'missing')).at(-1)).toMatchObject({ code: 'unknown_host' });

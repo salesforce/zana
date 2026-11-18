@@ -2,6 +2,15 @@ import { describe, expect, it, vi } from 'vitest';
 import { createFakePluginHost, PluginContextStaleError } from './index.js';
 
 describe('createFakePluginHost', () => {
+  it('records a single connection provider and revokes it on disposal', async () => {
+    const { zcc, harness } = createFakePluginHost();
+    const provider = { owns: () => true, prepare: async () => ({ status: 'ready' as const }) };
+    expect(() => zcc.sshConnections.register({} as never)).toThrow('Invalid');
+    zcc.sshConnections.register(provider); expect(harness.sshConnections.provider).toBe(provider);
+    expect(() => zcc.sshConnections.register(provider)).toThrow('already registered');
+    await harness.dispose(); expect(harness.sshConnections.signal.aborted).toBe(true); expect(harness.sshConnections.provider).toBeNull();
+    expect(() => zcc.sshConnections.register(provider)).toThrow('stale');
+  });
   it('records rpc, kv, settings, and realtime', async () => {
     const { zcc, harness } = createFakePluginHost({ pluginId: 'notes' });
     zcc.rpc.method('echo', (args) => args);

@@ -17,6 +17,7 @@ Handed to `export default function plugin(zcc)`.
 | `background.service` / `schedule` | Long-running work |
 | `process.spawn` | Host-tracked child: `spawn(command, args, { cwd?, env? })` resolves `{ pid, exited }` (`exited` is the exit code, or `null` when signalled or the plugin stopped). No shell, own process group, output discarded, at most 8 live per plugin. Dispose, deactivate and worker crash send SIGTERM to each recorded group, wait up to 1.5 s, then SIGKILL it; a server exit kills recorded groups too. Only recorded groups are signalled: no process-tree sweeps, no kill by name. Windows has no process groups, so only the direct child is stopped. Raw `node:child_process` stays supported but is **not** tracked or reaped |
 | `remoteEnvironment.provide` / `refresh` | Environment variables for sessions on non-primary machines (manifest allowlist `zcc.extra.remoteEnvironment`; held in memory, never stored) |
+| `sshConnections.register` | One provider per generation; server-selected ownership and foreground authentication before explicit SSH bootstrap/repair. Automatic recovery stays noninteractive. |
 | `agents.contributeInstructions` / `contributeSkills` / `registerTool` / `configure` | Agent capabilities. `registerTool` takes Zod or JSON Schema `parameters` (parsed on invoke). `configure` sees thread / project / environment / host / provider / `origin` / frozen `pluginMetadata`. For a PTY launch (Claude, Codex, OpenCode) it runs once per session with `surface: 'pty'`, the real `sessionId`, `threadId`, `projectId` and `provider.id`; `instructions` (and `contributeInstructions`) are delivered as Claude `--append-system-prompt`, folded into Codex `developer_instructions`, or listed as a private per-session file in OpenCode's config `instructions`. Each contribution is capped at 4096 characters and the total at 16000; a throwing `configure` is written to the plugin log and other plugins still contribute. Cursor PTYs receive no instructions (see the Cursor notes below the parity matrix). Remote PTYs are not covered. Local Claude, Codex and OpenCode PTYs also receive the plugin's `registerTool` tools (see below) |
 | `ui.requestInput` | Host prompt. `threadId` may be a PTY session id for a session shown in the Agents monitor (see Actor-attributed request input) |
 | `ui.registerMentionProvider` | `@` / `#` / `$` / `!` / `~` typeahead source; `search` and `resolve` run in the plugin server, so never trust renderer-supplied context |
@@ -33,6 +34,20 @@ Handed to `export default function plugin(zcc)`.
 
 Plugins do not get `ctx.exec` permission tokens. They are full-trust in the
 server process and must not be given host-daemon tokens.
+
+`sshConnections.register({ owns, prepare })` lets an integration prepare its
+managed SSH aliases without adding vendor logic to core. `owns(remote, signal)`
+receives a server-validated `{ host, user?, proxyJump? }` and must use local,
+read-only state within five seconds. It must never authenticate. The server
+rejects overlapping owners before calling `prepare(remote, signal)` on explicit
+bootstrap or Machines repair. Return `{ status: 'ready' }` or
+`{ status: 'blocked', message: 'Public recovery advice' }`; thrown error text is
+hidden. Preparation is serialized per plugin, bounded to six minutes, and
+aborted when the request closes or the plugin generation ends. Honor the signal
+and cancel child processes. Do not enroll or recursively call bootstrap/repair
+from preparation. Background host recovery never invokes it; an already-connected
+bootstrap reuses its connection. Feature-detect `zcc.sshConnections` when supporting
+older hosts and retain the plugin's explicit Connect preparation as a fallback.
 
 `remoteEnvironment.provide(resolve)` lets a plugin contribute environment
 variables to sessions that run on other enrolled machines (never the primary

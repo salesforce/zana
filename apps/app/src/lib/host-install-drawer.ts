@@ -16,6 +16,7 @@ export interface HostInstallStageEntry {
 }
 
 export const HOST_INSTALL_STAGE_LABELS: Record<HostBootstrapStage, string> = {
+  prepare: 'Preparing connection',
   ssh: 'Connecting over SSH',
   tunnel: 'Opening tunnel',
   install: 'Installing',
