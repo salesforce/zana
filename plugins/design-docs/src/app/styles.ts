@@ -79,7 +79,10 @@ export const DESIGN_DOCS_STYLES = `
 .dd-map-card { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-elevated); padding: 10px 12px; margin-bottom: 10px; }
 .dd-map-card-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .dd-map-preview { margin: 6px 0 4px; font-size: 12px; }
-.dd-map-link { background: none; border: 0; color: var(--accent-blue); cursor: pointer; padding: 0; font: inherit; font-size: 12px; }
+.dd-map-link { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; background: none; border: 0; border-radius: 4px; color: var(--accent-blue, #2563eb); cursor: pointer; padding: 2px 6px 2px 2px; margin-left: -2px; font: inherit; font-size: 12px; font-weight: 500; }
+.dd-map-link:hover { background: color-mix(in srgb, var(--accent-blue, #2563eb) 12%, transparent); text-decoration: underline; }
+.dd-map-link:focus-visible { outline: 2px solid var(--accent-blue, #2563eb); outline-offset: 1px; }
+.dd-map-link-count { opacity: 0.75; font-weight: 400; }
 .dd-map-tlist { margin: 6px 0; padding: 6px 8px 6px 26px; max-height: 240px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-base); font-size: 12px; }
 .dd-map-tlist li { padding: 1px 0; }
 .dd-map-tlist .dd-map-more { list-style: none; margin-left: -18px; color: var(--text-muted); font-style: italic; }

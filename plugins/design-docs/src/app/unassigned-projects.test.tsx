@@ -130,8 +130,12 @@ describe('UnassignedProjectsDialog', () => {
     expect(loads).toEqual([]);
     const toggle = screen.getByRole('button', { name: 'Show docs' });
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    // Affordance: chevron plus a visual-only count, so the accessible name stays "Show docs".
+    expect(toggle.querySelector('svg')).toBeTruthy();
+    expect(toggle.querySelector('.dd-map-link-count')?.textContent).toBe('(340)');
     fireEvent.click(toggle);
     const list = await screen.findByRole('list', { name: 'Doc titles' });
+    expect(screen.getByRole('button', { name: 'Hide docs' }).querySelector('.dd-map-link-count')).toBeNull();
     expect(within(list).getAllByRole('listitem')).toHaveLength(201);
     expect(within(list).getByText('and 140 more')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Hide docs' }).getAttribute('aria-expanded')).toBe('true');

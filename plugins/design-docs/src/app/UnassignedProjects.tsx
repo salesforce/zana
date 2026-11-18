@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { errorMessage, toast, useApi, type ProjectInfo, type UnassignedProject } from './api.js';
 import { useProjectMappings, useProjects } from './hooks.js';
 import { headingLabel } from './unassigned-groups.js';
@@ -237,7 +238,9 @@ export function UnassignedProjectsDialog({
               <div className="dd-muted dd-map-preview">{preview}{item.docCount > shownPreview.length ? ` · +${item.docCount - shownPreview.length}` : ''}</div>
             ) : null}
             <button type="button" className="dd-map-link" aria-expanded={open} onClick={() => toggleDocs(id)}>
+              {open ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}
               {open ? 'Hide docs' : 'Show docs'}
+              {open ? null : <span className="dd-map-link-count" aria-hidden="true">({item.docCount})</span>}
             </button>
             <div className="dd-map-pick">
               <span className="dd-muted" aria-hidden="true">Map to</span>
