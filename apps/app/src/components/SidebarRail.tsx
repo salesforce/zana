@@ -109,6 +109,7 @@ export function SidebarRail({
   const hiddenIds = useUi((s) => storageKey === PROJECT_NAV_ORDER_KEY ? s.projectSidebarNavHidden : s.sidebarNavHidden);
   const hidden = new Set(hiddenIds ?? []);
   const moreButton = useRef<HTMLButtonElement>(null);
+  const collapseBehavior = useUi((s) => s.sidebarCollapseBehavior);
   const [popup, setPopup] = useState<SidebarNavigationPopupState | null>(null);
   const [saveError, setSaveError] = useState(false);
   const closePopup = useCallback(() => setPopup(null), []);
@@ -272,8 +273,13 @@ export function SidebarRail({
         returnFocus={moreButton} onClose={closePopup}
         onCustomize={() => setPopup({ ...popup, kind: 'customize' })}
         onVisibleChange={(id, visible) => saveHidden(visible ? (hiddenIds ?? []).filter((key) => key !== id) : [...(hiddenIds ?? []), id])}
-        onReset={() => saveHidden([], items.map((item) => item.id))}
-        renderHiddenItem={(id) => renderItem(id, false, true)} />}
+        onReset={() => {
+          useUi.getState().setSidebarCollapseBehavior('two-state');
+          saveHidden([], items.map((item) => item.id));
+        }}
+        renderHiddenItem={(id) => renderItem(id, false, true)}
+        collapseBehavior={collapseBehavior}
+        onCollapseBehaviorChange={(b) => useUi.getState().setSidebarCollapseBehavior(b)} />}
       <div className="sidebar-utility-bar" aria-label="Sidebar utilities">
         {utilityStart}
         <Link

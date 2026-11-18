@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   sidebarMode: 'expanded' as 'expanded' | 'rail' | 'hidden',
+  sidebarCollapseBehavior: 'three-state' as 'two-state' | 'three-state',
   setSidebarMode: vi.fn(),
   cycleSidebarMode: vi.fn(),
   setLauncherOpen: vi.fn(),

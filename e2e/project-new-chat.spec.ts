@@ -98,7 +98,6 @@ test('project New Chat navigates to the full-page composer across views and proj
 
   // The collapsed action and keyboard shortcut keep the same project context.
   await window.getByRole('button', { name: 'Collapse sidebar', exact: true }).click();
-  await window.getByRole('button', { name: 'Hide sidebar', exact: true }).click();
   await window.getByTestId('sidebar-collapsed-new-chat').click();
   await expect(window.getByTestId('new-thread-view')).toBeVisible();
   await expect(window).toHaveURL(new RegExp(`/projects/${projectId}/threads/new`));

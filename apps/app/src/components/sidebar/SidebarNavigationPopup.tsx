@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { DndContext } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { EyeOff, GripVertical, SlidersHorizontal } from 'lucide-react';
+import type { SidebarCollapseBehavior } from '../../store.js';
 import type { SidebarRailRow } from '../SidebarRail.js';
 import { SortableNavItem, type useSortableSidebarNav } from '../sidebarSortable.js';
 
@@ -18,7 +19,7 @@ export interface SidebarNavigationPopupState {
 /** Portal keeps the menu clear of the rail's scrolling and clipping containers. */
 export function SidebarNavigationPopup({
   popup, rows, hidden, pinnedIds, drag, returnFocus, onClose, onCustomize,
-  onVisibleChange, onReset, renderHiddenItem
+  onVisibleChange, onReset, renderHiddenItem, collapseBehavior, onCollapseBehaviorChange
 }: {
   popup: SidebarNavigationPopupState;
   rows: readonly SidebarRailRow[];
@@ -31,6 +32,9 @@ export function SidebarNavigationPopup({
   onVisibleChange(id: string, visible: boolean): void;
   onReset(): void;
   renderHiddenItem(id: string): ReactNode;
+  /** Global sidebar collapse behaviour; undefined hides the section. */
+  collapseBehavior?: SidebarCollapseBehavior;
+  onCollapseBehaviorChange?(behavior: SidebarCollapseBehavior): void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const customize = popup.kind === 'customize';
@@ -118,6 +122,22 @@ export function SidebarNavigationPopup({
             </div>
           </SortableContext>
         </DndContext>
+        {collapseBehavior && onCollapseBehaviorChange && (
+          <fieldset className="sidebar-collapse-behavior">
+            <legend>Collapsed behavior</legend>
+            {([
+              ['two-state', 'Expanded, Hidden', 'Collapse hides the sidebar'],
+              ['three-state', 'Expanded, Rail, Hidden', 'Collapse steps through the icon rail']
+            ] as const).map(([value, label, hint]) => (
+              <label key={value}>
+                <input type="radio" name="sidebar-collapse-behavior" value={value}
+                  checked={collapseBehavior === value} onChange={() => onCollapseBehaviorChange(value)} />
+                <span><span className="sidebar-collapse-behavior-label">{label}</span>
+                  <span className="sidebar-collapse-behavior-hint">{hint}</span></span>
+              </label>
+            ))}
+          </fieldset>
+        )}
         <button type="button" className="sidebar-navigation-menu-action" onClick={onReset}>Restore defaults</button>
       </> : <>
         {popup.kind === 'context' && item && !hidden.has(item.id) && (

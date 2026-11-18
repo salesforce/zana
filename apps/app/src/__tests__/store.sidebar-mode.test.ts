@@ -46,14 +46,42 @@ describe('sidebar mode', () => {
     }
   });
 
-  it('cycleSidebarMode goes expanded -> rail -> hidden -> expanded', async () => {
+  it('defaults to two-state: cycleSidebarMode toggles expanded <-> hidden and skips rail', async () => {
     const ui = await freshStore();
+    expect(ui.getState().sidebarCollapseBehavior).toBe('two-state');
+    const seen: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      ui.getState().cycleSidebarMode();
+      seen.push(ui.getState().sidebarMode);
+    }
+    expect(seen).toEqual(['hidden', 'expanded', 'hidden']);
+  });
+
+  it('two-state leaves rail (set elsewhere) back to expanded', async () => {
+    const ui = await freshStore();
+    ui.getState().setSidebarMode('rail');
+    ui.getState().cycleSidebarMode();
+    expect(ui.getState().sidebarMode).toBe('expanded');
+  });
+
+  it('three-state cycles expanded -> rail -> hidden -> expanded and persists the choice', async () => {
+    const ui = await freshStore();
+    ui.getState().setSidebarCollapseBehavior('three-state');
+    expect(localStorage.getItem('zcc.sidebarCollapseBehavior')).toBe('three-state');
     const seen: string[] = [];
     for (let i = 0; i < 4; i++) {
       ui.getState().cycleSidebarMode();
       seen.push(ui.getState().sidebarMode);
     }
     expect(seen).toEqual(['rail', 'hidden', 'expanded', 'rail']);
+    const reloaded = await freshStore();
+    expect(reloaded.getState().sidebarCollapseBehavior).toBe('three-state');
+  });
+
+  it('ignores an invalid stored behavior', async () => {
+    localStorage.setItem('zcc.sidebarCollapseBehavior', 'bogus');
+    const ui = await freshStore();
+    expect(ui.getState().sidebarCollapseBehavior).toBe('two-state');
   });
 
   it('toggleSidebar keeps expanded <-> hidden semantics and restores the last visible mode', async () => {

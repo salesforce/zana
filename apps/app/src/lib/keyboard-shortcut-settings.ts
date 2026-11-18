@@ -26,7 +26,7 @@ export const REMAPPABLE_COMMANDS: Array<{
   { command: 'thread.find', label: 'Search in thread', help: 'Search the conversation in the open thread.' },
   { command: 'file.quickOpen', label: 'Quick Open', help: 'Open a file in the selected project.' },
   { command: 'sidebar.toggle', label: 'Toggle explorer', help: 'Switch between terminals and the file explorer.' },
-  { command: 'sidebar.rail.toggle', label: 'Cycle navigation sidebar', help: 'Cycle the sidebar through expanded, icon-only rail and hidden.' },
+  { command: 'sidebar.rail.toggle', label: 'Cycle navigation sidebar', help: 'Collapse or expand the sidebar. Customize navigation chooses whether it also stops at the icon-only rail.' },
   { command: 'settings.open', label: 'Settings', help: 'Open or close Settings. Inside a project, opens its Project settings.' },
   { command: 'browser.focusLocation', label: 'Browser address bar', help: 'Focus the in-app browser address bar.' },
   { command: 'browser.find', label: 'Find in page', help: 'Find text in the in-app browser tab.' },

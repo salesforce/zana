@@ -150,6 +150,17 @@ function sidebarModeKey(): string {
 
 export type SidebarMode = 'expanded' | 'rail' | 'hidden';
 
+/**
+ * What the collapse trigger / shortcut cycles through. `two-state` (default) is
+ * the original expanded <-> hidden toggle; `three-state` adds the icon rail.
+ */
+export type SidebarCollapseBehavior = 'two-state' | 'three-state';
+const SIDEBAR_COLLAPSE_BEHAVIOR_KEY = 'zcc.sidebarCollapseBehavior';
+
+export function readSidebarCollapseBehavior(): SidebarCollapseBehavior {
+  return readLocalStorageItem(SIDEBAR_COLLAPSE_BEHAVIOR_KEY) === 'three-state' ? 'three-state' : 'two-state';
+}
+
 /** New key first, then the legacy collapsed flag ('1' → hidden), else expanded. */
 export function readSidebarMode(): SidebarMode {
   const v = readLocalStorageItem(sidebarModeKey());
@@ -578,7 +589,10 @@ interface UiState {
   sidebarMode: SidebarMode;
   lastVisibleSidebarMode: 'expanded' | 'rail';
   setSidebarMode: (mode: SidebarMode) => void;
-  /** expanded <-> rail; from hidden restores the last visible mode. */
+  /** Which states the trigger/shortcut cycle through (global, not per project window). */
+  sidebarCollapseBehavior: SidebarCollapseBehavior;
+  setSidebarCollapseBehavior: (behavior: SidebarCollapseBehavior) => void;
+  /** two-state: expanded <-> hidden. three-state: expanded -> rail -> hidden -> expanded. */
   cycleSidebarMode: () => void;
   toggleSidebar: () => void;
   // sidebar: when true, the Projects list hides projects that have no live
@@ -1230,10 +1244,17 @@ export const useUi = create<UiState>((set, get) => ({
         lastVisibleSidebarMode: mode === 'hidden' ? s.lastVisibleSidebarMode : mode
       };
     }),
+  sidebarCollapseBehavior: readSidebarCollapseBehavior(),
+  setSidebarCollapseBehavior: (behavior) => {
+    writeLocalStorageItem(SIDEBAR_COLLAPSE_BEHAVIOR_KEY, behavior);
+    set({ sidebarCollapseBehavior: behavior });
+  },
   cycleSidebarMode: () => {
     const s = useUi.getState();
     const next: SidebarMode =
-      s.sidebarMode === 'expanded' ? 'rail' : s.sidebarMode === 'rail' ? 'hidden' : 'expanded';
+      s.sidebarCollapseBehavior === 'three-state'
+        ? s.sidebarMode === 'expanded' ? 'rail' : s.sidebarMode === 'rail' ? 'hidden' : 'expanded'
+        : s.sidebarMode === 'expanded' ? 'hidden' : 'expanded';
     s.setSidebarMode(next);
   },
   toggleSidebar: () => {

@@ -28,14 +28,16 @@ export function SidebarTriggerOverlay({
   const focusedProjectId = useUi((s) => s.focusedProjectId);
   const projectId = getScopedProjectId() ?? focusedProjectId;
   // `collapsed` = sidebar not fully expanded (rail or hidden). The click cycles
-  // expanded -> rail -> hidden -> expanded, so the label names the NEXT state.
+  // expanded -> rail -> hidden -> expanded (three-state) or expanded <-> hidden
+  // (two-state, default), so the label names the NEXT state.
   const collapsed = collapsedOverride ?? sidebarMode !== 'expanded';
   const hidden = collapsedOverride ?? sidebarMode === 'hidden';
   const toggleSidebar = useUi((s) => s.cycleSidebarMode);
+  const threeState = useUi((s) => s.sidebarCollapseBehavior) === 'three-state';
   const setPaletteOpen = useUi((s) => s.setPaletteOpen);
   const navigate = useNavigate();
   const label =
-    collapsedOverride !== undefined || sidebarMode !== 'rail'
+    collapsedOverride !== undefined || !threeState || sidebarMode !== 'rail'
       ? collapsed
         ? 'Expand sidebar'
         : 'Collapse sidebar'

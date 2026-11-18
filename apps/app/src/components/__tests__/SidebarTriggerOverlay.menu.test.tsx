@@ -5,11 +5,12 @@ import { MemoryRouter } from 'react-router-dom';
 
 const h = vi.hoisted(() => ({
   mode: 'expanded' as 'expanded' | 'rail' | 'hidden',
+  behavior: 'three-state' as 'two-state' | 'three-state',
   cycleSidebarMode: vi.fn()
 }));
 vi.mock('../../store', () => ({
   useUi: (selector: (s: unknown) => unknown) => selector({
-    focusedProjectId: null, sidebarMode: h.mode,
+    focusedProjectId: null, sidebarMode: h.mode, sidebarCollapseBehavior: h.behavior,
     cycleSidebarMode: h.cycleSidebarMode, setPaletteOpen: vi.fn()
   })
 }));
@@ -23,7 +24,16 @@ vi.mock('../MobileAgentsBack', () => ({ MobileAgentsBack: () => null }));
 import { SidebarTriggerOverlay } from '../SidebarTriggerOverlay.js';
 
 const mount = () => render(<MemoryRouter><SidebarTriggerOverlay /></MemoryRouter>);
-afterEach(() => { cleanup(); h.mode = 'expanded'; vi.clearAllMocks(); });
+afterEach(() => { cleanup(); h.mode = 'expanded'; h.behavior = 'three-state'; vi.clearAllMocks(); });
+
+describe('SidebarTriggerOverlay two-state (default behavior)', () => {
+  it('labels rail as Expand sidebar, since the next click returns to expanded', () => {
+    h.behavior = 'two-state';
+    h.mode = 'rail';
+    mount();
+    expect(screen.getByRole('button', { name: 'Expand sidebar' })).toBeTruthy();
+  });
+});
 
 describe('SidebarTriggerOverlay three-state cycle', () => {
   it.each([
