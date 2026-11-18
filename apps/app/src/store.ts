@@ -143,6 +143,47 @@ function sidebarCollapsedKey(): string {
   return scoped ? `zcc.sidebarCollapsed.${scoped}` : 'zcc.sidebarCollapsed';
 }
 
+function sidebarModeKey(): string {
+  const scoped = getScopedProjectId();
+  return scoped ? `zcc.sidebarMode.${scoped}` : 'zcc.sidebarMode';
+}
+
+export type SidebarMode = 'expanded' | 'rail' | 'hidden';
+
+/**
+ * What the collapse trigger / shortcut cycles through. `two-state` (default) is
+ * the original expanded <-> hidden toggle; `three-state` adds the icon rail.
+ */
+export type SidebarCollapseBehavior = 'two-state' | 'three-state';
+const SIDEBAR_COLLAPSE_BEHAVIOR_KEY = 'zcc.sidebarCollapseBehavior';
+
+export function readSidebarCollapseBehavior(): SidebarCollapseBehavior {
+  return readLocalStorageItem(SIDEBAR_COLLAPSE_BEHAVIOR_KEY) === 'three-state' ? 'three-state' : 'two-state';
+}
+
+/**
+ * The behavior is one global localStorage value shared by every window but
+ * read once at store creation; follow writes from other windows. Install once
+ * at app init and call the disposer on shutdown.
+ */
+export function installSidebarCollapseBehaviorSync(): () => void {
+  if (typeof window === 'undefined') return () => {};
+  const onStorage = (e: StorageEvent) => {
+    if (e.key !== null && e.key !== SIDEBAR_COLLAPSE_BEHAVIOR_KEY) return;
+    const next = readSidebarCollapseBehavior();
+    if (useUi.getState().sidebarCollapseBehavior !== next) useUi.setState({ sidebarCollapseBehavior: next });
+  };
+  window.addEventListener('storage', onStorage);
+  return () => window.removeEventListener('storage', onStorage);
+}
+
+/** New key first, then the legacy collapsed flag ('1' → hidden), else expanded. */
+export function readSidebarMode(): SidebarMode {
+  const v = readLocalStorageItem(sidebarModeKey());
+  if (v === 'expanded' || v === 'rail' || v === 'hidden') return v;
+  return readLocalStorageItem(sidebarCollapsedKey()) === '1' ? 'hidden' : 'expanded';
+}
+
 /** Built-in nav destinations. App modules (plugins/*) add their own ids. */
 export type CoreNavId =
   | 'setup'
@@ -558,7 +599,17 @@ interface UiState {
   // sidebar: collapsed to an icon rail (labels hidden) to save horizontal
   // space. Persisted per-window in localStorage so a project window's rail
   // doesn't bleed into the main window.
+  // `sidebarCollapsed` keeps meaning "hidden" (the `sidebar-is-collapsed`
+  // class contract); `sidebarMode` is the tri-state source of truth.
   sidebarCollapsed: boolean;
+  sidebarMode: SidebarMode;
+  lastVisibleSidebarMode: 'expanded' | 'rail';
+  setSidebarMode: (mode: SidebarMode) => void;
+  /** Which states the trigger/shortcut cycle through (global, not per project window). */
+  sidebarCollapseBehavior: SidebarCollapseBehavior;
+  setSidebarCollapseBehavior: (behavior: SidebarCollapseBehavior) => void;
+  /** two-state: expanded <-> hidden. three-state: expanded -> rail -> hidden -> expanded. */
+  cycleSidebarMode: () => void;
   toggleSidebar: () => void;
   // sidebar: when true, the Projects list hides projects that have no live
   // (non-exited or background) sessions. Persisted on AppConfig.
@@ -1190,13 +1241,42 @@ export const useUi = create<UiState>((set, get) => ({
   setHostInstallDrawerOpen: (open) => set((s) => ({
     hostInstallDrawer: { ...s.hostInstallDrawer, open }
   })),
-  sidebarCollapsed: readLocalStorageItem(sidebarCollapsedKey()) === '1',
-  toggleSidebar: () =>
+  ...(() => {
+    const mode = readSidebarMode();
+    return {
+      sidebarMode: mode,
+      sidebarCollapsed: mode === 'hidden',
+      lastVisibleSidebarMode: (mode === 'rail' ? 'rail' : 'expanded') as 'expanded' | 'rail'
+    };
+  })(),
+  setSidebarMode: (mode) =>
     set((s) => {
-      const next = !s.sidebarCollapsed;
-      writeLocalStorageItem(sidebarCollapsedKey(), next ? '1' : '0');
-      return { sidebarCollapsed: next };
+      writeLocalStorageItem(sidebarModeKey(), mode);
+      // Legacy mirror for one release so a rollback build reads the right state.
+      writeLocalStorageItem(sidebarCollapsedKey(), mode === 'hidden' ? '1' : '0');
+      return {
+        sidebarMode: mode,
+        sidebarCollapsed: mode === 'hidden',
+        lastVisibleSidebarMode: mode === 'hidden' ? s.lastVisibleSidebarMode : mode
+      };
     }),
+  sidebarCollapseBehavior: readSidebarCollapseBehavior(),
+  setSidebarCollapseBehavior: (behavior) => {
+    writeLocalStorageItem(SIDEBAR_COLLAPSE_BEHAVIOR_KEY, behavior);
+    set({ sidebarCollapseBehavior: behavior });
+  },
+  cycleSidebarMode: () => {
+    const s = useUi.getState();
+    const next: SidebarMode =
+      s.sidebarCollapseBehavior === 'three-state'
+        ? s.sidebarMode === 'expanded' ? 'rail' : s.sidebarMode === 'rail' ? 'hidden' : 'expanded'
+        : s.sidebarMode === 'expanded' ? 'hidden' : 'expanded';
+    s.setSidebarMode(next);
+  },
+  toggleSidebar: () => {
+    const s = useUi.getState();
+    s.setSidebarMode(s.sidebarMode === 'hidden' ? s.lastVisibleSidebarMode : 'hidden');
+  },
   hideIdleProjects: readLocalStorageItem('zcc.hideIdleProjects') === '1',
   toggleHideIdleProjects: () =>
     set((s) => {

@@ -38,6 +38,8 @@ import { SplitPaneMiniMap } from './sidebar/SplitPaneMiniMap.js';
 import type { PaneContent } from '../lib/split-layout/types.js';
 import './sidebar/sidebar-appearance.css';
 import { useMobileNavDismiss } from './mobile-nav-context.js';
+import { RailProjects } from './sidebar/RailProjects.js';
+import { PROJECTS_SECTION_SORT_ID } from './sidebarNavOrder.js';
 import { MobileSidebarNav } from './MobileSidebarNav.js';
 
 export interface SidebarRailRow {
@@ -84,7 +86,8 @@ export function SidebarRail({
   items,
   header,
   utilityStart,
-  settingsRoutePath
+  settingsRoutePath,
+  railVariant = 'expanded'
 }: {
   className: string;
   navAriaLabel: string;
@@ -96,13 +99,17 @@ export function SidebarRail({
   utilityStart?: ReactNode;
   /** Overrides remembered global settings for a project-scoped rail. */
   settingsRoutePath?: string;
+  /** Icon-only 52px rail. Ignored in the mobile drawer. */
+  railVariant?: 'expanded' | 'rail';
 }): ReactElement {
   const savedCollapsed = useUi((s) => s.sidebarCollapsed);
   const dismissMobileNav = useMobileNavDismiss();
-  const collapsed = savedCollapsed && !dismissMobileNav;
+  const rail = railVariant === 'rail' && !dismissMobileNav;
+  const collapsed = (savedCollapsed && !dismissMobileNav) || rail;
   const hiddenIds = useUi((s) => storageKey === PROJECT_NAV_ORDER_KEY ? s.projectSidebarNavHidden : s.sidebarNavHidden);
   const hidden = new Set(hiddenIds ?? []);
   const moreButton = useRef<HTMLButtonElement>(null);
+  const collapseBehavior = useUi((s) => s.sidebarCollapseBehavior);
   const [popup, setPopup] = useState<SidebarNavigationPopupState | null>(null);
   const [saveError, setSaveError] = useState(false);
   const closePopup = useCallback(() => setPopup(null), []);
@@ -156,6 +163,10 @@ export function SidebarRail({
     const item = itemsById.get(id);
     if (!item) return null;
     if (item.kind === 'section') {
+      if (rail) {
+        // Rail: Projects collapse to an icon switcher; the Sessions tree has no icon form.
+        return id === PROJECTS_SECTION_SORT_ID ? <RailProjects key={id} /> : null;
+      }
       const section = cloneElement(
         item.node as ReactElement<{
           dragHandle?: HTMLAttributes<HTMLElement>;
@@ -220,7 +231,7 @@ export function SidebarRail({
   };
 
   return (
-    <aside className={className}>
+    <aside className={`${className}${rail ? ' sidebar--rail' : ''}`}>
       {header}
       {dismissMobileNav ? (
         <MobileSidebarNav
@@ -262,8 +273,13 @@ export function SidebarRail({
         returnFocus={moreButton} onClose={closePopup}
         onCustomize={() => setPopup({ ...popup, kind: 'customize' })}
         onVisibleChange={(id, visible) => saveHidden(visible ? (hiddenIds ?? []).filter((key) => key !== id) : [...(hiddenIds ?? []), id])}
-        onReset={() => saveHidden([], items.map((item) => item.id))}
-        renderHiddenItem={(id) => renderItem(id, false, true)} />}
+        onReset={() => {
+          useUi.getState().setSidebarCollapseBehavior('two-state');
+          saveHidden([], items.map((item) => item.id));
+        }}
+        renderHiddenItem={(id) => renderItem(id, false, true)}
+        collapseBehavior={collapseBehavior}
+        onCollapseBehaviorChange={(b) => useUi.getState().setSidebarCollapseBehavior(b)} />}
       <div className="sidebar-utility-bar" aria-label="Sidebar utilities">
         {utilityStart}
         <Link
@@ -332,7 +348,7 @@ export function SidebarRail({
           );
         })}
       </div>
-      {!dismissMobileNav && <SidebarResizer />}
+      {!dismissMobileNav && !rail && <SidebarResizer />}
     </aside>
   );
 }

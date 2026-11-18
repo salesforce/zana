@@ -90,6 +90,7 @@ import {
   isUpdateBannerVisible,
   visibleTerminals,
   installInboxCrossWindowSync,
+  installSidebarCollapseBehaviorSync,
   useFavoriteAgents,
   mergeFavoritesFromMain,
   ptyFavoriteKeys,
@@ -99,6 +100,7 @@ import { useFavoriteCount } from './hooks/useAgentCards.js';
 import { useCompactLayout } from './hooks/useCompactLayout.js';
 import { useIsCompactViewport } from './hooks/useIsCompactViewport.js';
 import { focusInboxEntry } from './lib/inboxNavigation.js';
+import { resolveSidebarShellState } from './lib/sidebar-shell-state.js';
 import { projectDefaultLaunch } from './lib/launchProfile.js';
 import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
 import { ShellTitlebarTitle } from './components/TitlebarProjectButton.js';
@@ -263,11 +265,11 @@ function AppShell() {
   navigateRef.current = navigate;
   const splitWorkspaceShowing = isSplitWorkspacePath(location.pathname);
   const nav = route.nav;
-  const desktopSidebarCollapsed = useUi((s) => s.sidebarCollapsed);
+  const sidebarMode = useUi((s) => s.sidebarMode);
   const mobileNavigation = useMobileNavigation();
   const sidebarCollapsed = mobileNavigation.isCompact
     ? !mobileNavigation.drawerOpen
-    : desktopSidebarCollapsed;
+    : sidebarMode === 'hidden';
   const storeFocusedProjectId = useUi((s) => s.focusedProjectId);
   // URL project wins; the store keeps sticky focus for Inbox / Next Steps /
   // Settings so the project rail stays while those destinations have no
@@ -482,6 +484,7 @@ function AppShell() {
     // this re-hydrates them when another window writes (e.g. a per-project
     // window marks an entry read, the main window reflects it immediately).
     const offInboxSync = installInboxCrossWindowSync();
+    const offCollapseBehaviorSync = installSidebarCollapseBehaviorSync();
     const offData = product.terminals.onData((id) => {
       const ui = useUi.getState();
       const data = useData.getState();
@@ -657,6 +660,7 @@ function AppShell() {
       offFocusInboxEntry();
       offDeepLinks();
       offInboxSync();
+      offCollapseBehaviorSync();
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
       offWake();
@@ -779,9 +783,17 @@ function AppShell() {
     ? (nav === 'extensions' ? (({ skills: 'Skills', mcp: 'MCP servers', marketplace: 'Browse plugins' } as Record<string, string>)[route.extensionsTab ?? ''] ?? 'Plugins') : mobileTitles[nav] ?? modules.find((module) => module.id === nav)?.title ?? desktopTitle)
     : desktopTitle;
 
+  // Settings / Plugins show rail expanded; compact never gets rail (see helper).
+  const { effectiveMode, railVariant, railClass, overlayCollapsed } = resolveSidebarShellState({
+    isCompact: mobileNavigation.isCompact,
+    sidebarMode,
+    shellRail: shellLayout.rail,
+    sidebarCollapsed
+  });
+
   return (
     <div
-      className={`app-shell nav-${nav} shell-rail-${shellLayout.rail} ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''} scoped-no-list ${
+      className={`app-shell nav-${nav} shell-rail-${shellLayout.rail} ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''} ${railClass} scoped-no-list ${
         updateBannerVisible ? 'has-update-banner' : ''
       }${!mobileNavigation.isCompact ? ' shell-inset' : ''}`}
       data-mobile={mobileNavigation.isCompact}
@@ -875,18 +887,19 @@ function AppShell() {
         projectId={scopedProject?.id}
       >
       {sidebarCollapsed ? null : scopedProject ? (
-        <ProjectScopedNav project={scopedProject} variant="window" />
+        <ProjectScopedNav project={scopedProject} variant="window" railVariant={railVariant} />
       ) : focusedProject && keepsProjectFocusRail(nav, focusedProjectId) ? (
         <ProjectScopedNav
           project={focusedProject}
           variant="focus"
+          railVariant={railVariant}
         />
       ) : shellLayout.rail === 'settings' ? (
         <SettingsPane />
       ) : shellLayout.rail === 'extensions' ? (
         <ExtensionsPane />
       ) : (
-        <Sidebar />
+        <Sidebar railVariant={railVariant} />
       )}
       </MobileAgentNavigation>
       </MobileNavDrawer>
@@ -914,7 +927,10 @@ function AppShell() {
         />
       )}
       <SidebarTriggerOverlay
-        collapsed={sidebarCollapsed}
+        collapsed={overlayCollapsed}
+        // Display the mode actually rendered (Settings/Plugins show rail expanded);
+        // the click still cycles from the stored mode.
+        mode={effectiveMode}
         onToggle={mobileNavigation.isCompact
           ? () => mobileNavigation.setDrawerOpen(!mobileNavigation.drawerOpen)
           : undefined}

@@ -10,7 +10,7 @@ import {
   Folder, TerminalSquare, Plus, Code2, FolderOpen, FileSearch, Sparkles, Play,
   Zap, Keyboard, History, Search, Inbox, RotateCcw, Trash2, Copy, Pin, PinOff,
   BookOpen, Clock, LayoutGrid, RotateCw, Undo2, Puzzle, Plug, Drama, Bot, AppWindow, Settings, FolderCog,
-  Columns2
+  Columns2, PanelLeft
 } from 'lucide-react';
 import { NAMED_PANE_COMMANDS, runPaneCommand } from '../../lib/split-layout/paneCommands.js';
 import { shortcutLabelForCommand } from '../../lib/keyboard-shortcut-settings.js';
@@ -233,6 +233,25 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
         onClose();
       }
     },
+    ...(
+      [
+        ['expanded', 'Expanded', undefined],
+        ['rail', 'Rail', shortcutLabelForCommand('sidebar.rail.toggle') ?? undefined],
+        ['hidden', 'Hidden', undefined]
+      ] as const
+    ).map(([mode, name, hint]) => ({
+      key: `action:sidebar-${mode}`,
+      icon: <PanelLeft size={14} />,
+      label: `Sidebar: ${name}`,
+      hint,
+      keywords: ['sidebar', 'navigation', 'rail', 'collapse', 'expand', 'hide'],
+      category: 'Actions' as const,
+      source: 'core' as const,
+      run: () => {
+        useUi.getState().setSidebarMode(mode);
+        onClose();
+      }
+    })),
     {
       key: 'action:refresh-models',
       icon: <RotateCw size={14} />,

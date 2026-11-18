@@ -20,6 +20,16 @@ afterEach(() => {
   localStorage.removeItem('zcc.keyboard-overrides');
 });
 
+describe('rail toggle binding', () => {
+  it('is remappable, bound to Mod+Shift+B, and does not collide with the explorer toggle', () => {
+    expect(REMAPPABLE_COMMANDS.some((row) => row.command === 'sidebar.rail.toggle')).toBe(true);
+    const rail = DEFAULT_APP_KEYBINDINGS.find((row) => row.command === 'sidebar.rail.toggle');
+    const explorer = DEFAULT_APP_KEYBINDINGS.find((row) => row.command === 'sidebar.toggle');
+    expect(rail?.shortcut).toMatchObject({ key: 'b', mod: true, shift: true });
+    expect(explorer?.shortcut).toMatchObject({ key: 'b', mod: true, shift: false });
+  });
+});
+
 describe('split pane default bindings', () => {
   it('binds every pane command, gated to an active split outside modals', () => {
     for (const command of [...NAMED_PANE_COMMANDS.map((row) => row.command), ...PANE_FOCUS_INDEX_COMMANDS]) {

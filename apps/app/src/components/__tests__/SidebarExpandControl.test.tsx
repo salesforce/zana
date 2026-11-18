@@ -3,8 +3,10 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
-  sidebarCollapsed: false,
-  toggleSidebar: vi.fn(),
+  sidebarMode: 'expanded' as 'expanded' | 'rail' | 'hidden',
+  sidebarCollapseBehavior: 'three-state' as 'two-state' | 'three-state',
+  setSidebarMode: vi.fn(),
+  cycleSidebarMode: vi.fn(),
   setLauncherOpen: vi.fn(),
   setPaletteOpen: vi.fn()
 }));
@@ -34,7 +36,7 @@ function renderOverlay() {
 
 describe('SidebarTriggerOverlay', () => {
   beforeEach(() => {
-    h.sidebarCollapsed = false;
+    h.sidebarMode = 'expanded';
   });
 
   it('provides the persistent shell control used to restore the sidebar', () => {
@@ -47,6 +49,15 @@ describe('SidebarTriggerOverlay', () => {
     expect(markup).not.toContain('data-testid="sidebar-trigger-collapsed-actions"');
   });
 
+  it('reads "Hide sidebar" (next state) with aria-expanded=false in rail, without the hidden-only actions', () => {
+    h.sidebarMode = 'rail';
+    const markup = renderOverlay();
+
+    expect(markup).toContain('aria-label="Hide sidebar"');
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).not.toContain('data-testid="sidebar-trigger-collapsed-actions"');
+  });
+
   it('keeps back/forward in the same overlay so a collapsed rail cannot hide them', () => {
     const markup = renderOverlay();
 
@@ -56,7 +67,7 @@ describe('SidebarTriggerOverlay', () => {
   });
 
   it('adds unread, search, and new-chat actions only while the rail is collapsed', () => {
-    h.sidebarCollapsed = true;
+    h.sidebarMode = 'hidden';
     const markup = renderOverlay();
 
     expect(markup).toContain('aria-label="Expand sidebar"');
