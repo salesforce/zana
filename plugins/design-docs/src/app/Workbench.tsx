@@ -28,9 +28,8 @@ import {
   X
 } from 'lucide-react';
 import { STATUS_LABELS, DOC_STATUSES, type DesignDocSummary, type DocStatus } from '../shared/contract.js';
-import { MAX_LIST_LIMIT } from '../shared/limits.js';
 import { MAX_AGENT_PROMPT_LENGTH } from '../shared/agent-actions.js';
-import { MAX_SUMMARY_LENGTH, MAX_TITLE_LENGTH } from '../shared/limits.js';
+import { MAX_LIST_LIMIT, MAX_SUMMARY_LENGTH, MAX_TITLE_LENGTH } from '../shared/limits.js';
 import { draftDocAgent, showDocAgent } from './Agents.js';
 import { defaultAgentProject, errorMessage, toast, useApi, type DocSyncState, type ProjectInfo, type TemplateInfo, type UnassignedProject } from './api.js';
 import { effectiveSyncState, needsAttention, SYNC_STATE_LABEL, useDocSyncStatuses } from './sync-status.js';

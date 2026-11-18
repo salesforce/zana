@@ -323,7 +323,7 @@ describe('Map shortcut', () => {
     await waitFor(() => expect(document.activeElement).toBe(document.querySelector('.dd-list-scroll')));
   });
 
-  it('opens unfocused when the id is missing from the dialog list and never uses it as a selector', async () => {
+  it('focuses the matching card for a hostile foreign id without ever using it as a selector or rendering it', async () => {
     const hostile = '"] , x[';
     mount({ docs: [{ id: 'a', fid: hostile, title: 'A' }], projects: [project(hostile, { senderName: 'Odd', suggestion: { projectId: 'p1', name: 'App', basis: 'name' } })] });
     const region = await section();

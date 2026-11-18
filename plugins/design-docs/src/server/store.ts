@@ -58,6 +58,9 @@ import type { PeerOperationOrigin } from '../shared/peer-contract.js';
 import { templateBundleSchema, templateInputSchema, type TemplateInput } from '../shared/template-bundle.js';
 import { MAX_TEMPLATES, MAX_TEMPLATE_BUNDLE_BYTES, MAX_TEMPLATE_LABEL_LENGTH } from '../shared/limits.js';
 
+/** Ids per SQL `IN (...)` batch, kept well under SQLite's bound-variable limit. */
+const ID_CHUNK = 500;
+
 // A development build recorded peer-sync migrations before the released navigation
 // migration existed. Move that complete lineage aside so the host can apply index 2.
 const LEGACY_PEER_SYNC_MIGRATION_HASHES = [
@@ -609,8 +612,8 @@ export class DesignDocStore {
   /** Foreign project id per received doc, for grouping unassigned lists. Non-string or oversized ids are dropped. */
   private foreignProjectIds(ids: string[]): Map<string, string> {
     const out = new Map<string, string>();
-    for (let index = 0; index < ids.length; index += 500) {
-      const chunk = ids.slice(index, index + 500);
+    for (let index = 0; index < ids.length; index += ID_CHUNK) {
+      const chunk = ids.slice(index, index + ID_CHUNK);
       const rows = this.db.prepare(`SELECT r.doc_id AS id, json_extract(r.project_json, '$') AS fid FROM sync_doc_references r
         WHERE r.project_json <> 'null' AND r.doc_id IN (${chunk.map(() => '?').join(',')})`).all(...chunk) as Array<{ id: string; fid: unknown }>;
       for (const row of rows) {
@@ -623,8 +626,8 @@ export class DesignDocStore {
   /** Effective project of received docs: the local project their foreign id is mapped to. */
   private aliasedProjects(ids: string[]): Map<string, string> {
     const out = new Map<string, string>();
-    for (let index = 0; index < ids.length; index += 500) {
-      const chunk = ids.slice(index, index + 500);
+    for (let index = 0; index < ids.length; index += ID_CHUNK) {
+      const chunk = ids.slice(index, index + ID_CHUNK);
       const rows = this.db.prepare(`SELECT r.doc_id AS id, a.local_project_id AS local FROM sync_doc_references r
         JOIN dd_project_aliases a ON a.foreign_project_id = json_extract(r.project_json, '$')
         WHERE ${ALIAS_LIVE} AND r.doc_id IN (${chunk.map(() => '?').join(',')})`).all(...chunk) as Array<{ id: string; local: string }>;

@@ -44,7 +44,7 @@ describe('labels', () => {
   it('folds case, width, whitespace and lookalike letters', () => {
     expect(foldLabel('Ａｐｐ  ＳＩＴＥ')).toBe('app site');
     expect(foldLabel('аpp')).toBe('app'); // Cyrillic a
-    expect(foldLabel('ΑΡΡ'.toLowerCase())).toBe('aaa'.replace('aaa', 'app'));
+    expect(foldLabel('ΑΡΡ'.toLowerCase())).toBe('app'); // Greek alpha, rho, rho
   });
 });
 
@@ -137,6 +137,24 @@ describe('collisions', () => {
     expect(same.map((g) => g.label).sort()).toEqual(['Shared #1', 'Shared #2']);
     const tagIsLocal = build([doc('a', 'f1')], [project('f1', { senderName: 'App', senderTag: 'x' })], ['app', 'App (x)']);
     expect(tagIsLocal[0]!.label).toBe('App #1');
+  });
+
+  it('keeps numeric suffixes when a same-tag sibling is filtered out of the doc list', () => {
+    const projects = [project('f1', { senderName: 'Shared', senderTag: 't' }), project('f2', { senderName: 'Shared', senderTag: 't' })];
+    const filtered = build([doc('a', 'f1')], projects);
+    expect(filtered[0]!.label).toBe('Shared #1'); // not 'Shared (t)', which the unfiltered list never shows
+  });
+
+  it('never generates a label that equals a local Project or another group', () => {
+    const local = build([doc('x', 'f1')], [project('f1', { senderName: 'App' })], ['app', 'App #1']);
+    expect(local[0]!.label).toBe('App #2');
+    const projects = [project('f1', { senderName: 'App' }), project('f2', { senderName: 'App' }), project('f3', { senderName: 'App #1' })];
+    const groups = build([doc('a', 'f1'), doc('b', 'f2'), doc('c', 'f3')], projects, ['app']);
+    const labels = groups.map((g) => g.label);
+    expect(new Set(labels.map(foldLabel)).size).toBe(3);
+    expect(labels.map(foldLabel)).not.toContain('app');
+    const tagged = build([doc('a', 'f1')], [project('f1', { senderName: 'Site', senderTag: 'x' }), project('f2', { senderName: 'Site' }), project('f3', { senderName: 'Site (x)' })]);
+    expect(tagged[0]!.label).toBe('Site #1'); // 'Site (x)' is another group's label
   });
 
   it('does not suffix unique labels', () => {

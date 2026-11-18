@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PluginDatabase } from '@zana-ai/zcc-plugin-sdk/server';
 import { createProjectNames } from './project-names.js';
-import { cleanLabel, DesignDocProjectRefs, MAX_TITLES } from './project-refs.js';
+import { cleanLabel, DesignDocProjectRefs, MAX_LABEL_CODE_POINTS, MAX_TITLES } from './project-refs.js';
 import { createRpcHandlers, UI_USER } from './rpc.js';
 import { DesignDocStore } from './store.js';
 import { DesignDocSyncStore } from './sync-store.js';
@@ -251,12 +251,10 @@ describe('mapping and scoping', () => {
   it('resolves foreign ids for more than 500 unassigned docs', () => {
     const { db, store, refs } = setup();
     refs.observe(PROJECTS);
-    const at = Date.now();
     for (let i = 0; i < 520; i += 1) {
       const doc = store.create({ title: `D${i}`, template: 'blank' }, UI_USER);
       db.prepare('INSERT INTO sync_doc_references (doc_id, project_json, threads_json) VALUES (?, ?, ?)').run(doc.id, JSON.stringify(`f${i % 3}`), '[]');
     }
-    void at;
     const listed = store.list({ unassigned: true, limit: 200 });
     expect(listed).toHaveLength(200);
     expect(listed.every((doc) => /^f[012]$/.test(doc.foreignProjectId ?? ''))).toBe(true);
@@ -418,6 +416,13 @@ describe('listForeignProjectTitles', () => {
     expect(unassigned[0]!.sampleTitles).toEqual(['Eviltxt.exe', 'Untitled']);
     await refs.mapForeignProject(list, 'f1', 'p1');
     expect(refs.listProjectMappings(PROJECTS)[0]!.sampleTitles).toEqual(['Eviltxt.exe', 'Untitled']);
+  });
+
+  it('keeps long doc titles up to the title limit while peer labels stay capped at 80', () => {
+    const { received, refs } = setup();
+    received('t'.repeat(120), 'f1');
+    expect(refs.listForeignProjectTitles('f1')).toEqual(['t'.repeat(120)]);
+    expect(Array.from(cleanLabel('n'.repeat(500))!)).toHaveLength(MAX_LABEL_CODE_POINTS);
   });
 
   it('throws on a DB error after tables looked available and re-probes afterwards', () => {

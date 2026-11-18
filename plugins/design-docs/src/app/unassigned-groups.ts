@@ -1,8 +1,9 @@
 import type { DesignDocSummary } from '../shared/contract.js';
+import { MAX_LABEL_CODE_POINTS, sanitizeLabel } from '../shared/label.js';
 import type { UnassignedProject } from './api.js';
 
-/** Longest peer-supplied label, in code points (mirrors the server cap). */
-export const MAX_GROUP_LABEL = 80;
+/** Longest peer-supplied label, in code points (the server uses the same constant). */
+export const MAX_GROUP_LABEL = MAX_LABEL_CODE_POINTS;
 export const UNNAMED_PROJECT = 'Unnamed project';
 export const OTHER_LABEL = 'Other';
 export const OTHER_KEY = 'unassigned-other';
@@ -34,17 +35,9 @@ export interface GroupOptions {
   labels?: LabelSource;
 }
 
-// Invisible and format characters a peer could use to spoof or hide text (mirrors the server's cleanLabel).
-// eslint-disable-next-line no-control-regex
-const INVISIBLE = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u206f\u2800\u3164\ufe00-\ufe0f\ufeff\u{e0000}-\u{e007f}\u{e0100}-\u{e01ef}]/gu;
-const COMBINING_RUN = /(\p{M}{3})\p{M}+/gu;
-
-/** Peer text made safe to render: invisible characters removed, combining runs and length capped, blank as null. */
+/** Peer text made safe to render: the same sanitizer the server uses (see `shared/label.ts`). */
 export function cleanPeerText(value: string | null | undefined): string | null {
-  const cleaned = (value ?? '').replace(INVISIBLE, '').replace(COMBINING_RUN, '$1').trim();
-  if (!cleaned) return null;
-  const points = Array.from(cleaned);
-  return (points.length > MAX_GROUP_LABEL ? points.slice(0, MAX_GROUP_LABEL).join('').trimEnd() : cleaned) || null;
+  return sanitizeLabel(value);
 }
 
 /** The most common Cyrillic and Greek letters that look like Latin ones. */
@@ -87,6 +80,87 @@ interface Draft {
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
+/** One foreign project as the collision pass sees it: a base label plus an optional disambiguating tag. */
+interface Entry {
+  id: string;
+  label: string;
+  tag: string | null;
+}
+
+/** Split the doc list into per-foreign-project buckets; docs without a usable id go to `other`. */
+function bucketDocs(docs: DesignDocSummary[]): { byId: Map<string, DesignDocSummary[]>; other: DesignDocSummary[] } {
+  const byId = new Map<string, DesignDocSummary[]>();
+  const other: DesignDocSummary[] = [];
+  for (const doc of docs) {
+    const id = doc.foreignProjectId;
+    if (typeof id !== 'string' || id === '') {
+      other.push(doc);
+      continue;
+    }
+    const list = byId.get(id) ?? [];
+    list.push(doc);
+    byId.set(id, list);
+  }
+  return { byId, other };
+}
+
+/** A group per bucket, labelled from its project metadata when known, else from its first doc title. */
+function buildDrafts(byId: Map<string, DesignDocSummary[]>, meta: Map<string, UnassignedProject>): Draft[] {
+  const drafts: Draft[] = [];
+  for (const [id, members] of byId) {
+    const project = meta.get(id);
+    const named = project ? groupLabel(project, members[0]?.title) : { label: cleanPeerText(members[0]?.title) ?? UNNAMED_PROJECT, suggestedName: null };
+    drafts.push({
+      id,
+      label: named.label,
+      tag: cleanPeerText(project?.senderTag),
+      suggestedName: named.suggestedName,
+      basis: named.suggestedName ? project?.suggestion?.basis ?? null : null,
+      docs: members,
+      newest: members.reduce((max, doc) => Math.max(max, doc.updatedAt), 0)
+    });
+  }
+  return drafts;
+}
+
+/**
+ * Final label for every foreign project whose base label equals a local Project name or another project's label.
+ * Judged over the whole known universe (hidden and filtered-out projects included) and allocated in id order, so a
+ * suffix does not change with the search text, a sync reorder or the doc window. A tag suffix is used when it is
+ * unique; otherwise `#<n>`. Generated labels are reserved too, so they never collide with an existing label.
+ */
+function resolveCollisions(entries: Entry[], local: Set<string>): Map<string, string> {
+  const sorted = [...entries].sort((a, b) => compare(a.id, b.id));
+  const folds = new Map(sorted.map((entry) => [entry.id, foldLabel(entry.label)]));
+  const members = new Map<string, string[]>();
+  for (const entry of sorted) members.set(folds.get(entry.id)!, [...(members.get(folds.get(entry.id)!) ?? []), entry.id]);
+  const colliding = sorted.filter((entry) => local.has(folds.get(entry.id)!) || members.get(folds.get(entry.id)!)!.length > 1);
+
+  const reserved = new Set<string>([...local, ...folds.values()]);
+  const tagged = new Map<string, number>();
+  for (const entry of colliding) {
+    if (entry.tag) {
+      const key = foldLabel(`${entry.label} (${entry.tag})`);
+      tagged.set(key, (tagged.get(key) ?? 0) + 1);
+    }
+  }
+
+  const out = new Map<string, string>();
+  for (const entry of colliding) {
+    const withTag = entry.tag ? `${entry.label} (${entry.tag})` : null;
+    if (withTag !== null && tagged.get(foldLabel(withTag)) === 1 && !reserved.has(foldLabel(withTag))) {
+      out.set(entry.id, withTag);
+      reserved.add(foldLabel(withTag));
+      continue;
+    }
+    let n = members.get(folds.get(entry.id)!)!.indexOf(entry.id) + 1;
+    while (reserved.has(foldLabel(`${entry.label} #${n}`))) n += 1;
+    out.set(entry.id, `${entry.label} #${n}`);
+    reserved.add(foldLabel(`${entry.label} #${n}`));
+  }
+  return out;
+}
+
 /**
  * Group the unassigned doc list into one group per foreign project. Membership comes from the docs only;
  * `projects` supplies labels and is joined by id. Docs without a usable id go to a trailing "Other" group.
@@ -102,59 +176,20 @@ export function buildUnassignedGroups(
   const meta = new Map<string, UnassignedProject>();
   if (labels === 'ready') for (const project of projects) if (typeof project.foreignProjectId === 'string') meta.set(project.foreignProjectId, project);
 
-  const byId = new Map<string, DesignDocSummary[]>();
-  const other: DesignDocSummary[] = [];
-  for (const doc of docs) {
-    const id = doc.foreignProjectId;
-    if (typeof id !== 'string' || id === '') {
-      other.push(doc);
-      continue;
-    }
-    const list = byId.get(id) ?? [];
-    list.push(doc);
-    byId.set(id, list);
-  }
-
-  const drafts: Draft[] = [];
-  for (const [id, members] of byId) {
-    const project = meta.get(id);
-    const named = project ? groupLabel(project, members[0]?.title) : { label: cleanPeerText(members[0]?.title) ?? UNNAMED_PROJECT, suggestedName: null };
-    drafts.push({
-      id,
-      label: named.label,
-      tag: cleanPeerText(project?.senderTag),
-      suggestedName: named.suggestedName,
-      basis: named.suggestedName ? project?.suggestion?.basis ?? null : null,
-      docs: members,
-      newest: members.reduce((max, doc) => Math.max(max, doc.updatedAt), 0)
-    });
-  }
+  const { byId, other } = bucketDocs(docs);
+  const drafts = buildDrafts(byId, meta);
 
   if (labels === 'ready') {
-    // Collisions are judged over every known label (the unfiltered project list included), so a suffix
-    // does not change with the search text, a sync reorder or the doc window.
-    const universe = new Map<string, string>();
-    for (const [id, project] of meta) universe.set(id, foldLabel(groupLabel(project).label));
-    for (const draft of drafts) universe.set(draft.id, foldLabel(draft.label));
+    const universe = new Map<string, Entry>();
     const local = new Set(localProjectNames.map(foldLabel));
-    for (const draft of drafts) if (draft.suggestedName) local.add(foldLabel(draft.suggestedName));
-    const sorted = [...universe.keys()].sort(compare);
-    const rank = (id: string, fold: string) => sorted.filter((other) => universe.get(other) === fold).indexOf(id) + 1;
-    const shared = (fold: string) => sorted.filter((id) => universe.get(id) === fold).length;
-    const collides = (draft: Draft) => local.has(universe.get(draft.id)!) || shared(universe.get(draft.id)!) > 1;
-    const colliding = drafts.filter(collides);
-    const tagged = new Map<string, number>();
-    for (const draft of colliding) {
-      if (draft.tag) {
-        const key = foldLabel(`${draft.label} (${draft.tag})`);
-        tagged.set(key, (tagged.get(key) ?? 0) + 1);
-      }
+    for (const [id, project] of meta) {
+      universe.set(id, { id, label: groupLabel(project).label, tag: cleanPeerText(project.senderTag) });
+      const suggested = cleanPeerText(project.suggestion?.name);
+      if (suggested) local.add(foldLabel(suggested));
     }
-    for (const draft of colliding) {
-      const withTag = draft.tag ? `${draft.label} (${draft.tag})` : null;
-      const unique = withTag !== null && tagged.get(foldLabel(withTag)) === 1 && !local.has(foldLabel(withTag));
-      draft.label = unique ? withTag : `${draft.label} #${rank(draft.id, universe.get(draft.id)!)}`;
-    }
+    for (const draft of drafts) universe.set(draft.id, { id: draft.id, label: draft.label, tag: draft.tag });
+    const resolved = resolveCollisions([...universe.values()], local);
+    for (const draft of drafts) draft.label = resolved.get(draft.id) ?? draft.label;
   }
 
   drafts.sort((a, b) => b.newest - a.newest || compare(a.label, b.label) || compare(a.id, b.id));

@@ -1,4 +1,5 @@
 import type { DesignDocSummary } from '../shared/contract.js';
+import { GROUP_KEY_PREFIX } from './unassigned-groups.js';
 
 export type SectionKind = 'pinned' | 'needs-me' | 'project' | 'recent';
 
@@ -122,7 +123,7 @@ export function anyOpen(keys: readonly string[], collapsedRaw: string, extraOpen
 }
 
 /** Prefix of collapse keys for peer-project subgroups of the Unassigned section. */
-export const SUBGROUP_PREFIX = 'unassigned:';
+export const SUBGROUP_PREFIX = GROUP_KEY_PREFIX;
 /** Most remembered collapse keys; the oldest are evicted first. */
 export const MAX_COLLAPSED_KEYS = 500;
 

@@ -1,6 +1,8 @@
 import type { PluginDatabase } from '@zana-ai/zcc-plugin-sdk/server';
 import { assertRegisteredProject, type ProjectLister } from './project-guard.js';
 import { DesignDocError } from './store.js';
+import { MAX_TITLE_LENGTH } from '../shared/limits.js';
+import { MAX_LABEL_CODE_POINTS, sanitizeLabel } from '../shared/label.js';
 
 /**
  * Local-only project bookkeeping, kept out of the append-only migration book and
@@ -59,27 +61,14 @@ export const MAPPED_TO_ANY = `EXISTS (SELECT 1 FROM sync_doc_references r JOIN d
 export const MAPPED_TO_PROJECT = `EXISTS (SELECT 1 FROM sync_doc_references r JOIN dd_project_aliases a
   ON a.foreign_project_id = json_extract(r.project_json, '$') WHERE r.doc_id = d.id AND a.local_project_id = ? AND ${ALIAS_LIVE})`;
 
-/** Display-safe doc title: sanitized like labels; a title that is blank after cleaning keeps its row as 'Untitled'. */
-const displayTitle = (title: string): string => cleanLabel(title) ?? 'Untitled';
+/** Display-safe doc title: sanitized like labels but kept to the title limit, not the label cap; blank after cleaning keeps its row as 'Untitled'. */
+const displayTitle = (title: string): string => sanitizeLabel(title, MAX_TITLE_LENGTH) ?? 'Untitled';
 
-/** Longest display label, in code points. */
-export const MAX_LABEL_CODE_POINTS = 80;
-const MAX_COMBINING_RUN = 3;
-/* eslint-disable no-control-regex */
-const INVISIBLE = new RegExp(
-  '[\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u061c\\u180e\\u200b-\\u200f\\u2028-\\u202e\\u2060-\\u2064\\u2066-\\u206f' +
-    '\\u2800\\u3164\\ufe00-\\ufe0f\\ufeff\\u{e0000}-\\u{e007f}\\u{e0100}-\\u{e01ef}]',
-  'gu'
-);
-/* eslint-enable no-control-regex */
-const COMBINING_RUN = new RegExp(`(\\p{M}{${MAX_COMBINING_RUN}})\\p{M}+`, 'gu');
+export { MAX_LABEL_CODE_POINTS };
 
-/** Display-safe text: control, bidirectional and invisible characters removed, combining runs and length capped, blank as null. */
+/** Display-safe peer label (sender name or tag), capped at 80 code points. See `sanitizeLabel`. */
 export function cleanLabel(value: string | null | undefined): string | null {
-  const cleaned = (value ?? '').replace(INVISIBLE, '').replace(COMBINING_RUN, '$1').trim();
-  if (!cleaned) return null;
-  const points = Array.from(cleaned);
-  return (points.length > MAX_LABEL_CODE_POINTS ? points.slice(0, MAX_LABEL_CODE_POINTS).join('').trimEnd() : cleaned) || null;
+  return sanitizeLabel(value);
 }
 
 function cleanId(value: unknown, label: string): string {
