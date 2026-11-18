@@ -47,7 +47,7 @@ import { QuickOpen } from './components/QuickOpen.js';
 import { ResumePicker } from './components/ResumePicker.js';
 import { SearchPanel } from './components/SearchPanel.js';
 import { ShortcutsHelp } from './components/ShortcutsHelp.js';
-import { AgentTerminalModal } from './components/AgentTerminalModal.js';
+import { AgentModalHost } from './components/AgentModalHost.js';
 import { ThreadModal } from './components/ThreadModal.js';
 import { SessionMoveDialog } from './components/SessionMoveDialog.js';
 import { FavoriteAgentsDrawer } from './components/FavoriteAgentsDrawer.js';
@@ -81,7 +81,6 @@ import {
   useData,
   useUi,
   usePersonas,
-  useAgentStatus,
   useUnreadInboxCount,
   useInbox,
   useInboxRead,
@@ -154,9 +153,9 @@ import {
   TOOLS_PLUGINS_ROUTE_PATH,
   TOOLS_ROUTE_PATH,
   TOOLS_SKILLS_ROUTE_PATH,
-  getAgentSessionRoutePath,
   getProjectSettingsRoutePath,
-  getThreadRoutePath
+  getThreadRoutePath,
+  sessionIdFromPath
 } from './lib/route-paths.js';
 import { inspectAgentSession, inspectRouteProjectId, threadOpenListener } from './lib/inspect-session.js';
 import { resolveFocusedProject } from './lib/focusedProject.js';
@@ -503,8 +502,9 @@ function AppShell() {
       const scoped = getScopedProjectId();
       if (scoped && owningProjectId !== scoped) return;
       const isActive =
-        ui.selectedProjectId === owningProjectId &&
-        ui.selectedTabId[owningProjectId] === id;
+        (ui.selectedProjectId === owningProjectId &&
+          ui.selectedTabId[owningProjectId] === id) ||
+        sessionIdFromPath(window.location.pathname) === id;
       if (!isActive) ui.markUnread(id);
       // Coalesce bursts of terminal output into a single git status refresh
       // so commits/pulls/branch swaps inside a tab show up promptly.
@@ -1027,46 +1027,6 @@ function ShortcutsHelpHost() {
   const close = () => useUi.getState().setShortcutsOpen(false);
   if (!open) return null;
   return <ShortcutsHelp onClose={close} ctrlVPasteEnabled={ctrlVPasteEnabled} />;
-}
-
-function AgentModalHost() {
-  const classicSessionViewEnabled = useData((s) => s.classicSessionViewEnabled);
-  const fullPageView = useCompactLayout() || classicSessionViewEnabled;
-  const agentModal = useUi((s) => s.agentModal);
-  const projects = useData((s) => s.projects);
-  const terminals = useData((s) => s.terminals);
-  const navigate = useNavigate();
-  const state = useAgentStatus((s) => (agentModal ? s.byId[agentModal.sessionId] : undefined));
-  const close = () => useUi.getState().closeAgentModal();
-  useEffect(() => {
-    if (!fullPageView || !agentModal) return;
-    navigate(
-      getAgentSessionRoutePath(
-        agentModal.sessionId,
-        inspectRouteProjectId(agentModal.projectId)
-      )
-    );
-    useUi.getState().closeAgentModal();
-  }, [fullPageView, agentModal, navigate]);
-  if (fullPageView || !agentModal) return null;
-  const session = (terminals[agentModal.projectId] ?? []).find(
-    (t) => t.id === agentModal.sessionId
-  );
-  // The session can vanish while the modal is open (process terminated and the
-  // tombstone dismissed). Drop the modal rather than render an empty shell.
-  if (!session) return null;
-  const project = projects.find((p) => p.id === agentModal.projectId);
-  return (
-    <AgentTerminalModal
-      session={session}
-      projectId={agentModal.projectId}
-      projectName={project?.name ?? 'Unknown'}
-      projectColor={project?.color}
-      projectRemote={!!project?.remote}
-      state={state ?? 'unknown'}
-      onClose={close}
-    />
-  );
 }
 
 function ThreadModalHost() {

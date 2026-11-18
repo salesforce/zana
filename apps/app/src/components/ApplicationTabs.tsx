@@ -8,7 +8,7 @@ import {
   TriangleAlert
 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useData, useUi } from '../store.js';
+import { useData, useUi, useAgentStatus } from '../store.js';
 import {
   onThreadArchived,
   useThreads,
@@ -16,10 +16,12 @@ import {
 } from '../thread-store.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import {
+  getAgentSessionRoutePath,
   getAgentsRoutePath,
   getNewThreadRoutePath,
   getProjectRoutePath,
-  getThreadRoutePath
+  getThreadRoutePath,
+  sessionIdFromPath
 } from '../lib/route-paths.js';
 import { getScopedProjectId } from '../lib/windowScope.js';
 import {
@@ -30,6 +32,8 @@ import {
   type ClosedApplicationTab,
   type PluginApplicationTab
 } from '../lib/application-tabs.js';
+import { agentTabStatus, isListedAgent } from '../lib/agent-tab-status.js';
+import { resumingAgents } from '../lib/agent-tab-resume.js';
 import { pluginTabPath } from '../lib/plugin-tab-route.js';
 import { usePluginAppModules } from '../plugins/plugin-app-loader.js';
 import {
@@ -67,6 +71,10 @@ export function ApplicationTabs({
   const threads = useThreads((s) => s.threads);
   const projects = useData((s) => s.projects);
   const projectsLoaded = useData((s) => s.configLoaded);
+  const terminals = useData((s) => s.terminals);
+  const terminalsLoaded = useData((s) => s.terminalsLoaded);
+  const agentStates = useAgentStatus((s) => s.byId);
+  const unreadAgents = useUi((s) => s.unread);
   const setups = useSetupPages((s) => s.pages);
   const open = useApplicationTabs((s) => s.open);
   const closed = useApplicationTabs((s) => s.closed);
@@ -75,6 +83,11 @@ export function ApplicationTabs({
   usePluginAppModules((s) => s.reconciled && s.modules);
   usePinnedItemOverrides((s) => s.byId);
   const { resolve } = usePluginPinResolver();
+  // Last-seen host per session: a vanished host-owned session may only be unreachable.
+  const hostOf = useRef(new Map<string, string>());
+  for (const list of Object.values(terminals))
+    for (const session of list)
+      if (session.hostId) hostOf.current.set(session.id, session.hostId);
   const currentPath = useRef(location.pathname);
   currentPath.current = location.pathname;
   const fallback = scope ? getProjectRoutePath(scope) : getAgentsRoutePath();
@@ -117,6 +130,49 @@ export function ApplicationTabs({
     [route.threadId, navigate, fallback]
   );
 
+  useEffect(() => {
+    if (!includeThreads) return;
+    const sessionId = sessionIdFromPath(location.pathname);
+    if (!sessionId) return;
+    for (const [projectId, list] of Object.entries(terminals)) {
+      const session = list.find((row) => row.id === sessionId);
+      if (!session || !isListedAgent(session)) continue;
+      if (scope && projectId !== scope) return;
+      useApplicationTabs.getState().openTab({
+        kind: 'agent',
+        sessionId,
+        projectId,
+        projectScoped: !!route.focusedProjectId || !!scope
+      });
+      return;
+    }
+  }, [includeThreads, location.pathname, terminals, scope, route.focusedProjectId]);
+  // Drop tabs whose session is gone from a project whose list was read successfully.
+  useEffect(() => {
+    if (!includeThreads) return;
+    for (const tab of open) {
+      if (tab.kind !== 'agent' || !terminalsLoaded[tab.projectId]) continue;
+      if (scope && tab.projectId !== scope) continue;
+      if (resumingAgents.has(tab.sessionId)) continue;
+      const session = (terminals[tab.projectId] ?? []).find(
+        (row) => row.id === tab.sessionId
+      );
+      if (isListedAgent(session)) continue;
+      if (session?.hostId || hostOf.current.get(tab.sessionId)) continue; // host loss is unknown, not gone
+      useApplicationTabs.getState().closeTab(applicationTabId(tab), false);
+      if (sessionIdFromPath(currentPath.current) === tab.sessionId)
+        void navigate(fallback);
+    }
+  }, [includeThreads, open, terminals, terminalsLoaded, scope, navigate, fallback]);
+
+  const validAgent = (tab: Extract<ApplicationTab, { kind: 'agent' }>) => {
+    if (!projects.some((project) => project.id === tab.projectId)) return null;
+    if (scope && tab.projectId !== scope) return null;
+    const session = (terminals[tab.projectId] ?? []).find(
+      (row) => row.id === tab.sessionId
+    );
+    return session && isListedAgent(session) ? session : null;
+  };
   const validThread = (tab: Extract<ApplicationTab, { kind: 'thread' }>) => {
     const thread = threads.find((row) => row.id === tab.threadId);
     return thread &&
@@ -136,9 +192,14 @@ export function ApplicationTabs({
           tab.threadId,
           scope ?? (tab.projectScoped ? tab.projectId : null)
         )
-      : tab.kind === 'setup'
-        ? setupPath(tab.setupId)
-        : (pluginTabPath(tab) ?? currentPath.current);
+      : tab.kind === 'agent'
+        ? getAgentSessionRoutePath(
+            tab.sessionId,
+            scope ?? (tab.projectScoped ? tab.projectId : null)
+          )
+        : tab.kind === 'setup'
+          ? setupPath(tab.setupId)
+          : (pluginTabPath(tab) ?? currentPath.current);
   // Opening a pinned item happens under the project it was pinned in.
   const activate = (tab: ApplicationTab) => {
     if (tab.kind === 'plugin') {
@@ -176,6 +237,23 @@ export function ApplicationTabs({
       )
         void navigate(fallback);
     }, failed);
+  };
+  const closeAgent = (session: { id: string; title: string; projectId: string }) => {
+    if (
+      !window.confirm(
+        `Close “${session.title || 'Untitled agent'}”? This ends the running agent.`
+      )
+    )
+      return;
+    const store = useData.getState();
+    void store.closeTerminal(session.id, session.projectId).then(
+      () => {
+        useApplicationTabs.getState().closeTab(`agent:${session.id}`, false);
+        if (sessionIdFromPath(currentPath.current) === session.id)
+          void navigate(fallback);
+      },
+      () => useUi.getState().pushToast('Could not close agent', 'error')
+    );
   };
   const views = open.flatMap((tab): ApplicationTabView[] => {
     const id = applicationTabId(tab);
@@ -232,6 +310,74 @@ export function ApplicationTabs({
       ];
     }
     if (!includeThreads) return [];
+    if (tab.kind === 'agent') {
+      const session = validAgent(tab);
+      if (!session) return [];
+      const project = projects.find((project) => project.id === tab.projectId)!;
+      const active = sessionIdFromPath(location.pathname) === tab.sessionId;
+      const status = agentTabStatus(session, agentStates[session.id]);
+      const StatusIcon =
+        status === 'Error'
+          ? TriangleAlert
+          : status === 'Needs you'
+            ? MessageSquareText
+            : status === 'Working'
+              ? ZanaSpinner
+              : null;
+      const unread = !active && !!unreadAgents[session.id];
+      const title = session.title || 'Untitled agent';
+      return [
+        {
+          id,
+          kind: 'agent',
+          title,
+          context: project.name,
+          label: `${title} — ${project.name}${unread ? ' — Unread' : ''}`,
+          tooltip: `${title}\n${project.name} · ${status}${unread ? ' · Unread' : ''}`,
+          active,
+          busy: false,
+          unread,
+          closeHint: 'Close tab (keeps agent running)',
+          icon: <ProjectDot project={project} />,
+          status: StatusIcon && (
+            <span
+              className={`titlebar-thread-status status-${status.toLowerCase().replace(' ', '-')}`}
+              role="img"
+              aria-label={status}
+            >
+              <StatusIcon size={12} aria-hidden="true" />
+            </span>
+          ),
+          actions: [
+            {
+              label: 'Copy agent link',
+              run: () => {
+                void copyTextOrFail(
+                  new URL(path(tab), window.location.origin).href
+                ).then(
+                  () => useUi.getState().pushToast('Agent link copied'),
+                  () =>
+                    useUi
+                      .getState()
+                      .pushToast('Could not copy agent link', 'error')
+                );
+              }
+            },
+            {
+              label: 'Open project',
+              run: () => void navigate(getProjectRoutePath(project.id))
+            }
+          ],
+          footerActions: [
+            {
+              label: 'Close agent',
+              separatorBefore: true,
+              run: () => closeAgent(session)
+            }
+          ]
+        }
+      ];
+    }
     if (tab.kind !== 'thread') return [];
     const thread = validThread(tab);
     if (!thread) return [];
@@ -317,7 +463,8 @@ export function ApplicationTabs({
     .find((tab) =>
       tab.kind === 'plugin'
         ? validPlugin(tab)
-        : includeThreads && !!validThread(tab)
+        : includeThreads &&
+          (tab.kind === 'agent' ? !!validAgent(tab) : !!validThread(tab))
     );
   const activePluginTab = open.find(
     (tab): tab is PluginApplicationTab =>

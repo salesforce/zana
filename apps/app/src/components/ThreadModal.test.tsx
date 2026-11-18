@@ -54,6 +54,7 @@ import { readSourceText } from '../__tests__/helpers/source-text.js';
 const modalSource = readSourceText(new URL('./ThreadModal.tsx', import.meta.url));
 const board = readSourceText(new URL('../views/agents/AgentsBoard.tsx', import.meta.url));
 const app = readSourceText(new URL('../App.tsx', import.meta.url));
+const agentHost = readSourceText(new URL('./AgentModalHost.tsx', import.meta.url));
 const store = readSourceText(new URL('../store.ts', import.meta.url));
 const css = readSourceText(fileURLToPath(new URL('../styles/global.css', import.meta.url)));
 
@@ -97,10 +98,11 @@ describe('ThreadModal', () => {
     expect(app).toContain('<ThreadModalHost />');
     expect(app).toContain('<ThreadModal threadId={threadModal.threadId} onClose={close} />');
     expect(app).toContain('if (fullPageView || !threadModal) return null');
-    expect(app).toContain('if (fullPageView || !agentModal) return null');
-    expect(app).toContain('inspectRouteProjectId(agentModal.projectId)');
+    expect(agentHost).toContain('if (fullPageView || !agentModal) return null');
+    expect(agentHost).toContain('inspectRouteProjectId(agentModal.projectId)');
     expect(app).toContain('inspectRouteProjectId(null)');
-    expect(app).not.toContain('getAgentSessionRoutePath(agentModal.sessionId, agentModal.projectId)');
+    expect(agentHost).not.toContain('getAgentSessionRoutePath(agentModal.sessionId, agentModal.projectId)');
+    expect(app).toContain('<AgentModalHost />');
     expect(store).toContain('openThreadModal: (threadId) => set({ threadModal: { threadId }, agentModal: null })');
     expect(store).toContain('set({ agentModal: { sessionId, projectId }, threadModal: null })');
   });

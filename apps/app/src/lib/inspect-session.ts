@@ -26,15 +26,16 @@ export function inspectRouteProjectId(projectId: string | null | undefined): str
 }
 
 /**
- * Open a CLI agent: first-class session page when Classic session view is on;
- * inspector overlay otherwise.
+ * Open a CLI agent: first-class session page when Classic session view is on or
+ * desktop tabs are available; inspector overlay otherwise.
  */
 export function inspectAgentSession(
   sessionId: string,
   projectId: string,
   navigate: InspectNavigate
 ): void {
-  if (useData.getState().classicSessionViewEnabled) {
+  const { classicSessionViewEnabled, threadTabsEnabled } = useData.getState();
+  if (classicSessionViewEnabled || (threadTabsEnabled && !isCompactViewport())) {
     navigate(getAgentSessionRoutePath(sessionId, inspectRouteProjectId(projectId)));
     return;
   }
