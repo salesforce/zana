@@ -27,7 +27,8 @@ const { uiState, dataState } = vi.hoisted(() => ({
     focusedProjectId: null as string | null,
     selectedTabId: {} as Record<string, string>,
     setResumeOpen: vi.fn(),
-    setFindOpen: vi.fn()
+    setFindOpen: vi.fn(),
+    cycleSidebarMode: vi.fn()
   },
   dataState: { projects: [], terminals: {} as Record<string, unknown[]> }
 }));
@@ -368,5 +369,38 @@ describe('shortcuts: ⌘⇧W archives an agent tab and deletes a plain shell', (
     kb.press('W', { meta: true, shift: true });
     expect(confirmMock).not.toHaveBeenCalled();
     expect(closeTerminal).toHaveBeenCalledWith('t1', 'p1');
+  });
+});
+
+describe('shortcuts: Mod+Shift+B toggles the navigation rail', () => {
+  let kb: KeyboardHarness;
+  let uninstall: () => void;
+  beforeEach(() => {
+    kb = installKeyboardHarness();
+    uninstall = installShortcuts();
+    uiState.cycleSidebarMode.mockClear();
+  });
+  afterEach(() => {
+    uninstall();
+    kb.teardown();
+    uiState.selectedProjectId = 'p1';
+  });
+
+  it('toggles with a project selected and swallows the chord', () => {
+    const { preventDefault } = kb.press('b', { meta: true, shift: true });
+    expect(uiState.cycleSidebarMode).toHaveBeenCalledTimes(1);
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it('also toggles when no project is selected', () => {
+    uiState.selectedProjectId = undefined;
+    kb.press('b', { meta: true, shift: true });
+    expect(uiState.cycleSidebarMode).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves plain Mod+B to the explorer toggle', () => {
+    uiState.selectedProjectId = undefined; // explorer toggle returns early without a project
+    kb.press('b', { meta: true });
+    expect(uiState.cycleSidebarMode).not.toHaveBeenCalled();
   });
 });

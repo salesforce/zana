@@ -41,6 +41,13 @@ export function installShortcuts(): () => void {
     const activeTabId = projectId ? ui.selectedTabId[projectId] : undefined;
     const activeIdx = activeTabId ? tabs.findIndex((t) => t.id === activeTabId) : -1;
 
+    // cmd+shift+b — sidebar expanded <-> rail. Works without a selected project.
+    if (shortcutForCommand('sidebar.rail.toggle', e)) {
+      e.preventDefault();
+      ui.cycleSidebarMode();
+      if (typeof document !== 'undefined') document.querySelector<HTMLElement>('.sidebar-expand-control')?.focus();
+      return;
+    }
     // cmd+b — toggle terminals/explorer mode (flips between the two
     // text-editing modes). Remappable in Settings → Shortcuts.
     if (shortcutForCommand('sidebar.toggle', e)) {

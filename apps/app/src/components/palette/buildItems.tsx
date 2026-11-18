@@ -10,7 +10,7 @@ import {
   Folder, TerminalSquare, Plus, Code2, FolderOpen, FileSearch, Sparkles, Play,
   Zap, Keyboard, History, Search, Inbox, RotateCcw, Trash2, Copy, Pin, PinOff,
   BookOpen, Clock, LayoutGrid, RotateCw, Undo2, Puzzle, Plug, Drama, Bot, AppWindow, Settings, FolderCog,
-  Columns2
+  Columns2, PanelLeft
 } from 'lucide-react';
 import { NAMED_PANE_COMMANDS, runPaneCommand } from '../../lib/split-layout/paneCommands.js';
 import { shortcutLabelForCommand } from '../../lib/keyboard-shortcut-settings.js';
@@ -230,6 +230,45 @@ export function buildPaletteItems(ctx: PaletteBuildContext): PaletteItem[] {
       source: 'core',
       run: () => {
         useUi.getState().exitProjectFocus('/settings');
+        onClose();
+      }
+    },
+    {
+      key: 'action:sidebar-expanded',
+      icon: <PanelLeft size={14} />,
+      label: 'Sidebar: Expanded',
+      hint: undefined,
+      keywords: ['sidebar', 'navigation', 'rail', 'collapse', 'expand', 'hide'],
+      category: 'Actions',
+      source: 'core',
+      run: () => {
+        useUi.getState().setSidebarMode('expanded');
+        onClose();
+      }
+    },
+    {
+      key: 'action:sidebar-rail',
+      icon: <PanelLeft size={14} />,
+      label: 'Sidebar: Rail',
+      hint: shortcutLabelForCommand('sidebar.rail.toggle') ?? undefined,
+      keywords: ['sidebar', 'navigation', 'rail', 'collapse', 'expand', 'hide'],
+      category: 'Actions',
+      source: 'core',
+      run: () => {
+        useUi.getState().setSidebarMode('rail');
+        onClose();
+      }
+    },
+    {
+      key: 'action:sidebar-hidden',
+      icon: <PanelLeft size={14} />,
+      label: 'Sidebar: Hidden',
+      hint: undefined,
+      keywords: ['sidebar', 'navigation', 'rail', 'collapse', 'expand', 'hide'],
+      category: 'Actions',
+      source: 'core',
+      run: () => {
+        useUi.getState().setSidebarMode('hidden');
         onClose();
       }
     },

@@ -93,7 +93,8 @@ import {
   useFavoriteAgents,
   mergeFavoritesFromMain,
   ptyFavoriteKeys,
-  type PendingLaunch
+  type PendingLaunch,
+  type SidebarMode
 } from './store.js';
 import { useFavoriteCount } from './hooks/useAgentCards.js';
 import { useCompactLayout } from './hooks/useCompactLayout.js';
@@ -263,11 +264,11 @@ function AppShell() {
   navigateRef.current = navigate;
   const splitWorkspaceShowing = isSplitWorkspacePath(location.pathname);
   const nav = route.nav;
-  const desktopSidebarCollapsed = useUi((s) => s.sidebarCollapsed);
+  const sidebarMode = useUi((s) => s.sidebarMode);
   const mobileNavigation = useMobileNavigation();
   const sidebarCollapsed = mobileNavigation.isCompact
     ? !mobileNavigation.drawerOpen
-    : desktopSidebarCollapsed;
+    : sidebarMode === 'hidden';
   const storeFocusedProjectId = useUi((s) => s.focusedProjectId);
   // URL project wins; the store keeps sticky focus for Inbox / Next Steps /
   // Settings so the project rail stays while those destinations have no
@@ -779,9 +780,18 @@ function AppShell() {
     ? (nav === 'extensions' ? (({ skills: 'Skills', mcp: 'MCP servers', marketplace: 'Browse plugins' } as Record<string, string>)[route.extensionsTab ?? ''] ?? 'Plugins') : mobileTitles[nav] ?? modules.find((module) => module.id === nav)?.title ?? desktopTitle)
     : desktopTitle;
 
+  // Settings / Plugins list text-only categories: show them expanded while rail
+  // is selected, without writing state. Compact layout never gets rail.
+  const effectiveMode: SidebarMode = mobileNavigation.isCompact
+    ? 'expanded'
+    : sidebarMode === 'rail' && (shellLayout.rail === 'settings' || shellLayout.rail === 'extensions')
+      ? 'expanded'
+      : sidebarMode;
+  const railVariant: 'expanded' | 'rail' = effectiveMode === 'rail' ? 'rail' : 'expanded';
+
   return (
     <div
-      className={`app-shell nav-${nav} shell-rail-${shellLayout.rail} ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''} scoped-no-list ${
+      className={`app-shell nav-${nav} shell-rail-${shellLayout.rail} ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''} ${effectiveMode === 'rail' ? 'sidebar-is-rail' : ''} scoped-no-list ${
         updateBannerVisible ? 'has-update-banner' : ''
       }${!mobileNavigation.isCompact ? ' shell-inset' : ''}`}
       data-mobile={mobileNavigation.isCompact}
@@ -875,18 +885,19 @@ function AppShell() {
         projectId={scopedProject?.id}
       >
       {sidebarCollapsed ? null : scopedProject ? (
-        <ProjectScopedNav project={scopedProject} variant="window" />
+        <ProjectScopedNav project={scopedProject} variant="window" railVariant={railVariant} />
       ) : focusedProject && keepsProjectFocusRail(nav, focusedProjectId) ? (
         <ProjectScopedNav
           project={focusedProject}
           variant="focus"
+          railVariant={railVariant}
         />
       ) : shellLayout.rail === 'settings' ? (
         <SettingsPane />
       ) : shellLayout.rail === 'extensions' ? (
         <ExtensionsPane />
       ) : (
-        <Sidebar />
+        <Sidebar railVariant={railVariant} />
       )}
       </MobileAgentNavigation>
       </MobileNavDrawer>
@@ -914,7 +925,8 @@ function AppShell() {
         />
       )}
       <SidebarTriggerOverlay
-        collapsed={sidebarCollapsed}
+        collapsed={mobileNavigation.isCompact ? sidebarCollapsed : undefined}
+        mode={sidebarMode}
         onToggle={mobileNavigation.isCompact
           ? () => mobileNavigation.setDrawerOpen(!mobileNavigation.drawerOpen)
           : undefined}

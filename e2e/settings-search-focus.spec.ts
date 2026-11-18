@@ -94,6 +94,9 @@ test('re-mounting the rail while a Terminal field has focus leaves focus in that
   // and re-mounts the Settings rail (a pointer click would focus the button).
   const trigger = win.getByTestId('sidebar-trigger-overlay');
   await trigger.getByRole('button', { name: 'Collapse sidebar' }).evaluate((b: HTMLElement) => b.click());
+  // Settings shows the rail expanded while rail is selected (temporary override).
+  await expect(search(win)).toBeVisible();
+  await trigger.getByRole('button', { name: 'Hide sidebar' }).evaluate((b: HTMLElement) => b.click());
   await expect(search(win)).toHaveCount(0);
   await trigger.getByRole('button', { name: 'Expand sidebar' }).evaluate((b: HTMLElement) => b.click());
   await expect(search(win)).toBeVisible();

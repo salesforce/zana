@@ -23,8 +23,11 @@ test('the shell keeps its sidebar trigger and history controls in Electron title
     'true'
   );
   await sidebarTrigger.getByRole('button', { name: 'Collapse sidebar' }).click();
+  // The trigger now collapses to the icon rail; hiding is a deliberate second step.
+  await expect(window.locator('.app-shell')).toHaveClass(/sidebar-is-rail/);
+  await sidebarTrigger.getByRole('button', { name: 'Hide sidebar' }).click();
 
-  // Collapse removes the rail entirely, but the root trigger stays at its fixed
+  // Hide removes the rail entirely, but the root trigger stays at its fixed
   // top-left position rather than being reparented into page content.
   await expect(window.locator('aside.sidebar')).toHaveCount(0);
   await expect(historyControls).toBeVisible();
@@ -39,8 +42,10 @@ test('the shell keeps its sidebar trigger and history controls in Electron title
   expect(triggerAfterCollapse?.x).toBe(triggerBeforeCollapse?.x);
   expect(triggerAfterCollapse?.y).toBe(triggerBeforeCollapse?.y);
 
+  // The cycle continues from hidden back to expanded.
   await expandSidebar.click();
   await expect(sidebar).toBeVisible();
+  await expect(window.locator('.app-shell')).not.toHaveClass(/sidebar-is-rail/);
   await expect(sidebarTrigger.getByRole('button', { name: 'Collapse sidebar' })).toHaveAttribute(
     'aria-expanded',
     'true'
