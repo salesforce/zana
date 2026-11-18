@@ -207,6 +207,21 @@ describe('header rename entry points', () => {
     fireEvent.change(titleInput(), { target: { value: 'Team template' } });
     fireEvent.keyDown(titleInput(), { key: 'Enter' });
     await waitFor(() => expect(harness.rpcCalls.some((call) => call.method === 'templateUpdateMeta')).toBe(true));
+    const call = harness.rpcCalls.find((entry) => entry.method === 'templateUpdateMeta')!;
+    expect(call.input).toEqual({ template: template.id, label: 'Team template' });
+    expect(harness.toasts).toEqual([]);
+    expect(harness.store.get(template.id, 'template').title).toBe('Team template');
+  });
+
+  it('renames a template on blur without a rejected-metadata error', async () => {
+    const harness = createHarness();
+    const template = harness.store.templateNew({ label: 'New template' }, UI_USER);
+    renderHeader(harness, template as never, { template: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+    fireEvent.change(titleInput(), { target: { value: 'UXF - HLD' } });
+    fireEvent.blur(titleInput());
+    await waitFor(() => expect(harness.store.get(template.id, 'template').title).toBe('UXF - HLD'));
+    expect(harness.toasts).toEqual([]);
   });
 });
 

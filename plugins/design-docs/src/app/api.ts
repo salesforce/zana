@@ -109,6 +109,18 @@ export interface CreateArgs {
   projectId?: string | null;
 }
 
+/**
+ * Templates store title/summary as label/description and accept only those plus entryPath
+ * (the server rejects any other key, including expectedHead), so translate the doc-shaped patch.
+ */
+export function templateMetaPatch(patch: UpdateArgs): { label?: string; description?: string; entryPath?: string } {
+  return {
+    ...(patch.title !== undefined ? { label: patch.title } : {}),
+    ...(patch.summary !== undefined ? { description: patch.summary } : {}),
+    ...(patch.entryPath !== undefined ? { entryPath: patch.entryPath } : {})
+  };
+}
+
 export interface UpdateArgs {
   expectedHead?: string | null;
   title?: string;
@@ -253,7 +265,7 @@ export function createApi(call: Call): DesignDocsApi {
     addFromTemplate: (docId, templateKey, renameOnConflict) => typed('addFromTemplate', { docId, templateKey, ...(renameOnConflict ? { renameOnConflict: true } : {}) }),
     templateNew: (args) => typed('templateNew', args),
     templateDuplicate: (template) => typed('templateDuplicate', { template }),
-    templateUpdateMeta: (template, patch) => typed('templateUpdateMeta', { template, ...patch }),
+    templateUpdateMeta: (template, patch) => typed('templateUpdateMeta', { template, ...templateMetaPatch(patch) }),
     templateDelete: (template) => done(typed('templateDelete', { template })),
     templatesRestoreBuiltins: () => typed('templatesRestoreBuiltins'),
     templatesExport: (keys) => typed('templatesExport', keys ? { keys } : undefined),
