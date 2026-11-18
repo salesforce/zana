@@ -4,7 +4,7 @@ import { validateSquadExecutionTarget, type Project, type SquadExecutionTargetSe
 import { AUTONOMOUS_DEFAULTS } from '@zana-ai/zcc-server/services/agents/autonomous-run-supervisor';
 import type { ExpandedTeamSlot } from '@zana-ai/zcc-server/services/agents/team-slot-expansion';
 import type { ExecutionRequestV1, SquadExecutionService } from '@zana-ai/zcc-server/services/execution/service';
-import { ExecutionSourceError, type createExecutionSourceRegistry, type ExecutionSourcePathDescriptor } from '@zana-ai/zcc-server/services/execution/source-registry';
+import { ExecutionSourceError, snapshotKeyForLaunch, type createExecutionSourceRegistry, type ExecutionSourcePathDescriptor } from '@zana-ai/zcc-server/services/execution/source-registry';
 import { resolveSourcePolicy, type SourcePolicy } from '@zana-ai/zcc-server/services/execution/source-policy';
 import type { ExecutionRecord, ExecutionReportTarget } from '@zana-ai/zcc-server/services/execution/store';
 import { squadGoalTooLongMessage, squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
@@ -142,7 +142,7 @@ async function snapshotWindowSources(
   const capabilityIds = [...new Set([...args.sourceCapabilityIds, ...goalSourceCapabilities.map(({ id }) => id)])];
   if (!capabilityIds.length) return undefined;
   return registry.resolve({
-    windowId, projectId, capabilityIds, snapshotKey: args.launchRequestId.replace(/[^a-zA-Z0-9:_-]/g, '_')
+    windowId, projectId, capabilityIds, snapshotKey: snapshotKeyForLaunch(args.launchRequestId)
   });
 }
 
@@ -177,7 +177,7 @@ async function snapshotSessionSources(
     : undefined;
   const capabilityIds = [...pathViews.map(({ id }) => id), ...(attached?.views.map(({ id }) => id) ?? [])];
   if (!capabilityIds.length) return {};
-  const sourceBundle = await registry.resolve({ binding, projectId, capabilityIds, snapshotKey: args.launchRequestId.replace(/[^a-zA-Z0-9:_-]/g, '_') });
+  const sourceBundle = await registry.resolve({ binding, projectId, capabilityIds, snapshotKey: snapshotKeyForLaunch(args.launchRequestId) });
   return { sourceBundle, ...(attached ? { attachmentMapping: attached.mapping } : {}) };
 }
 
