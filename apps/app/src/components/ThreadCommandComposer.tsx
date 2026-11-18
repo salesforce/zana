@@ -885,7 +885,7 @@ function ThreadComposerContent({
       }
       aria-busy={busy}
       data-testid="thread-command-send"
-      disabled={busy || (!terminalIntent && (sendBlocked || hostSendBlocked || providerCliBlocked || followUpSubmitBlocked || Boolean(options.selectionError) || !canSend))}
+      disabled={busy || (!terminalIntent && (sendBlocked || hostSendBlocked || providerCliBlocked || followUpSubmitBlocked || Boolean(options.selectionError) || Boolean(permissionSelectionError) || !canSend))}
       onMouseDown={(event) => event.preventDefault()}
       onClick={() => void submit()}
     >
@@ -897,7 +897,7 @@ function ThreadComposerContent({
     </ComposerIconButton>
   );
 
-  const permissionPicker = permissionOptions.length > 1 ? (
+  const permissionPicker = permissionOptions.length > 1 || (permissionOptions.length > 0 && permissionSelectionError) ? (
     <PopoverPicklist
       value={permissionMode}
       options={permissionOptions.map((row) => ({

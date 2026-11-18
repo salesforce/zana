@@ -145,6 +145,7 @@ export function SettingsView() {
       const next = await product.config.set(patch);
       setConfig(next);
       if ('defaultThreadProviderId' in patch) useData.setState({ defaultThreadProviderId: next.defaultThreadProviderId ?? null });
+      if ('defaultThreadPermissionMode' in patch) useData.setState({ defaultThreadPermissionMode: next.defaultThreadPermissionMode ?? null });
       if (typeof patch.fontSize === 'number') useData.getState().setFontSize(patch.fontSize);
       if (typeof patch.terminalTheme === 'string') {
         useData.getState().setTerminalTheme(patch.terminalTheme);
@@ -299,7 +300,7 @@ export function SettingsView() {
         ) : tab === 'composer' ? (
           <ComposerSettingsView
             config={config}
-            onUpdate={update}
+            onUpdate={patch => update(patch, { throwOnError: 'defaultThreadPermissionMode' in patch })}
           />
         ) : tab === 'keyboard' ? (
           <KeyboardSettingsSection />

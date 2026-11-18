@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, act } from '@testing-library/react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { COMPOSER_LAUNCH_SURFACES_REV, type AppConfig } from '@zana-ai/zcc-domain/product';
 import { ComposerSettingsView } from './ComposerSettingsView.js';
@@ -24,22 +24,37 @@ function switchButton(html: string, label: string): string {
 }
 
 describe('ComposerSettingsView', () => {
-  it('defaults Full access off and persists the opt-in across remounts', () => {
-    const props = { config, onUpdate: vi.fn().mockResolvedValue(undefined) };
-    const { unmount } = render(<ComposerSettingsView {...props} />);
-    const toggle = screen.getByRole('switch', { name: 'Full access by default' });
-    expect(toggle.getAttribute('aria-checked')).toBe('false');
-    expect(screen.getByText(/Off starts in Approve for me when available, otherwise Accept Edits/)).toBeTruthy();
-    fireEvent.click(toggle);
-    expect(toggle.getAttribute('aria-checked')).toBe('true');
+  it('preserves upgrade behavior without importing local Full globally', () => {
+    localStorage.setItem(FULL_ACCESS_BY_DEFAULT_KEY, '1');
+    const onUpdate = vi.fn();
+    render(<ComposerSettingsView config={config} onUpdate={onUpdate} />);
+    expect(screen.getByRole('button', { name: 'Default permissions' }).textContent).toContain('Keep existing defaults');
+    expect(onUpdate).not.toHaveBeenCalled();
     expect(localStorage.getItem(FULL_ACCESS_BY_DEFAULT_KEY)).toBe('1');
-    unmount();
-    render(<ComposerSettingsView {...props} />);
-    const restored = screen.getByRole('switch', { name: 'Full access by default' });
-    expect(restored.getAttribute('aria-checked')).toBe('true');
-    fireEvent.click(restored);
-    expect(restored.getAttribute('aria-checked')).toBe('false');
-    expect(localStorage.getItem(FULL_ACCESS_BY_DEFAULT_KEY)).toBe('0');
+  });
+
+  it.each([
+    ['Accept Edits', 'accept-edits'], ['Approve for me', 'auto'], ['Full Access', 'full'], ['Keep existing defaults', null]
+  ] as const)('saves %s to shared configuration', async (label, value) => {
+    const onUpdate = vi.fn().mockResolvedValue(undefined);
+    render(<ComposerSettingsView config={{ ...config, defaultThreadPermissionMode: 'auto' }} onUpdate={onUpdate} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Default permissions' }));
+    fireEvent.click(screen.getByRole('option', { name: new RegExp(label) }));
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledWith({ defaultThreadPermissionMode: value }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Default permissions' }).hasAttribute('disabled')).toBe(false));
+  });
+
+  it('disables duplicate saves and reports failure while keeping the persisted choice', async () => {
+    const pending = Promise.withResolvers<void>();
+    const onUpdate = vi.fn(() => pending.promise);
+    render(<ComposerSettingsView config={{ ...config, defaultThreadPermissionMode: 'accept-edits' }} onUpdate={onUpdate} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Default permissions' }));
+    fireEvent.click(screen.getByRole('option', { name: /Full Access/ }));
+    expect(screen.getByRole('button', { name: 'Default permissions' }).hasAttribute('disabled')).toBe(true);
+    await act(async () => pending.reject(new Error('offline')));
+    expect(screen.getByRole('alert').textContent).toContain('Could not save');
+    expect(screen.getByRole('button', { name: 'Default permissions' }).textContent).toContain('Accept Edits');
+    expect(onUpdate).toHaveBeenCalledOnce();
   });
 
   it('lists launch surfaces with CLI Agent first and one Team toggle', () => {

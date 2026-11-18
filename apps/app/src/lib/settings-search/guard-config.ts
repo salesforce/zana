@@ -20,7 +20,7 @@ export const SETTINGS_SOURCE_DIRS = ['views/settings', 'components/settings'] as
  */
 export const SECTION_SOURCES: Record<SearchSection, readonly string[]> = {
   global: ['views/settings/GlobalView.tsx', 'views/settings/CliSkillsSettings.tsx', 'components/settings/DoctorSection.tsx', 'views/settings/TrustedPreviewFoldersSection.tsx', 'components/settings/NamedChecksSettings.tsx'],
-  composer: ['views/settings/ComposerSettingsView.tsx'],
+  composer: ['views/settings/ComposerSettingsView.tsx', 'views/settings/DefaultThreadPermissionsField.tsx'],
   keyboard: ['views/settings/KeyboardSettingsSection.tsx'],
   inbox: ['views/settings/InboxSettingsView.tsx'],
   browser: ['components/settings/BrowserSettingsSection.tsx', 'components/settings/BrowserImportDialog.tsx'],
