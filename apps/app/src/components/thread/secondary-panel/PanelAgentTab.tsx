@@ -53,6 +53,7 @@ export function PanelAgentTab({
   draftReferences,
   projectId,
   resourceLabel,
+  draftSessionKey,
   pluginPanel,
   capturePageContext,
   onCreated,
@@ -69,6 +70,8 @@ export function PanelAgentTab({
   projectId?: string;
   /** Human-readable identity of the page resource this assistant belongs to. */
   resourceLabel?: string;
+  /** Stable identity for a built-in page's unsent draft, independent of plugins. */
+  draftSessionKey?: string;
   pluginPanel?: { pluginId: string; panel: string; view?: string };
   capturePageContext?: () => PluginPageContext;
   onCreated: (threadId: string) => void;
@@ -100,7 +103,7 @@ export function PanelAgentTab({
           : 'Ask an agent without leaving this page.'}
       </p>
       <PluginAssistantPageContext.Provider value={capturePageContext ?? null}>
-      <ComposerDraftProvider sessionKey={pluginPanel ? JSON.stringify(['panel', pluginPanel.pluginId, pluginPanel.panel, projectId ?? draftProjectId ?? null, pluginPanel.view ?? null]) : undefined}>
+      <ComposerDraftProvider sessionKey={draftSessionKey ?? (pluginPanel ? JSON.stringify(['panel', pluginPanel.pluginId, pluginPanel.panel, projectId ?? draftProjectId ?? null, pluginPanel.view ?? null]) : undefined)}>
       <ThreadCommandComposer
         autoFocus
         navigateOnCreate={false}

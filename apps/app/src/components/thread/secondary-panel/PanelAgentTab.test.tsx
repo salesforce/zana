@@ -189,6 +189,20 @@ describe('PanelAgentTab', () => {
     const unboundB = sessionFor(<PanelAgentTab onCreated={vi.fn()} />);
     expect(unboundA).not.toBe(unboundB);
   });
+  it('retains built-in page drafts by explicit tab identity without a plugin binding', () => {
+    const sessionFor = (key: string) => {
+      const view = render(<PanelAgentTab projectId="dx" draftSessionKey={key} onCreated={vi.fn()} />);
+      const session = composerProps.session;
+      view.unmount();
+      return session;
+    };
+    const first = sessionFor('explorer:p1:tab1');
+    expect(sessionFor('explorer:p1:tab1')).toBe(first);
+    expect(sessionFor('explorer:p1:tab2')).not.toBe(first);
+    expect(sessionFor('explorer:p2:tab1')).not.toBe(first);
+    expect(threads.panelConversations).not.toHaveBeenCalled();
+  });
+
   it('queries recents only for the current project and view, clearing prior results on scope changes', async () => {
     threads.panelConversations.mockResolvedValueOnce([{ id: 'a', title: 'Agent A', updatedAt: 1 }]);
     const onOpen = vi.fn();
