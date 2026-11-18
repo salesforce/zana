@@ -21,6 +21,8 @@ import type {
   ZccPanelAgentOptions,
   ZccPanelToolOptions,
   ZccPanelScope,
+  ZccPinnedItem,
+  ZccPinnedItemUpdate,
   ZccWindowTitle
 } from '../app-contract.js';
 import { collectTestPluginApp } from './app.js';
@@ -42,6 +44,9 @@ export type NavigateCall =
   | { method: 'openPanelAgent'; options: ZccPanelAgentOptions }
   | { method: 'openPanelTool'; options: ZccPanelToolOptions }
   | { method: 'setPanelScope'; scope: ZccPanelScope | null }
+  | { method: 'pinTab'; item: ZccPinnedItem }
+  | { method: 'unpinTab'; itemKey: string }
+  | { method: 'updatePinnedItem'; itemKey: string; update: ZccPinnedItemUpdate }
   | { method: 'setPageContext'; context: import('../app-contract.js').ZccPageContext | null }
   | { method: 'openInWindow'; projectId: string; options?: { tabId?: string; resourceId?: string } };
 
@@ -57,6 +62,8 @@ export interface RenderSlotOptions {
   realtimeConnectionState?: 'connecting' | 'connected' | 'reconnecting';
   /** Whether the page has a side panel to show agents in (`navigate.openPanelAgent`). Defaults to false. */
   panelAgent?: boolean;
+  /** Whether `navigate.pinTab` accepts the pin, as the host does with a user gesture and room under the caps. Defaults to true. */
+  pinTab?: boolean;
   /** `deepLinks.base()`. Defaults to `zana-test://`. */
   deepLinkBase?: string | null;
   /** What `deepLinks.open(raw)` resolves. Defaults to `unavailable`. */
@@ -175,6 +182,12 @@ export function installTestPluginRuntime(options: RenderSlotOptions = {}): {
     }
   };
 
+  const pinned = new Set<string>();
+  const pinListeners = new Set<() => void>();
+  const notifyPinned = () => {
+    for (const listener of [...pinListeners]) listener();
+  };
+
   const navigate: ZccNavigate = {
     toThread(threadId) {
       navigateCalls.push({ method: 'toThread', threadId });
@@ -213,6 +226,29 @@ export function installTestPluginRuntime(options: RenderSlotOptions = {}): {
     },
     setPanelScope(scope) {
       navigateCalls.push({ method: 'setPanelScope', scope });
+    },
+    pinTab(item) {
+      navigateCalls.push({ method: 'pinTab', item });
+      if (options.pinTab === false) return false;
+      if (!pinned.has(item.itemKey)) {
+        pinned.add(item.itemKey);
+        notifyPinned();
+      }
+      return true;
+    },
+    unpinTab(itemKey) {
+      navigateCalls.push({ method: 'unpinTab', itemKey });
+      if (pinned.delete(itemKey)) notifyPinned();
+    },
+    isPinned: (itemKey) => pinned.has(itemKey),
+    onPinnedChange(callback) {
+      pinListeners.add(callback);
+      return () => {
+        pinListeners.delete(callback);
+      };
+    },
+    updatePinnedItem(itemKey, update) {
+      navigateCalls.push({ method: 'updatePinnedItem', itemKey, update });
     },
     setPageContext(context) {
       navigateCalls.push({ method: 'setPageContext', context });

@@ -459,7 +459,7 @@ describe('creating docs', () => {
     expect(harness.spawn).not.toHaveBeenCalled();
     const doc = harness.store.list({})[0]!;
     expect(doc.projectId).toBeNull();
-    expect(harness.navigateCalls.filter(call => call.method !== 'setPageContext')).toEqual([{ method: 'toPluginPanel', path: 'design-docs', options: { subPath: doc.id } }]);
+    expect(harness.navigateCalls.filter(call => !['setPageContext', 'setPanelScope'].includes(call.method))).toEqual([{ method: 'toPluginPanel', path: 'design-docs', options: { subPath: doc.id } }]);
   });
 
   it('says the doc was created when only the drafting agent fails to start', async () => {

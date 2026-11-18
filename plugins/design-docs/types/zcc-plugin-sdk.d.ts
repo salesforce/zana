@@ -5,7 +5,8 @@
  */
 
 declare module '@zana-ai/zcc-plugin-sdk' {
-  export type { ZccPluginApi, PluginSettingValue, PluginProviderDeclaration, PluginProviderHandle, PluginProviderCapabilities, PluginProviderReasoningLevel, PluginProviderStrings } from '@zana-ai/zcc-plugin-sdk/server';
+  export type { PluginProviderUsageResult, ZccPluginApi, PluginSettingValue, PluginProviderDeclaration, PluginProviderHandle, PluginProviderCapabilities, PluginProviderReasoningLevel, PluginProviderStrings } from '@zana-ai/zcc-plugin-sdk/server';
+  export type { PluginSshConnections, PluginSshConnectionProvider, PluginSshIdentity } from '@zana-ai/zcc-plugin-sdk/server';
 
   export type { PluginSdk, PluginSdkInbox, PluginSdkInboxEntry, PluginSdkInboxSearchArgs, PluginSdkInboxSearchResult, PluginSdkInboxReport, PluginSdkAssistant } from '@zana-ai/zcc-plugin-sdk/server';
   export type { PluginNotificationSoundProviderRegistration, PluginAgentsViewProps, PluginFleetMember, PluginFleetSchedule, PluginFleetExecution } from '@zana-ai/zcc-plugin-sdk/app';
@@ -193,6 +194,7 @@ export interface PluginProviderOptionsContext {
 }
 
 export interface PluginProviderDeclaration {
+  usage?: (hostId: string) => Promise<PluginProviderUsageResult>;
   id: string;
   displayName: string;
   family?: string;
@@ -455,6 +457,10 @@ export type PluginSdkInbox = PluginSdk['inbox'];
     | { action: 'allow' }
     | { action: 'deny'; reason: string }
     | { action: 'ask'; prompt: string; timeoutMs?: number };
+  export type PluginProviderUsageResult = { supported: false } | { supported: true; usage:
+    { status: 'ok'; accountEmail: string | null; planLabel: string | null; windows: Array<{label: string; usedPercent: number; resetsAt: string | null}> } |
+    {status: 'not_installed' | 'unauthenticated' | 'expired'} | {status: 'error'; message: string} };
+
 
   export interface PluginHooks {
     /** One message-dispatch admission handler per plugin. */
@@ -548,7 +554,20 @@ export type PluginSdkInbox = PluginSdk['inbox'];
   export type PluginPersonaInput = { id?: string; [key: string]: unknown };
   export type PluginTeamInput = { id?: string; [key: string]: unknown };
 
+  export interface PluginSshIdentity {
+    readonly host: string;
+    readonly user?: string;
+    readonly proxyJump?: string;
+  }
+  export interface PluginSshConnectionProvider {
+    owns(remote: PluginSshIdentity, signal: AbortSignal): boolean | Promise<boolean>;
+    prepare(remote: PluginSshIdentity, signal: AbortSignal): Promise<{ status: 'ready' } | { status: 'blocked'; message: string }>;
+  }
+  export interface PluginSshConnections {
+    register(provider: PluginSshConnectionProvider): void;
+  }
   export interface ZccPluginApi {
+    readonly sshConnections: PluginSshConnections;
     readonly pluginId: string;
     readonly log: { debug(m: string): void; info(m: string): void; warn(m: string): void; error(m: string): void };
     readonly settings: {
@@ -821,6 +840,7 @@ export type PluginSdkInbox = PluginSdk['inbox'];
         write(args: { hostId?: string; path: string; rootPath?: string; content: string; contentEncoding?: 'utf8' | 'base64'; createParents?: boolean }): Promise<void>;
       };
       providers: {
+        usage(args: {providerId: string; hostId: string}): Promise<PluginProviderUsageResult>;
         list(args?: { environmentId?: string }): Promise<Array<{
           id: string;
           available: boolean;
@@ -935,6 +955,36 @@ declare module '@zana-ai/zcc-plugin-sdk/app' {
   export type ZccPanelAgentOptions =
     | { threadId: string; title?: string }
     | { draft: { prompt: string; projectId?: string; view?: string; references?: readonly ContextReference[]; selection?: { version: 1; path: string; text: string; startLine?: number; endLine?: number } }; title?: string };
+  export interface ZccPanelToolOptions {
+    actionId: string;
+    /** Tab label. Defaults to the action's title. */
+    title?: string;
+    params?: JsonValue;
+  }
+  export interface ZccPanelScope {
+    /** Stable page resource identity. Does not grant access to that resource. */
+    id: string;
+    /** Optional view identity, e.g. a tool group within the resource. */
+    view?: string;
+    /** Project the resource belongs to, for a global page with a project picker. Main authorizes it. */
+    projectId?: string;
+  }
+  export interface ZccPinnedItem {
+    /** Opaque to the host, at most 256 characters, no control characters. Also the route `subPath` and the `setPanelScope` id. Names the item; never grants access. */
+    itemKey: string;
+    /** Tab label, at most 120 characters, no control characters. */
+    title: string;
+    /** Short host-known icon token (letters, digits, `_`, `-`; at most 32), never a URL. */
+    icon?: string;
+    /** Project the item belongs to. Used when registered; otherwise the host uses the current project. */
+    projectId?: string;
+  }
+  export interface ZccPinnedItemUpdate {
+    /** New tab label, validated like `ZccPinnedItem.title`. */
+    title?: string;
+    /** `false` marks the item gone, so its tab shows as unavailable. */
+    available?: boolean;
+  }
   /** Lightweight identity beside an assistant; IDs and paths grant no access. */
   export interface ZccPageContext {
     title: string;
@@ -952,6 +1002,20 @@ declare module '@zana-ai/zcc-plugin-sdk/app' {
     supportsContextReferences?: true;
     addThreadContext?(reference: ContextReference): boolean;
     openPanelAgent(options: ZccPanelAgentOptions): boolean;
+    /** Open one of this plugin's `threadPanelAction` tabs in this page's side panel. False when there is no side panel or the action does not match. */
+    openPanelTool?(options: ZccPanelToolOptions): boolean;
+    /** Select the resource whose independent host side panel this page displays. Null restores the page default. */
+    setPanelScope?(scope: ZccPanelScope | null): void;
+    /** Pin an item of this page as a top-bar tab. Call only from a click or key handler (needs user activation). `itemKey` is also the route `subPath` and the `setPanelScope` id. False without a gesture, for invalid input, an unknown project, over the caps (20 total, 10 per plugin) or in a plugin view window. */
+    pinTab?(item: ZccPinnedItem): boolean;
+    /** Remove this plugin's tab for `itemKey`. */
+    unpinTab?(itemKey: string): void;
+    /** Whether this plugin has a tab pinned for `itemKey`, in any project. */
+    isPinned?(itemKey: string): boolean;
+    /** Called when this plugin's pinned tabs change. Returns an unsubscribe. */
+    onPinnedChange?(callback: () => void): () => void;
+    /** Tell the host a pinned item's title changed or the item is gone (`available: false`). Only this plugin's tabs; in memory only. */
+    updatePinnedItem?(itemKey: string, update: ZccPinnedItemUpdate): void;
     /** Update on navigation; clear with null on unmount. Each message retains
      * identity/reference for queueing and retries; the agent fetches live content
      * on demand with page_context_read through the owning plugin. */

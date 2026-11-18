@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { Check, ChevronDown, ChevronUp, Globe, Hash, MoreHorizontal, Pencil, Plus, X } from 'lucide-react';
+import { useContext, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { Check, ChevronDown, ChevronUp, Globe, Hash, MoreHorizontal, PanelTopClose, Pencil, Plus, X } from 'lucide-react';
 import { DOC_STATUSES, type DesignDocDetail, type DocStatus } from '../shared/contract.js';
 import { RenameStaleNotice, useDocActions, useTitleRename } from './DocActions.js';
 import { MAX_SUMMARY_LENGTH, MAX_TAG_LENGTH, MAX_TAGS, MAX_TITLE_LENGTH } from '../shared/limits.js';
@@ -8,6 +8,8 @@ import { ActorLabel, IconButton, MenuItem, Popover, StatusPill, TimeAgo } from '
 import { ProjectMark } from './ProjectMark.js';
 import { PeerConflictView } from './PeerConflictView.js';
 import { effectiveSyncState, SYNC_STATE_HELP, SYNC_STATE_LABEL, useDocSyncStatuses } from './sync-status.js';
+import { PinnableContext, useDocPinned } from './pin.js';
+import { useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { usePeerSync } from './PeerSettings.js';
 
 /**
@@ -309,6 +311,9 @@ export function DocHeader({
   const rename = useTitleRename(template ? 'template' : 'doc');
   const menuDoc = useRef(doc);
   const docActions = useDocActions(projects);
+  const navigate = useZccNavigate();
+  const pinnable = useContext(PinnableContext) && !template && !!navigate.pinTab;
+  const pinned = useDocPinned(doc.id);
   const project = doc.projectId ? projects.find((entry) => entry.id === doc.projectId) : null;
 
   const update = async (patch: UpdateArgs) => {
@@ -359,6 +364,9 @@ export function DocHeader({
           </span>
         )}
         <span className="dd-spacer" />
+        {pinnable && pinned ? (
+          <IconButton icon={PanelTopClose} label="Remove from tab bar" hint="In the tab bar. Click to remove" active onClick={() => navigate.unpinTab?.(doc.id)} />
+        ) : null}
         {actions}
         {template ? null : <button type="button" className="btn" onClick={() => setConflicts(true)}>Peer conflicts</button>}
         {template ? null : <Popover

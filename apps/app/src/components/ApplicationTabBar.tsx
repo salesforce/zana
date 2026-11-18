@@ -19,6 +19,8 @@ export interface ApplicationTabView {
   kind: ApplicationTab['kind'];
   title: string;
   context: string;
+  /** Shown faded: the content behind the tab cannot be opened right now. */
+  dimmed?: boolean;
   label: string;
   tooltip?: string;
   icon: ReactNode;
@@ -40,6 +42,7 @@ export function ApplicationTabBar({
   onMove,
   onNewThread,
   onReopen,
+  onHover,
   locationKey
 }: {
   tabs: ApplicationTabView[];
@@ -49,6 +52,7 @@ export function ApplicationTabBar({
   onMove(id: string, targetId: string): void;
   onNewThread?: () => void;
   onReopen?: () => void;
+  onHover?(id: string): void;
   locationKey: string;
 }) {
   const [query, setQuery] = useState('');
@@ -160,7 +164,8 @@ export function ApplicationTabBar({
             key={tab.id}
             data-tab-id={tab.id}
             data-tab-kind={tab.kind}
-            className={`titlebar-thread ${tab.active ? 'is-active' : ''} ${tab.unread ? 'is-unread' : ''}`}
+            className={`titlebar-thread ${tab.active ? 'is-active' : ''} ${tab.unread ? 'is-unread' : ''} ${tab.dimmed ? 'is-dimmed' : ''}`}
+            onMouseEnter={() => onHover?.(tab.id)}
             onContextMenu={(event) => {
               event.preventDefault();
               event.stopPropagation();

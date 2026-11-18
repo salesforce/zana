@@ -954,6 +954,30 @@ export interface ZccPanelScope {
   projectId?: string;
 }
 
+/** A plugin item the user pins as a top-bar tab. */
+export interface ZccPinnedItem {
+  /**
+   * Opaque to the host, at most 256 characters, no control characters. Also the
+   * page route's `subPath` (URL-encoded) and the `setPanelScope` id, so one key
+   * identifies the item everywhere. It names the item; it never grants access.
+   */
+  itemKey: string;
+  /** Tab label, at most 120 characters, no control characters. */
+  title: string;
+  /** Short host-known icon token (letters, digits, `_`, `-`; at most 32), never a URL. */
+  icon?: string;
+  /** Project the item belongs to. Used when registered; otherwise the host uses the current project. */
+  projectId?: string;
+}
+
+/** What a page can tell the host about a pinned item without the host calling the page. */
+export interface ZccPinnedItemUpdate {
+  /** New tab label, validated like `ZccPinnedItem.title`. */
+  title?: string;
+  /** `false` marks the item gone, so its tab shows as unavailable. */
+  available?: boolean;
+}
+
 export type ZccPageContext = import('@zana-ai/zcc-domain/thread-runtime').PluginPageResource;
 
 export interface ZccNavigate {
@@ -996,6 +1020,27 @@ export interface ZccNavigate {
   openPanelTool?(options: ZccPanelToolOptions): boolean;
   /** Select the resource whose independent host side panel this page displays. Null restores the page default. */
   setPanelScope?(scope: ZccPanelScope | null): void;
+  /**
+   * Pin an item of this page as a top-bar tab. Call it only from a click or key
+   * handler: the host requires transient user activation. The host binds the
+   * plugin and page, and takes the project from `projectId` when it is registered (or the window's locked project), else the current selection. Pinning
+   * the same item again keeps one tab. False without a user gesture, for
+   * invalid input, an unknown project, over the tab caps (20 plugin tabs in
+   * total, 10 per plugin; the host shows an error toast), in a plugin view
+   * window, or on older hosts (absent).
+   */
+  pinTab?(item: ZccPinnedItem): boolean;
+  /** Remove this plugin's tab for `itemKey`. Never touches another plugin's tabs or deletes the item. */
+  unpinTab?(itemKey: string): void;
+  /** Whether this plugin has a tab pinned for `itemKey`, in any project. */
+  isPinned?(itemKey: string): boolean;
+  /** Called when this plugin's pinned tabs change, including a close by the user. Returns an unsubscribe. */
+  onPinnedChange?(callback: () => void): () => void;
+  /**
+   * Tell the host a pinned item's title changed or the item is gone. Only this
+   * plugin's own tabs are updated; the state lives in memory and is not saved.
+   */
+  updatePinnedItem?(itemKey: string, update: ZccPinnedItemUpdate): void;
   /**
    * Publish the page/resource beside the assistant, independently of panel ownership.
    * Update on navigation (including list/settings states); clear on unmount.
