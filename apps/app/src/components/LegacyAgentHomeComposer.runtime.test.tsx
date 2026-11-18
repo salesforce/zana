@@ -333,12 +333,17 @@ describe('CLI Agent retained launch choices', () => {
 
   it('refuses to launch while the restored permission mode is unavailable', async () => {
     h.permissionError = 'The saved permission mode is unavailable.';
-    render(composer(h.projects[1]));
-    await ready();
+    const view = render(composer(h.projects[1]));
+    expect((await screen.findByRole('status')).textContent).toBe('The saved permission mode is unavailable.');
+    expect(launchButton().hasAttribute('disabled')).toBe(true);
     fireEvent.click(launchButton());
-    expect((await screen.findByTestId('legacy-agent-command-error')).textContent).toBe('The saved permission mode is unavailable.');
     expect(h.createTerminal).not.toHaveBeenCalled();
     expect(h.clear).not.toHaveBeenCalled();
+    await waitFor(() => expect(h.picklists.some(options => options.length === 1 && options[0].value === 'accept-edits')).toBe(true));
+    h.permissionError = undefined;
+    view.rerender(composer(h.projects[1]));
+    await ready();
+    expect(screen.queryByRole('status')).toBeNull();
   });
 
   it('refuses a model the user chose that the live catalogue no longer offers, and launches once they pick an offered one', async () => {

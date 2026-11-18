@@ -821,6 +821,7 @@ function mirroredConfigFlags(config: AppConfig) {
   return {
     defaultHarness: config.defaultHarness ?? null,
     defaultThreadProviderId: config.defaultThreadProviderId ?? null,
+    defaultThreadPermissionMode: config.defaultThreadPermissionMode ?? null,
     fontSize: config.fontSize,
     // Mirror AppConfig.theme so the xterm palette (which paints to a canvas and
     // can't read the CSS `data-theme` cascade) tracks light/dark like every
@@ -1664,6 +1665,7 @@ interface DataState {
   /** Main-owned global default; null keeps Claude compatibility fallback. */
   defaultHarness: AppConfig['defaultHarness'] | null;
   defaultThreadProviderId: string | null;
+  defaultThreadPermissionMode: AppConfig['defaultThreadPermissionMode'];
   /** True once the first main config read completed. */
   configLoaded: boolean;
   projects: Project[];
@@ -2302,6 +2304,7 @@ export const useData = create<DataState>((set, get) => ({
   structuredQuestionsEnabled: true,
   defaultHarness: null,
   defaultThreadProviderId: null,
+  defaultThreadPermissionMode: null,
   configLoaded: false,
   closingFollowupIds: new Set<string>(),
   harnessCursorEnabled: false,

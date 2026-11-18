@@ -601,13 +601,8 @@ describe('Modern composer retained-draft guards', () => {
     render(composer());
     expect(screen.getByRole('status').textContent).toBe('Saved choice is unavailable.');
     fireEvent.click(sendButton());
-    if (_name === 'provider selection') {
-      expect((sendButton() as HTMLButtonElement).disabled).toBe(true);
-      expect(screen.getByRole('status').textContent).toBe('Saved choice is unavailable.');
-    } else {
-      await waitFor(() => expect(screen.getByTestId('thread-command-error').textContent).toBe('Saved choice is unavailable.'));
-      expect(screen.queryByRole('status')).toBeNull();
-    }
+    expect((sendButton() as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('status').textContent).toBe('Saved choice is unavailable.');
     expect(h.send).not.toHaveBeenCalled();
     expect(h.clear).not.toHaveBeenCalled();
   });
