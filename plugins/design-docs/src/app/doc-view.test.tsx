@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // The page frame asks for page-runtime.js, which happy-dom does not load.
 // @vitest-environment-options { "settings": { "handleDisabledFileLoadingAsSuccess": true } }
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup as cleanupRender, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { UI_USER } from '../server/rpc.js';
@@ -10,6 +10,9 @@ import { DocView, type DocLayout } from './DocView.js';
 import { draftDocAgent } from './Agents.js';
 import { AGENT, createHarness, type Harness } from './test-harness.js';
 import { DocHeader } from './DocHeader.js';
+import { NavPanel, ProjectTab } from './slots.js';
+import { Workbench } from './Workbench.js';
+import type { DocLocation } from './content.js';
 import { createApi } from './api.js';
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
@@ -1496,4 +1499,223 @@ it.each([true, false])('adds the selected rendered snapshot only to the owning t
   vi.stubGlobal('getSelection', () => undefined);
   fireEvent.mouseUp(element);
   expect(screen.queryByRole('button', {name: 'Add to thread'})).toBeNull();
+});
+
+describe('pinning a doc as a tab', () => {
+  const pinCalls = (harness: Harness) => harness.navigateCalls.filter((call) => call.method === 'pinTab' || call.method === 'unpinTab');
+  const renderNav = (harness: Harness, subPath: string) => harness.render(<NavPanel pluginId="design-docs" subPath={subPath} />);
+  const openMore = () => fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+
+  it('pins only from the menu click and keeps the list-order pin separate', async () => {
+    const harness = createHarness();
+    const doc = simpleDoc(harness);
+    renderNav(harness, doc.id);
+    await screen.findByRole('button', { name: 'More actions' });
+    expect(pinCalls(harness)).toEqual([]);
+    openMore();
+    expect(screen.getByRole('menuitem', { name: /Pin to top/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('menuitem', { name: /Add to tab bar/ }));
+    expect(pinCalls(harness)).toEqual([{ method: 'pinTab', item: { itemKey: doc.id, title: 'Simple', projectId: 'p1' } }]);
+    expect(harness.store.summary(doc.id).pinnedAt).toBeNull();
+    openMore();
+    expect(screen.getByRole('menuitem', { name: /Remove from tab bar/ })).toBeTruthy();
+    expect(screen.queryByRole('menuitem', { name: /Add to tab bar/ })).toBeNull();
+  });
+
+  it('pins a global doc without naming a project, so the host picks one', async () => {
+    const harness = createHarness();
+    const doc = simpleDoc(harness, undefined, null);
+    renderNav(harness, doc.id);
+    await screen.findByRole('button', { name: 'More actions' });
+    openMore();
+    fireEvent.click(screen.getByRole('menuitem', { name: /Add to tab bar/ }));
+    expect(pinCalls(harness)).toEqual([{ method: 'pinTab', item: { itemKey: doc.id, title: 'Simple' } }]);
+  });
+
+  it('pins from the list right-click menu', async () => {
+    const harness = createHarness();
+    const doc = simpleDoc(harness);
+    renderNav(harness, '');
+    fireEvent.contextMenu((await screen.findByText('Simple', { selector: '.dd-doc-row-title' })).closest('button')!, { clientX: 4, clientY: 4 });
+    fireEvent.click(screen.getByRole('menuitem', { name: /Add to tab bar/ }));
+    expect(pinCalls(harness)).toEqual([{ method: 'pinTab', item: { itemKey: doc.id, title: 'Simple', projectId: 'p1' } }]);
+  });
+
+  it('shows pinned state from the host, follows an unpin made elsewhere, and unpins from the header', async () => {
+    const harness = createHarness();
+    const doc = simpleDoc(harness);
+    renderNav(harness, doc.id);
+    await screen.findByRole('button', { name: 'More actions' });
+    expect(screen.queryByRole('button', { name: 'Remove from tab bar' })).toBeNull();
+    act(() => { harness.hostNavigate().pinTab!({ itemKey: doc.id, title: 'Simple' }); });
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove from tab bar' }));
+    expect(harness.navigateCalls).toContainEqual({ method: 'unpinTab', itemKey: doc.id });
+    expect(screen.queryByRole('button', { name: 'Remove from tab bar' })).toBeNull();
+    act(() => { harness.hostNavigate().pinTab!({ itemKey: doc.id, title: 'Simple' }); });
+    await screen.findByRole('button', { name: 'Remove from tab bar' });
+    // The tab's own × closes it without the page acting.
+    act(() => { harness.hostNavigate().unpinTab!(doc.id); });
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove from tab bar' })).toBeNull());
+  });
+
+  it('offers no pinning where the host cannot pin or the page is a project tab, and releases its subscription on unmount', async () => {
+    const harness = createHarness();
+    const doc = simpleDoc(harness);
+    const nav = harness.hostNavigate();
+    const subscribe = nav.onPinnedChange!.bind(nav);
+    let live = 0;
+    nav.onPinnedChange = (callback) => {
+      live += 1;
+      const off = subscribe(callback);
+      return () => { live -= 1; off(); };
+    };
+    const view = harness.render(<NavPanel pluginId="design-docs" subPath={doc.id} />);
+    await screen.findByRole('button', { name: 'More actions' });
+    expect(live).toBeGreaterThan(0);
+    view.unmount();
+    expect(live).toBe(0);
+
+    localStorage.setItem('zcc.design-docs.project-location:p1', JSON.stringify(doc.id));
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    await screen.findByRole('button', { name: 'More actions' });
+    openMore();
+    expect(screen.queryByRole('menuitem', { name: /Add to tab bar/ })).toBeNull();
+  });
+
+  it('shows no pin state when the host refuses the pin', async () => {
+    const harness = createHarness({ pinTab: false });
+    const doc = simpleDoc(harness);
+    renderNav(harness, doc.id);
+    await screen.findByRole('button', { name: 'More actions' });
+    openMore();
+    fireEvent.click(screen.getByRole('menuitem', { name: /Add to tab bar/ }));
+    expect(pinCalls(harness)).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Remove from tab bar' })).toBeNull();
+  });
+
+  it('selects the panel scope by doc and clears it with no doc', async () => {
+    const harness = createHarness();
+    const first = simpleDoc(harness);
+    const second = harness.store.create({ title: 'Second', projectId: 'p1', template: 'blank' }, UI_USER);
+    const scopes = () => harness.navigateCalls.filter((call) => call.method === 'setPanelScope').map((call) => (call as { scope: unknown }).scope);
+    const view = renderNav(harness, first.id);
+    await screen.findByRole('button', { name: 'More actions' });
+    view.rerender(<NavPanel pluginId="design-docs" subPath={second.id} />);
+    view.rerender(<NavPanel pluginId="design-docs" subPath="" />);
+    expect(scopes()).toEqual([{ id: first.id }, { id: second.id }, null]);
+  });
+
+  it('keeps the project tab on the default panel scope', async () => {
+    const harness = createHarness();
+    const doc = simpleDoc(harness);
+    localStorage.setItem('zcc.design-docs.project-location:p1', JSON.stringify(doc.id));
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    await screen.findByRole('button', { name: 'More actions' });
+    expect(harness.navigateCalls.some((call) => call.method === 'setPanelScope')).toBe(false);
+  });
+
+  it('reports a renamed title only for a pinned doc', async () => {
+    const harness = createHarness();
+    const doc = simpleDoc(harness);
+    const updates = () => harness.navigateCalls.filter((call) => call.method === 'updatePinnedItem');
+    renderNav(harness, doc.id);
+    await screen.findByRole('button', { name: 'More actions' });
+    expect(updates()).toEqual([]);
+    act(() => { harness.hostNavigate().pinTab!({ itemKey: doc.id, title: 'Simple' }); });
+    await harness.asAgent((store) => store.update(doc.id, { title: 'Renamed', expectedHead: store.summary(doc.id).head }, UI_USER));
+    await waitFor(() => expect(updates()).toContainEqual({ method: 'updatePinnedItem', itemKey: doc.id, update: { title: 'Renamed', available: true } }));
+  });
+
+  it('reports a doc that is missing, deleted elsewhere, or deleted here as unavailable', async () => {
+    const harness = createHarness();
+    const unavailable = (id: string) => ({ method: 'updatePinnedItem', itemKey: id, update: { available: false } });
+    act(() => { harness.hostNavigate().pinTab!({ itemKey: 'gone', title: 'Gone' }); });
+    renderNav(harness, 'gone');
+    await waitFor(() => expect(harness.navigateCalls).toContainEqual(unavailable('gone')));
+    cleanupRender();
+
+    const elsewhere = simpleDoc(harness);
+    act(() => { harness.hostNavigate().pinTab!({ itemKey: elsewhere.id, title: 'Simple' }); });
+    renderNav(harness, elsewhere.id);
+    await screen.findByRole('button', { name: 'More actions' });
+    await harness.asAgent((store) => store.remove(elsewhere.id, UI_USER));
+    await waitFor(() => expect(harness.navigateCalls).toContainEqual(unavailable(elsewhere.id)));
+    cleanupRender();
+
+    const here = harness.store.create({ title: 'Local delete', projectId: 'p1', template: 'blank' }, UI_USER);
+    act(() => { harness.hostNavigate().pinTab!({ itemKey: here.id, title: 'Local delete' }); });
+    renderNav(harness, here.id);
+    await screen.findByRole('button', { name: 'More actions' });
+    openMore();
+    fireEvent.click(screen.getByRole('menuitem', { name: /Delete/ }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete design doc' })).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(harness.navigateCalls).toContainEqual(unavailable(here.id)));
+
+    // A delete from the list reports too, even with another doc open.
+    const listed = harness.store.create({ title: 'Listed', projectId: 'p1', template: 'blank' }, UI_USER);
+    act(() => { harness.hostNavigate().pinTab!({ itemKey: listed.id, title: 'Listed' }); });
+    cleanupRender();
+    renderNav(harness, '');
+    fireEvent.contextMenu((await screen.findByText('Listed', { selector: '.dd-doc-row-title' })).closest('button')!, { clientX: 4, clientY: 4 });
+    fireEvent.click(screen.getByRole('menuitem', { name: /Delete/ }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete design doc' })).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(harness.navigateCalls).toContainEqual(unavailable(listed.id)));
+  });
+});
+
+describe('opening a pinned doc beside its agent', () => {
+  const agentCalls = (harness: Harness) => harness.navigateCalls.filter((call) => call.method === 'openPanelAgent');
+  const pinned = (harness: Harness, id: string) => act(() => { harness.hostNavigate().pinTab!({ itemKey: id, title: 'Simple' }); });
+
+  it('shows the most recently active linked thread', async () => {
+    const harness = createHarness({ panelAgent: true });
+    const doc = simpleDoc(harness);
+    harness.store.linkThread(doc.id, 'older', 'Older', 'assistant');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    harness.store.linkThread(doc.id, 'newer', 'Newer', 'reviewer');
+    pinned(harness, doc.id);
+    harness.render(<NavPanel pluginId="design-docs" subPath={doc.id} />);
+    await waitFor(() => expect(agentCalls(harness)).toHaveLength(1));
+    expect(agentCalls(harness)[0]).toMatchObject({ options: { threadId: 'newer', title: 'Simple' } });
+  });
+
+  it('opens the briefed composer when no thread is linked, once per visit', async () => {
+    const harness = createHarness({ panelAgent: true });
+    const doc = simpleDoc(harness);
+    pinned(harness, doc.id);
+    harness.render(<NavPanel pluginId="design-docs" subPath={doc.id} />);
+    await waitFor(() => expect(agentCalls(harness)).toHaveLength(1));
+    expect(agentCalls(harness)[0]).toMatchObject({ options: { draft: { view: doc.id, projectId: 'p1' } } });
+    await harness.asAgent((store) => store.update(doc.id, { summary: 'changed', expectedHead: store.summary(doc.id).head }, UI_USER));
+    expect(agentCalls(harness)).toHaveLength(1);
+  });
+
+  it('stays on the doc when the page has no side panel', async () => {
+    const harness = createHarness();
+    const doc = simpleDoc(harness);
+    harness.store.linkThread(doc.id, 'only', 'Only', 'assistant');
+    pinned(harness, doc.id);
+    harness.render(<NavPanel pluginId="design-docs" subPath={doc.id} />);
+    await screen.findByRole('button', { name: 'More actions' });
+    expect(harness.navigateCalls.some((call) => call.method === 'toThread' || call.method === 'openThreadPanel')).toBe(false);
+  });
+
+  it('leaves docs that are not pinned, or opened from the list, alone', async () => {
+    const harness = createHarness({ panelAgent: true });
+    const doc = simpleDoc(harness);
+    harness.store.linkThread(doc.id, 'only', 'Only', 'assistant');
+    harness.render(<NavPanel pluginId="design-docs" subPath={doc.id} />);
+    await screen.findByRole('button', { name: 'More actions' });
+    expect(agentCalls(harness)).toEqual([]);
+    cleanupRender();
+    pinned(harness, doc.id);
+    function Host() {
+      const [location, setLocation] = useState<DocLocation>({ docId: null, path: null });
+      return <Workbench variant="global" projectId={null} location={location} onLocationChange={setLocation} />;
+    }
+    harness.render(<Host />);
+    fireEvent.click(await screen.findByText('Simple', { selector: '.dd-doc-row-title' }));
+    await screen.findByRole('button', { name: 'More actions' });
+    expect(agentCalls(harness)).toEqual([]);
+  });
 });

@@ -259,3 +259,31 @@ it('persists Notifications changes and propagates save failures to its controls'
   });
   expect(h.props.notifications.config.notificationSoundsEnabled).toBe(false);
 });
+
+
+it.each(['accept-edits', 'auto', 'full', null, undefined])('mirrors normalized shared permissions after saving: %s', async value => {
+  useData.setState({ defaultThreadPermissionMode: 'auto' });
+  useUi.setState({ settingsTab: 'composer', settingsAnchor: null });
+  mount();
+  await screen.findByText('tab-composer');
+  h.setMock.mockResolvedValueOnce({ defaultThreadPermissionMode: value });
+  await act(async () => { await h.props.composer.onUpdate({ defaultThreadPermissionMode: 'full' }); });
+  expect(h.setMock).toHaveBeenCalledWith({ defaultThreadPermissionMode: 'full' });
+  expect(useData.getState().defaultThreadPermissionMode).toBe(value ?? null);
+  expect(h.props.composer.config.defaultThreadPermissionMode).toBe(value);
+});
+
+it('keeps committed permissions on unrelated edits and exposes failed permission saves to the field', async () => {
+  useData.setState({ defaultThreadPermissionMode: 'accept-edits' });
+  useUi.setState({ settingsTab: 'composer', settingsAnchor: null });
+  mount();
+  await screen.findByText('tab-composer');
+  h.setMock.mockResolvedValueOnce({ defaultThreadPermissionMode: 'full', composerShowModern: true });
+  await act(async () => { await h.props.composer.onUpdate({ composerShowModern: true }); });
+  expect(useData.getState().defaultThreadPermissionMode).toBe('accept-edits');
+  h.setMock.mockRejectedValueOnce(new Error('disk unavailable'));
+  await act(async () => {
+    await expect(h.props.composer.onUpdate({ defaultThreadPermissionMode: 'full' })).rejects.toThrow('disk unavailable');
+  });
+  expect(useData.getState().defaultThreadPermissionMode).toBe('accept-edits');
+});

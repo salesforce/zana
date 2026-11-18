@@ -10,6 +10,7 @@ import { isDocStatus, type CommentStatus, type DocActor, type PeerConflictChoice
 import type { PageFile } from '../shared/frame-protocol.js';
 import { normalizeDocPath } from '../shared/paths.js';
 import { buildPublishPrompt, parsePublishTarget, PublishTargetError } from '../shared/publish.js';
+import { MAX_PIN_ITEM_KEY_LENGTH, resolvePinnedDoc } from './resolve-pin.js';
 import { addFromTemplate, asInput, optionalString, readTemplate, requiredString } from './operations.js';
 import { docPageReader, NO_KIT, renderPage, type KitReader } from './pages.js';
 import { parseRenderReport, type RenderReports } from './render-reports.js';
@@ -322,6 +323,16 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
     },
 
     get: (raw) => { const input = asInput(raw); return store.get(requiredString(input, 'doc'), requiredKind(input)); },
+
+    // Host-called while a pinned tab's page is unmounted: only availability and the title, for a registered project.
+    resolvePin: async (raw) => {
+      const input = onlyKeys(raw, ['itemKey', 'projectId']);
+      const projectId = requiredString(input, 'projectId');
+      await requireProject(projectId);
+      const itemKey = requiredString(input, 'itemKey');
+      if (itemKey.length > MAX_PIN_ITEM_KEY_LENGTH) throw new DesignDocError('invalid', `itemKey must be at most ${MAX_PIN_ITEM_KEY_LENGTH} characters`);
+      return resolvePinnedDoc(store, projectId, itemKey);
+    },
 
     create: async (raw) => {
       const input = asInput(raw);

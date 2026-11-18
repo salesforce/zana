@@ -22,6 +22,9 @@ vi.mock('@/components/TabBar', () => ({ TabBar: (props: { projectId?: string }) 
 vi.mock('@/components/agentCardActions', () => ({ cliAgentRestartConfirm: () => '' }));
 vi.mock('@/components/FindBar', () => ({ FindBar: () => null }));
 vi.mock('@/views/agents/AgentsBoard', () => ({ AgentsBoard: () => null }));
+vi.mock('@/views/project/ExplorerView', () => ({
+  ExplorerView: ({ project }: { project: { id: string } }) => <section aria-label="Project files">{project.id}</section>
+}));
 vi.mock('@/views/project/ProjectExtensionTab', () => ({ ProjectExtensionTab: ({ moduleId }: { moduleId: string }) => <section aria-label="Module tab">{moduleId}</section> }));
 vi.mock('@/plugins/PluginSlotBoundary', () => ({ PluginSlotBoundary: ({ children }: { children: ReactNode }) => children }));
 vi.mock('@/plugins/ProjectStatusbarItems', () => ({ ProjectStatusbarItems: () => null }));
@@ -127,4 +130,15 @@ it('tells the terminal tab strip which project it belongs to, so Archive can wor
   state.tabBarProps = [];
   render(<ProjectModePane projectId="p" mode="terminals" paneId="pane" />);
   expect(state.tabBarProps.at(-1)?.projectId).toBe('p');
+});
+it('mounts the Agent rail around the project Explorer and removes it when navigating away', async () => {
+  state.tabs = [];
+  const view = render(<ProjectModePane projectId="p" mode="explorer" paneId="pane" />);
+  const files = await screen.findByRole('region', { name: 'Project files' });
+  expect(screen.getByTestId('explorer-panel-layout').contains(files)).toBe(true);
+  expect(files.textContent).toBe('p');
+  expect(screen.getByRole('button', { name: 'Show right panel' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Ask an agent' })).toBeTruthy();
+  view.rerender(<ProjectModePane projectId="p" mode="terminals" paneId="pane" />);
+  expect(screen.queryByTestId('explorer-panel-layout')).toBeNull();
 });

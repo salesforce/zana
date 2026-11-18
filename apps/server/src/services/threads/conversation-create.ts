@@ -42,10 +42,10 @@ import {
   bridgeLaunchForProvider,
   canonicalThreadProviderId,
   getThreadProvider,
-  permissionModeForLaunchProfile,
   waitForThreadProvider
 } from './thread-provider-catalog.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
+import { permissionModeForNewThread } from './thread-permission-default.js';
 import { validateProviderModelSelection } from './provider-model-validation.js';
 import { appendClientTurnRequested } from './client-turn-requested.js';
 import { withConversationSend, type ConversationSendLease } from './conversation-send-guard.js';
@@ -219,7 +219,7 @@ async function startConversationOnHost(
     requestedMode,
     effectiveMode: requestedMode
   });
-  const requestedPermissionMode = args.input.permissionMode ?? permissionModeForLaunchProfile(args.input.providerId);
+  const requestedPermissionMode = permissionModeForNewThread(args.input.providerId, args.input.permissionMode, ctx.config.getConfig().defaultThreadPermissionMode);
   const permissionMode = clampPermissionModeToHost(ctx.db, args.hostId, requestedPermissionMode) ?? requestedPermissionMode;
   const providerOptions = await derivedProviderOptionsForCommand({
     providerId,
@@ -357,6 +357,9 @@ export async function createConversationFromRequest(
     throw new ThreadCreateError(400, 'invalid-provider', 'providerId is required');
   }
   await waitForThreadProvider(input.providerId);
+  // Resolve once before provisioning or saving a thread. A settings change
+  // during launch must not change the policy of an already admitted request.
+  input = { ...input, permissionMode: permissionModeForNewThread(input.providerId, input.permissionMode, ctx.config.getConfig().defaultThreadPermissionMode) };
   input.serviceTier = authorizedServiceTier(ctx, input.providerId, input.serviceTier);
   const pluginResolvedPromptInput = await withResolvedPluginMentionContext(ctx.plugins, input.promptInput);
   const textPrompt = flattenThreadInput(pluginResolvedPromptInput).map((part) => part.trim()).filter((part) => part.length > 0);

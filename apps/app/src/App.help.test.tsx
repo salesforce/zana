@@ -183,6 +183,47 @@ it('always applies the inset workspace design on desktop and retains compact chr
   }
 });
 
+it('keeps the tab strip for a plugin tab while thread tabs are disabled, and drops it with the last plugin tab', async () => {
+  fixtures.compact = false;
+  const { useApplicationTabs } = await import('./lib/application-tabs.js');
+  const original = useApplicationTabs.getState();
+  store.useData.setState({ threadTabsEnabled: false });
+  const view = render(<MemoryRouter><App /></MemoryRouter>);
+  try {
+    expect(screen.queryByTestId('thread-tabs-shell')).toBeNull();
+    act(() => useApplicationTabs.setState({ open: [{ kind: 'plugin', pluginId: 'test-plugin', pageId: 'docs', itemKey: 'one', title: 'One', projectId: 'p' }] }));
+    expect(screen.getByTestId('thread-tabs-shell')).toBeTruthy();
+    act(() => useApplicationTabs.setState({ open: [] }));
+    expect(screen.queryByTestId('thread-tabs-shell')).toBeNull();
+  } finally {
+    view.unmount();
+    useApplicationTabs.setState({ open: original.open });
+    store.useData.setState({ threadTabsEnabled: true });
+  }
+});
+
+it('in a project-scoped window, only that project\'s plugin tabs keep the tab strip', async () => {
+  fixtures.compact = false;
+  const { useApplicationTabs } = await import('./lib/application-tabs.js');
+  const scope = await import('./lib/windowScope.js');
+  const spy = vi.spyOn(scope, 'getScopedProjectId').mockReturnValue('p');
+  const original = useApplicationTabs.getState();
+  store.useData.setState({ threadTabsEnabled: false });
+  const tab = (projectId: string) => ({ kind: 'plugin' as const, pluginId: 'test-plugin', pageId: 'docs', itemKey: 'one', title: 'One', projectId });
+  const view = render(<MemoryRouter><App /></MemoryRouter>);
+  try {
+    act(() => useApplicationTabs.setState({ open: [tab('other')] }));
+    expect(screen.queryByTestId('thread-tabs-shell')).toBeNull();
+    act(() => useApplicationTabs.setState({ open: [tab('other'), tab('p')] }));
+    expect(screen.getByTestId('thread-tabs-shell')).toBeTruthy();
+  } finally {
+    view.unmount();
+    spy.mockRestore();
+    useApplicationTabs.setState({ open: original.open });
+    store.useData.setState({ threadTabsEnabled: true });
+  }
+});
+
 it('promotes an existing thread inspector when thread tabs are enabled', async () => {
   fixtures.compact = false;
   const original = store.useUi.getState();

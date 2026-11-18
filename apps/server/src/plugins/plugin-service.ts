@@ -1,4 +1,5 @@
 import { defaultGitPluginChanged } from './plugin-process.js';
+import { SshConnectionPreparation } from './ssh-connection-providers.js';
 import { readCatalogIcon } from './catalog-icon.js';
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, watch } from 'node:fs';
 import { removePluginTemporaryDirectory } from './plugin-cleanup.js';
@@ -233,6 +234,7 @@ export interface PluginService {
     input: unknown;
     ctx: PluginAgentToolContext;
   }): Promise<ToolCallResponse>;
+  prepareSshConnection(remote: import('@zana-ai/zcc-plugin-sdk/server').PluginSshIdentity, signal: AbortSignal, onProvider: (name: string) => void): Promise<void>;
   callRpc(pluginId: string, method: string, args: unknown): Promise<unknown>;
   getSettings(pluginId: string): {
     descriptors: Record<string, import('@zana-ai/zcc-plugin-sdk/server').PluginSettingDescriptor>;
@@ -644,6 +646,11 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     file: marketplaceStorePath(opts.dataDir)
   });
   const live = new Map<string, LivePlugin>();
+  const sshPreparation = new SshConnectionPreparation(() => [...live.values()].flatMap(({ row, handle }) => {
+    const connection = handle?.sshConnection;
+    if (!row.enabled || !connection?.provider || connection.lifetime.aborted) return [];
+    return [{ pluginId: row.id, name: row.name || row.id, provider: connection.provider, lifetime: connection.lifetime }];
+  }));
   const serverRuntimes = new Set<ReturnType<typeof createIsolatedPluginRuntime>>();
   const updateChecks = createPluginUpdateStore(join(opts.dataDir, 'plugins', 'update-checks.json'));
   let pendingUpdateCheck: Promise<PluginUpdateRow[]> | undefined;
@@ -3241,6 +3248,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       if (!handle) throw new Error(`plugin not running: ${id}`);
       return runPluginCli(handle, argv, context);
     },
+    prepareSshConnection: (remote, signal, onProvider) => sshPreparation.prepare(remote, signal, onProvider),
     async dispatchHttp(pluginId, request) {
       const routes = live.get(pluginId)?.handle?.httpRoutes ?? [];
       const route = routes.find((row) => row.method === request.method && row.path === request.path);

@@ -55,6 +55,18 @@ describe('scratchWorkspaceRoot', () => {
 });
 
 describe('config — boolean feature flags round-trip through setConfig', () => {
+  it.each(['accept-edits', 'auto', 'full', null] as const)('persists shared thread permissions %s', mode => {
+    store.setConfig({ defaultThreadPermissionMode: mode });
+    expect(store.getConfig().defaultThreadPermissionMode).toBe(mode);
+    expect(readJson(configFile).defaultThreadPermissionMode).toBe(mode);
+  });
+
+  it('does not import local composer preferences and ignores invalid permission defaults', () => {
+    expect(store.getConfig().defaultThreadPermissionMode).toBeUndefined();
+    for (const mode of ['invalid', '', true, {}, 7]) {
+      expect(normalizeConfig({ defaultThreadPermissionMode: mode } as never)).not.toHaveProperty('defaultThreadPermissionMode');
+    }
+  });
   it('keeps validated model tier rules and drops unknown tiers, non-strings and oversized rules', () => {
     const out = normalizeConfig({
       harnessRouting: { schemaVersion: 1, byAdapter: { opencode: { modelTierRules: {

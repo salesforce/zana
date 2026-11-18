@@ -18,6 +18,7 @@ import { decodeRouteParam, getProjectModeRoutePath } from '@/lib/route-paths';
 import { useNavigate } from 'react-router-dom';
 import { SplitPaneHeaderActions } from '@/views/thread-detail/SplitPaneHeaderActions';
 import { PluginPanelHostLayout } from '@/views/thread-detail/PluginPanelHostLayout';
+import { ExplorerPanelLayout } from './ExplorerPanelLayout.js';
 import {
   DetachedPluginTab,
   OpenInWindowButton,
@@ -234,9 +235,11 @@ export function ProjectModePane({
           </div>
         )}
         {isExplorer && (
-          <Suspense fallback={<DelayedStencilList label="Loading explorer" className="zcc-stencil-padded" />}>
-            <ExplorerView project={project} />
-          </Suspense>
+          <ExplorerPanelLayout projectId={project.id}>
+            <Suspense fallback={<DelayedStencilList label="Loading explorer" className="zcc-stencil-padded" />}>
+              <ExplorerView project={project} />
+            </Suspense>
+          </ExplorerPanelLayout>
         )}
         {isScheduler && (
           <Suspense fallback={<DelayedStencilList label="Loading scheduler" className="zcc-stencil-padded" />}>

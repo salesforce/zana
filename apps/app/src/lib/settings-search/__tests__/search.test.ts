@@ -388,3 +388,16 @@ describe('hiddenSections', () => {
     expect(ids(searchSettings('links', snap(), { entries, providers: [], hiddenSections: new Set() }))).toHaveLength(2);
   });
 });
+
+
+it.each([
+  ['accept-edits', 'Accept Edits'], ['auto', 'Approve for me'], ['full', 'Full Access'],
+  [null, 'Keep existing defaults'], [undefined, 'Keep existing defaults']
+])('indexes the saved permission default %s as %s', async (mode, label) => {
+  const { entries } = await import('../entries/composer');
+  const entry = entries.find(row => row.id === 'composer.default-permissions')!;
+  expect(entry.value!(snap({ defaultThreadPermissionMode: mode }))).toBe(label);
+  for (const query of ['reply in thread', 'full access by default', 'permissions']) {
+    expect(ids(searchSettings(query, snap({ defaultThreadPermissionMode: mode }), { entries: [entry] }))).toContain(entry.id);
+  }
+});

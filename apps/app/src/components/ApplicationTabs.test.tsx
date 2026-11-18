@@ -5,14 +5,15 @@ import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import type { ThreadListItem } from '../thread-store.js';
 
-const h = vi.hoisted(() => ({ scope: null as string | null, load: vi.fn(), archived: null as null | ((id: string) => void), unsubscribe: vi.fn(), copy: vi.fn(), toast: vi.fn(), archive: vi.fn(), remove: vi.fn() }));
+const h = vi.hoisted(() => ({ panels: [] as Array<{ pluginId: string; id: string; path?: string; placement?: string }>, rpc: vi.fn(), select: vi.fn(), scope: null as string | null, load: vi.fn(), archived: null as null | ((id: string) => void), unsubscribe: vi.fn(), copy: vi.fn(), toast: vi.fn(), archive: vi.fn(), remove: vi.fn() }));
 vi.mock('../lib/copy-text.js', () => ({ copyTextOrFail: h.copy }));
-vi.mock('../lib/product-client.js', () => ({ product: { threads: { archive: h.archive } } }));
+vi.mock('../lib/product-client.js', () => ({ product: { threads: { archive: h.archive }, pluginApps: { callRpc: h.rpc } } }));
 vi.mock('../lib/windowScope.js', () => ({ getScopedProjectId: () => h.scope }));
 vi.mock('../store.js', async () => {
   const { create } = await import('zustand');
-  return { useData: create(() => ({ projects: [] })), useUi: create(() => ({ pushToast: h.toast })) };
+  return { useData: create(() => ({ projects: [], configLoaded: true })), useUi: create(() => ({ pushToast: h.toast, selectedProjectId: null as string | null, selectProject: h.select })) };
 });
+vi.mock('../plugins/plugin-slots.js', () => ({ listNavPanels: () => h.panels, listProjectTabs: () => [], projectTabView: () => '' }));
 vi.mock('../thread-store.js', async () => {
   const { create } = await import('zustand');
   return { useThreads: create(() => ({ threads: [], load: h.load, remove: h.remove })), onThreadArchived: (cb: (id: string) => void) => { h.archived = cb; return h.unsubscribe; } };
@@ -26,6 +27,9 @@ import { useThreads } from '../thread-store.js';
 import { useApplicationTabs } from '../lib/application-tabs.js';
 import { useSetupPages, setupPath } from './setup/setup-pages.js';
 import { ApplicationTabs } from './ApplicationTabs.js';
+import { usePluginAppModules } from '../plugins/plugin-app-loader.js';
+import { REFUSAL_MESSAGES, usePinnedItemOverrides } from '../plugins/plugin-pinned-tabs.js';
+import { applicationTabId, type PluginApplicationTab } from '../lib/application-tabs.js';
 
 const row = (id: string, projectId = 'p', extra: Partial<ThreadListItem> = {}): ThreadListItem => ({ id, projectId, title: `Thread ${id}`, providerId: 'fake', status: 'idle', hostId: 'local', environmentId: null, createdAt: 1, cwd: null, branchName: null, isWorktree: false, ...extra });
 function Probe() {
@@ -39,6 +43,10 @@ const tabs = () => screen.getAllByRole('tab');
 beforeEach(() => {
   useApplicationTabs.setState({ open: [], closed: [], initializedScope: undefined });
   useSetupPages.setState({ pages: [] });
+  h.panels = [{ pluginId: 'test-plugin', id: 'docs' }];
+  h.rpc.mockReset().mockResolvedValue({ available: true }); h.select.mockReset();
+  usePinnedItemOverrides.setState({ byId: {} });
+  usePluginAppModules.setState({ reconciled: true, modules: [{ id: 'test-plugin' }] as never, runtimeLoadedIds: new Set(['test-plugin']) });
   h.scope = null; h.load.mockReset().mockResolvedValue(undefined); h.unsubscribe.mockReset(); sessionStorage.clear();
   h.copy.mockReset().mockResolvedValue(undefined); h.toast.mockReset();
   h.archive.mockReset().mockResolvedValue({ ok: true });
@@ -508,4 +516,182 @@ it('keeps setup tabs available when thread tabs are disabled and restores only c
   useSetupPages.setState({ pages: [] });
   mount('/settings');
   expect(screen.queryByRole('tab')).toBeNull();
+});
+
+const pin = (itemKey: string, extra: Partial<PluginApplicationTab> = {}): PluginApplicationTab => ({ kind: 'plugin', pluginId: 'test-plugin', pageId: 'docs', itemKey, title: `Item ${itemKey}`, projectId: 'p', ...extra });
+const seed = (...items: PluginApplicationTab[]) => useApplicationTabs.setState({ open: items, closed: [], initializedScope: h.scope });
+const mountAt = (path: string, includeThreads = true) => render(<MemoryRouter initialEntries={[path]}><ApplicationTabs includeThreads={includeThreads} /><Probe /></MemoryRouter>);
+const flush = () => act(async () => { await Promise.resolve(); });
+
+it('renders plugin tabs interleaved with thread tabs in open order and marks the one whose route is open', () => {
+  seed(pin('one'));
+  mountAt('/threads/a');
+  visit('/threads/a');
+  act(() => { useApplicationTabs.getState().openTab(pin('two')); });
+  expect(tabs().map(tab => tab.getAttribute('aria-label'))).toEqual(['Item one — Project P', 'Thread a — Project P', 'Item two — Project P']);
+  expect(document.querySelectorAll('[data-tab-kind="plugin"]')).toHaveLength(2);
+  expect(tabs()[1]!.getAttribute('aria-selected')).toBe('true');
+  fireEvent.click(tabs()[2]!);
+  expect(screen.getByTestId('route').textContent).toBe('/plugins/test-plugin/docs/two');
+  expect(tabs()[2]!.getAttribute('aria-selected')).toBe('true');
+  expect(tabs()[1]!.getAttribute('aria-selected')).toBe('false');
+  expect(h.select).toHaveBeenCalledWith('p');
+});
+
+it('encodes the item key into the route, honours a panel path and the hub placement, and ignores clicks when the page is missing', () => {
+  h.panels = [{ pluginId: 'test-plugin', id: 'docs', path: 'library' }];
+  seed(pin('a b/c'));
+  mountAt('/settings');
+  fireEvent.click(tabs()[0]!);
+  expect(screen.getByTestId('route').textContent).toBe('/plugins/test-plugin/library/a%2520b%252Fc');
+  h.panels = [{ pluginId: 'test-plugin', id: 'docs', placement: 'extensions' }];
+  visit('/settings'); fireEvent.click(tabs()[0]!);
+  expect(screen.getByTestId('route').textContent).toBe('/extensions/pages/test-plugin/docs/a%2520b%252Fc');
+  h.panels = [];
+  visit('/settings'); fireEvent.click(tabs()[0]!);
+  expect(screen.getByTestId('route').textContent).toBe('/settings');
+});
+
+it('selects the project the item was pinned in when opening a tab from another project', () => {
+  seed(pin('one', { projectId: 'q' }));
+  mountAt('/settings');
+  fireEvent.click(tabs()[0]!);
+  expect(h.select).toHaveBeenCalledWith('q');
+});
+
+it('dims a tab whose item is unavailable, offers one-click removal and never drops it', () => {
+  seed(pin('gone'), pin('ok'));
+  mountAt('/settings');
+  act(() => usePinnedItemOverrides.getState().merge(applicationTabId(pin('gone')), { available: false }));
+  const gone = tabs()[0]!;
+  expect(gone.getAttribute('aria-label')).toBe('Item gone — Unavailable');
+  expect(gone.closest('.titlebar-thread')!.classList.contains('is-dimmed')).toBe(true);
+  expect(tabs()[1]!.closest('.titlebar-thread')!.classList.contains('is-dimmed')).toBe(false);
+  const remove = screen.getByRole('button', { name: 'Close tab: Item gone' });
+  expect(remove.getAttribute('title')).toBe('Remove unavailable tab');
+  fireEvent.click(remove);
+  expect(tabs().map(tab => tab.textContent)).toEqual(['Item okProject P']);
+});
+
+it('marks tabs unavailable for a disabled plugin or an unregistered page, and shows a loading tab as available', () => {
+  seed(pin('one'));
+  mountAt('/settings');
+  const dimmed = () => tabs()[0]!.closest('.titlebar-thread')!.classList.contains('is-dimmed');
+  expect(dimmed()).toBe(false);
+  act(() => usePluginAppModules.setState({ reconciled: true, modules: [] }));
+  expect(dimmed()).toBe(true);
+  act(() => usePluginAppModules.setState({ reconciled: false, modules: [] }));
+  expect(tabs()).toHaveLength(1);
+  expect(dimmed()).toBe(false);
+  expect(tabs()[0]!.getAttribute('aria-label')).toBe('Item one — Project P');
+});
+
+it('shows a title learned in memory', () => {
+  seed(pin('one'));
+  mountAt('/settings');
+  act(() => usePinnedItemOverrides.getState().merge(applicationTabId(pin('one')), { title: 'Renamed' }));
+  expect(tabs()[0]!.getAttribute('aria-label')).toBe('Renamed — Project P');
+});
+
+it('closing a plugin tab only unpins it: the item stays remembered for reopen and no plugin call is made', async () => {
+  seed(pin('one'));
+  mountAt('/plugins/test-plugin/docs/one');
+  await flush();
+  h.rpc.mockClear();
+  fireEvent.click(screen.getByRole('button', { name: 'Close tab: Item one' }));
+  expect(tabs).toThrow();
+  expect(useApplicationTabs.getState().closed.map(tab => tab.kind)).toEqual(['plugin']);
+  expect(h.rpc).not.toHaveBeenCalled();
+  expect(screen.getByTestId('route').textContent).toBe('/agents');
+  fireEvent.click(screen.getByLabelText('All open tabs').closest('details')!.querySelector('.titlebar-threads-reopen')!);
+  expect(tabs()).toHaveLength(1);
+  expect(screen.getByTestId('route').textContent).toBe('/plugins/test-plugin/docs/one');
+});
+
+it('does not reopen a closed plugin tab for an unknown project, and reports a refused reopen', () => {
+  seed(pin('one'));
+  mountAt('/settings');
+  fireEvent.click(screen.getByRole('button', { name: 'Close tab: Item one' }));
+  act(() => useData.setState({ projects: [{ id: 'z', name: 'Z' }] as Project[] }));
+  expect(document.querySelector('.titlebar-threads-reopen')).toBeNull();
+  act(() => useData.setState({ projects: [{ id: 'p', name: 'Project P' }] as Project[] }));
+  const closedTab = useApplicationTabs.getState().closed[0]!;
+  act(() => { useApplicationTabs.setState({ open: Array.from({ length: 10 }, (_, i) => pin(`k${i}`, { pluginId: 'test-plugin' })) }); });
+  fireEvent.click(document.querySelector('.titlebar-threads-reopen')!);
+  expect(h.toast).toHaveBeenCalledWith(REFUSAL_MESSAGES['plugin-cap'], 'error');
+  expect(useApplicationTabs.getState().closed).toContainEqual(closedTab);
+  expect(useApplicationTabs.getState().open).toHaveLength(10);
+});
+
+it('moves arrow, Home and End focus across thread, setup and plugin tabs and drags to reorder them', () => {
+  seed(pin('one'));
+  mountAt('/threads/a');
+  visit('/threads/a');
+  act(() => { useApplicationTabs.getState().openTab(pin('two')); });
+  const first = tabs()[0]!;
+  first.focus();
+  fireEvent.keyDown(first, { key: 'ArrowRight' });
+  expect(screen.getByTestId('route').textContent).toBe('/threads/a');
+  fireEvent.keyDown(tabs()[1]!, { key: 'End' });
+  expect(screen.getByTestId('route').textContent).toBe('/plugins/test-plugin/docs/two');
+  fireEvent.keyDown(tabs()[2]!, { key: 'Home' });
+  expect(screen.getByTestId('route').textContent).toBe('/plugins/test-plugin/docs/one');
+  const data = { setData: vi.fn(), effectAllowed: '' };
+  fireEvent.dragStart(tabs()[2]!, { dataTransfer: data });
+  fireEvent.drop(tabs()[0]!, { dataTransfer: data });
+  expect(useApplicationTabs.getState().open.map(tab => tab.kind === 'plugin' ? tab.itemKey : tab.kind)).toEqual(['two', 'one', 'thread']);
+});
+
+it('keeps only plugin tabs of the locked project and hides tabs of unregistered projects once projects loaded', () => {
+  h.scope = 'p';
+  seed(pin('mine', { projectId: 'p' }), pin('theirs', { projectId: 'q' }), pin('ghost', { projectId: 'nope' }));
+  const view = mountAt('/settings');
+  expect(tabs().map(tab => tab.textContent)).toEqual(['Item mineProject P']);
+  view.unmount();
+  h.scope = null;
+  seed(pin('mine', { projectId: 'p' }), pin('theirs', { projectId: 'q' }), pin('ghost', { projectId: 'nope' }));
+  mountAt('/settings');
+  expect(tabs().map(tab => tab.textContent)).toEqual(['Item mineProject P', 'Item theirsProject Q']);
+  act(() => useData.setState({ configLoaded: false, projects: [] }));
+  expect(tabs()).toHaveLength(3);
+});
+
+it('shows plugin tabs when thread tabs are disabled and leaves threads out', () => {
+  seed(pin('one'));
+  mountAt('/threads/a', false);
+  expect(h.load).not.toHaveBeenCalled();
+  expect(tabs().map(tab => tab.getAttribute('aria-label'))).toEqual(['Item one — Project P']);
+  expect(screen.queryByLabelText('New thread')).toBeNull();
+});
+
+it('refreshes a plugin tab on activation and hover through the resolver, without another call inside the interval', async () => {
+  seed(pin('one'));
+  mountAt('/settings');
+  await flush();
+  const calls = () => h.rpc.mock.calls.filter(call => call[1] === 'resolvePin');
+  expect(calls()).toHaveLength(1);
+  expect(calls()[0]).toEqual(['test-plugin', 'resolvePin', { itemKey: 'one', projectId: 'p' }]);
+  fireEvent.mouseEnter(tabs()[0]!.closest('.titlebar-thread')!);
+  fireEvent.click(tabs()[0]!);
+  await flush();
+  expect(calls()).toHaveLength(1);
+});
+
+it('resolves immediately on hover and activation once the interval has passed', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  try {
+    seed(pin('one'));
+    mountAt('/settings');
+    await flush();
+    h.rpc.mockResolvedValue({ available: false, title: 'Fresh' });
+    vi.setSystemTime(Date.now() + 31_000);
+    fireEvent.mouseEnter(tabs()[0]!.closest('.titlebar-thread')!);
+    await flush();
+    expect(tabs()[0]!.getAttribute('aria-label')).toBe('Fresh — Unavailable');
+    vi.setSystemTime(Date.now() + 31_000);
+    h.rpc.mockResolvedValue({ available: true });
+    fireEvent.click(tabs()[0]!);
+    await flush();
+    expect(tabs()[0]!.getAttribute('aria-label')).toBe('Fresh — Project P');
+  } finally { vi.useRealTimers(); }
 });

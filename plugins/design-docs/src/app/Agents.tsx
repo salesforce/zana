@@ -5,6 +5,7 @@ import { AGENT_ACTIONS, agentActionById, buildAgentPrompt, MAX_AGENT_PROMPT_LENG
 import type { DesignDocDetail, ThreadRole } from '../shared/contract.js';
 import { defaultAgentProject, errorMessage, toast, useApi } from './api.js';
 import { useProjects } from './hooks.js';
+import { sortLinkedThreads } from './pin.js';
 import { actionIcon, EmptyState, IconButton, Popover, Spinner, TimeAgo } from './ui.js';
 
 const ROLE_LABELS: Record<ThreadRole, string> = {
@@ -52,6 +53,18 @@ export function draftDocAgent(
   });
 }
 
+/**
+ * Opening a doc from a pinned tab: show its most recently active linked agent,
+ * or, with none, the side panel's composer briefed on the doc. No agent is
+ * started and nothing is sent. A host without a side panel gets the plain doc:
+ * activation never navigates the user away from the doc they opened.
+ */
+export function activateDocAgent(navigate: ZccNavigate, doc: Pick<DesignDocDetail, 'id' | 'title' | 'threads' | 'projectId'>): void {
+  const [latest] = sortLinkedThreads(doc.threads);
+  if (latest) navigate.openPanelAgent?.({ threadId: latest.threadId, title: doc.title });
+  else draftDocAgent(navigate, doc, { projectId: doc.projectId });
+}
+
 /** Linked conversations use the host's agent tabs; a doc beside a thread navigates there. */
 export function AgentsPane({
   doc,
@@ -64,7 +77,7 @@ export function AgentsPane({
 }) {
   const api = useApi();
   const navigate = useZccNavigate();
-  const threads = [...doc.threads].sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+  const threads = sortLinkedThreads(doc.threads);
   return (
     <div className="dd-rail-pane dd-agents">
       <div className="dd-rail-scroll">

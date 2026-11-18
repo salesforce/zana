@@ -153,3 +153,14 @@ it('moves the latest projectExpanded toggle to the end and caps the map', () => 
   expect(keys.at(-1)).toBe('fresh');
   expect(useUi.getState().projectExpanded.p1).toBeUndefined();
 });
+
+
+it.each(['accept-edits', 'auto', 'full', null, undefined])('hydrates and synchronizes shared thread permissions: %s', async mode => {
+  config.value = { defaultThreadPermissionMode: mode, walkthroughCompleted: true, setupDismissed: true };
+  await useData.getState().init();
+  expect(useData.getState().defaultThreadPermissionMode).toBe(mode ?? null);
+  config.changed?.({ ...config.value, defaultThreadPermissionMode: 'full' });
+  expect(useData.getState().defaultThreadPermissionMode).toBe('full');
+  config.changed?.({ ...config.value, defaultThreadPermissionMode: null });
+  expect(useData.getState().defaultThreadPermissionMode).toBeNull();
+});

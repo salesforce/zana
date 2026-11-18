@@ -83,6 +83,7 @@ import {
   getRememberedAppRoutePath,
   getRouteBeforeInbox,
   getRouteBeforeProjectSettings,
+  getRouteBeforeScheduler,
   resolveProjectBackPath
 } from './lib/route-memory.js';
 import {
@@ -636,6 +637,11 @@ interface UiState {
    * open before it; Home only when there is none or its project was removed.
    */
   toggleInbox: () => void;
+  /**
+   * Ctrl/Cmd+J. Opens the Scheduler. From the Scheduler, returns to the route
+   * open before it; Home only when there is none or its project was removed.
+   */
+  toggleScheduler: () => void;
   /** Page selected in the focused top-level Extensions workspace. */
   extensionsTab: ExtensionsTab;
   setExtensionsTab: (tab: ExtensionsTab) => void;
@@ -821,6 +827,7 @@ function mirroredConfigFlags(config: AppConfig) {
   return {
     defaultHarness: config.defaultHarness ?? null,
     defaultThreadProviderId: config.defaultThreadProviderId ?? null,
+    defaultThreadPermissionMode: config.defaultThreadPermissionMode ?? null,
     fontSize: config.fontSize,
     // Mirror AppConfig.theme so the xterm palette (which paints to a canvas and
     // can't read the CSS `data-theme` cascade) tracks light/dark like every
@@ -1049,9 +1056,10 @@ export function pushErrorToast(message: string) {
 const RAIL_KEEPING_NAVS = new Set(['projects', 'inbox', 'suggestions', 'settings']);
 
 /**
- * The return leg of a toggle shortcut: the remembered route, or null (go Home)
- * when there is none or its project was removed. A removed thread or session
- * falls back to its project's home, or Home outside a project.
+ * The return leg of a toggle shortcut (Ctrl/Cmd+I, Ctrl/Cmd+J): the remembered
+ * route, or null (go Home) when there is none or its project was removed. A
+ * removed thread or session falls back to its project's home, or Home outside
+ * a project.
  */
 function liveReturnRoute(before: string | null): string | null {
   if (!before) return null;
@@ -1382,6 +1390,16 @@ export const useUi = create<UiState>((set, get) => ({
     if (before) applyDestination(set, before);
     else s.setNav('home');
   },
+  toggleScheduler: () => {
+    const s = get();
+    if (s.nav !== 'scheduler') {
+      s.setNav('scheduler');
+      return;
+    }
+    const before = liveReturnRoute(getRouteBeforeScheduler());
+    if (before) applyDestination(set, before);
+    else s.setNav('home');
+  },
   setExtensionsTab: (extensionsTab) =>
     applyDestination(set, getExtensionsTabRoutePath(extensionsTab)),
   setSettingsExtensionId: (settingsExtensionId) => set({ settingsExtensionId }),
@@ -1664,6 +1682,7 @@ interface DataState {
   /** Main-owned global default; null keeps Claude compatibility fallback. */
   defaultHarness: AppConfig['defaultHarness'] | null;
   defaultThreadProviderId: string | null;
+  defaultThreadPermissionMode: AppConfig['defaultThreadPermissionMode'];
   /** True once the first main config read completed. */
   configLoaded: boolean;
   projects: Project[];
@@ -2302,6 +2321,7 @@ export const useData = create<DataState>((set, get) => ({
   structuredQuestionsEnabled: true,
   defaultHarness: null,
   defaultThreadProviderId: null,
+  defaultThreadPermissionMode: null,
   configLoaded: false,
   closingFollowupIds: new Set<string>(),
   harnessCursorEnabled: false,

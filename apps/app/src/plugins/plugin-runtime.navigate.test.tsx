@@ -6,7 +6,7 @@ import { ThreadPanelOwnerProvider } from './thread-panel-owner.js';
  */
 import { cleanup, render } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PluginSdkApp, ZccContext, ZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import type { ReactNode } from 'react';
 
@@ -205,4 +205,72 @@ it('opens plugin settings through the canonical Settings route', () => {
   const navigate = vi.fn(); registerAppNavigate(navigate);
   try { openPluginSettings('sample'); expect(navigate).toHaveBeenCalledWith('/settings/plugins/sample', undefined); }
   finally { registerAppNavigate(null); }
+});
+
+describe('navigate pin API', () => {
+  const page = { pluginId: 'test-plugin', page: 'main' };
+  const beside = (children: ReactNode) => <PluginPagePanelProvider page={page}>{children}</PluginPagePanelProvider>;
+  const gesture = (isActive: boolean) =>
+    Object.defineProperty(navigator, 'userActivation', { value: { isActive }, configurable: true });
+
+  beforeEach(async () => {
+    const { useData, useUi } = await import('../store.js');
+    const { useApplicationTabs } = await import('../lib/application-tabs.js');
+    useApplicationTabs.setState({ open: [], closed: [] });
+    useData.setState({ projects: [{ id: 'p1' }] as never });
+    useUi.setState({ selectedProjectId: 'p1' });
+    gesture(true);
+  });
+
+  it('binds the caller, resolves the page, and round-trips pin, isPinned and unpin', async () => {
+    const { useApplicationTabs } = await import('../lib/application-tabs.js');
+    const { navigate } = renderRuntime('test-plugin', beside);
+    expect(navigate.pinTab?.({ itemKey: 'a', title: 'A' })).toBe(true);
+    expect(useApplicationTabs.getState().open).toEqual([
+      { kind: 'plugin', pluginId: 'test-plugin', pageId: 'main', itemKey: 'a', title: 'A', projectId: 'p1' }
+    ]);
+    expect(navigate.isPinned?.('a')).toBe(true);
+    navigate.unpinTab?.('a');
+    expect(navigate.isPinned?.('a')).toBe(false);
+  });
+
+  it('refuses a pin without a gesture or without a calling page', async () => {
+    const { useApplicationTabs } = await import('../lib/application-tabs.js');
+    gesture(false);
+    expect(renderRuntime('test-plugin', beside).navigate.pinTab?.({ itemKey: 'a', title: 'A' })).toBe(false);
+    cleanup();
+    gesture(true);
+    expect(renderRuntime('test-plugin').navigate.pinTab?.({ itemKey: 'a', title: 'A' })).toBe(false);
+    cleanup();
+    expect(renderRuntime('other-plugin', beside).navigate.pinTab?.({ itemKey: 'a', title: 'A' })).toBe(false);
+    expect(useApplicationTabs.getState().open).toEqual([]);
+  });
+
+  it('refuses in a plugin view window', async () => {
+    const view = await import('../lib/pluginViewSurface.js');
+    const spy = vi.spyOn(view, 'getPluginViewTarget').mockReturnValue({ pluginId: 'test-plugin', tabId: 't', projectId: 'p1' } as never);
+    expect(renderRuntime('test-plugin', beside).navigate.pinTab?.({ itemKey: 'a', title: 'A' })).toBe(false);
+    spy.mockRestore();
+  });
+
+  it('keeps another plugin from unpinning or updating, and releases onPinnedChange on unmount', async () => {
+    const { useApplicationTabs } = await import('../lib/application-tabs.js');
+    const owner = renderRuntime('test-plugin', beside).navigate;
+    owner.pinTab?.({ itemKey: 'a', title: 'A' });
+    const intruder = renderRuntime('other-plugin', beside).navigate;
+    intruder.unpinTab?.('a');
+    intruder.updatePinnedItem?.('a', { title: 'Hijack', available: false });
+    const { usePinnedItemOverrides } = await import('./plugin-pinned-tabs.js');
+    expect(usePinnedItemOverrides.getState().byId).toEqual({});
+    expect(useApplicationTabs.getState().open).toHaveLength(1);
+    const changed = vi.fn();
+    const off = owner.onPinnedChange?.(changed);
+    owner.updatePinnedItem?.('a', { title: 'Renamed' });
+    expect(Object.values(usePinnedItemOverrides.getState().byId)).toEqual([{ title: 'Renamed' }]);
+    owner.unpinTab?.('a');
+    expect(changed).toHaveBeenCalledTimes(1);
+    off?.();
+    owner.pinTab?.({ itemKey: 'b', title: 'B' });
+    expect(changed).toHaveBeenCalledTimes(1);
+  });
 });
