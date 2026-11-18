@@ -1,4 +1,5 @@
 import { product } from '../lib/product-client.js';
+import { PrecedenceStrip } from './PrecedenceStrip.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { X, Trash2, Copy, Pencil, Plus, GripVertical, Crown } from 'lucide-react';
 import { ImprovePromptButton } from './ImprovePromptButton.js';
@@ -822,6 +823,7 @@ function TeamForm({
             the effective project-or-global setting; On forces a shared squad worktree; Off
             disables it.
           </p>
+          <PrecedenceStrip settingKey="launch.options" />
         </div>
 
         <div className="scheduler-form-field">
@@ -863,16 +865,17 @@ function TeamForm({
             Use default follows the global setting; On tier-routes work when supported; Off falls
             back. Manual assignments are not checked.
           </p>
+          <PrecedenceStrip settingKey="squad.routingEnforced" />
         </div>
 
         <div className="scheduler-form-field">
-          <label className="scheduler-checkbox-row">
+          <label className="scheduler-checkbox-row scheduler-checkbox-row--end">
+            <span>Keep orchestrator running after completion</span>
             <input
               type="checkbox"
               checked={retainOrchestrator}
               onChange={(event) => setRetainOrchestrator(event.target.checked)}
             />
-            Keep orchestrator running after completion
           </label>
           <p className="settings-help">
             Keeps the orchestrator open after a successful run. Workers still close; stopping or failing the run closes all agents.
@@ -880,17 +883,18 @@ function TeamForm({
         </div>
 
         <div className="scheduler-form-field">
-          <label className="scheduler-checkbox-row">
+          <label className="scheduler-checkbox-row scheduler-checkbox-row--end">
+            <span>Lean workers</span>
             <input
               type="checkbox"
               checked={leanWorkers}
               onChange={(event) => setLeanWorkers(event.target.checked)}
             />
-            Lean workers
           </label>
           <p className="settings-help">
             Workers start with only the zcc-inbox skill, which makes their first model call smaller. The orchestrator is unaffected. A context filter, not a security boundary.
           </p>
+          <PrecedenceStrip settingKey="squad.leanWorkers" />
           {leanWorkers && workerPersonasWithSkills.length > 0 && (
             <p className="settings-help" data-testid="team-lean-persona-skills-notice">
               This persona's skills apply even when lean is on: {workerPersonasWithSkills.map((s) => personaById.get(s.personaId)?.name ?? s.personaId).join(', ')}.
@@ -940,7 +944,7 @@ function TeamForm({
             value={defaultPlanning}
             onChange={(next) => setDefaultPlanning(next === 'infer' || next === 'provided' ? next : '')}
             options={[
-              { value: '', label: 'Use the global default' },
+              { value: '', label: 'Use the built-in default' },
               { value: 'infer', label: 'Infer plan from goal' },
               { value: 'provided', label: 'Plan provided in goal' }
             ]}
@@ -948,6 +952,7 @@ function TeamForm({
           <p className="settings-help">
             Sets the planning mode when this Squad is picked in the composer or proposed by an agent.
           </p>
+          <PrecedenceStrip settingKey="squad.planning" />
         </div>
 
         <div className="scheduler-form-field">
@@ -969,6 +974,7 @@ function TeamForm({
             and you press Launch from the Inbox. A Project set to Review before launch applies to this Squad
             whatever is chosen here. Launching from the composer, schedules and triggers is not affected.
           </p>
+          <PrecedenceStrip settingKey="squad.launchApproval" />
         </div>
 
         <p className="settings-help persona-form-hint">

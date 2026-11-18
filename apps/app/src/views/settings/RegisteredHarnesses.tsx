@@ -12,6 +12,7 @@ import { Section } from '../../components/settings/FormFields.js';
 import { registeredHarnessStatus } from './registered-harness-status.js';
 import { ProviderAuthentication } from './ProviderAuthentication.js';
 import { ThreadProviderDefaultField } from './ThreadProviderDefaultField.js';
+import { PrecedenceStrip } from '../../components/PrecedenceStrip.js';
 import './registered-harnesses.css';
 
 export function RegisteredHarnesses({ config, status, hostId, hostName, onUpdate, onRefreshStatus, checkingStatus, cliDefault }: {
@@ -46,6 +47,7 @@ export function RegisteredHarnesses({ config, status, hostId, hostName, onUpdate
         searchId="harness.default-thread-provider" help="Used for new threads. Existing threads and unsent drafts keep their harness."
         onChange={async defaultThreadProviderId => onUpdate({ defaultThreadProviderId }, { throwOnError: true })} />
       {cliDefault}
+      <PrecedenceStrip settingKey="harness.target" />
     </Section>
     <Section searchId="harness.registered" anchorId="harness-registered" title="Your AI harnesses" flush help="Provided by your installed plugins. Choose a harness in the composer, or set your thread default.">
       <div className="registered-harness-toolbar">

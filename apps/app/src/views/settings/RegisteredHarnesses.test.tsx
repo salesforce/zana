@@ -36,6 +36,14 @@ describe('RegisteredHarnesses', () => {
     await waitFor(() => expect(update).toHaveBeenCalledTimes(2));
     expect(update.mock.calls[1]).toEqual([{ defaultThreadProviderId: 'plugin-custom' }, { throwOnError: true }]);
   });
+  it('shows the priority strip once under Defaults, covering threads and CLI agents', () => {
+    render(<View config={{}} />);
+    const strip = screen.getByRole('group', { name: 'Provider, model, role and execution state priority' });
+    expect(screen.getAllByRole('group', { name: /priority$/ })).toHaveLength(1);
+    expect(strip.textContent).toContain('AgentPersonaProjectGlobalBuilt-in default');
+    expect(strip.textContent).toContain('new threads and CLI agents');
+  });
+
   it('shows registered providers and links to their actual plugin without seeded rows', () => {
     render(<View config={{ defaultThreadProviderId: 'codex' }} />);
     expect(screen.getByText('Actual Mac · 1 registered')).toBeTruthy();

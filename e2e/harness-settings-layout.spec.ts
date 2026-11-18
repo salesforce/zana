@@ -143,7 +143,7 @@ test('AI Harness makes setup readable and preserves keyboard, enablement, and bi
     await capture(`cli-options-${theme}.png`);
     await panel.getByRole('group', { name: 'Tools & access', exact: true }).evaluate((el) => el.scrollIntoView({ block: 'start' }));
     await capture(`cli-tools-${theme}.png`);
-    await capture(`cli-default-${theme}.png`, panel.locator('.harness-default-card'));
+    await capture(`cli-default-${theme}.png`, panel.locator('#settings-anchor-harness-defaults'));
     await claudeSettings.click();
     await modern.click();
   }

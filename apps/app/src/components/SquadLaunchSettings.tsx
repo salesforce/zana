@@ -4,6 +4,8 @@ import { launchOptionsSchema } from '@zana-ai/zcc-domain/launch-options';
 import type { Project, Worktree } from '@zana-ai/zcc-domain/product';
 import type { SquadLaunchPreview } from '@zana-ai/zcc-domain/squad-proposal';
 import { product } from '../lib/product-client.js';
+import { PrecedenceStrip } from './PrecedenceStrip.js';
+import { worktreeDefaultOrigin } from '../lib/workspace-choice.js';
 import './SquadLaunchSettings.css';
 
 type CoordinationMode = 'structured' | 'freeform';
@@ -29,10 +31,28 @@ function updateOption<K extends keyof LaunchOptions>(value: LaunchOptions, key: 
   return updated;
 }
 
-export function SquadResolvedLaunchDetails({ resolved }: { resolved: ExecutionResolvedLaunchV1 }) {
+export function SquadResolvedLaunchDetails({ resolved, projectId }: { resolved: ExecutionResolvedLaunchV1; projectId?: string }) {
+  // Only worktree isolation has a Project/Global fallback; load the Project
+  // override to say which one supplied the default. Display only.
+  const [projectOverride, setProjectOverride] = useState<{ projectId: string; value: boolean | undefined } | null>(null);
+  const needsOrigin = resolved.worktree?.source === 'default' && !!projectId;
+  useEffect(() => {
+    if (!needsOrigin || !projectId) return undefined;
+    let active = true;
+    // Display-only: any failure just leaves the plain "Default" label.
+    try {
+      void product.projectSettings.get(projectId).then(
+        (settings) => { if (active) setProjectOverride({ projectId, value: settings.worktreeIsolation }); },
+        () => undefined
+      );
+    } catch { /* settings bridge unavailable */ }
+    return () => { active = false; };
+  }, [needsOrigin, projectId]);
+  const origin = needsOrigin && projectOverride?.projectId === projectId ? worktreeDefaultOrigin(projectOverride.value) : undefined;
   return <dl className="squad-launch-resolved-details">{(Object.keys(resolved) as Array<keyof ExecutionResolvedLaunchV1>).map((key) => {
     const setting = resolved[key];
-    return <div key={key}><dt>{settingLabel(key)}</dt><dd>{settingValue(key, setting.value)} <span>({sourceLabel(setting.source)})</span></dd></div>;
+    const label = key === 'worktree' && setting?.source === 'default' && origin ? `${origin} default` : sourceLabel(setting.source);
+    return <div key={key}><dt>{settingLabel(key)}</dt><dd>{settingValue(key, setting.value)} <span>({label})</span></dd></div>;
   })}</dl>;
 }
 
@@ -59,6 +79,7 @@ export function SquadLaunchPolicyFields({ value, onChange, disabled, includeChec
   };
 
   return <div className="squad-launch-policy-fields">
+    {!includeCheckout ? <div className="precedence-divided"><PrecedenceStrip settingKey="launch.options" /></div> : null}
     {!includeCheckout ? <label><span>Worktree isolation</span><select aria-label="Worktree isolation" disabled={disabled} value={value.worktree === undefined ? '' : String(value.worktree)} onChange={(event) => onChange(updateOption(value, 'worktree', event.target.value === '' ? undefined : event.target.value === 'true'))}><option value="">Use default</option><option value="true">Create new worktree</option><option value="false">Use selected checkout</option></select></label> : null}
     <label><span>On complete</span><select aria-label="On complete" disabled={disabled} value={value.onComplete ?? ''} onChange={(event) => onChange(updateOption(value, 'onComplete', event.target.value === '' ? undefined : event.target.value as 'leave' | 'merge' | 'delete'))}><option value="">Use default</option><option value="leave">Keep checkout and branch</option><option value="merge">Merge then remove</option><option value="delete">Delete checkout and branch</option></select></label>
     <label><span>Push</span><select aria-label="Push" disabled={disabled} value={value.push === undefined ? '' : String(value.push)} onChange={(event) => onChange(updateOption(value, 'push', event.target.value === '' ? undefined : event.target.value === 'true'))}><option value="">Use default</option><option value="true">Allow push</option><option value="false">Do not push</option></select></label>
@@ -74,7 +95,6 @@ export function SquadLaunchPolicyFields({ value, onChange, disabled, includeChec
       setChecksText(text);
       commitChecks('named', text);
     }} onBlur={() => { editingChecks.current = false; }} /></label> : null}
-    <p className="squad-launch-help">Use default follows the plan, then Squad settings, then defaults. Review the effective values and their sources before launch.</p>
   </div>;
 }
 
@@ -147,7 +167,7 @@ export function SquadLaunchSettings({ teamId, projectId, goal, coordinationMode,
         : currentPreview?.error ? <p role="alert">{currentPreview.error}</p>
           : <p>{locationText ? `Location: ${locationText}` : 'Resolving launch location and settings…'}</p>}
       {resolved ? <>
-        <SquadResolvedLaunchDetails resolved={resolved} />
+        <SquadResolvedLaunchDetails resolved={resolved} projectId={projectId} />
         {resolved.onComplete.value !== 'leave' ? <p>User-owned worktrees cannot merge or delete.</p> : null}
       </> : null}
       <p className="squad-launch-help">Preview shows effective settings and their sources. Each run revalidates the plan, Squad and checkout.</p>
@@ -156,6 +176,7 @@ export function SquadLaunchSettings({ teamId, projectId, goal, coordinationMode,
       <button type="button" className="launch-disclosure-button" aria-expanded={customizeOpen} onClick={() => setCustomizeOpen((open) => !open)}>Customize launch</button>
     </div>
     {customizeOpen ? <div className="squad-launch-customize">
+      <div className="precedence-divided"><PrecedenceStrip settingKey="launch.options" /></div>
       <label><span>Checkout</span><select aria-label="Checkout" disabled={disabled} value={targetValue} onChange={(event) => {
         const selected = event.target.value;
         if (selected === '') change(updateOption(updateOption(value, 'target', undefined), 'worktree', undefined));
@@ -165,6 +186,7 @@ export function SquadLaunchSettings({ teamId, projectId, goal, coordinationMode,
         else change({ ...updateOption(value, 'target', { kind: 'worktree', branch: selected.slice('worktree:'.length) }), worktree: false });
       }}><option value="">Inherit checkout</option><option value="new-worktree">Generated new worktree</option><option value="project-root">Project checkout</option><option value="selected-checkout">Selected checkout</option>{selectedBranch && !knownBranch ? <option value={`worktree:${selectedBranch}`}>{selectedBranch} (missing worktree)</option> : null}{worktrees.filter((tree) => !tree.isMain && tree.branch && !tree.detached && !tree.bare).map((tree) => <option key={tree.path} value={`worktree:${tree.branch}`}>{tree.branch} (existing worktree)</option>)}</select></label>
       <p className="squad-launch-help">Existing branches resolve only from this registered Project. Main validates all checkout choices.</p>
+      <PrecedenceStrip settingKey="launch.checkout" />
       <SquadLaunchPolicyFields value={value} onChange={change} disabled={disabled} includeCheckout />
       <div className="squad-launch-reset"><button type="button" className="btn" disabled={disabled} onClick={() => change({})}>Reset launch settings</button></div>
     </div> : null}

@@ -25,6 +25,7 @@ import { TerminalSessionService } from '@zana-ai/zcc-server/terminal-session-ser
 import { defaultBundledRoot } from '@zana-ai/zcc-server/plugins/plugin-service';
 import {
   PluginAppSnapshotSchema,
+  DesktopHostEnrollmentSchema,
   MenubarThreadOpenResultSchema,
   ThreadQueueTurnResultSchema,
   MenubarThreadsListResultSchema,
@@ -547,7 +548,7 @@ interface UtilityChild {
 interface UtilityRuntime {
   child: UtilityChild;
   url: string;
-  request(operation: 'app-version' | 'projects-list'): Promise<unknown>;
+  request(operation: 'app-version' | 'projects-list' | 'desktop-host-enrollment'): Promise<unknown>;
   request(operation: 'project-metadata', request: ProjectMetadataRequest): Promise<unknown>;
   request(operation: 'project-catalogs', request: ProjectCatalogRequest): Promise<unknown>;
   request(operation: 'project-feed', request: ProjectFeedRequest): Promise<unknown>;
@@ -765,23 +766,34 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     dataDir: options.dataDir!
   };
   let enrolledHostId: string | undefined;
-  const enrollOnce = async (type: 'enroll' | 'relaunch' = 'enroll') => {
-    if (failed || closing) throw new Error('Background service unavailable');
-    const identity = await enrollHostUtility(host.child, enrollInput, type);
-    if (!failed && !closing) {
+  let enrolling: Promise<void> | undefined;
+  const enrollOnce = (type: 'enroll' | 'relaunch' = 'enroll'): Promise<void> => {
+    if (enrolling) return enrolling;
+    enrolling = (async () => {
+      if (failed || closing) throw new Error('Background service unavailable');
+      const desktopEnrollment = DesktopHostEnrollmentSchema.parse(await server.request('desktop-host-enrollment'));
+      if (failed || closing) throw new Error('Background service unavailable');
+      const identity = await enrollHostUtility(host.child, { ...enrollInput, desktopEnrollment }, type);
+      if (failed || closing) throw new Error('Background service unavailable');
       enrolledHostId = identity;
       renderer.child.postMessage({ type: 'local-host', protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION, hostId: identity });
-    }
+    })().finally(() => { enrolling = undefined; });
+    return enrolling;
   };
+  let initialEnrollTimer: NodeJS.Timeout | undefined;
   try {
-    await enrollOnce();
+    // Keep the window's original 15s startup bound while the single enrollment
+    // task can finish its daemon handshake. Retries observe that same task.
+    await Promise.race([enrollOnce(), new Promise<never>((_resolve, reject) => {
+      initialEnrollTimer = setTimeout(() => reject(new Error('Host daemon is still connecting')), 15_000);
+    })]);
   } catch (error) {
     // The renderer can still boot; thread spawn surfaces host-unavailable if
     // the handshake never completes. Blocking the window here makes Electron
     // E2E hang in firstWindow() with no diagnostic. Keep retrying so this
     // machine is not stuck Offline after a transient enroll failure.
     console.error('host daemon enroll failed', error);
-    if (!failed && !closing) enrollRetry = setInterval(() => {
+    if (!failed && !closing && !enrollRetry) enrollRetry = setInterval(() => {
       void enrollOnce().then(() => {
         if (enrollRetry) {
           clearInterval(enrollRetry);
@@ -789,6 +801,8 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
         }
       }).catch(() => undefined);
     }, 5_000);
+  } finally {
+    clearTimeout(initialEnrollTimer);
   }
   const productEvents = createProductEventForwarder((channel, args) => server.request('product-event', channel, args));
   const terminalListeners = new Set<(event: TerminalHostEvent) => void>();
@@ -1010,7 +1024,7 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
         await enrollOnce('relaunch');
         return { ok: true as const };
       } catch (error) {
-        if (!failed && !closing) enrollRetry = setInterval(() => {
+        if (!failed && !closing && !enrollRetry) enrollRetry = setInterval(() => {
           void enrollOnce().then(() => {
             if (enrollRetry) {
               clearInterval(enrollRetry);
@@ -1075,7 +1089,7 @@ export function createUtilityRuntime(runtime: { child: UtilityChild; url: string
   return {
     ...runtime,
     request(
-      operation: 'named-checks-get' | 'named-checks-set' | 'plugins-tool-settled' | 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'thread-live' | 'thread-queue-turn' | 'squad-runtime-preflight' | 'squad-member-create' | 'squad-member-activate' | 'squad-member-deliver' | 'squad-member-delivery-complete' | 'squad-member-status' | 'squad-member-stop' | 'squad-member-retain' | 'squad-member-resume' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'projects-touch' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugin-packs-list' | 'plugin-packs-installed' | 'plugin-packs-plan' | 'plugin-packs-install' | 'plugin-packs-forget' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-repair' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-update-all' | 'plugins-call-rpc' | 'plugins-tool-policy' | 'plugins-dispatch-admission' | 'plugins-pty-lifecycle-event' | 'plugins-pty-session-instructions' | 'plugins-pty-session-tools' | 'plugins-pty-session-tool-call' | 'plugins-tool-policy-inventory' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
+      operation: 'desktop-host-enrollment' | 'named-checks-get' | 'named-checks-set' | 'plugins-tool-settled' | 'cli-callback-grant' | 'cli-discovery' | 'library-agent' | 'library-document' | 'project-metadata' | 'project-catalogs' | 'project-history' | 'project-feed' | 'product-event' | 'app-version' | 'thread-live' | 'thread-queue-turn' | 'squad-runtime-preflight' | 'squad-member-create' | 'squad-member-activate' | 'squad-member-deliver' | 'squad-member-delivery-complete' | 'squad-member-status' | 'squad-member-stop' | 'squad-member-retain' | 'squad-member-resume' | 'menubar-threads-list' | 'menubar-thread-open' | 'projects-list' | 'projects-add' | 'projects-update' | 'projects-reorder' | 'projects-touch' | 'projects-remove' | 'projects-touch' | 'project-settings-get' | 'project-settings-set' | 'terminal-execute' | 'terminal-record' | 'terminal-events-since' | 'plugins-snapshot' | 'plugin-packs-list' | 'plugin-packs-installed' | 'plugin-packs-plan' | 'plugin-packs-install' | 'plugin-packs-forget' | 'plugins-install' | 'plugins-enable' | 'plugins-disable' | 'plugins-remove' | 'plugins-reload' | 'plugins-repair' | 'plugins-logs' | 'plugins-search' | 'plugins-outdated' | 'plugins-update' | 'plugins-update-all' | 'plugins-call-rpc' | 'plugins-tool-policy' | 'plugins-dispatch-admission' | 'plugins-pty-lifecycle-event' | 'plugins-pty-session-instructions' | 'plugins-pty-session-tools' | 'plugins-pty-session-tool-call' | 'plugins-tool-policy-inventory' | 'plugins-settings-get' | 'plugins-settings-set' | 'plugins-cli-contributions' | 'plugins-cli-run' | 'marketplace-list' | 'marketplace-add' | 'marketplace-refresh' | 'marketplace-remove',
         ...args: [NamedCheckScope] | [NamedCheckScope, NamedCheck[]] | [PluginPackIdentity] | [PluginPackInstallRequest] | [number] | [CliCallbackControl] | [CliDiscoveryRequest] | [LibraryAgentRequest] | [LibraryDocumentRequest] | [ProjectMetadataRequest] | [ProjectCatalogRequest] | [NativeToolPolicyRequest] | [DispatchAdmissionMainRequest] | [PtyLifecycleEventMainRequest] | [NativeToolSettledMainRequest] | [PtySessionInstructionsMainRequest] | [PtySessionToolsMainRequest] | [PtySessionToolCallMainRequest] | [SquadMemberRuntimeRequest] | [SquadMemberDeliveryRequest] | [SquadMemberDeliveryCompletion] | [SquadMemberControlRequest] | [SquadRuntimePreflightRequest] | [string, unknown[]] | [TerminalRequestCommand] | [TerminalHostEvent] | [string] | [string[]] | [string, string?] | [string, number?] | [string, RuntimeProjectPatch] | [string, RuntimeProjectSettings] | [string, string, unknown?] | [string, string, string] | [string, Record<string, string | number | boolean | null>] | [string, string[]] | [string, string[], { projectId?: string; threadId?: string; cwd?: string }?] | []
     ) {
       if (stopped || stopping) return Promise.reject(new Error('Background service stopped. Restart Zana to reconnect.'));
