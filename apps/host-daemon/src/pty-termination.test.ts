@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 describe('terminatePtyProcessTree on Windows', () => {
-  it('releases the pty with a signal-less kill, then stops its tree by PID', () => {
+  it('starts the tree stop while the root holds its PID, then releases the pty', () => {
     setPlatform('win32');
     const groupKill = vi.spyOn(process, 'kill');
     const order: string[] = [];
@@ -41,7 +41,7 @@ describe('terminatePtyProcessTree on Windows', () => {
 
     expect(handle.kill).toHaveBeenCalledTimes(1);
     expect(handle.kill).toHaveBeenCalledWith();
-    expect(order).toEqual(['kill', 'tree 4242']);
+    expect(order).toEqual(['tree 4242', 'kill']);
     // No process groups on Windows.
     expect(groupKill).not.toHaveBeenCalled();
   });

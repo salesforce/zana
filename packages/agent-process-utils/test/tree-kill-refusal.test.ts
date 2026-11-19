@@ -41,3 +41,17 @@ describe("Windows tree kill refusal", () => {
     expect(spawnTaskkill).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("Windows tree kill logging", () => {
+  it("logs the target and the outcome for a run kill", () => {
+    const lines: string[] = [];
+    const taskkill = Object.assign(new (require("node:events").EventEmitter)(), { kill: () => true });
+    stopWindowsProcessTree(4244, () => {}, {
+      spawnTaskkill: () => taskkill as never,
+      warn: (m: string) => lines.push(m),
+    });
+    taskkill.emit("exit", 0);
+    expect(lines[0]).toMatch(/taskkill \/T \/F PID 4244 \(self=\d+ parent=\d+\)/);
+    expect(lines[1]).toMatch(/PID 4244 finished: exit 0/);
+  });
+});

@@ -245,17 +245,23 @@ export function stopWindowsProcessTree(
     protectedPids?: () => Iterable<number>;
   } = defaultProcessTreeKillHost,
 ): void {
+  const log = host.warn ?? console.warn;
+  // Every decision leaves a line, so a silent exit of Zana names the PID that
+  // was targeted and what this process's own identity was at the time.
+  const identity = `self=${process.pid} parent=${process.ppid}`;
   const refusal = treeKillRefusal(pid, host.protectedPids?.() ?? protectedProcessPids);
   if (refusal) {
-    (host.warn ?? console.warn)(`[agent-process-utils] refusing taskkill /T /F for PID ${pid}: ${refusal}`);
+    log(`[agent-process-utils] refusing taskkill /T /F for PID ${pid} (${identity}): ${refusal}`);
     onDone(null);
     return;
   }
+  log(`[agent-process-utils] taskkill /T /F PID ${pid} (${identity})`);
   let settled = false;
   const finish = (code: number | null): void => {
     if (settled) return;
     settled = true;
     clearTimeout(timer);
+    log(`[agent-process-utils] taskkill /T /F PID ${pid} finished: ${code === null ? "did not run or timed out" : `exit ${code}`}`);
     onDone(code);
   };
   let timer: ReturnType<typeof setTimeout> | undefined;
