@@ -467,7 +467,7 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=6144
       - name: Verify Squad source snapshots on native Windows
-        run: pnpm test:e2e:only -- e2e/squad-source-snapshot-path.spec.ts
+        run: pnpm test:e2e -- e2e/squad-source-snapshot-path.spec.ts
         env:
           NODE_OPTIONS: --max-old-space-size=6144
       - name: Upload Windows admission failure artifacts
