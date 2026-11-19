@@ -5,6 +5,7 @@ export {
   removeUnlessRealDirectory,
 } from "./remove-tree.js";
 export * from "./temp-dir-sweep.js";
+import { appendFileSync } from "node:fs";
 import { spawn as nodeSpawn, type ChildProcess, type StdioOptions } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -205,6 +206,30 @@ export function registerProtectedProcessPid(pid: number): () => void {
 }
 
 /** Why a tree kill of `pid` is refused, or undefined when it may run. */
+/** Comma-separated PIDs of Zana's sibling processes; the desktop appends each child it forks. */
+export const PROTECTED_PIDS_ENV = "ZANA_PROTECTED_PIDS";
+/** File that receives one synchronous line per tree-kill decision, so it survives a crash. */
+export const TREE_KILL_AUDIT_ENV = "ZANA_TREE_KILL_AUDIT";
+
+/** Add `pid` to the protected list that this process's children inherit. */
+export function exportProtectedPid(pid: number, env: NodeJS.ProcessEnv = process.env): void {
+  const known = new Set((env[PROTECTED_PIDS_ENV] ?? "").split(",").filter(Boolean));
+  known.add(String(pid));
+  env[PROTECTED_PIDS_ENV] = [...known].join(",");
+}
+
+function envProtectedPids(env: NodeJS.ProcessEnv = process.env): number[] {
+  return (env[PROTECTED_PIDS_ENV] ?? "").split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0);
+}
+
+function auditTreeKill(line: string, env: NodeJS.ProcessEnv = process.env): void {
+  const file = env[TREE_KILL_AUDIT_ENV];
+  if (!file) return;
+  // Synchronous on purpose: the next thing a bad kill does is end this process.
+  try { appendFileSync(file, `${new Date().toISOString()} ${process.pid} ${line}
+`); } catch { /* Logging must not stop a kill. */ }
+}
+
 export function treeKillRefusal(
   pid: number,
   protectedPids: Iterable<number> = protectedProcessPids,
@@ -215,6 +240,7 @@ export function treeKillRefusal(
   for (const guarded of protectedPids) {
     if (guarded === pid) return "it is a registered Zana process";
   }
+  if (envProtectedPids().includes(pid)) return "it is a Zana process listed in the environment";
   return undefined;
 }
 
@@ -240,28 +266,36 @@ export function windowsTaskkillPath(env: NodeJS.ProcessEnv = process.env): strin
 export function stopWindowsProcessTree(
   pid: number,
   onDone: (code: number | null) => void = () => {},
-  host: Pick<ProcessTreeKillHost, "spawnTaskkill"> & Partial<Pick<ProcessTreeKillHost, "warn">> & {
+  host: Pick<ProcessTreeKillHost, "spawnTaskkill"> & {
+    /** Receives each tree-kill decision; defaults to console.warn so the runtime log file keeps it. */
+    log?: (message: string) => void;
     /** Extra PIDs that must never be tree-killed. Defaults to the registered Zana PIDs. */
     protectedPids?: () => Iterable<number>;
   } = defaultProcessTreeKillHost,
 ): void {
-  const log = host.warn ?? console.warn;
+  const log = host.log ?? console.warn;
   // Every decision leaves a line, so a silent exit of Zana names the PID that
   // was targeted and what this process's own identity was at the time.
   const identity = `self=${process.pid} parent=${process.ppid}`;
   const refusal = treeKillRefusal(pid, host.protectedPids?.() ?? protectedProcessPids);
   if (refusal) {
-    log(`[agent-process-utils] refusing taskkill /T /F for PID ${pid} (${identity}): ${refusal}`);
+    const line = `[agent-process-utils] refusing taskkill /T /F for PID ${pid} (${identity}): ${refusal}`;
+    auditTreeKill(line);
+    log(line);
     onDone(null);
     return;
   }
-  log(`[agent-process-utils] taskkill /T /F PID ${pid} (${identity})`);
+  const startLine = `[agent-process-utils] taskkill /T /F PID ${pid} (${identity})`;
+  auditTreeKill(startLine);
+  log(startLine);
   let settled = false;
   const finish = (code: number | null): void => {
     if (settled) return;
     settled = true;
     clearTimeout(timer);
-    log(`[agent-process-utils] taskkill /T /F PID ${pid} finished: ${code === null ? "did not run or timed out" : `exit ${code}`}`);
+    const doneLine = `[agent-process-utils] taskkill /T /F PID ${pid} finished: ${code === null ? "did not run or timed out" : `exit ${code}`}`;
+    auditTreeKill(doneLine);
+    log(doneLine);
     onDone(code);
   };
   let timer: ReturnType<typeof setTimeout> | undefined;
