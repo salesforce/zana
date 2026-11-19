@@ -60,7 +60,7 @@ vi.mock('../../components/thread/secondary-panel/PanelAgentTab.js', () => ({
   </>)
 }));
 vi.mock('../../components/thread/secondary-panel/ThreadPluginTab.js', () => ({
-  ThreadPluginTab: ({ moduleId, actionId, params, layout, surface, projectId, tabId, page }: {
+  ThreadPluginTab: ({ moduleId, actionId, params, layout, surface, projectId, tabId, page, active, tabState, onTabStateChange }: {
     moduleId: string;
     actionId?: string;
     params?: unknown;
@@ -69,9 +69,15 @@ vi.mock('../../components/thread/secondary-panel/ThreadPluginTab.js', () => ({
     projectId: string | null;
     tabId?: string;
     page?: { pluginId: string; page: string };
+    active?: boolean;
+    tabState?: unknown;
+    onTabStateChange?: (state: unknown) => void;
   }) => (
     <div
       data-testid="plugin-tool"
+      data-active={String(active)}
+      data-state={JSON.stringify(tabState ?? null)}
+      onClick={() => onTabStateChange?.({ saved: tabId })}
       data-tool={`${moduleId}/${actionId}`}
       data-params={JSON.stringify(params ?? null)}
       data-layout={layout ?? ''}
@@ -400,6 +406,11 @@ describe('PluginPanelHostLayout', () => {
     });
     expect(tabLabels()).toEqual(['Close Graph view']);
     expect(tool().dataset.params).toBe('{"node":"n2"}');
+    // The plugin saves its place; it comes back through the same tab and the hidden tab learns it is inactive.
+    expect(tool().dataset.active).toBe('true');
+    expect(tool().dataset.state).toBe('null');
+    fireEvent.click(tool());
+    expect(tool().dataset.state).toBe(JSON.stringify({ saved: tool().dataset.tab }));
 
     // The New Tab page lists only this page's tools.
     fireEvent.click(screen.getByTestId('thread-secondary-new-tab'));

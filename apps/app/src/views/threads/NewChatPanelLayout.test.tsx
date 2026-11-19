@@ -33,7 +33,9 @@ vi.mock('../../components/thread/secondary-panel/ThreadFilePreviewTab.js', () =>
 vi.mock('../../components/thread/secondary-panel/ThreadExplorerTab.js', () => ({ ThreadExplorerTab: () => <div>Project files</div> }));
 vi.mock('../../components/thread/secondary-panel/ThreadInboxTab.js', () => ({ ThreadInboxTab: () => <div>Project inbox</div> }));
 vi.mock('../../components/thread/secondary-panel/DockedTerminalTab.js', () => ({ DockedTerminalTab: ({ sessionId }: { sessionId: string }) => <div>Shell: {sessionId}</div> }));
-vi.mock('../../components/thread/secondary-panel/ThreadPluginTab.js', () => ({ ThreadPluginTab: ({ params }: { params: unknown }) => <div>Plugin: {JSON.stringify(params)}</div> }));
+vi.mock('../../components/thread/secondary-panel/ThreadPluginTab.js', () => ({ ThreadPluginTab: ({ params, tabState, onTabStateChange }: { params: unknown; tabState?: unknown; onTabStateChange?: (state: unknown) => void }) => (
+  <div><span>Plugin: {JSON.stringify(params)}</span><button onClick={() => onTabStateChange?.({ place: 2 })}>Save plugin state</button><output data-testid="plugin-state">{JSON.stringify(tabState ?? null)}</output></div>
+) }));
 vi.mock('../../components/thread/secondary-panel/BrowserTabDeck.js', () => ({
   BrowserTabDeck: (p: ComponentProps<typeof import('../../components/thread/secondary-panel/BrowserTabDeck.js').BrowserTabDeck>) => p.activeBrowserTabId ? <div data-testid="browser" data-visible={String(p.canShowNativeBrowserView)}>
     <button onClick={() => p.onUpdate({ tabId: p.activeBrowserTabId!, url: 'https://example.com/docs', title: 'Reference' })}>Visit page</button>
@@ -107,6 +109,8 @@ describe('New chat side panels', () => {
     renderDraft(); show(); click('Open Explorer'); expect(screen.getByText('Project files')).toBeTruthy();
     click('New tab'); click('Open Inbox'); expect(screen.getByText('Project inbox')).toBeTruthy();
     click('New tab'); click('Open plugin'); expect(screen.getByText('Plugin: {"mode":1}')).toBeTruthy();
+    expect(screen.getByTestId('plugin-state').textContent).toBe('null'); click('Save plugin state');
+    expect(screen.getByTestId('plugin-state').textContent).toBe('{"place":2}');
     click('New tab'); click('Recent'); expect(screen.getByTestId('browser')).toBeTruthy(); click('Blank page');
     expect(screen.getByRole('button', { name: 'Browser', exact: true })).toBeTruthy();
     click('Quick files'); expect(screen.getByText('Project files')).toBeTruthy();
