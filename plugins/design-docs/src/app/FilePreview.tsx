@@ -355,8 +355,12 @@ export function FilePreview({
       }}
     >
       {canOpenInBrowser ? (
-        <div className="dd-preview-actions">
-          <IconButton icon={ExternalLink} label="Open in browser" onClick={() => void openInBrowser()} />
+        <div className="dd-html-toolbar dd-md-toolbar">
+          <span />
+          <span />
+          <div className="dd-html-actions">
+            <IconButton icon={ExternalLink} label="Open in browser" onClick={() => void openInBrowser()} />
+          </div>
         </div>
       ) : null}
       {body}
