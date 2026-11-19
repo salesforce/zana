@@ -79,7 +79,8 @@ import {
   getProjectModeRoutePath,
   getScheduleRoutePath,
   getSchedulerRoutePath,
-  getSettingsTabRoutePath
+  getSettingsTabRoutePath,
+  sessionIdFromPath
 } from './lib/route-paths.js';
 import {
   getRememberedAppRoutePath,
@@ -1609,8 +1610,13 @@ export const useUi = create<UiState>((set, get) => ({
         break;
     }
   },
+  // Output on the session whose page is open is being read: never flag it.
   markUnread: (sessionId) =>
-    set((s) => (s.unread[sessionId] ? s : { unread: { ...s.unread, [sessionId]: true } })),
+    set((s) =>
+      s.unread[sessionId] || sessionIdFromPath(window.location.pathname) === sessionId
+        ? s
+        : { unread: { ...s.unread, [sessionId]: true } }
+    ),
   clearUnread: (sessionId) =>
     set((s) => {
       if (!s.unread[sessionId]) return s;

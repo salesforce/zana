@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TerminalSession } from '@zana-ai/zcc-domain/product';
 import { agentTabStatus, isListedAgent } from '../lib/agent-tab-status.js';
@@ -113,6 +114,19 @@ describe('withAgentTabReplace', () => {
 
 describe('store lifecycle and agent tabs', () => {
   const projects = [{ id: 'p1', name: 'P', path: '/tmp/p', createdAt: 1, lastActiveAt: 1 }];
+
+  it('markUnread flags output unless that session page is the open route', async () => {
+    const { useUi } = await import('../store.js');
+    useUi.setState({ unread: {} });
+    window.history.pushState({}, '', '/sessions/open');
+    useUi.getState().markUnread('open');
+    expect(useUi.getState().unread).toEqual({});
+    useUi.getState().markUnread('other');
+    expect(useUi.getState().unread).toEqual({ other: true });
+    useUi.getState().markUnread('other');
+    expect(useUi.getState().unread).toEqual({ other: true });
+    window.history.pushState({}, '', '/');
+  });
 
   it('closeTerminal closes the nav tab without remembering it for reopen', async () => {
     const { useData, useApplicationTabs } = await load();
