@@ -374,7 +374,7 @@ describe('zcc design-docs', () => {
     const store = new DesignDocStore(createTestDatabase());
     const user = { kind: 'user', label: 'You', threadId: null } as const;
     const doc = store.create(
-      { title: 'Site', files: [{ path: 'index.html', content: '<p>x</p>' }, { path: 'runs/a.html', content: '<p>a</p>' }, { path: 'notes.md', content: '# n' }], entryPath: 'index.html' },
+      { title: 'Site', files: [{ path: 'index.html', content: '<p>x</p>' }, { path: 'runs/a.html', content: '<p>a</p>' }, { path: 'notes.md', content: '# n' }, { path: 'notes.mdx', content: '# n' }, { path: 'AGENTS.md', content: '# a' }], entryPath: 'index.html' },
       user
     );
     const base = { store, changed: () => {}, caller: async () => ({ actor: user, projectId: null, files: null }), readLocalFile: vi.fn() };
@@ -386,7 +386,9 @@ describe('zcc design-docs', () => {
     expect(entry.stdout!.split('\n')[0]).toBe(`http://127.0.0.1:8780/page?doc=${doc.id}&path=index.html`);
     expect(entry.stdout).toContain("zcc browser create --url 'http://127.0.0.1:8780/page?");
     expect((await run(['preview', doc.id, 'runs/a.html'])).stdout).toContain('path=runs/a.html');
-    expect((await run(['preview', doc.id, 'notes.md'])).stderr).toMatch(/notes.md is not an HTML page/);
+    expect((await run(['preview', doc.id, 'notes.md'])).stdout).toContain('path=notes.md');
+    expect((await run(['preview', doc.id, 'notes.mdx'])).stderr).toMatch(/notes.mdx is not an HTML or markdown/);
+    expect((await run(['preview', doc.id, 'AGENTS.md'])).exitCode).not.toBe(0);
     expect((await run(['preview', doc.id, 'gone.html'])).exitCode).toBe(1);
     expect((await run(['preview', doc.id], base)).stderr).toMatch(/not available/);
   });
