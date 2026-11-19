@@ -77,6 +77,11 @@ function foldWithMap(text: string): { folded: string; origin: number[] } {
   return { folded, origin };
 }
 
+/** Case-insensitive containment with the same folding as `findTextRanges` (İ-safe). */
+export function textMatchesFind(haystack: string, needle: string): boolean {
+  return foldWithMap(haystack).folded.includes(foldWithMap(needle).folded);
+}
+
 type Located = [Text, number];
 
 /** Maps offsets in the joined original text back to (text node, offset). */

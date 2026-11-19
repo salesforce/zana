@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { ShortcutsHelp } from './ShortcutsHelp.js';
+import { registerThreadFindTarget, threadFindClaims } from '../lib/thread-find.js';
 
 afterEach(() => {
   cleanup();
@@ -97,5 +98,82 @@ describe('ShortcutsHelp', () => {
     unmount();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(3);
+  });
+
+});
+
+describe('ShortcutsHelp find', () => {
+  const filter = () => screen.getByRole('searchbox', { name: 'Filter shortcuts' }) as HTMLInputElement;
+  const modal = () => screen.getByRole('dialog', { name: 'Keyboard Shortcuts' });
+  const ctrlF = { key: 'f', ctrlKey: true };
+
+  function renderOnLinux(onClose: () => void = () => undefined) {
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('Linux x86_64');
+    return render(<ShortcutsHelp onClose={onClose} />);
+  }
+
+  it('Ctrl+F focuses the filter instead of thread find', () => {
+    renderOnLinux();
+    const target = { root: () => document.body, main: () => document.body, isPrimary: () => true, open: vi.fn() };
+    const unregister = registerThreadFindTarget(target);
+    expect(document.activeElement).toBe(modal());
+    const event = new KeyboardEvent('keydown', { ...ctrlF, bubbles: true, cancelable: true });
+    expect(threadFindClaims(event)).toBe(false);
+    modal().dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(filter());
+    unregister();
+  });
+
+  it('filters by label, key combo and section, and hides empty sections', () => {
+    renderOnLinux();
+    fireEvent.change(filter(), { target: { value: 'toggle inbox' } });
+    expect(screen.getAllByText('Toggle Inbox')).toHaveLength(1);
+    expect(screen.queryByText('Next tab')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Tabs' })).toBeNull();
+    fireEvent.change(filter(), { target: { value: 'ctrl+shift+d' } });
+    expect(screen.getByText('Duplicate active tab (same profile)')).toBeTruthy();
+    expect(screen.queryByText('Toggle diff vs HEAD on open file')).toBeNull();
+    fireEvent.change(filter(), { target: { value: 'CTRL + SHIFT + D' } });
+    expect(screen.getByText('Duplicate active tab (same profile)')).toBeTruthy();
+    fireEvent.change(filter(), { target: { value: 'explorer' } });
+    expect(screen.getByText('Save edited file')).toBeTruthy();
+    expect(screen.queryByText('New Chat')).toBeNull();
+  });
+
+  it('reports the count and an empty state', () => {
+    renderOnLinux();
+    fireEvent.change(filter(), { target: { value: 'next tab' } });
+    expect(screen.getByRole('status').textContent).toBe('1 shortcut match');
+    fireEvent.change(filter(), { target: { value: 'zzzz' } });
+    expect(screen.getByText('No shortcuts match “zzzz”.')).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe('0 shortcuts match');
+    fireEvent.change(filter(), { target: { value: '' } });
+    expect(screen.getByRole('status').textContent).toBe('');
+    expect(screen.queryByText(/No shortcuts match/u)).toBeNull();
+  });
+
+  it('Esc clears the filter and keeps the panel open, then closes on the next press', () => {
+    const onClose = vi.fn();
+    renderOnLinux(onClose);
+    fireEvent.change(filter(), { target: { value: 'tab' } });
+    filter().focus();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(filter().value).toBe('');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(modal());
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('puts focus back where it was when the panel closes', () => {
+    const opener = document.createElement('button');
+    document.body.append(opener);
+    opener.focus();
+    const { unmount } = renderOnLinux();
+    expect(document.activeElement).toBe(modal());
+    unmount();
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
   });
 });

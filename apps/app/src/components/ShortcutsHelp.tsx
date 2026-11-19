@@ -1,5 +1,8 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { X } from 'lucide-react';
+import { textMatchesFind } from '../lib/dom-find.js';
+import { shortcutForCommand } from '../lib/keyboard-shortcut-settings.js';
+import { OWN_FIND_ATTRIBUTE } from '../lib/thread-find.js';
 import { platformKey, platformShortcut } from '../lib/platformShortcut.js';
 import { ctrlVPastesByDefault, terminalPasteHelpRow } from '../lib/terminalPaste.js';
 
@@ -120,40 +123,116 @@ const sections = (pasteRow: Row | null): Section[] => [
   }
 ];
 
-export function ShortcutsHelp({ onClose, ctrlVPasteEnabled = ctrlVPastesByDefault() }: Props) {
+/** What a row reads as on this platform, plus `Ctrl+F` spelled with plus signs so a typed combo matches. */
+function rowHaystack(section: Section, row: Row): string {
+  const keys = row.keys.map((key) => platformKey(key));
+  return [section.title, platformShortcut(row.label), keys.join(' '), keys.join('+')].join('\n');
+}
+
+function filterSections(all: Section[], query: string): Section[] {
+  const needle = query.trim().replace(/\s*\+\s*/gu, '+');
+  if (!needle) return all;
+  return all
+    .map((section) => ({ ...section, rows: section.rows.filter((row) => textMatchesFind(rowHaystack(section, row), needle)) }))
+    .filter((section) => section.rows.length > 0);
+}
+
+function ShortcutRow({ row }: { row: Row }) {
+  return (
+    <div className="shortcut-row">
+      <span className="shortcut-keys">
+        {row.keys.map((k, j) => (
+          <kbd key={j}>{platformKey(k)}</kbd>
+        ))}
+      </span>
+      <span className="shortcut-label">{platformShortcut(row.label)}</span>
+    </div>
+  );
+}
+
+/**
+ * Ctrl+F filter for the panel. Esc clears the text first and closes the panel
+ * when there is nothing to clear; either way focus stays inside the panel.
+ */
+function useShortcutsFilter(onClose: () => void) {
+  const [query, setQuery] = useState('');
+  const queryRef = useRef('');
+  queryRef.current = query;
+  const hostRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    hostRef.current?.focus();
+    return () => previous?.focus();
+  }, []);
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (!queryRef.current) return onClose();
+      setQuery('');
+      hostRef.current?.focus();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+  const onHostKeyDown = useCallback((event: KeyboardEvent<HTMLElement>) => {
+    if (!shortcutForCommand('thread.find', event.nativeEvent)) return;
+    event.preventDefault();
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+  return { query, setQuery, hostRef, inputRef, onHostKeyDown };
+}
+
+function countText(shown: number): string {
+  return `${shown} ${shown === 1 ? 'shortcut' : 'shortcuts'}`;
+}
+
+export function ShortcutsHelp({ onClose, ctrlVPasteEnabled = ctrlVPastesByDefault() }: Props) {
+  const { query, setQuery, hostRef, inputRef, onHostKeyDown } = useShortcutsFilter(onClose);
+  const visible = filterSections(sections(terminalPasteHelpRow(ctrlVPasteEnabled)), query);
+  const shown = visible.reduce((total, section) => total + section.rows.length, 0);
+  const filtering = query.trim().length > 0;
 
   return (
     <div className="palette-backdrop" onMouseDown={onClose}>
-      <div className="shortcuts-modal" onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        ref={hostRef}
+        className="shortcuts-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Keyboard Shortcuts"
+        tabIndex={-1}
+        {...{ [OWN_FIND_ATTRIBUTE]: '' }}
+        onKeyDown={onHostKeyDown}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <header className="shortcuts-header">
           <h3>Keyboard Shortcuts</h3>
           <button className="icon-btn" aria-label="Close" onClick={onClose}>
             <X size={14} />
           </button>
         </header>
+        <div className="shortcuts-filter" role="search">
+          <input
+            ref={inputRef}
+            type="search"
+            value={query}
+            placeholder="Filter shortcuts"
+            aria-label="Filter shortcuts"
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          {filtering && <span className="shortcuts-filter-count" aria-hidden="true">{countText(shown)}</span>}
+          <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{filtering ? `${countText(shown)} match` : ''}</span>
+        </div>
         <div className="shortcuts-body">
-          {sections(terminalPasteHelpRow(ctrlVPasteEnabled)).map((s) => (
+          {visible.map((s) => (
             <section key={s.title} className="shortcuts-section">
               <h4>{s.title}</h4>
-              {s.rows.map((r, i) => (
-                <div key={i} className="shortcut-row">
-                  <span className="shortcut-keys">
-                    {r.keys.map((k, j) => (
-                      <kbd key={j}>{platformKey(k)}</kbd>
-                    ))}
-                  </span>
-                  <span className="shortcut-label">{platformShortcut(r.label)}</span>
-                </div>
-              ))}
+              {s.rows.map((r, i) => <ShortcutRow key={i} row={r} />)}
             </section>
           ))}
+          {shown === 0 && <p className="shortcuts-empty">No shortcuts match “{query.trim()}”.</p>}
         </div>
       </div>
     </div>

@@ -12606,6 +12606,36 @@ body.resizing-col .explorer-resizer::after {
   font-weight: 600;
 }
 
+.shortcuts-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.shortcuts-filter input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.shortcuts-filter-count,
+.shortcuts-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.shortcuts-empty {
+  white-space: normal;
+}
+
 .shortcuts-body {
   padding: 8px 16px 16px;
   overflow-y: auto;

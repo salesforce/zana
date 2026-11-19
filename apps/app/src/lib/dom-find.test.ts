@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FIND_MATCH_LIMIT, createFindHighlighter, findTextRanges, scrollRangeIntoView } from './dom-find.js';
+import { FIND_MATCH_LIMIT, createFindHighlighter, findTextRanges, scrollRangeIntoView, textMatchesFind } from './dom-find.js';
 
 class FakeHighlight {
   readonly ranges: Range[];
@@ -238,5 +238,13 @@ describe('documents without a browsing context', () => {
     const detached = document.implementation.createHTMLDocument('x');
     detached.body.innerHTML = '<p>needle <span>hay</span></p>';
     expect(findTextRanges(detached.body, 'needle')).toHaveLength(1);
+  });
+});
+
+describe('textMatchesFind', () => {
+  it('ignores case and folds İ the way findTextRanges does', () => {
+    expect(textMatchesFind('Toggle Inbox', 'INBOX')).toBe(true);
+    expect(textMatchesFind('İstanbul', 'i̇s')).toBe(true);
+    expect(textMatchesFind('Toggle Inbox', 'outbox')).toBe(false);
   });
 });
