@@ -12,7 +12,6 @@ Exact verification commands for changes that touch launch, memory, browser, plug
 | Packaged plugin runtime seams | `pnpm test:e2e -- e2e/packaged-provider-startup.spec.ts` | `apps/server/src/services/extensions/AGENTS.md` |
 | Plugin authoring loop | `pnpm test:e2e -- e2e/plugin-authoring-live.spec.ts` | `apps/server/src/services/extensions/AGENTS.md` |
 | Windows title bar overlay (caption button colours, `titleBarOverlay`, title bar `--bg-base` / `--inset-chrome` / `--text-muted` / `--titlebar-h`) | On Windows: `pnpm test:e2e -- e2e/windows-titlebar-overlay-theme.spec.ts` (skips on Linux CI) | `apps/desktop/src/window/titlebar-overlay.ts` |
-| Squad execution-source snapshots (`source-registry.ts` snapshot keys, `snapshotKeyForLaunch`, `squad-execution-sources` paths) | On Windows: `pnpm test:e2e -- e2e/squad-source-snapshot-path.spec.ts` (also runs in CI's Squad Windows admission job and on Linux) | `apps/server/src/services/execution/source-registry.ts` |
 
 Live suites (`live:*`) need an attached app on `:8780`/`:8781`, an enrolled host-daemon, and a host shell (`unset ZCC_SESSION_ID`). Preflight skips with `console.warn`, so a verify that finishes in milliseconds is a false green. Keep them off `pnpm live:matrix`.
 
