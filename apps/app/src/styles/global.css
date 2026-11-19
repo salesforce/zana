@@ -12558,15 +12558,8 @@ body.resizing-col .explorer-resizer::after {
   color: var(--danger, var(--text-muted));
 }
 
-::highlight(find-match) {
-  background-color: rgba(230, 184, 0, 0.35);
-}
-
-::highlight(find-current) {
-  background-color: #ff9d00;
-  color: #000;
-}
-
+/* `::highlight()` rules for find matches are injected per instance by
+   createFindHighlighter (lib/dom-find.ts), since each surface owns its names. */
 
 /* Inline image preview in the Explorer viewer (mirrors .library-image-preview). */
 .explorer-image-preview {

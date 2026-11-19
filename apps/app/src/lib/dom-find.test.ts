@@ -1,14 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  FIND_CURRENT_HIGHLIGHT,
-  FIND_MATCH_HIGHLIGHT,
-  FIND_MATCH_LIMIT,
-  clearFindHighlights,
-  findTextRanges,
-  paintFindHighlights,
-  scrollRangeIntoView
-} from './dom-find.js';
+import { FIND_MATCH_LIMIT, createFindHighlighter, findTextRanges, scrollRangeIntoView } from './dom-find.js';
 
 class FakeHighlight {
   readonly ranges: Range[];
@@ -66,8 +58,27 @@ describe('findTextRanges', () => {
     expect(findTextRanges(element, 'absent')).toEqual([]);
   });
 
-  it('keeps offsets right when lowercasing changes the text length', () => {
-    expect(texts(findTextRanges(root('<p>İ needle</p>'), 'needle'))).toEqual(['needle']);
+  it('matches after a character whose lowercase is longer (İ)', () => {
+    expect(texts(findTextRanges(root('<p>İ NEEDLE and İNEEDLE</p>'), 'needle'))).toEqual(['NEEDLE', 'NEEDLE']);
+  });
+
+  it('matches the İ itself and maps its range back to the original text', () => {
+    const [range] = findTextRanges(root('<p>xİy</p>'), 'i̇y');
+    expect(range!.toString()).toBe('İy');
+  });
+
+  it('handles astral characters before a match', () => {
+    expect(texts(findTextRanges(root('<p>😀 Needle</p>'), 'needle'))).toEqual(['Needle']);
+  });
+
+  it('skips text that is not rendered', () => {
+    const element = root(
+      '<p style="display:none">needle a</p><p hidden>needle b</p><p style="visibility:hidden">needle c</p>' +
+      '<span class="sr-only">needle d</span><details><summary>needle e</summary>needle f<p>needle g</p></details>' +
+      '<details open><p>needle h</p></details><p>needle i</p>'
+    );
+    expect(texts(findTextRanges(element, 'needle'))).toHaveLength(3);
+    expect(findTextRanges(element, 'needle').map((range) => range.startContainer.textContent)).toEqual(['needle e', 'needle h', 'needle i']);
   });
 
   it('caps the number of matches', () => {
@@ -75,45 +86,84 @@ describe('findTextRanges', () => {
   });
 });
 
-describe('highlights', () => {
+describe('createFindHighlighter', () => {
   let registry: Map<string, unknown>;
+  const names = () => [...registry.keys()];
+  const painted = (prefix: string) => {
+    const key = names().find((name) => name.startsWith(prefix));
+    return key ? (registry.get(key) as FakeHighlight).ranges : undefined;
+  };
   beforeEach(() => {
     registry = new Map();
     vi.stubGlobal('CSS', { highlights: registry });
     vi.stubGlobal('Highlight', FakeHighlight);
   });
+  afterEach(() => { document.head.replaceChildren(); });
 
   it('paints all matches plus a distinct current match from the same ranges', () => {
     const ranges = findTextRanges(root('<p>ab ab ab</p>'), 'ab');
-    paintFindHighlights(ranges, 1);
-    expect((registry.get(FIND_MATCH_HIGHLIGHT) as FakeHighlight).ranges).toEqual(ranges);
-    expect((registry.get(FIND_CURRENT_HIGHLIGHT) as FakeHighlight).ranges).toEqual([ranges[1]]);
+    createFindHighlighter().paint(ranges, 1);
+    expect(painted('find-match-')).toEqual(ranges);
+    expect(painted('find-current-')).toEqual([ranges[1]]);
   });
 
   it('drops the current highlight when no match is current', () => {
     const ranges = findTextRanges(root('<p>ab</p>'), 'ab');
-    paintFindHighlights(ranges, 0);
-    paintFindHighlights(ranges, -1);
-    expect(registry.has(FIND_CURRENT_HIGHLIGHT)).toBe(false);
-    expect(registry.has(FIND_MATCH_HIGHLIGHT)).toBe(true);
+    const highlighter = createFindHighlighter();
+    highlighter.paint(ranges, 0);
+    highlighter.paint(ranges, -1);
+    expect(painted('find-current-')).toBeUndefined();
+    expect(painted('find-match-')).toBeDefined();
   });
 
-  it('clears both highlights when there are no matches, and on demand', () => {
+  it('clears when there are no matches, and on demand', () => {
     const ranges = findTextRanges(root('<p>ab</p>'), 'ab');
-    paintFindHighlights(ranges, 0);
-    paintFindHighlights([], -1);
+    const highlighter = createFindHighlighter();
+    highlighter.paint(ranges, 0);
+    highlighter.paint([], -1);
     expect(registry.size).toBe(0);
-    paintFindHighlights(ranges, 0);
-    clearFindHighlights();
+    highlighter.paint(ranges, 0);
+    highlighter.clear();
     expect(registry.size).toBe(0);
+  });
+
+  it('keeps each instance on its own names, so one never clears another', () => {
+    const first = createFindHighlighter();
+    const second = createFindHighlighter();
+    const ranges = findTextRanges(root('<p>ab ab</p>'), 'ab');
+    first.paint(ranges, 0);
+    second.paint(ranges.slice(0, 1), 0);
+    expect(names()).toHaveLength(4);
+    second.paint([], -1);
+    second.clear();
+    expect(names()).toHaveLength(2);
+    second.dispose();
+    expect(painted('find-match-')).toEqual(ranges);
+    first.dispose();
+    expect(registry.size).toBe(0);
+  });
+
+  it('injects a ::highlight stylesheet for its own names and removes it on dispose', () => {
+    const highlighter = createFindHighlighter();
+    expect(document.head.querySelectorAll('style')).toHaveLength(0);
+    const ranges = findTextRanges(root('<p>ab</p>'), 'ab');
+    highlighter.paint(ranges, 0);
+    highlighter.paint(ranges, 0);
+    const styles = document.head.querySelectorAll('style');
+    expect(styles).toHaveLength(1);
+    for (const name of names()) expect(styles[0]!.textContent).toContain(`::highlight(${name})`);
+    highlighter.dispose();
+    expect(document.head.querySelectorAll('style')).toHaveLength(0);
+    expect(() => highlighter.dispose()).not.toThrow();
   });
 
   it('does nothing without the Highlight API', () => {
+    const highlighter = createFindHighlighter();
     vi.stubGlobal('Highlight', undefined);
-    paintFindHighlights(findTextRanges(root('<p>ab</p>'), 'ab'), 0);
+    highlighter.paint(findTextRanges(root('<p>ab</p>'), 'ab'), 0);
     expect(registry.size).toBe(0);
     vi.stubGlobal('CSS', undefined);
-    expect(() => { paintFindHighlights([], 0); clearFindHighlights(); }).not.toThrow();
+    expect(() => { highlighter.paint([], 0); highlighter.clear(); }).not.toThrow();
   });
 });
 
@@ -133,5 +183,38 @@ describe('scrollRangeIntoView', () => {
     } finally {
       Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
     }
+  });
+});
+
+describe('scrollRangeIntoView with layout', () => {
+  function rect(top: number, height: number) {
+    return { top, height, bottom: top + height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) } as DOMRect;
+  }
+
+  it('scrolls by the match rectangle when its parent is taller than the viewport', () => {
+    const element = root('<div id="scroller" style="overflow-y:auto"><pre>long code needle</pre></div>');
+    const scroller = document.getElementById('scroller')!;
+    Object.defineProperty(scroller, 'scrollHeight', { value: 5000, configurable: true });
+    Object.defineProperty(scroller, 'clientHeight', { value: 400, configurable: true });
+    scroller.getBoundingClientRect = () => rect(100, 400);
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { value: scrollIntoView, configurable: true });
+    const [range] = findTextRanges(element, 'needle');
+    range!.getBoundingClientRect = () => rect(3000, 20);
+    try {
+      scroller.scrollTop = 0;
+      scrollRangeIntoView(range!);
+      // Match centre (3010) moves to the container centre (300).
+      expect(scroller.scrollTop).toBe(2710);
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    } finally {
+      Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+    }
+  });
+
+  it('does nothing when no ancestor scrolls', () => {
+    const [range] = findTextRanges(root('<p>needle</p>'), 'needle');
+    range!.getBoundingClientRect = () => rect(10, 10);
+    expect(() => scrollRangeIntoView(range!)).not.toThrow();
   });
 });

@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FIND_CURRENT_HIGHLIGHT, FIND_MATCH_HIGHLIGHT } from '../../lib/dom-find.js';
 import { openThreadFind, registerThreadFindTarget, threadFindClaims } from '../../lib/thread-find.js';
 import MarkdownPreview from './MarkdownPreview';
 
@@ -64,8 +63,12 @@ function type(input: HTMLInputElement, value: string) {
 }
 
 const counter = () => screen.getByTestId('dom-find-bar-count').textContent;
-const matchesPainted = () => registry.get(FIND_MATCH_HIGHLIGHT)?.ranges.map((range) => range.toString());
-const currentPainted = () => registry.get(FIND_CURRENT_HIGHLIGHT)?.ranges.map((range) => range.toString());
+const paintedUnder = (prefix: string) => {
+  const key = [...registry.keys()].find((name) => name.startsWith(prefix));
+  return key ? registry.get(key)!.ranges.map((range) => range.toString()) : undefined;
+};
+const matchesPainted = () => paintedUnder('find-match-');
+const currentPainted = () => paintedUnder('find-current-');
 
 describe('Ctrl+F routing', () => {
   it('opens the preview find, not thread find, while a primary thread is mounted', () => {
@@ -228,5 +231,69 @@ describe('Esc', () => {
     type(input, 'thread');
     unmount();
     expect(registry.size).toBe(0);
+  });
+});
+
+describe('several find surfaces', () => {
+  it('a closed preview mounting or unmounting leaves another preview highlights alone', () => {
+    const { input } = openFind();
+    type(input, 'thread');
+    const before = [...registry.keys()].sort();
+    expect(before).toHaveLength(2);
+    const other = render(<MarkdownPreview content="thread elsewhere" documentPath="/repo/other.md" />);
+    expect([...registry.keys()].sort()).toEqual(before);
+    other.unmount();
+    expect([...registry.keys()].sort()).toEqual(before);
+    expect(counter()).toBe('1/5');
+  });
+
+  it('two open previews paint under different names', () => {
+    const first = openFind();
+    type(first.input, 'thread');
+    const second = render(<MarkdownPreview content="thread again" documentPath="/repo/two.md" />);
+    pressCtrlF(second.container.querySelector('.inbox-md')!);
+    fireEvent.change(second.container.querySelector('input[type="search"]')!, { target: { value: 'thread' } });
+    expect(registry.size).toBe(4);
+    second.unmount();
+    expect(registry.size).toBe(2);
+  });
+});
+
+describe('focus on open', () => {
+  function viewer(withFocusInside: 'toggle' | 'tree' | 'none') {
+    const section = document.createElement('section');
+    section.className = 'explorer-viewer';
+    const toggle = document.createElement('button');
+    const tree = document.createElement('button');
+    section.append(toggle);
+    document.body.append(section, tree);
+    if (withFocusInside === 'toggle') toggle.focus();
+    if (withFocusInside === 'tree') tree.focus();
+    const mount = document.createElement('div');
+    section.append(mount);
+    const view = render(<MarkdownPreview content={DOC} documentPath={DOC_PATH} />, { container: mount });
+    return { view, section, tree, host: mount.querySelector<HTMLElement>('[data-own-find]')! };
+  }
+
+  it('focuses the preview when focus came from the viewer toolbar', () => {
+    const { host, section, tree } = viewer('toggle');
+    expect(document.activeElement).toBe(host);
+    section.remove();
+    tree.remove();
+  });
+
+  it('focuses the preview when nothing has focus', () => {
+    const { host, section, tree } = viewer('none');
+    expect(document.activeElement).toBe(host);
+    section.remove();
+    tree.remove();
+  });
+
+  it('leaves focus alone when the user is in the file tree', () => {
+    const { host, section, tree } = viewer('tree');
+    expect(document.activeElement).toBe(tree);
+    expect(document.activeElement).not.toBe(host);
+    section.remove();
+    tree.remove();
   });
 });
