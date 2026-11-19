@@ -46,6 +46,7 @@ jobs:
         run: node scripts/ci-plan.mjs
         env:
           CI_BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           CI_FORCE_PREVIEW: ${{ github.event_name == 'workflow_dispatch' }}
 
   # The root suite runs pure unit files in parallel, then files that spawn real
@@ -369,6 +370,7 @@ jobs:
         run: xvfb-run -a node scripts/ci-verification.mjs
         env:
           CI_BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           NODE_OPTIONS: --max-old-space-size=6144
           CI_E2E_SHARD: ${{ matrix.shard }}/3
           CI_E2E_PREBUILT: '1'
