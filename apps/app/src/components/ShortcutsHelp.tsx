@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 import { textMatchesFind } from '../lib/dom-find.js';
 import { shortcutForCommand } from '../lib/keyboard-shortcut-settings.js';
 import { OWN_FIND_ATTRIBUTE } from '../lib/thread-find.js';
+import { useDialogFocusTrap } from '../hooks/useDialogFocusTrap.js';
 import { platformKey, platformShortcut } from '../lib/platformShortcut.js';
 import { ctrlVPastesByDefault, terminalPasteHelpRow } from '../lib/terminalPaste.js';
 
@@ -123,10 +124,23 @@ const sections = (pasteRow: Row | null): Section[] => [
   }
 ];
 
+/** Words people type for a key cap that the platform glyph or short name doesn't spell. */
+const KEY_ALIASES: Record<string, string> = {
+  '⌘': 'cmd command',
+  '⌃': 'control',
+  '⌥': 'option opt',
+  '⇧': 'shift',
+  Esc: 'escape',
+  '↵': 'return enter',
+  Enter: 'return'
+};
+
 /** What a row reads as on this platform, plus `Ctrl+F` spelled with plus signs so a typed combo matches. */
 function rowHaystack(section: Section, row: Row): string {
   const keys = row.keys.map((key) => platformKey(key));
-  return [section.title, platformShortcut(row.label), keys.join(' '), keys.join('+')].join('\n');
+  const aliases = row.keys.map((key) => KEY_ALIASES[key] ?? '');
+  const named = row.keys.map((key, i) => aliases[i]?.split(' ')[0] || keys[i]);
+  return [section.title, platformShortcut(row.label), keys.join(' '), keys.join('+'), aliases.join(' '), named.join('+')].join('\n');
 }
 
 function filterSections(all: Section[], query: string): Section[] {
@@ -160,14 +174,11 @@ function useShortcutsFilter(onClose: () => void) {
   queryRef.current = query;
   const hostRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    hostRef.current?.focus();
-    return () => previous?.focus();
-  }, []);
+  // Tab stays inside the dialog and focus returns to the opener on close; Esc is handled below.
+  useDialogFocusTrap(hostRef, undefined);
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
+      if (e.key !== 'Escape' || e.isComposing) return;
       if (!queryRef.current) return onClose();
       setQuery('');
       hostRef.current?.focus();
