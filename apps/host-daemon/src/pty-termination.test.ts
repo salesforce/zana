@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 describe('terminatePtyProcessTree on Windows', () => {
-  it('releases the pty with a signal-less kill, then stops its tree by PID', () => {
+  it('starts the tree stop while the root holds its PID, then releases the pty', () => {
     setPlatform('win32');
     const groupKill = vi.spyOn(process, 'kill');
     const order: string[] = [];
@@ -41,7 +41,7 @@ describe('terminatePtyProcessTree on Windows', () => {
 
     expect(handle.kill).toHaveBeenCalledTimes(1);
     expect(handle.kill).toHaveBeenCalledWith();
-    expect(order).toEqual(['kill', 'tree 4242']);
+    expect(order).toEqual(['tree 4242', 'kill']);
     // No process groups on Windows.
     expect(groupKill).not.toHaveBeenCalled();
   });
@@ -57,6 +57,21 @@ describe('terminatePtyProcessTree on Windows', () => {
     };
     expect(() => terminatePtyProcessTree(handle, { stopWindowsTree })).not.toThrow();
     expect(stopWindowsTree).toHaveBeenCalledWith(4242);
+  });
+
+  it('uses the shared Windows tree kill by default and still releases the pty', () => {
+    setPlatform('win32');
+    // The fixture PID is listed as protected, so the shared helper refuses it
+    // and no real taskkill can run against an unrelated process on this host.
+    const previous = process.env.ZANA_PROTECTED_PIDS;
+    process.env.ZANA_PROTECTED_PIDS = '4242';
+    try {
+      const handle = windowsPtyHandle();
+      expect(() => terminatePtyProcessTree(handle)).not.toThrow();
+      expect(handle.kill).toHaveBeenCalledWith();
+    } finally {
+      if (previous === undefined) delete process.env.ZANA_PROTECTED_PIDS; else process.env.ZANA_PROTECTED_PIDS = previous;
+    }
   });
 
   it.each([undefined, 0])('never runs taskkill for pid %s', (pid) => {

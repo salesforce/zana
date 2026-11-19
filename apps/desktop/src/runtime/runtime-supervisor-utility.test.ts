@@ -3,14 +3,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const h = vi.hoisted(() => ({ children: [] as any[], queued: undefined as unknown, queueRequests: [] as any[], pv: 0, enroll: vi.fn(async () => 'host-1'), proof: undefined as unknown }));
+const h = vi.hoisted(() => ({ children: [] as any[], queued: undefined as unknown, queueRequests: [] as any[], pv: 0, enroll: vi.fn(async () => 'host-1'), proof: undefined as unknown, forks: [] as Array<{ env: Record<string, string> }> }));
 
 vi.mock('electron', () => ({
   utilityProcess: {
-    fork: (entry: string) => {
+    fork: (entry: string, _args?: unknown, options?: { env: Record<string, string> }) => {
+      if (options) h.forks.push({ env: { ...options.env } });
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { EventEmitter: Emitter } = require('node:events') as typeof import('node:events');
-      const child: any = Object.assign(new Emitter(), { entry, pid: 7, kill: () => { child.emit('exit', 0); } });
+      const child: any = Object.assign(new Emitter(), { entry, pid: 7 + h.children.length, kill: () => { child.emit('exit', 0); } });
       child.postMessage = vi.fn((message: any) => {
         if (message.type === 'start') {
           setImmediate(() => child.emit('message', {
@@ -39,9 +40,21 @@ vi.mock('./enroll-host-utility.js', () => ({ enrollHostUtility: h.enroll }));
 h.pv = (await import('@zana-ai/zcc-contracts/runtime')).SERVER_RUNTIME_PROTOCOL_VERSION;
 const { startRuntimeSupervisor } = await import('./runtime-supervisor.js');
 
-afterEach(() => { h.children.length = 0; h.proof = undefined; h.enroll.mockReset().mockResolvedValue('host-1'); vi.useRealTimers(); });
+afterEach(() => { h.children.length = 0; h.forks.length = 0; h.proof = undefined; h.enroll.mockReset().mockResolvedValue('host-1'); vi.useRealTimers(); });
 
 describe('utility-backed runtime supervisor', () => {
+  it('forks every utility with the desktop PID, earlier children and the audit path in its env', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zcc-utility-protected-'));
+    vi.stubEnv('ZCC_HOST_ENROLL_TOKEN', 'x'.repeat(32));
+    const runtime = await startRuntimeSupervisor({ rendererRoot: dataDir, dataDir, runtimeDir: dataDir });
+    try {
+      expect(h.forks.length).toBeGreaterThanOrEqual(2);
+      const listed = (i: number) => (h.forks[i].env.ZANA_PROTECTED_PIDS ?? '').split(',');
+      expect(listed(0)).toContain(String(process.pid));
+      expect(listed(1)).toContain(String(h.children[0].pid));
+      expect(h.forks[0].env.ZANA_TREE_KILL_AUDIT).toBe(join(dataDir, 'logs', 'tree-kill.log'));
+    } finally { await runtime.close(); vi.unstubAllEnvs(); }
+  });
   it('opens the window after the startup bound while keeping only one enrollment in flight', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-utility-initial-bound-'));
     vi.stubEnv('ZCC_HOST_ENROLL_TOKEN', 'x'.repeat(32));

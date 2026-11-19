@@ -37,6 +37,7 @@ const h = vi.hoisted(() => {
     } },
     fieldArgs: null as null | { onSubmit: (options?: { modifierEnter?: boolean }) => void; interceptKeyDown: (event: KeyboardEvent) => boolean; projectId?: string; projectRoot?: string; slashCatalog?: { composerActions?: string[] } },
     reloadCommands: vi.fn(),
+    optionsArgs: null as null | { projectId?: string; hostId?: string; scopePending?: boolean },
     voiceArgs: null as null | { onTranscript: (text: string) => void; ownerKey?: string },
     frozenSend: null as null | ((text: string) => Promise<void>),
     voice: { state: 'idle', stream: null, canRetry: false, isSupported: true, available: true, canStart: true,
@@ -91,7 +92,7 @@ vi.mock('./composer-host-status.js', () => ({
   composerRemoteHostBadge: () => null, isForeignExecutionHost: () => h.foreignLocation,
   bootstrapOutcome: vi.fn(), composerBootstrapErrorMessage: vi.fn()
 }));
-vi.mock('./thread/pickers/useThreadComposerOptions.js', () => ({ useThreadComposerOptions: () => h.options }));
+vi.mock('./thread/pickers/useThreadComposerOptions.js', () => ({ useThreadComposerOptions: (args: typeof h.optionsArgs) => { h.optionsArgs = args; return h.options; } }));
 vi.mock('./thread/pickers/useThreadPermissionMode.js', () => ({ useThreadPermissionMode: () => ({ permissionMode: 'full', setPermissionMode: vi.fn(), selectionError: h.permissionError }) }));
 vi.mock('./composer/use-composer-provider-cli.js', () => ({ useComposerProviderCli: () => ({ blocked: h.cliBlocked }) }));
 vi.mock('./composer/useMobileComposerExpansion.js', () => ({ useMobileComposerExpansion: () => undefined }));
@@ -175,6 +176,21 @@ async function transcribeAndSend(text = 'Spoken words') {
   expect(h.frozenSend).not.toBeNull();
   await act(async () => { await h.frozenSend!(text); });
 }
+
+describe('thread catalogue scope while switching threads', () => {
+  it('holds saved-model validation until the switched-to thread is in the store', () => {
+    h.threads = [];
+    const view = render(composer({ threadId: 't2' }));
+    expect(h.optionsArgs?.scopePending).toBe(true);
+    h.threads = [{ id: 't2', hostId: 'host2', projectId: 'p2' }];
+    view.rerender(composer({ threadId: 't2' }));
+    expect(h.optionsArgs).toMatchObject({ scopePending: false, projectId: 'p2', hostId: 'host2' });
+  });
+  it('does not hold validation for a new thread', () => {
+    render(composer({ threadId: undefined }));
+    expect(h.optionsArgs?.scopePending).toBe(false);
+  });
+});
 
 describe('Modern composer submission contracts', () => {
   it('keeps an unavailable custom provider catalogue stable until discovery recovers', () => {

@@ -252,13 +252,29 @@ function validDigest(value: unknown): value is string {
   return typeof value === 'string' && /^sha256:[a-f0-9]{64}$/.test(value);
 }
 
+/**
+ * Folder-safe snapshot key for a launch request id. Launch ids are `ui:<uuid>` /
+ * `agent:<uuid>`, and `:` is not allowed in a Windows file name, so everything
+ * outside `[A-Za-z0-9_-]` becomes `_` (`ui:<uuid>` → `ui_<uuid>`).
+ */
+export function snapshotKeyForLaunch(launchRequestId: string): string {
+  return launchRequestId.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+// Characters, trailing forms and device names that Windows can't use in a file
+// name. Checked on every platform, so a bad key fails in Linux CI too.
+const WINDOWS_INVALID_NAME_CHARS = /[<>:"|?*\u0000-\u001f]/;
+const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\..*)?$/i;
+
 // A snapshot key is a single path segment used to build the on-disk snapshot
 // directory. It is renderer/agent-influenced, so it must never contain path
 // separators or traversal segments (Rule 2): reject anything that isn't exactly
-// one clean segment before it reaches join()/write.
+// one clean segment before it reaches join()/write. It must also be a valid
+// Windows file name.
 function assertSnapshotKey(key: string): string {
   if (typeof key !== 'string' || !key || key.length > 256 || key === '.' || key === '..'
-    || /[\\/]/.test(key) || normalize(key) !== key) {
+    || /[\\/]/.test(key) || normalize(key) !== key
+    || WINDOWS_INVALID_NAME_CHARS.test(key) || /[. ]$/.test(key) || WINDOWS_RESERVED_NAME.test(key)) {
     throw new ExecutionSourceError('INVALID_CONTENT_REF', 'Execution source snapshot key is invalid');
   }
   return key;

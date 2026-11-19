@@ -600,7 +600,7 @@ describe('createSquadSourceSnapshotter', () => {
     }));
     expect(result).toEqual({ ok: true, sourceBundle: bundle() });
     expect(fake.issue).toHaveBeenCalledWith({ windowId: 7, projectId: 'p1', paths: ['/repo/a.md'], policy });
-    expect(fake.resolve).toHaveBeenCalledWith({ windowId: 7, projectId: 'p1', capabilityIds: ['cap-1', 'goal-cap'], snapshotKey: 'ui:launch_1' });
+    expect(fake.resolve).toHaveBeenCalledWith({ windowId: 7, projectId: 'p1', capabilityIds: ['cap-1', 'goal-cap'], snapshotKey: 'ui_launch_1' });
   });
 
   it('resolves attached capabilities without issuing when the goal names no files', async () => {
@@ -630,7 +630,7 @@ describe('createSquadSourceSnapshotter', () => {
       [{ binding, projectId: 'p1', paths: ['/repo/a.md'], policy }]
     ]);
     // The goal names a listed file: the registry returns its capability again, resolved once.
-    expect(fake.resolve).toHaveBeenCalledWith({ binding, projectId: 'p1', capabilityIds: ['cap-a', 'cap-b'], snapshotKey: 'ui:launch_1' });
+    expect(fake.resolve).toHaveBeenCalledWith({ binding, projectId: 'p1', capabilityIds: ['cap-a', 'cap-b'], snapshotKey: 'ui_launch_1' });
   });
 
   it('issues only what a session launch has', async () => {
@@ -751,6 +751,23 @@ describe('session sources through the real registry', () => {
     });
     const names = (result as { sourceBundle: SquadSourceBundle }).sourceBundle.sources.map((source) => source.name);
     expect(names).toEqual(['plan.md', 'plan (1).md', 'extra.md']);
+  }));
+
+  it('stores a ui:/agent: launch snapshot in a folder whose name Windows accepts', async () => withFiles(async (dir) => {
+    const registry = registryIn(dir);
+    const policy = await policyIn(dir);
+    const snapshot = createSquadSourceSnapshotter(registry);
+    const base = { projectId: 'p1', sourceCapabilityIds: [], sourcePaths: [], goalSourceDescriptors: [], policy };
+    const [picked] = await registry.issue({ windowId: 7, projectId: 'p1', paths: [join(dir, 'project', 'plan.md')], policy });
+    const fromWindow = await snapshot({ kind: 'window', windowId: 7 }, {
+      ...base, launchRequestId: 'ui:124d771e-b1e0-4ecc-b550-8b40c6e58a69', sourceCapabilityIds: [picked.id]
+    });
+    const fromSession = await snapshot({ kind: 'session', sessionId: 'agent-session' }, {
+      ...base, launchRequestId: 'agent:5', attachments: [{ name: 'validation.md', text: '# attached' }]
+    });
+    expect(fromWindow).toMatchObject({ ok: true, sourceBundle: { contentRef: 'ui_124d771e-b1e0-4ecc-b550-8b40c6e58a69/sources.json' } });
+    expect(fromSession).toMatchObject({ ok: true, sourceBundle: { contentRef: 'agent_5/sources.json' } });
+    expect((await readdir(join(dir, 'store'))).sort()).toEqual(['agent_5', 'ui_124d771e-b1e0-4ecc-b550-8b40c6e58a69']);
   }));
 
   it('refuses attachments for a window provider and an unsafe attachment name', async () => withFiles(async (dir) => {

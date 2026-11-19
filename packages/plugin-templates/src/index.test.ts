@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -37,6 +37,24 @@ function generatedModule<T>(source: string, loader: 'ts' | 'tsx'): T {
 }
 
 describe('scaffoldPlugin', () => {
+  it('treats a hostile display name as data in every generated main-panel source file', async () => {
+    const dest = mkdtempSync(join(tmpdir(), 'zcc-plugin-hostile-name-'));
+    dirs.push(dest);
+    const marker = join(dest, 'pwned');
+    const name = `x', y: require('node:fs').writeFileSync(${JSON.stringify(marker)}, '1'), z: '{process.exit()}<script>`;
+    await scaffoldPlugin({ targetDir: dest, id: 'hostile-abcd', name, kind: 'main-panel' });
+    // server.ts: load it the way PluginService does; the name must reach the CLI summary verbatim.
+    const server = generatedModule<{ default: (zcc: ZccPluginApi) => Promise<void> }>(readFileSync(join(dest, 'server.ts'), 'utf8'), 'ts');
+    const { zcc } = createFakePluginHost({ pluginId: 'hostile-abcd' });
+    const register = vi.spyOn(zcc.cli, 'register');
+    await server.default(zcc);
+    expect(register.mock.calls[0]![0].summary).toBe(`Manage the ${name} example todo list`);
+    // app.tsx: must compile, with the name only as a JSON-encoded JSX expression.
+    const app = readFileSync(join(dest, 'app.tsx'), 'utf8');
+    expect(app).toContain(`{${JSON.stringify(name)}}</h2>`);
+    transformSync(app, { loader: 'tsx', format: 'cjs', jsx: 'automatic' });
+    expect(existsSync(marker)).toBe(false);
+  });
   it.each(['panel', 'main-panel', 'mcp-consumer', 'agent-preset'])('teaches %s live verification to every agent provider', async (kind) => {
     const dest = mkdtempSync(join(tmpdir(), 'zcc-plugin-live-guide-'));
     dirs.push(dest);
