@@ -259,3 +259,26 @@ export function titleWithShortcut(label: string, command: AppCommandId): string 
   const shortcut = shortcutLabelForCommand(command);
   return shortcut === null ? label : `${label} (${shortcut})`;
 }
+
+/**
+ * Shortcuts wired directly in `shortcuts.ts` (Mod + key) that are not remappable,
+ * so they have no command in the settings above. Keep in step with that file.
+ */
+export const FIXED_NAV_SHORTCUT_KEYS = { inbox: 'i', agents: 'o', scheduler: 'j' } as const;
+
+/** The fixed shortcut key for a global nav row id, if it has one. */
+export function fixedNavShortcutKey(id: string): string | undefined {
+  return Object.hasOwn(FIXED_NAV_SHORTCUT_KEYS, id)
+    ? FIXED_NAV_SHORTCUT_KEYS[id as keyof typeof FIXED_NAV_SHORTCUT_KEYS]
+    : undefined;
+}
+
+/** `label (Ctrl + I)` for a fixed Mod+key shortcut. */
+export function titleWithFixedShortcut(
+  label: string,
+  key: string,
+  platform = typeof navigator === 'undefined' ? '' : navigator.platform
+): string {
+  const shortcut = { key, mod: true, meta: false, control: false, alt: false, shift: false };
+  return `${label} (${formatAppShortcut(shortcut, platform)})`;
+}

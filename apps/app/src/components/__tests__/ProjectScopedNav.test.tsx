@@ -437,8 +437,10 @@ describe('ProjectScopedNav shortcut tooltips', () => {
     expect(anchorTag(markup, 'project-nav-explorer')).toContain('title="Explorer (Ctrl + B)"');
     expect(markup).toContain('title="Settings (Ctrl + ,)"');
     expect(markup).toContain('aria-label="Settings"');
-    expect(anchorTag(markup, 'project-nav-inbox')).toContain('title="Inbox for this project"');
-    expect(anchorTag(markup, 'project-nav-agents')).toContain('title="Agents"');
+    expect(anchorTag(markup, 'project-nav-inbox')).toContain('title="Inbox for this project (Ctrl + I)"');
+    expect(anchorTag(markup, 'project-nav-agents')).toContain('title="Agents (Ctrl + O)"');
+    expect(anchorTag(markup, 'project-nav-scheduler')).toContain('title="Scheduler (Ctrl + J)"');
+    expect(anchorTag(markup, 'project-nav-feed')).toContain('title="Feed"');
   });
 
   it('follows a rebinding and drops the suffix when unbound', () => {

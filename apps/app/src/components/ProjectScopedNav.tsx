@@ -1,3 +1,4 @@
+import { FIXED_NAV_SHORTCUT_KEYS } from '../lib/keyboard-shortcut-settings.js';
 import { History } from 'lucide-react';
 import { useConversationHistory } from './history/history-store.js';
 import { product } from '../lib/product-client.js';
@@ -184,6 +185,7 @@ export function ProjectScopedNav({
       testId: 'project-nav-inbox',
       active: nav === 'inbox',
       title: 'Inbox for this project',
+      fixedShortcutKey: FIXED_NAV_SHORTCUT_KEYS.inbox,
       splitContent: { kind: 'inbox', projectId: project.id },
       badge:
         unreadInbox > 0 ? (
@@ -276,6 +278,7 @@ export function ProjectScopedNav({
         testId: `project-nav-${item.mode}`,
         active,
         command: item.mode === 'explorer' ? 'sidebar.toggle' : undefined,
+        fixedShortcutKey: item.mode === 'agents' || item.mode === 'scheduler' ? FIXED_NAV_SHORTCUT_KEYS[item.mode] : undefined,
         mobileGroup: item.mode === 'agents' ? undefined : 'tools',
         running: agentsLive || goalsActive || followupsOpen || terminalsRunning,
         badge,

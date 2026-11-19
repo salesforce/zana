@@ -1,3 +1,4 @@
+import { fixedNavShortcutKey } from '../lib/keyboard-shortcut-settings.js';
 import { History } from 'lucide-react';
 import { useConversationHistory } from './history/history-store.js';
 import { navPanelListsInSidebar } from '@zana-ai/zcc-plugin-sdk';
@@ -199,6 +200,7 @@ export function Sidebar({ railVariant = 'expanded' }: { railVariant?: 'expanded'
       badge,
       splitContent,
       command: item.id === 'home' ? 'thread.new' : undefined,
+      fixedShortcutKey: fixedNavShortcutKey(item.id),
       title: collapsed || rail
         ? running
           ? `${item.label} — ${isAgents ? agentsTitle : scheduleTitle}`

@@ -24,7 +24,7 @@ import { resolveIcon } from '../lib/resolveIcon.js';
 import { listSidebarFooterActions, subscribePluginSlots } from '../plugins/plugin-slots.js';
 import { hrefForPluginNavPanel } from '../plugins/plugin-nav-href.js';
 import { getPluginSettingsRoutePath } from '../lib/route-paths.js';
-import { titleWithShortcut } from '../lib/keyboard-shortcut-settings.js';
+import { titleWithFixedShortcut, titleWithShortcut } from '../lib/keyboard-shortcut-settings.js';
 import { appNavigate } from '../lib/app-navigate.js';
 import { SidebarResizer } from './SidebarResizer.js';
 import {
@@ -57,6 +57,8 @@ export interface SidebarRailRow {
   title?: string;
   /** App command whose current shortcut is appended to the tooltip (never to the accessible name). */
   command?: AppCommandId;
+  /** Key of a fixed (non-remappable) Mod+key shortcut, for rows with no command. */
+  fixedShortcutKey?: string;
   badge?: ReactNode;
   running?: boolean;
   onClick?: (event: { preventDefault: () => void; metaKey?: boolean; ctrlKey?: boolean }) => void;
@@ -76,8 +78,12 @@ export interface SidebarRailSection {
 export type SidebarRailItem = SidebarRailRow | SidebarRailSection;
 
 /** Tooltip text for a row: its title (or label) plus the bound shortcut, if any. */
-export function railRowTitle(item: Pick<SidebarRailRow, 'title' | 'label' | 'command'>): string | undefined {
-  return item.command ? titleWithShortcut(item.title ?? item.label, item.command) : item.title;
+export function railRowTitle(
+  item: Pick<SidebarRailRow, 'title' | 'label' | 'command' | 'fixedShortcutKey'>
+): string | undefined {
+  if (item.command) return titleWithShortcut(item.title ?? item.label, item.command);
+  if (item.fixedShortcutKey) return titleWithFixedShortcut(item.title ?? item.label, item.fixedShortcutKey);
+  return item.title;
 }
 
 /**

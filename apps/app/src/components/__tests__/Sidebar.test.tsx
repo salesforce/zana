@@ -439,8 +439,12 @@ describe('Sidebar shortcut tooltips', () => {
     expect(markup).toContain('title="Settings (Ctrl + ,)"');
     expect(markup).toContain('aria-label="Settings"');
     // Rows without a command keep their plain tooltip.
-    expect(anchorTag(markup, 'nav-inbox')).toContain('title="Inbox"');
-    expect(anchorTag(markup, 'nav-agents')).toContain('title="Agents"');
+    // Fixed (non-remappable) shortcuts wired in shortcuts.ts.
+    expect(anchorTag(markup, 'nav-inbox')).toContain('title="Inbox (Ctrl + I)"');
+    expect(anchorTag(markup, 'nav-agents')).toContain('title="Agents (Ctrl + O)"');
+    expect(anchorTag(markup, 'nav-scheduler')).toContain('title="Scheduler (Ctrl + J)"');
+    // Rows with no shortcut keep their plain tooltip.
+    expect(anchorTag(markup, 'nav-extensions')).toContain('title="Plugins"');
   });
 
   it('follows a rebinding and drops the suffix when unbound', () => {

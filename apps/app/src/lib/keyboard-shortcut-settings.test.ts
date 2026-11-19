@@ -8,7 +8,9 @@ import {
   REMAPPABLE_COMMANDS,
   setCommandShortcutOverride,
   shortcutLabelForCommand,
-  titleWithShortcut
+  titleWithShortcut,
+  titleWithFixedShortcut,
+  fixedNavShortcutKey
 } from './keyboard-shortcut-settings.js';
 import { NAMED_PANE_COMMANDS, PANE_FOCUS_INDEX_COMMANDS } from './split-layout/paneCommands.js';
 
@@ -145,5 +147,20 @@ describe('shortcut labels and titles', () => {
     setCommandShortcutOverride('pane.close', null);
     expect(shortcutLabelForCommand('pane.close', 'MacIntel')).toBeNull();
     expect(titleWithShortcut('Close pane', 'pane.close')).toBe('Close pane');
+  });
+});
+
+describe('fixed navigation shortcuts', () => {
+  it('formats Mod+key per platform', () => {
+    expect(titleWithFixedShortcut('Inbox', 'i', 'Win32')).toBe('Inbox (Ctrl + I)');
+    expect(titleWithFixedShortcut('Inbox', 'i', 'MacIntel')).toBe('Inbox (⌘ I)');
+  });
+
+  it('knows only the rows wired in shortcuts.ts', () => {
+    expect(fixedNavShortcutKey('inbox')).toBe('i');
+    expect(fixedNavShortcutKey('agents')).toBe('o');
+    expect(fixedNavShortcutKey('scheduler')).toBe('j');
+    expect(fixedNavShortcutKey('extensions')).toBeUndefined();
+    expect(fixedNavShortcutKey('constructor')).toBeUndefined();
   });
 });
