@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
-import { act,cleanup,render,screen,waitFor } from '@testing-library/react';
+import { act,cleanup,fireEvent,render,screen,waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach,expect,it,vi } from 'vitest';
-const h=vi.hoisted(() => ({event:(_:any) => {},updated:(_:any) => {},reconnect:() => {},off:vi.fn(),get:vi.fn(),createTerminal:vi.fn(),addTab:vi.fn(),selectPin:vi.fn(),panelProps:null as any,bottomProps:null as any,diffProps:null as any,activateTab:vi.fn(),dockEnabled:false,timeline:vi.fn(),upsert:vi.fn(),state:{tabs:[] as any[],isOpen:true,isMaximized:false,activeId:'info' as string | null,widthPx:320}}));
+const h=vi.hoisted(() => ({event:(_:any) => {},updated:(_:any) => {},reconnect:() => {},off:vi.fn(),get:vi.fn(),createTerminal:vi.fn(),addTab:vi.fn(),selectPin:vi.fn(),panelProps:null as any,bottomProps:null as any,diffProps:null as any,activateTab:vi.fn(),setTabState:vi.fn(),dockEnabled:false,timeline:vi.fn(),upsert:vi.fn(),state:{tabs:[] as any[],isOpen:true,isMaximized:false,activeId:'info' as string | null,widthPx:320}}));
 vi.mock('../../hooks/useHosts.js', () => ({ useHosts: () => [] }));
 vi.mock('../../lib/product-client.js',() => ({product:{environments:{status:vi.fn(async () => ({branchName:null})),pullRequest:vi.fn(async () => ({pullRequest:null}))},terminals:{create:h.createTerminal},threads:{get:h.get,timeline:h.timeline,onEvent:(fn:any) => {h.event=fn;return h.off;},onUpdated:(fn:any) => {h.updated=fn;return h.off;}}}}));
 vi.mock('../../lib/product-ws.js',() => ({subscribeProductReconnect:(fn:any) => {h.reconnect=fn;return h.off;}}));
@@ -11,7 +11,7 @@ vi.mock('../../store.js',() => ({useData:(pick:any) => pick({projects:[],dockabl
 vi.mock('../../hooks/useRouteState.js',() => ({useRouteState:() => ({threadId:'a',isProjectFocused:false})}));
 vi.mock('../../hooks/useCompactLayout.js',() => ({useCompactLayout:() => false}));
 vi.mock('../../components/useMobileThreadTitleTarget.js',() => ({useMobileThreadTitleTarget:() => null,useMobileThreadActionsTarget:() => null,useMobileThreadControlsTarget:() => null}));
-vi.mock('../../components/thread/secondary-panel/useThreadSecondaryPanel.js',() => ({useThreadSecondaryPanel:() => ({state:h.state,open:() => {},addTab:h.addTab,selectPin:h.selectPin,activateTab:h.activateTab,patchTab:() => {}})}));
+vi.mock('../../components/thread/secondary-panel/useThreadSecondaryPanel.js',() => ({useThreadSecondaryPanel:() => ({state:h.state,open:() => {},addTab:h.addTab,selectPin:h.selectPin,activateTab:h.activateTab,patchTab:() => {},setTabState:h.setTabState})}));
 vi.mock('../../components/thread/secondary-panel/ThreadSecondaryPanel.js',() => ({ThreadSecondaryPanel:(props:any) => { if (props.dock?.side !== 'bottom') h.panelProps=props; else h.bottomProps=props; return <aside data-testid="secondary-panel">{props.children}</aside>; }}));
 vi.mock('../../components/thread/secondary-panel/BrowserTabDeck.js',() => ({BrowserTabDeck:() => null}));
 vi.mock('../../components/thread/secondary-panel/useInAppBrowserPanel.js',() => ({useInAppBrowserPanel:() => {}}));
@@ -35,7 +35,7 @@ vi.mock('../../components/thread/ThreadDiffPanel.js',() => ({ThreadDiffPanel:(pr
 vi.mock('../../components/thread/secondary-panel/ThreadNewTabPage.js',() => ({ThreadNewTabPage:(props:any) => <div data-testid="tab-ThreadNewTabPage" data-props={JSON.stringify(props,(_k,v) => typeof v === 'function' ? undefined : v)}/>}));
 vi.mock('../../components/thread/secondary-panel/ThreadFilePreviewTab.js',() => ({ThreadFilePreviewTab:(props:any) => <div data-testid="tab-ThreadFilePreviewTab" data-props={JSON.stringify(props,(_k,v) => typeof v === 'function' ? undefined : v)}/>}));
 vi.mock('../../components/thread/secondary-panel/ThreadTerminalTab.js',() => ({ThreadTerminalTab:(props:any) => <div data-testid="tab-ThreadTerminalTab" data-props={JSON.stringify(props,(_k,v) => typeof v === 'function' ? undefined : v)}/>}));
-vi.mock('../../components/thread/secondary-panel/ThreadPluginTab.js',() => ({ThreadPluginTab:(props:any) => <div data-testid="tab-ThreadPluginTab" data-props={JSON.stringify(props,(_k,v) => typeof v === 'function' ? undefined : v)}/>}));
+vi.mock('../../components/thread/secondary-panel/ThreadPluginTab.js',() => ({ThreadPluginTab:(props:any) => <div data-testid="tab-ThreadPluginTab" data-props={JSON.stringify(props,(_k,v) => typeof v === 'function' ? undefined : v)} onClick={() => props.onTabStateChange({ place: 3 })}/>}));
 vi.mock('../../components/thread/secondary-panel/ThreadExplorerTab.js',() => ({ThreadExplorerTab:(props:any) => <div data-testid="tab-ThreadExplorerTab" data-props={JSON.stringify(props,(_k,v) => typeof v === 'function' ? undefined : v)}/>}));
 vi.mock('../../components/thread/secondary-panel/ThreadInboxTab.js',() => ({ThreadInboxTab:(props:any) => <div data-testid="tab-ThreadInboxTab" data-props={JSON.stringify(props,(_k,v) => typeof v === 'function' ? undefined : v)}/>}));
 import { ThreadDetail } from './ThreadDetailView.js';
@@ -74,6 +74,9 @@ it('shows each side-panel tab kind and tells a plugin tab its surface and tab id
   expect(JSON.parse(screen.getByTestId('tab-ThreadPluginTab').dataset.props!)).toMatchObject({
     moduleId: 'salesforce', threadId: 'a', actionId: 'graph', params: { node: 'n1' }, layout: 'flush', surface: 'thread', tabId: 't-plugin'
   });
+  // A plugin tab saves its place through the panel.
+  fireEvent.click(screen.getByTestId('tab-ThreadPluginTab'));
+  expect(h.setTabState).toHaveBeenCalledWith('t-plugin', { place: 3 });
   // Diff and Plan pins without an environment or plan fall back to their empty states.
   h.state = { ...h.state, activeId: 'diff' };
   view.rerender(content());

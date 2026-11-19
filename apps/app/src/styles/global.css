@@ -42226,6 +42226,18 @@ body.split-frame-guard webview {
   gap: 6px;
 }
 
+.thread-plugin-tab-slot {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.thread-plugin-tab-slot[hidden],
+.thread-plugin-tab[hidden] {
+  display: none;
+}
+
 .thread-plugin-tab.is-padded {
   padding: 16px;
 }

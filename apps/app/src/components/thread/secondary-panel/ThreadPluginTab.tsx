@@ -19,7 +19,10 @@ export function ThreadPluginTab({
   layout,
   surface,
   page,
-  tabId
+  tabId,
+  active,
+  tabState,
+  onTabStateChange
 }: {
   moduleId: string;
   projectId: string | null;
@@ -33,6 +36,11 @@ export function ThreadPluginTab({
   page?: PluginThreadPanelPage;
   /** The side-panel tab showing the component; forwarded to it. */
   tabId?: string;
+  /** False while the tab is mounted but hidden behind another tab. */
+  active?: boolean;
+  /** View state the plugin last saved with this tab. */
+  tabState?: JsonValue | null;
+  onTabStateChange?: (state: JsonValue | null) => void;
 }) {
   const project = useData((s) => s.projects.find((row) => row.id === projectId) ?? null);
   const threadActions = useSyncExternalStore(
@@ -77,6 +85,8 @@ export function ThreadPluginTab({
               params={params ?? null}
               {...(surface ? { surface } : {})}
               {...(tabId ? { tabId } : {})}
+              {...(active !== undefined ? { active } : {})}
+              {...(onTabStateChange ? { tabState: tabState ?? null, onTabStateChange } : {})}
             />
           ) : ComposePanel ? (
             <ComposePanel

@@ -60,7 +60,7 @@ vi.mock('../../components/thread/secondary-panel/PanelAgentTab.js', () => ({
   </>)
 }));
 vi.mock('../../components/thread/secondary-panel/ThreadPluginTab.js', () => ({
-  ThreadPluginTab: ({ moduleId, actionId, params, layout, surface, projectId, tabId, page }: {
+  ThreadPluginTab: ({ moduleId, actionId, params, layout, surface, projectId, tabId, page, active, tabState, onTabStateChange }: {
     moduleId: string;
     actionId?: string;
     params?: unknown;
@@ -69,9 +69,15 @@ vi.mock('../../components/thread/secondary-panel/ThreadPluginTab.js', () => ({
     projectId: string | null;
     tabId?: string;
     page?: { pluginId: string; page: string };
+    active?: boolean;
+    tabState?: unknown;
+    onTabStateChange?: (state: unknown) => void;
   }) => (
     <div
       data-testid="plugin-tool"
+      data-active={String(active)}
+      data-state={JSON.stringify(tabState ?? null)}
+      onClick={() => onTabStateChange?.({ saved: tabId })}
       data-tool={`${moduleId}/${actionId}`}
       data-params={JSON.stringify(params ?? null)}
       data-layout={layout ?? ''}
@@ -391,7 +397,8 @@ describe('PluginPanelHostLayout', () => {
       shown = requestPluginPanelTool('salesforce', { actionId: 'studio-graph', params: { node: 'n1' } });
     });
     expect(shown).toBe(true);
-    const tool = () => screen.getByTestId('plugin-tool');
+    // Opened tabs stay mounted while hidden; the shown tool is the one in the visible slot.
+    const tool = () => screen.getAllByTestId('plugin-tool').find((el) => !el.closest('[hidden]'))!;
     expect(tool().dataset).toMatchObject({ tool: 'salesforce/studio-graph', params: '{"node":"n1"}', layout: 'flush', surface: 'plugin-page', project: 'p1' });
     // Asking again focuses the same tab with the new params.
     act(() => {
@@ -399,6 +406,11 @@ describe('PluginPanelHostLayout', () => {
     });
     expect(tabLabels()).toEqual(['Close Graph view']);
     expect(tool().dataset.params).toBe('{"node":"n2"}');
+    // The plugin saves its place; it comes back through the same tab and the hidden tab learns it is inactive.
+    expect(tool().dataset.active).toBe('true');
+    expect(tool().dataset.state).toBe('null');
+    fireEvent.click(tool());
+    expect(tool().dataset.state).toBe(JSON.stringify({ saved: tool().dataset.tab }));
 
     // The New Tab page lists only this page's tools.
     fireEvent.click(screen.getByTestId('thread-secondary-new-tab'));
@@ -414,6 +426,8 @@ describe('PluginPanelHostLayout', () => {
     expect(tabLabels()).toEqual(['Close Graph view']);
     expect(tool().dataset.tool).toBe('salesforce/studio-graph');
     expect(tool().dataset.tab).toMatch(/\S/);
+    // The closed tab is unmounted, not just hidden.
+    expect(screen.getAllByTestId('plugin-tool')).toHaveLength(1);
 
     view.unmount();
     expect(requestPluginPanelTool('salesforce', { actionId: 'studio-graph' })).toBe(false);

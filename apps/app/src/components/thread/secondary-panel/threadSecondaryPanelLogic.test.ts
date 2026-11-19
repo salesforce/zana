@@ -242,6 +242,14 @@ describe('threadSecondaryPanelLogic', () => {
     expect(state.activeId).toBe(tabId);
     commands.patchTab(tabId, { title: 'Renamed' });
     expect(state.tabs[0]?.title).toBe('Renamed');
+    // tabState is only kept on plugin tabs.
+    commands.setTabState(tabId, { docId: 'd1' });
+    expect(state.tabs[0]).not.toHaveProperty('tabState');
+    commands.addTab({ kind: 'plugin', title: 'Docs', moduleId: 'docs', actionId: 'doc' });
+    const pluginId = state.tabs.find((tab) => tab.kind === 'plugin')!.id;
+    commands.setTabState(pluginId, { docId: 'd1' });
+    expect(state.tabs.find((tab) => tab.id === pluginId)?.tabState).toEqual({ docId: 'd1' });
+    commands.closeTab(pluginId);
     commands.addTab({ kind: 'browser', title: 'Browser', url: 'https://example.com' });
     expect(state.tabs.some((tab) => tab.kind === 'browser')).toBe(true);
     commands.setWidth(480, 1200);

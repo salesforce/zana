@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { SessionStats, TerminalSession } from '@zana-ai/zcc-domain/product';
 
 const layout = vi.hoisted(() => ({ compact: false }));
+const plugin = vi.hoisted(() => ({ props: [] as Array<{ active?: boolean; tabState?: unknown; onTabStateChange?: (state: unknown) => void }> }));
 vi.mock('../hooks/useCompactLayout.js', () => ({ useCompactLayout: () => layout.compact }));
 
 vi.mock('./AgentDetailPanel.js', () => ({
@@ -27,9 +28,10 @@ vi.mock('./thread/secondary-panel/BrowserTabDeck.js', () => ({
   )
 }));
 vi.mock('./thread/secondary-panel/ThreadPluginTab.js', () => ({
-  ThreadPluginTab: ({ threadId }: { threadId?: string }) => (
-    <div data-testid="thread-plugin-tab" data-thread-id={threadId ?? ''} />
-  )
+  ThreadPluginTab: (props: { threadId?: string; active?: boolean; tabState?: unknown; onTabStateChange?: (state: unknown) => void }) => {
+    plugin.props.push(props);
+    return <div data-testid="thread-plugin-tab" data-thread-id={props.threadId ?? ''} />;
+  }
 }));
 vi.mock('./thread/secondary-panel/ThreadExplorerTab.js', () => ({
   ThreadExplorerTab: () => <div data-testid="thread-explorer-tab" />
@@ -260,6 +262,11 @@ describe('AgentSessionView', () => {
     expect(renderToStaticMarkup(
       <AgentSessionView session={session({ id: 's-plugin' })} projectId="p1" projectName="demo" state="working" terminalAnchorId="a" />
     )).toContain('data-thread-id="s-plugin"');
+    // The shown plugin tab is active and can save its place through the panel.
+    const shown = plugin.props.at(-1)!;
+    expect(shown.active).toBe(true);
+    expect(shown.tabState).toBeUndefined();
+    expect(() => shown.onTabStateChange!({ docId: 'd1' })).not.toThrow();
 
     persistPanel('s-explorer', { activeId: 'explorer:1', tabs: [{ id: 'explorer:1', kind: 'explorer', title: 'Explorer' }] });
     expect(renderToStaticMarkup(

@@ -4,6 +4,9 @@ import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+// The sponsor prompt can appear mid-test and take the context menu's focus, so dismiss it for every test here.
+test.use({ initialConfig: { sponsorPromptDismissed: true } });
+
 test.describe('document panel resizing', () => {
   test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { dockableThreadToolsEnabled: true, sponsorPromptDismissed: true } });
 
@@ -88,10 +91,21 @@ test('panel menus close tab groups without affecting the other dock or pinned vi
   const right = page.getByTestId('thread-secondary-panel'), bottom = page.getByTestId('thread-bottom-panel');
   const tools = (panel: typeof right) => panel.locator('.thread-secondary-tab:not(.is-pinned)');
   await expect(tools(right)).toHaveCount(3); await expect(tools(bottom)).toHaveCount(2);
-  await right.getByRole('button', { name: 'middle', exact: true }).click({ button: 'right' });
+  const middle = right.getByRole('button', { name: 'middle', exact: true });
+  const closeRight = page.getByRole('menuitem', { name: 'Close tabs to the right', exact: true });
+  // The panel can still be settling when the first right-click lands, which dismisses the menu; retry until it stays open.
+  await expect(async () => {
+    if (!await closeRight.isVisible()) await middle.click({ button: 'right' });
+    await expect(closeRight).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: 20_000 });
   await expect(right.getByRole('button', { name: 'first', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('panel-bulk-close-menu.png'));
-  await page.getByRole('menuitem', { name: 'Close tabs to the right', exact: true }).click();
+  // The native capture can blur the window, which dismisses the menu; open it again when that happens.
+  if (!await closeRight.isVisible()) {
+    await middle.click({ button: 'right' });
+    await expect(closeRight).toBeVisible();
+  }
+  await closeRight.click();
   await expect(tools(right)).toHaveCount(2); await expect(right.getByRole('button', { name: 'last', exact: true })).toHaveCount(0);
   await expect(tools(bottom)).toHaveCount(2);
   await right.getByRole('button', { name: 'middle', exact: true }).press('Shift+F10');
