@@ -15,10 +15,15 @@ export const FIND_MATCH_LIMIT = 2000;
 const SHOW_TEXT = 4;
 const SKIPPED_PARENTS = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT']);
 
+/** The window `el` is rendered in; a document with no browsing context falls back to this one. */
+function viewOf(el: Element): Window {
+  return el.ownerDocument.defaultView ?? window;
+}
+
 /** True when `el` itself is not painted (display, visibility, hidden, sr-only). */
 function isElementHidden(el: Element): boolean {
   if (SKIPPED_PARENTS.has(el.tagName) || el.hasAttribute('hidden') || el.classList.contains('sr-only')) return true;
-  const style = el.ownerDocument.defaultView!.getComputedStyle(el);
+  const style = viewOf(el).getComputedStyle(el);
   return style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse';
 }
 
@@ -175,7 +180,7 @@ export function createFindHighlighter(): FindHighlighter {
 
 function scrollableAncestor(start: Element | null): Element | null {
   for (let el = start; el; el = el.parentElement) {
-    const overflow = el.ownerDocument.defaultView!.getComputedStyle(el).overflowY;
+    const overflow = viewOf(el).getComputedStyle(el).overflowY;
     if ((overflow === 'auto' || overflow === 'scroll') && el.scrollHeight > el.clientHeight) return el;
   }
   return null;
@@ -198,7 +203,7 @@ export function scrollRangeIntoView(range: Range, options: { scrollWindow?: bool
   const rect = range.getBoundingClientRect();
   if (!scroller) {
     // A page that scrolls as a whole (a design doc in its own frame) has no scrolling ancestor.
-    const view = options.scrollWindow ? parent?.ownerDocument.defaultView : null;
+    const view = options.scrollWindow && parent ? viewOf(parent) : null;
     view?.scrollBy(0, rect.top + rect.height / 2 - view.innerHeight / 2);
     return;
   }

@@ -30,6 +30,8 @@ describe('parseFromPage', () => {
   it('rejects malformed find messages', () => {
     expect(parseFromPage({ type: 'find-result', index: 'x', count: 1 })).toBeNull();
     expect(parseFromPage({ type: 'find-result', index: 0, count: -1 })).toBeNull();
+    expect(parseFromPage({ type: 'find-result', index: 9, count: 3 })).toEqual({ type: 'find-result', index: 2, count: 3 });
+    expect(parseFromPage({ type: 'find-result', index: 4, count: 0 })).toEqual({ type: 'find-result', index: -1, count: 0 });
     expect(parseFromPage({ type: 'find-key', key: 'delete' })).toBeNull();
   });
 

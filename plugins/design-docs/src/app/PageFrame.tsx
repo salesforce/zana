@@ -420,7 +420,8 @@ export function PageFrame({
         find.onResult({ index: message.index, count: message.count });
         break;
       case 'find-key':
-        find.onPageKey(message.key);
+        // Only a key the reader pressed in the frame counts: a page cannot move focus on its own.
+        if (document.activeElement === frameRef.current) find.onPageKey(message.key);
         break;
       case 'scroll':
         view.current.scroll = { x: message.x, y: message.y };

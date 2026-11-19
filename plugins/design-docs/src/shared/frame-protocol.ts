@@ -205,7 +205,10 @@ export function parseFromPage(data: unknown): FromPage | null {
     case 'find-result': {
       const index = finite(message.index);
       const count = finite(message.count);
-      return index === null || count === null || count < 0 ? null : { type: 'find-result', index: Math.floor(index), count: Math.floor(count) };
+      if (index === null || count === null || count < 0) return null;
+      // The page chooses these numbers; keep the pair self-consistent.
+      const total = Math.floor(count);
+      return { type: 'find-result', index: Math.min(Math.max(Math.floor(index), -1), total - 1), count: total };
     }
     case 'find-key':
       return FIND_KEYS.has(message.key as FindKey) ? { type: 'find-key', key: message.key as FindKey } : null;

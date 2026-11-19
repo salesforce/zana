@@ -200,9 +200,12 @@
   var FIND_MATCH_LIMIT = 2e3;
   var SHOW_TEXT = 4;
   var SKIPPED_PARENTS = /* @__PURE__ */ new Set(["SCRIPT", "STYLE", "TEMPLATE", "NOSCRIPT"]);
+  function viewOf(el) {
+    return el.ownerDocument.defaultView ?? window;
+  }
   function isElementHidden(el) {
     if (SKIPPED_PARENTS.has(el.tagName) || el.hasAttribute("hidden") || el.classList.contains("sr-only")) return true;
-    const style = el.ownerDocument.defaultView.getComputedStyle(el);
+    const style = viewOf(el).getComputedStyle(el);
     return style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse";
   }
   function isInClosedDetails(el, root) {
@@ -323,7 +326,7 @@
   }
   function scrollableAncestor(start) {
     for (let el = start; el; el = el.parentElement) {
-      const overflow = el.ownerDocument.defaultView.getComputedStyle(el).overflowY;
+      const overflow = viewOf(el).getComputedStyle(el).overflowY;
       if ((overflow === "auto" || overflow === "scroll") && el.scrollHeight > el.clientHeight) return el;
     }
     return null;
@@ -337,7 +340,7 @@
     const scroller = scrollableAncestor(parent);
     const rect = range.getBoundingClientRect();
     if (!scroller) {
-      const view = options.scrollWindow ? parent?.ownerDocument.defaultView : null;
+      const view = options.scrollWindow && parent ? viewOf(parent) : null;
       view?.scrollBy(0, rect.top + rect.height / 2 - view.innerHeight / 2);
       return;
     }
@@ -346,8 +349,9 @@
   }
 
   // src/runtime/page-find.ts
+  var RECOUNT_DELAY_MS = 200;
   function findKeyFor(event, barOpen) {
-    if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "f") return "open";
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && (event.key.toLowerCase() === "f" || event.code === "KeyF")) return "open";
     if (!barOpen) return null;
     if (event.key === "F3") return event.shiftKey ? "prev" : "next";
     return event.key === "Escape" ? "close" : null;
@@ -358,14 +362,25 @@
     let index = 0;
     let ranges = [];
     const root = () => doc.body ?? doc.documentElement;
-    const run = (step) => {
+    const run = (step, scroll = true) => {
       ranges = query ? findTextRanges(root(), query) : [];
       index = ranges.length === 0 ? 0 : (Math.min(index, ranges.length - 1) + step + ranges.length) % ranges.length;
       highlighter.paint(ranges, index);
       const current = ranges[index];
-      if (current) scrollRangeIntoView(current, { scrollWindow: true });
+      if (current && scroll) scrollRangeIntoView(current, { scrollWindow: true });
       post({ type: "find-result", index: current ? index : -1, count: ranges.length });
     };
+    const view = doc.defaultView;
+    let timer;
+    const recount = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (query) run(0, false);
+      }, RECOUNT_DELAY_MS);
+    };
+    if (view?.MutationObserver) {
+      new view.MutationObserver(recount).observe(root(), { childList: true, subtree: true, characterData: true });
+    }
     doc.addEventListener("keydown", (event) => {
       const key = findKeyFor(event, query !== null);
       if (!key) return;

@@ -8,6 +8,9 @@
 import { MAX_FIND_QUERY_CHARS, type FindKey, type FromPage, type ToPage } from '../shared/frame-protocol.js';
 import { createFindHighlighter, findTextRanges, scrollRangeIntoView } from '../../../../apps/app/src/lib/dom-find.js';
 
+/** How long the page must be quiet before an open search recounts. */
+const RECOUNT_DELAY_MS = 200;
+
 export interface PageFind {
   /** Applies a `find` message from the app. */
   handle(message: Extract<ToPage, { type: 'find' }>): void;
@@ -15,7 +18,7 @@ export interface PageFind {
 
 /** The find key a keydown in the page stands for, given whether the bar is open. */
 export function findKeyFor(event: KeyboardEvent, barOpen: boolean): FindKey | null {
-  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'f') return 'open';
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && (event.key.toLowerCase() === 'f' || event.code === 'KeyF')) return 'open';
   if (!barOpen) return null;
   if (event.key === 'F3') return event.shiftKey ? 'prev' : 'next';
   return event.key === 'Escape' ? 'close' : null;
@@ -28,14 +31,26 @@ export function createPageFind(doc: Document, post: (message: FromPage) => void)
   let ranges: Range[] = [];
 
   const root = () => doc.body ?? doc.documentElement;
-  const run = (step: 0 | 1 | -1) => {
+  const run = (step: 0 | 1 | -1, scroll = true) => {
     ranges = query ? findTextRanges(root(), query) : [];
     index = ranges.length === 0 ? 0 : (Math.min(index, ranges.length - 1) + step + ranges.length) % ranges.length;
     highlighter.paint(ranges, index);
     const current = ranges[index];
-    if (current) scrollRangeIntoView(current, { scrollWindow: true });
+    if (current && scroll) scrollRangeIntoView(current, { scrollWindow: true });
     post({ type: 'find-result', index: current ? index : -1, count: ranges.length });
   };
+
+  // Content can arrive after a search (diagrams render, sections load): recount
+  // quietly, without scrolling, so the number stays true.
+  const view = doc.defaultView;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const recount = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { if (query) run(0, false); }, RECOUNT_DELAY_MS);
+  };
+  if (view?.MutationObserver) {
+    new view.MutationObserver(recount).observe(root(), { childList: true, subtree: true, characterData: true });
+  }
 
   doc.addEventListener('keydown', (event) => {
     const key = findKeyFor(event, query !== null);

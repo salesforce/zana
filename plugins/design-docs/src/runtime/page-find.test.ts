@@ -40,6 +40,8 @@ describe('findKeyFor', () => {
     expect(findKeyFor(keyEvent({ key: 'F3', shiftKey: true }), true)).toBe('prev');
     expect(findKeyFor(keyEvent({ key: 'Escape' }), true)).toBe('close');
     expect(findKeyFor(keyEvent({ key: 'a' }), true)).toBeNull();
+    // A non-Latin layout types another letter on the F key.
+    expect(findKeyFor(keyEvent({ key: 'а', code: 'KeyF', ctrlKey: true }), false)).toBe('open');
   });
 });
 
@@ -83,6 +85,17 @@ describe('createPageFind', () => {
     find.handle({ type: 'find', query: null, step: 0 });
     expect(painted.size).toBe(0);
     vi.unstubAllGlobals();
+  });
+
+  it('recounts quietly when content arrives after the search', async () => {
+    const { find, results } = setup('<p>alpha</p>');
+    const scroll = vi.spyOn(window, 'scrollBy');
+    find.handle({ type: 'find', query: 'alpha', step: 0 });
+    expect(results().at(-1)!.count).toBe(1);
+    scroll.mockClear();
+    document.body.insertAdjacentHTML('beforeend', '<p>alpha again</p>');
+    await vi.waitFor(() => expect(results().at(-1)!.count).toBe(2));
+    expect(scroll).not.toHaveBeenCalled();
   });
 
   it('bounds the query length', () => {

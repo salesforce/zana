@@ -232,3 +232,11 @@ describe('scrollRangeIntoView with layout', () => {
     expect(() => scrollRangeIntoView(range!)).not.toThrow();
   });
 });
+
+describe('documents without a browsing context', () => {
+  it('finds text in a detached document instead of throwing', () => {
+    const detached = document.implementation.createHTMLDocument('x');
+    detached.body.innerHTML = '<p>needle <span>hay</span></p>';
+    expect(findTextRanges(detached.body, 'needle')).toHaveLength(1);
+  });
+});

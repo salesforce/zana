@@ -650,8 +650,21 @@ describe('find in the open page', () => {
     expect(document.activeElement).toBe(stageOf(frame));
   });
 
+  it('ignores find keys from a page the reader is not typing in', async () => {
+    const { port, input } = await openedFind();
+    fireEvent.change(input, { target: { value: 'run' } });
+    const before = finds(port).length;
+    const active = vi.spyOn(document, 'activeElement', 'get').mockReturnValue(document.body);
+    port.emit({ type: 'find-key', key: 'close' });
+    expect(screen.getByTestId('dom-find-bar')).toBeTruthy();
+    port.emit({ type: 'find-key', key: 'next' });
+    expect(finds(port)).toHaveLength(before);
+    active.mockRestore();
+  });
+
   it('follows the find keys pressed inside the page', async () => {
-    const { port } = await openedFind();
+    const { frame, port } = await openedFind();
+    const active = vi.spyOn(document, 'activeElement', 'get').mockReturnValue(frame);
     port.emit({ type: 'find-key', key: 'close' });
     expect(screen.queryByTestId('dom-find-bar')).toBeNull();
     port.emit({ type: 'find-key', key: 'open' });
@@ -660,6 +673,7 @@ describe('find in the open page', () => {
     port.emit({ type: 'find-key', key: 'next' });
     port.emit({ type: 'find-key', key: 'prev' });
     expect(finds(port).slice(-2)).toEqual([['run', 1], ['run', -1]]);
+    active.mockRestore();
   });
 
   it('searches again when the page reloads while the bar is open', async () => {
