@@ -261,3 +261,14 @@ it('answers a pending interaction through main IPC by thread or by session, neve
   electron.invoke.mockRejectedValueOnce(new Error('Human proof required'));
   await expect(api.threads.interactions.respond('thread-1', 'int-3', null)).rejects.toThrow('Human proof required');
 });
+
+it('exposes Stop and fix the plan through its execution-board IPC channel', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  const result = { ok: true };
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValueOnce(result);
+
+  await expect(api.executionBoard.stopAndFixPlan('p1', 'exec-1', 'no-route:a')).resolves.toBe(result);
+  expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.executionBoard.stopAndFixPlan, 'p1', 'exec-1', 'no-route:a');
+});
