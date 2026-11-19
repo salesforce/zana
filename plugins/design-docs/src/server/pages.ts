@@ -17,7 +17,8 @@ import { PAGE_CONFIG_ID, PAGE_FILES_ID, type PageConfig, type PageFile } from '.
 import { prependToHead } from '../shared/html-scan.js';
 import { MAX_TEXT_FILE_BYTES } from '../shared/limits.js';
 import { KIT_DIR, PAGE_ORIGIN, scriptJson, type RenderedPage } from '../shared/page.js';
-import { comparePaths, fileKindOf, imageMediaTypeOf, isAgentInstructionsPath, isBinaryKind, mediaTypeOf, normalizeDocPath } from '../shared/paths.js';
+import { comparePaths, fileKindOf, imageMediaTypeOf, isAgentInstructionsPath, isBinaryKind, isRenderableMarkdownPath, mediaTypeOf, normalizeDocPath } from '../shared/paths.js';
+import { markdownPageHtml } from './markdown-page.js';
 import { bundlePage, escapeScriptText, type PageSource } from './page-bundle.js';
 import { DesignDocError, type DesignDocStore } from './store.js';
 
@@ -120,6 +121,16 @@ export function renderPage(store: DesignDocStore, kit: KitReader, input: RenderP
   return { docId: doc.id, path, revision: saved && saved.revision > 0 ? saved.revision : null, ...bundle };
 }
 
+/** A markdown file as a standalone, script-free page. */
+export function standaloneMarkdownHtml(store: DesignDocStore, kit: KitReader, input: { doc: string; path: string }, endpoint: string): string {
+  const doc = store.summary(input.doc);
+  const path = pagePath(input.path);
+  const read = docPageReader(store, doc.id, kit);
+  const file = read(path);
+  if (!file || file.revision === 0) throw new DesignDocError('not_found', `${path} not found in ${doc.slug}`);
+  return markdownPageHtml(file.content, { docId: doc.id, path, endpoint, read }, kit('site.css')?.content ?? null);
+}
+
 export interface StandaloneOptions {
   endpoint: string;
   /** Source of the page runtime. */
@@ -184,6 +195,23 @@ export const PAGE_CSP = [
   "frame-ancestors 'none'"
 ].join('; ');
 
+/**
+ * Standalone markdown pages run nothing: no script, no forms, no requests
+ * beyond https images. Links may open other pages and sites.
+ */
+export const MD_PAGE_CSP = [
+  'sandbox allow-popups allow-popups-to-escape-sandbox',
+  "default-src 'none'",
+  "script-src 'none'",
+  "style-src 'unsafe-inline'",
+  'img-src data: https:',
+  "connect-src 'none'",
+  'font-src data:',
+  "form-action 'none'",
+  "base-uri 'none'",
+  "frame-ancestors 'none'"
+].join('; ');
+
 /** Raw doc files never run anything, SVG included. */
 export const FILE_CSP = "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'; frame-ancestors 'none'";
 
@@ -236,11 +264,21 @@ export function createPageRoutes(deps: PageRouteDeps) {
     headers: { ...COMMON_HEADERS, 'content-type': 'text/html; charset=utf-8', 'content-security-policy': PAGE_CSP }
   });
 
+  const markdownPage = (doc: string, path: string): PluginHttpResponse => ({
+    status: 200,
+    body: standaloneMarkdownHtml(deps.store, deps.kit, { doc, path }, deps.endpoint),
+    headers: { ...COMMON_HEADERS, 'content-type': 'text/html; charset=utf-8', 'content-security-policy': MD_PAGE_CSP }
+  });
+
   return {
     /** `GET /page?doc=<id|slug>[&path=<page>]` */
     page(request: PluginHttpRequest): PluginHttpResponse {
       try {
-        return page(requiredQuery(request, 'doc'), queryValue(request, 'path'));
+        const doc = requiredQuery(request, 'doc');
+        const requested = queryValue(request, 'path');
+        const path = pagePath(requested ?? deps.store.summary(doc).entryPath);
+        if (isRenderableMarkdownPath(path)) return markdownPage(doc, path);
+        return page(doc, requested);
       } catch (error) {
         return errorResponse(error);
       }
@@ -252,6 +290,7 @@ export function createPageRoutes(deps: PageRouteDeps) {
         const doc = requiredQuery(request, 'doc');
         const path = pagePath(requiredQuery(request, 'path'));
         if (fileKindOf(path) === 'html') return page(doc, path);
+        if (isRenderableMarkdownPath(path)) return markdownPage(doc, path);
         const summary = deps.store.summary(doc);
         const file = docPageReader(deps.store, summary.id, deps.kit)(path);
         if (!file) throw new DesignDocError('not_found', `${path} not found in ${summary.slug}`);
