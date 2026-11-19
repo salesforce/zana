@@ -229,8 +229,8 @@ function ThreadComposerContent({
       : threadDefault.providerId,
     hostId: catalogHostId,
     projectId: currentThread?.projectId ?? selectedProject?.id,
-    hostPending: !catalogHostId && hosts.length === 0,
-    scopePending: Boolean(threadId && !currentThread)
+    scopePending: Boolean(threadId && !currentThread),
+    hostPending: !catalogHostId && hosts.length === 0
   });
   // The tier is inherited from the thread, never picked here, so an unoffered
   // tier falls back to the default for this send without being saved.
