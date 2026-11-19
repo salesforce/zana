@@ -157,6 +157,7 @@ import {
   getThreadRoutePath,
   sessionIdFromPath
 } from './lib/route-paths.js';
+import { isSessionViewed } from './lib/agent-tab-status.js';
 import { inspectAgentSession, inspectRouteProjectId, threadOpenListener } from './lib/inspect-session.js';
 import { resolveFocusedProject } from './lib/focusedProject.js';
 
@@ -501,10 +502,12 @@ function AppShell() {
       // open window would fire a redundant `git status` spawn per burst.
       const scoped = getScopedProjectId();
       if (scoped && owningProjectId !== scoped) return;
-      const isActive =
-        (ui.selectedProjectId === owningProjectId &&
-          ui.selectedTabId[owningProjectId] === id) ||
-        sessionIdFromPath(window.location.pathname) === id;
+      const isActive = isSessionViewed(
+        id,
+        owningProjectId,
+        ui,
+        sessionIdFromPath(window.location.pathname)
+      );
       if (!isActive) ui.markUnread(id);
       // Coalesce bursts of terminal output into a single git status refresh
       // so commits/pulls/branch swaps inside a tab show up promptly.

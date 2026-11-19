@@ -32,7 +32,7 @@ import {
   type ClosedApplicationTab,
   type PluginApplicationTab
 } from '../lib/application-tabs.js';
-import { agentTabStatus, isListedAgent } from '../lib/agent-tab-status.js';
+import { isListedAgent } from '../lib/agent-tab-status.js';
 import { resumingAgents } from '../lib/agent-tab-resume.js';
 import { pluginTabPath } from '../lib/plugin-tab-route.js';
 import { usePluginAppModules } from '../plugins/plugin-app-loader.js';
@@ -55,6 +55,7 @@ import {
   type ApplicationTabView
 } from './ApplicationTabBar.js';
 import { ZanaSpinner } from './fairy/ZanaSpinner.js';
+import { agentTabView } from './agentTabView.js';
 
 /** Content adapters supply identity, live metadata and lifecycle rules to one tab shell. */
 export function ApplicationTabs({
@@ -85,9 +86,19 @@ export function ApplicationTabs({
   const { resolve } = usePluginPinResolver();
   // Last-seen host per session: a vanished host-owned session may only be unreachable.
   const hostOf = useRef(new Map<string, string>());
-  for (const list of Object.values(terminals))
-    for (const session of list)
-      if (session.hostId) hostOf.current.set(session.id, session.hostId);
+  useEffect(() => {
+    const map = hostOf.current;
+    const live = new Set<string>();
+    for (const list of Object.values(terminals))
+      for (const session of list) {
+        live.add(session.id);
+        if (session.hostId) map.set(session.id, session.hostId);
+      }
+    // Only open agent tabs consult this; forget sessions that are neither listed nor tabbed.
+    for (const id of [...map.keys()])
+      if (!live.has(id) && !open.some((tab) => tab.kind === 'agent' && tab.sessionId === id))
+        map.delete(id);
+  }, [terminals, open]);
   const currentPath = useRef(location.pathname);
   currentPath.current = location.pathname;
   const fallback = scope ? getProjectRoutePath(scope) : getAgentsRoutePath();
@@ -314,68 +325,26 @@ export function ApplicationTabs({
       const session = validAgent(tab);
       if (!session) return [];
       const project = projects.find((project) => project.id === tab.projectId)!;
-      const active = sessionIdFromPath(location.pathname) === tab.sessionId;
-      const status = agentTabStatus(session, agentStates[session.id]);
-      const StatusIcon =
-        status === 'Error'
-          ? TriangleAlert
-          : status === 'Needs you'
-            ? MessageSquareText
-            : status === 'Working'
-              ? ZanaSpinner
-              : null;
-      const unread = !active && !!unreadAgents[session.id];
-      const title = session.title || 'Untitled agent';
+      const href = new URL(path(tab), window.location.origin).href;
       return [
-        {
+        agentTabView({
           id,
-          kind: 'agent',
-          title,
-          context: project.name,
-          label: `${title} — ${project.name}${unread ? ' — Unread' : ''}`,
-          tooltip: `${title}\n${project.name} · ${status}${unread ? ' · Unread' : ''}`,
-          active,
-          busy: false,
-          unread,
-          closeHint: 'Close tab (keeps agent running)',
-          icon: <ProjectDot project={project} />,
-          status: StatusIcon && (
-            <span
-              className={`titlebar-thread-status status-${status.toLowerCase().replace(' ', '-')}`}
-              role="img"
-              aria-label={status}
-            >
-              <StatusIcon size={12} aria-hidden="true" />
-            </span>
-          ),
-          actions: [
-            {
-              label: 'Copy agent link',
-              run: () => {
-                void copyTextOrFail(
-                  new URL(path(tab), window.location.origin).href
-                ).then(
-                  () => useUi.getState().pushToast('Agent link copied'),
-                  () =>
-                    useUi
-                      .getState()
-                      .pushToast('Could not copy agent link', 'error')
-                );
-              }
-            },
-            {
-              label: 'Open project',
-              run: () => void navigate(getProjectRoutePath(project.id))
-            }
-          ],
-          footerActions: [
-            {
-              label: 'Close agent',
-              separatorBefore: true,
-              run: () => closeAgent(session)
-            }
-          ]
-        }
+          session,
+          project,
+          agentState: agentStates[session.id],
+          active: sessionIdFromPath(location.pathname) === tab.sessionId,
+          unread:
+            sessionIdFromPath(location.pathname) !== tab.sessionId &&
+            !!unreadAgents[session.id],
+          copyLink: () => {
+            void copyTextOrFail(href).then(
+              () => useUi.getState().pushToast('Agent link copied'),
+              () => useUi.getState().pushToast('Could not copy agent link', 'error')
+            );
+          },
+          openProject: () => void navigate(getProjectRoutePath(project.id)),
+          closeAgent: () => closeAgent(session)
+        })
       ];
     }
     if (tab.kind !== 'thread') return [];

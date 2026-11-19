@@ -18,3 +18,17 @@ export function agentTabStatus(
   if (session.status === 'starting' || state === 'working') return 'Working';
   return 'Idle';
 }
+
+/** Output on a session is "seen" when it is the selected terminal tab or its page is the open route. */
+export function isSessionViewed(
+  sessionId: string,
+  owningProjectId: string,
+  selection: { selectedProjectId: string | null; selectedTabId: Record<string, string | undefined> },
+  routeSessionId: string | null | undefined
+): boolean {
+  return (
+    (selection.selectedProjectId === owningProjectId &&
+      selection.selectedTabId[owningProjectId] === sessionId) ||
+    routeSessionId === sessionId
+  );
+}

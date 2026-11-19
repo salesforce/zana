@@ -21,7 +21,8 @@ import {
   MAX_PLUGIN_ROWS_CHARS,
   MAX_PLUGIN_TABS,
   MAX_PLUGIN_TABS_PER_PLUGIN,
-  MAX_TABS
+  MAX_TABS,
+  MAX_THREAD_TABS
 } from '../thread-tabs.js';
 const thread = (id: string, projectId = 'p'): ThreadApplicationTab => ({
   kind: 'thread',
@@ -201,7 +202,7 @@ it('interleaves plugin tabs in open order, dedupes and treats an unchanged repea
 
 it('refuses plugin tabs over the per-plugin and total caps without evicting other kinds', () => {
   let state = openApplicationTab(empty(), setup);
-  for (let i = 0; i < MAX_TABS - MAX_PLUGIN_TABS; i++)
+  for (let i = 0; i < MAX_THREAD_TABS; i++)
     state = openApplicationTab(state, thread(String(i)));
   for (let i = 0; i < MAX_PLUGIN_TABS_PER_PLUGIN; i++)
     state = openApplicationTab(state, plugin(String(i)));
@@ -225,7 +226,7 @@ it('refuses plugin tabs over the per-plugin and total caps without evicting othe
   // Thread opens evict only threads, never plugin pins or setup.
   state = openApplicationTab(state, thread('new'));
   expect(state.open.filter((t) => t.kind === 'thread')).toHaveLength(
-    MAX_TABS - MAX_PLUGIN_TABS
+    MAX_THREAD_TABS
   );
   expect(state.open.filter((t) => t.kind === 'plugin')).toHaveLength(
     MAX_PLUGIN_TABS
@@ -429,8 +430,8 @@ it('keeps every thread tab for a maximal mixed payload and bounds hostile payloa
   );
   const payload = JSON.stringify({ open: [...threads, ...wide], closed: [] });
   const read = readApplicationTabs(memory(payload).io, null).open;
-  // Each of the 20 pins leaves one fewer conversation slot.
-  expect(read.filter((t) => t.kind === 'thread')).toHaveLength(MAX_TABS - 20);
+  // 20 pins leave 30 slots, but conversations never drop below the long-standing 40.
+  expect(read.filter((t) => t.kind === 'thread')).toHaveLength(MAX_THREAD_TABS);
   const hostile = JSON.stringify({ open: [thread('a')], pad: 'x'.repeat(300_000) });
   expect(readApplicationTabs(memory(hostile).io, null)).toEqual(empty());
 });
@@ -487,17 +488,30 @@ it('shares one cap of 50 between threads and agents, evicting the leftmost even 
   expect(state.closed).toEqual([]);
 });
 
-it('counts pins against the cap: fewer conversation slots, pins never evicted, and a pin at the cap is refused', () => {
+it('uses pin slots above the thread cap: fewer conversations only past 40, pins never evicted, and a pin at the strip cap over 40 conversations is refused', () => {
   let state = empty();
-  for (let i = 0; i < MAX_PLUGIN_TABS_PER_PLUGIN; i++)
-    state = openApplicationTab(state, plugin(String(i)));
-  for (let i = 0; i < MAX_TABS; i++)
-    state = openApplicationTab(state, agent(String(i)));
-  expect(state.open.filter((t) => t.kind === 'plugin')).toHaveLength(MAX_PLUGIN_TABS_PER_PLUGIN);
+  for (let i = 0; i < 5; i++) state = openApplicationTab(state, plugin(String(i)));
+  for (let i = 0; i < MAX_TABS; i++) state = openApplicationTab(state, agent(String(i)));
+  expect(state.open.filter((t) => t.kind === 'plugin')).toHaveLength(5);
+  expect(state.open.filter((t) => t.kind === 'agent')).toHaveLength(MAX_TABS - 5);
   expect(state.open).toHaveLength(MAX_TABS);
   const refused = tryOpenApplicationTab(state, plugin('late'));
   expect(refused.refusal).toBe('plugin-total-cap');
   expect(refused.state).toBe(state);
+});
+
+it('keeps 40 conversations alongside 20 pins and accepts a pin while conversations are at the thread cap', () => {
+  let state = empty();
+  for (let i = 0; i < MAX_THREAD_TABS; i++) state = openApplicationTab(state, thread(String(i)));
+  for (let i = 0; i < MAX_PLUGIN_TABS_PER_PLUGIN; i++) state = openApplicationTab(state, plugin(String(i)));
+  for (let i = 0; i < MAX_PLUGIN_TABS - MAX_PLUGIN_TABS_PER_PLUGIN; i++)
+    state = openApplicationTab(state, plugin(String(i), { pluginId: 'other' }));
+  expect(state.open.filter((t) => t.kind === 'plugin')).toHaveLength(MAX_PLUGIN_TABS);
+  expect(state.open.filter((t) => t.kind === 'thread')).toHaveLength(MAX_THREAD_TABS);
+  const again = openApplicationTab(state, thread('new'));
+  expect(again.open.filter((t) => t.kind === 'thread')).toHaveLength(MAX_THREAD_TABS);
+  const saved = JSON.stringify({ open: state.open, closed: [] });
+  expect(readApplicationTabs(memory(saved).io, null).open).toHaveLength(MAX_THREAD_TABS + MAX_PLUGIN_TABS);
 });
 
 it('remembers closed agents for reopen but not when closed without history', () => {

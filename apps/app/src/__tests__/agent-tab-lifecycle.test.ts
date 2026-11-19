@@ -4,12 +4,14 @@ import { agentTabStatus, isListedAgent } from '../lib/agent-tab-status.js';
 
 const restore = vi.fn();
 const close = vi.fn();
+const reconnect = vi.fn();
 
 vi.mock('../lib/product-client.js', () => ({
   product: {
     terminals: {
       restore: (...args: unknown[]) => restore(...args),
-      close: (...args: unknown[]) => close(...args)
+      close: (...args: unknown[]) => close(...args),
+      reconnectRemote: (...args: unknown[]) => reconnect(...args)
     },
     threads: { list: vi.fn().mockResolvedValue([]) },
     git: { status: vi.fn().mockRejectedValue(new Error('no git')) }
@@ -46,6 +48,7 @@ beforeEach(() => {
   vi.resetModules();
   restore.mockReset();
   close.mockReset().mockResolvedValue(true);
+  reconnect.mockReset();
 });
 
 describe('agentTabStatus', () => {
@@ -136,6 +139,31 @@ describe('store lifecycle and agent tabs', () => {
       'agent:z'
     ]);
     expect(resumingAgents.size).toBe(0);
+  });
+
+  it('reconnectRemote swaps the tab to the new session id in place and clears the mark', async () => {
+    reconnect.mockResolvedValue({ ok: true, value: session('re', { restoreCapabilityId: 'c3' }) });
+    const { useData, useApplicationTabs, applicationTabId, resumingAgents } = await load();
+    useData.setState({
+      projects: [{ ...projects[0], remote: { host: 'h' } }] as never,
+      terminals: { p1: [session('gone', { status: 'exited', restoreCapabilityId: 'c1' })] }
+    });
+    useApplicationTabs.setState({ open: [agentTab('q'), agentTab('gone', true)], closed: [] });
+    const created = await useData.getState().reconnectRemote('gone', 'p1');
+    expect(created?.id).toBe('re');
+    expect(useApplicationTabs.getState().open).toEqual([agentTab('q'), agentTab('re', true)]);
+    expect(resumingAgents.size).toBe(0);
+  });
+
+  it('reconnectRemote leaves the tab alone for a local project or a refused reconnect', async () => {
+    const { useData, useApplicationTabs, applicationTabId } = await load();
+    useData.setState({ projects, terminals: { p1: [session('gone', { status: 'exited' })] } });
+    useApplicationTabs.setState({ open: [agentTab('gone')], closed: [] });
+    expect(await useData.getState().reconnectRemote('gone', 'p1')).toBeNull();
+    reconnect.mockResolvedValue({ ok: false, code: 'DENIED', message: 'nope' });
+    useData.setState({ projects: [{ ...projects[0], remote: { host: 'h' } }] as never });
+    expect(await useData.getState().reconnectRemote('gone', 'p1')).toBeNull();
+    expect(useApplicationTabs.getState().open.map(applicationTabId)).toEqual(['agent:gone']);
   });
 
   it('restartTerminal failure leaves the tab and clears the in-flight mark', async () => {

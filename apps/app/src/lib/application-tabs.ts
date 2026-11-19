@@ -8,6 +8,7 @@ import {
   MAX_PLUGIN_TABS_PER_PLUGIN,
   MAX_PLUGIN_TITLE_CHARS,
   MAX_TABS,
+  MAX_THREAD_TABS,
   parseThreadTab,
   readThreadTabs,
   type ThreadTab
@@ -214,10 +215,15 @@ function parseRows(
     rows.push(tab);
   }
   if (!enforcePluginCaps) return rows.slice(-limit);
-  // Keep the newest conversations only; each pin leaves one fewer slot.
+  // Keep the newest conversations only. Pins use the slots above the thread cap.
   let toDrop =
-    rows.filter(isConversation).length - (limit - plugins);
+    rows.filter(isConversation).length - conversationCap(plugins, limit);
   return rows.filter((row) => !isConversation(row) || toDrop-- <= 0);
+}
+
+/** Conversation slots: the strip cap minus pins, but never below the long-standing thread cap. */
+function conversationCap(pins: number, limit = MAX_TABS): number {
+  return Math.max(MAX_THREAD_TABS, limit - pins);
 }
 
 /** Conversations and plugin pins can be restored after reload. Setup references require a live draft. */
@@ -321,8 +327,12 @@ function tryOpenPlugin(
     const plugins = state.open.filter(
       (row): row is PluginApplicationTab => row.kind === 'plugin'
     );
-    // A pin never displaces a conversation: at the strip cap the user closes a tab first.
-    if (plugins.length + state.open.filter(isConversation).length >= MAX_TABS)
+    // A pin never displaces a conversation: past the thread cap, at the strip cap the user closes a tab first.
+    const conversations = state.open.filter(isConversation).length;
+    if (
+      conversations > MAX_THREAD_TABS &&
+      plugins.length + conversations >= MAX_TABS
+    )
       return { state, refusal: 'plugin-total-cap' };
     if (plugins.length >= MAX_PLUGIN_TABS)
       return { state, refusal: 'plugin-total-cap' };
@@ -364,7 +374,7 @@ function tryOpenOther(
   // Visiting more conversations evicts the leftmost one (the active tab is not protected),
   // never a live setup or plugin pin. Each pin leaves one fewer conversation slot.
   const pins = open.filter((row) => row.kind === 'plugin').length;
-  while (open.filter(isConversation).length > MAX_TABS - pins) {
+  while (open.filter(isConversation).length > conversationCap(pins)) {
     const oldest = open.findIndex(isConversation);
     open = open.filter((_, index) => index !== oldest);
   }
