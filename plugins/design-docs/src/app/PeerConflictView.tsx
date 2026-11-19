@@ -58,7 +58,7 @@ function ForkReview({ docId, remoteHead, onResolved }: { docId: string; remoteHe
   const review = useResource(`${docId}\0${remoteHead}`, () => api.peerConflictReview(docId, remoteHead));
   const [step, setStep] = useState(0);
   const [choices, setChoices] = useState<PeerConflictChoices>({});
-  const [pickedDocChoice, setDocChoice] = useState<PeerResolutionChoice | null>(null);
+  const [pickedDocChoice, setPickedDocChoice] = useState<PeerResolutionChoice | null>(null);
   const [fileStale, setFileStale] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -108,7 +108,7 @@ function ForkReview({ docId, remoteHead, onResolved }: { docId: string; remoteHe
       {data.conflicts.length ? <p>{data.conflicts.join('; ')}</p> : <p>Different parts changed on each side; they merge safely.</p>}
       {(['merge', 'local', 'remote'] as const).filter((value) => value !== 'merge' || data.mergeAvailable).map((value) =>
         <label key={value} style={{ display: 'block' }}><input type="radio" name="doc-choice" value={value} checked={docChoice === value} disabled={busy}
-          onChange={() => setDocChoice(value)} /> {value === 'merge' ? 'Merge changes' : CHOICE_LABEL[value]}</label>)}
+          onChange={() => setPickedDocChoice(value)} /> {value === 'merge' ? 'Merge changes' : CHOICE_LABEL[value]}</label>)}
     </fieldset>}
     {data.conflicts.includes('history causal order conflict') ? <p>History order differs. Explicit selection keeps the selected branch's order and retains remaining snapshots.</p> : null}
     <p>Both original versions remain in peer history. Resolution saves locally, does not share unsaved editor buffers, and does not trigger automatic sync. Use Sync Now to share it.</p>
