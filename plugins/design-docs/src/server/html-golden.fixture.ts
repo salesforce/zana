@@ -35,8 +35,8 @@ export function captureHtmlRoutes(deps: GoldenDeps): GoldenSnapshot {
   const routes = deps.createPageRoutes({ store: deps.store, kit: deps.NO_KIT, endpoint: '/x', runtime: () => '/*runtime*/' });
   const request = (path: string, query: Record<string, string>) => ({ method: 'GET', path, query: { doc: doc.id, ...query }, body: undefined });
   const snap = (response: PluginHttpResponse) => ({
-    status: response.status ?? 200,
-    headers: { ...(response.headers ?? {}) },
+    status: response.status as number,
+    headers: { ...(response.headers as Record<string, string>) },
     body: (typeof response.body === 'string' ? response.body : `bytes:${Buffer.from(response.body as Uint8Array).toString('base64')}`).split(doc.id).join('<DOC>')
   });
   return {
