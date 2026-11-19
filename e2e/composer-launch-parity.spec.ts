@@ -45,15 +45,15 @@ for (const mode of ['now', 'review'] as const) {
           expect(receipt.proposalId).toBeTruthy();
           expect(receipt.inboxEntryId).toBeTruthy();
           const detail = await openSquadReview(ctx, title);
-          await expect(detail).toContainText('onComplete: leave (launch)');
-          await expect(detail).toContainText('push: false (launch)');
-          await expect(detail).toContainText('checks: none (launch)');
-          await expect(detail).toContainText('failurePolicyDefault: fail-run (launch)');
-          await expect(detail).toContainText(checkout === 'new-worktree' ? 'New worktree from main' : checkout === 'worktree' ? 'feature/e2e' : 'main');
-          if (checkout !== 'new-worktree') await expect(detail).toContainText(realpathSync(checkout === 'worktree' ? linked : ctx.projectDir));
-          else await expect(detail).toContainText('path assigned at launch');
-           await ctx.window.getByRole('button', { name: 'Review Squad launch' }).click();
-           const modal = ctx.window.getByTestId('launch-modal');
+          // The card stays short: launch policies and location are in the composer under Review settings.
+          await expect(detail).not.toContainText('(launch)');
+          await expect(detail).not.toContainText('failurePolicyDefault:');
+          await ctx.window.getByRole('button', { name: 'Review Squad launch' }).click();
+          const modal = ctx.window.getByTestId('launch-modal');
+          await expect(modal.getByLabel('Reviewed launch settings')).toHaveCount(0);
+          await modal.getByRole('button', { name: 'Review settings', exact: true }).click();
+          if (checkout !== 'new-worktree') await expect(modal).toContainText(realpathSync(checkout === 'worktree' ? linked : ctx.projectDir));
+          else await expect(modal).toContainText('path assigned at launch');
            await expect(modal).toContainText('Keep checkout and branch (This launch)');
            await expect(modal).toContainText('Blocked (This launch)');
            await expect(modal).toContainText('No checks (This launch)');
@@ -108,8 +108,9 @@ test('composer attached plan survives repeated previews and launch', async ({ ap
   try {
     initSquadRepo(ctx);
     await launchSquadFixture(ctx, [], { teamExtra: { worktreeOnComplete: 'merge' } });
+    // Agents open as a full-page tab (no dialog) when thread tabs are on; close the modal only when one exists.
     const owner = ctx.window.getByRole('dialog', { name: /^Agent / }).first();
-    await owner.getByRole('button', { name: 'Close' }).click();
+    if (await owner.count()) await owner.getByRole('button', { name: 'Close' }).click();
     await ctx.window.getByTestId('nav-agents').or(ctx.window.getByTestId('project-nav-agents')).click();
     await ctx.window.getByTestId('agents-board-new-thread').first().click();
     const modal = ctx.window.getByTestId('launch-modal');
@@ -218,8 +219,7 @@ test('review Launch revalidates branch checkout and rejects changed target witho
     const receipt = await squadReviewReceipt(ctx, 'stale');
     expect(receipt.proposalId).toBeTruthy();
     const detail = await openSquadReview(ctx, 'Stale review target');
-    await expect(detail).toContainText('feature/review-owned (user-owned)');
-    await expect(detail).toContainText(realpathSync(linked));
+    await expect(detail).not.toContainText(realpathSync(linked));
     await ctx.window.getByRole('button', { name: 'Review Squad launch' }).click();
     const modal = ctx.window.getByTestId('launch-modal');
     await expect(modal).toBeVisible();

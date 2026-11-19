@@ -4,7 +4,7 @@ import { InboxActionOperatorError } from '../inbox-actions/registry.js';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import type { ExecutionWorkUnitInput } from '@zana-ai/zcc-server/services/execution/store';
 import type { CoordinatorWakeConfirmation } from '@zana-ai/zcc-server/services/execution/coordinator-wake-confirmation';
-import { hasPortablePlanStep } from '@zana-ai/zcc-server/services/execution/portable-plan';
+import { hasPortablePlanStep, PARSER_VERSION } from '@zana-ai/zcc-server/services/execution/portable-plan';
 import {
   correctionProseRelPath,
   correctionDiffRelPath,
@@ -235,9 +235,12 @@ export class PlanCorrectionService {
     }
     this.missingArtifactIdles.delete(current.executionId);
     const digest = planDigest(corrected.units);
-    if (current.offeredDigest !== digest) {
+    // An offer stamped by an older parser is re-offered, not carded; a record with no stamp stays valid.
+    const staleParser = current.parserVersion !== undefined && current.parserVersion !== PARSER_VERSION;
+    if (current.offeredDigest !== digest || staleParser) {
       this.clearApproval(current);
       current.offeredDigest = digest;
+      current.parserVersion = PARSER_VERSION;
       current.offeredUnits = cloneUnits(corrected.units);
       current.status = 'correction-required';
     }
@@ -290,8 +293,8 @@ export class PlanCorrectionService {
       dedupeKey: `plan-correction:${ctx.executionId}:${current.offeredActionId ?? 'pending'}`,
       subject: 'Plan correction required',
       comments: reviewReady
-        ? `${reviewLead}${planReviewSummary(current.reason, current.offeredUnits ?? [], notes)}\n\nReview the proposed corrected plan below before work can continue. Approve starts work using this exact revision. Request changes sends it back for revision. Cancel stops this run.`
-        : `${stallLead}Plan requires revisions to proceed. Problem with the supplied plan: ${current.reason.replace(/\.$/, '')}. Select Request changes, then Continue, to ask the coordinator to write a complete corrected plan. Select Cancel, then Continue, to stop this run.`,
+        ? `${reviewLead}${planReviewSummary(current.reason, current.offeredUnits ?? [], notes)}\n\nReview the proposed corrected plan below before work can continue. Use the corrected plan starts work using this exact revision. Ask the agent to revise sends it back for revision. Cancel the run stops it.`
+        : `${stallLead}Plan requires revisions to proceed. Problem with the supplied plan: ${current.reason.replace(/\.$/, '')}. This is a Must fix, so work cannot start until the plan is corrected. Select Ask the agent to revise, then Continue, to ask the coordinator to write a complete corrected plan. Select Cancel the run, then Continue, to stop this run.`,
       decisionGuidance: {
         kind: 'plan-correction',
         diagnostic: current.reason,
@@ -302,11 +305,11 @@ export class PlanCorrectionService {
         } : {})
       },
       questions: [{
-        prompt: reviewReady ? 'Review the proposed plan, then approve, request changes, or cancel.' : 'Request a corrected plan or cancel.',
+        prompt: reviewReady ? 'Review the proposed plan, then use it, ask the agent to revise it, or cancel the run.' : 'Ask the agent for a corrected plan, or cancel the run.',
         options: [
-          ...(reviewReady ? [{ id: 'approve', label: 'Approve' }] : []),
-          { id: 'changes', label: 'Request changes' },
-          { id: 'cancel', label: 'Cancel' }
+          ...(reviewReady ? [{ id: 'approve', label: 'Use the corrected plan' }] : []),
+          { id: 'changes', label: 'Ask the agent to revise' },
+          { id: 'cancel', label: 'Cancel the run' }
         ]
       }]
     });
@@ -654,6 +657,7 @@ export class PlanCorrectionService {
     current.channel = 'register';
     this.clearApproval(current);
     current.offeredDigest = planDigest(units);
+    current.parserVersion = PARSER_VERSION;
     current.offeredUnits = cloneUnits(units);
     // Retries were checked above, so a reject here is a cancellation that won the write.
     if (await this.request(current) === 'reject') return { ok: false, message: 'plan correction was cancelled' };

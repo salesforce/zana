@@ -267,7 +267,7 @@ function presetBody(opts: FakeAgentOptions): string {
  * no re-asking the human. The test answers the question out-of-band via
  * `executionBoard.respond`.
  */
-export type JobTeamScenario = 'success' | 'unattended' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'kickoff-churn' | 'peer-handoff' | 'plan-correction' | 'plan-correction-silent' | 'api-error-nudge' | 'api-error-restart' | 'api-error-permanent';
+export type JobTeamScenario = 'success' | 'unattended' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'kickoff-churn' | 'peer-handoff' | 'plan-correction' | 'plan-correction-silent' | 'api-error-nudge' | 'api-error-restart' | 'api-error-permanent' | 'no-route';
 
 /** The behavior gates the generated coordinator script keys its behavior off. */
 interface JobTeamScenarioFlags {
@@ -282,6 +282,7 @@ interface JobTeamScenarioFlags {
   apiErrorNudge: boolean;
   apiErrorRestart: boolean;
   apiErrorPermanent: boolean;
+  noRoute: boolean;
 }
 
 /** Map a scenario name to the script's behavior flags (exactly one true, or none for 'success'). */
@@ -297,7 +298,8 @@ function resolveScenarioFlags(scenario?: JobTeamScenario): JobTeamScenarioFlags 
     planCorrectionSilent: scenario === 'plan-correction-silent',
     apiErrorNudge: scenario === 'api-error-nudge',
     apiErrorRestart: scenario === 'api-error-restart',
-    apiErrorPermanent: scenario === 'api-error-permanent'
+    apiErrorPermanent: scenario === 'api-error-permanent',
+    noRoute: scenario === 'no-route'
   };
 }
 
@@ -415,6 +417,10 @@ const PLAN_CORRECTION_SILENT = ${JSON.stringify(flags.planCorrectionSilent)};
 const API_ERROR_NUDGE = ${JSON.stringify(flags.apiErrorNudge)};
 const API_ERROR_RESTART = ${JSON.stringify(flags.apiErrorRestart)};
 const API_ERROR_PERMANENT = ${JSON.stringify(flags.apiErrorPermanent)};
+// No-route repro: the last step must not run on the workers that ran its two parents (a, c), and there are only two. The engine blocks it behind a
+// coordinator blocker and wakes this coordinator, which logs the wake and EXITS without answering, so the
+// stale-blocker sweep escalates to the human (Inbox). A worker never receives the step.
+const NO_ROUTE = ${JSON.stringify(flags.noRoute)};
 // Optional execution.start idle deadline (ms); null = engine default. Used by the blocked-wait E2E.
 const DEADLINE_MS = ${JSON.stringify(deadlineMs ?? null)};
 const APIERR = API_ERROR_NUDGE || API_ERROR_RESTART || API_ERROR_PERMANENT;
@@ -514,7 +520,14 @@ const HANDOFF_PLAN = [
 const API_ERROR_PLAN = [
   { id: 'api-error-unit', title: 'API Error Unit', task: 'Write api-error.txt containing RECOVERED: ready', dependencies: [], files: ['api-error.txt'], verification: ['api-error.txt present'] }
 ];
-const PLAN = APIERR ? API_ERROR_PLAN : FAILED_DAG ? FAILED_DAG_PLAN : (STALLED || CHURN) ? STALLED_PLAN : STREAMING ? STREAMING_PLAN : HANDOFF ? HANDOFF_PLAN : SUCCESS_PLAN;
+// Launch preflight rejects a plan whose hard requirement is unmeetable up front, so the dead end must appear at
+// runtime: a and c run in parallel on the two workers, then review-step may use neither of them.
+const NO_ROUTE_PLAN = [
+  { id: 'a', title: 'Step A', task: 'Complete step A', dependencies: [], readOnly: true, verification: ['a done'] },
+  { id: 'c', title: 'Step C', task: 'Complete step C', dependencies: [], readOnly: true, verification: ['c done'] },
+  { id: 'review-step', title: 'Review Step', task: 'Review both (no remaining worker may take it)', dependencies: ['a', 'c'], readOnly: true, verification: ['review recorded'], routing: { version: 1, excludeSameWorkerAs: ['a', 'c'] } }
+];
+const PLAN = NO_ROUTE ? NO_ROUTE_PLAN : APIERR ? API_ERROR_PLAN : FAILED_DAG ? FAILED_DAG_PLAN : (STALLED || CHURN) ? STALLED_PLAN : STREAMING ? STREAMING_PLAN : HANDOFF ? HANDOFF_PLAN : SUCCESS_PLAN;
 
 async function owner() {
   log('owner start');
@@ -522,7 +535,7 @@ async function owner() {
     version: 1,
     teamId: 'e2e-job-team',
     launchRequestId: 'e2e-cli-agent-job-' + process.pid,
-    jobTitle: ANSWERS_REPORTS ? 'CLI Agent reporting job' : APIERR ? 'CLI Agent API error job' : CHURN ? 'CLI Agent kickoff churn job' : STALLED ? 'CLI Agent stalled job' : STREAMING ? 'CLI Agent streaming job' : HANDOFF ? 'CLI Agent handoff job' : 'CLI Agent durable job',
+    jobTitle: ANSWERS_REPORTS ? 'CLI Agent reporting job' : APIERR ? 'CLI Agent API error job' : CHURN ? 'CLI Agent kickoff churn job' : NO_ROUTE ? 'CLI Agent no-route job' : STALLED ? 'CLI Agent stalled job' : STREAMING ? 'CLI Agent streaming job' : HANDOFF ? 'CLI Agent handoff job' : 'CLI Agent durable job',
     summary: 'Full Job Team route started by a CLI Agent owner.',
     workUnits: PLAN,
     ...(ANSWERS_REPORTS ? { notify: true } : {}),
@@ -662,6 +675,20 @@ async function orchestrator() {
   // the wall-clock backstop reclaims + re-dispatches (claimGeneration climbs).
   if (STALLED || CHURN) { log((CHURN ? 'churn' : 'stalled') + ': dispatched, holding for reclaim/escalation'); await hold(); }
   if (STREAMING) { log('streaming: dispatched, holding while worker streams'); await hold(); }
+  if (NO_ROUTE) {
+    // The engine wakes the coordinator through its PTY once the step is blocked. Log it, then exit unanswered.
+    let wakeBuf = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', function (chunk) {
+      wakeBuf += String(chunk);
+      if (!/has no qualified worker/.test(wakeBuf)) return;
+      log('no-route wake received; exiting without answering');
+      setTimeout(function () { process.exit(0); }, 300);
+    });
+    process.stdin.resume();
+    setIdle();
+    await hold();
+  }
   // Deliberately do NOT call execution.complete. This models a real orchestrator
   // (e.g. an external skill-driven coordinator) that dispatches the DAG but never
   // finalizes — the observed stall. The engine's auto-finalize safety net must
@@ -826,6 +853,10 @@ async function doUnit(unitId) {
     } else if (unitId === 'about') {
       fs.writeFileSync(path.join(CWD, 'about.txt'), 'ABOUT: ready\n');
       await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: 'about', result: 'ABOUT: ready', ...outcomeFence });
+    } else if (NO_ROUTE && (unitId === 'a' || unitId === 'c')) {
+      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: unitId + ' done', ...outcomeFence });
+    } else if (NO_ROUTE && unitId === 'review-step') {
+      throw new Error('review-step was dispatched to a worker it must never run on');
     } else if (unitId === 'api-error-unit') {
       fs.writeFileSync(path.join(CWD, 'api-error.txt'), 'RECOVERED: ready\n');
       await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: 'recovered', ...outcomeFence });

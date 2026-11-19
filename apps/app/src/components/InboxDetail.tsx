@@ -47,7 +47,7 @@ import { setPendingSquadDetailsTarget } from '../lib/squad-details-target.js';
 import { inboxPrimaryTitle, inboxShortTitle, inboxContextLine } from '../lib/inboxPresentation.js';
 import { classifyEntry } from '@zana-ai/zcc-domain/feed-categories';
 import { resolveAnswerSurface } from '../lib/answerSurface.js';
-import { respondToInboxBlocker } from '../lib/inboxBlockerRespond.js';
+import { isNoRouteBlockerEntry, respondToInboxBlocker, stopAndFixPlanFromInbox } from '../lib/inboxBlockerRespond.js';
 import { useExecutionInboxBlockerState, type ExecutionInboxBlockerState } from '../lib/executionInboxBlockerState.js';
 import { isClaudeProfile, knownProfile, projectDefaultProfile } from '../lib/launchProfile.js';
 import { fileManagerName } from '../lib/file-manager.js';
@@ -661,6 +661,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
   const squadProposalSurface = entry.squadProposal ? (
     <InboxSquadProposalSurface
       hostAction={hostAction}
+      planCheck={entry.squadProposal.planCheck}
       ownershipLoading={ownershipLoading}
       ownershipError={ownershipError}
       projectAlive={projectAlive}
@@ -1409,6 +1410,22 @@ function ReplyBox({
           <Send size={13} strokeWidth={1.75} />
           {busy ? (dead ? 'Reopening…' : 'Sending…') : dead ? 'Reopen & send' : 'Send'}
         </button>
+        {executionLinked && isNoRouteBlockerEntry(entry) && (
+          <button
+            type="button"
+            className="inbox-reply-stop-fix"
+            data-testid="inbox-stop-and-fix-plan"
+            title="Stops the run and keeps the work already done. Fix the plan, then launch again."
+            onClick={() => {
+              if (busy) return;
+              setSending(true);
+              void stopAndFixPlanFromInbox(entry).finally(() => setSending(false));
+            }}
+            disabled={busy}
+          >
+            Stop and fix the plan
+          </button>
+        )}
       </div>
     </div>
   );

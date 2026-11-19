@@ -136,7 +136,7 @@ export const SETTING_PRECEDENCE = [
     layers: ['squad', 'global'],
     mergeRule: 'first',
     evidence: [
-      { file: 'apps/desktop/src/team-routing-enforcement.ts', line: 20, contains: 'team?.routingEnforced ?? globalEnabled' }
+      { file: 'apps/desktop/src/team-routing-enforcement.ts', line: 32, contains: 'team?.routingEnforced ?? globalEnabled' }
     ]
   },
   {
@@ -146,7 +146,7 @@ export const SETTING_PRECEDENCE = [
     mergeRule: 'first',
     note: 'The built-in default is Infer plan from goal when the orchestrator can write a plan, otherwise Plan provided in goal. In the composer, the Squad default applies until you pick a mode.',
     evidence: [
-      { file: 'apps/desktop/src/squad-proposals/service.ts', line: 362, contains: "planningInput ?? team.defaultPlanning ?? (canInfer ? 'infer' : 'provided')" }
+      { file: 'apps/desktop/src/squad-proposals/service.ts', line: 399, contains: "planningInput ?? team.defaultPlanning ?? (canInfer ? 'infer' : 'provided')" }
     ]
   },
   {

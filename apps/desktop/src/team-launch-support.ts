@@ -223,13 +223,15 @@ export async function gateInvalidProvidedPlan(
 ): Promise<TeamJobLaunchResponse | undefined> {
   if (!args.planError) return undefined;
   if (args.unattended) {
+    // Reasons end in a full stop already; do not add a second one before our next sentence.
+    const reason = args.planError.replace(/[.\s]+$/, '');
     await deps.inboxStore.append({
       projectId: args.projectId,
       projectLabel: args.projectName,
       subject: 'Squad plan needed correction',
       comments: args.viaTrigger
-        ? `Provided Squad plan is invalid: ${args.planError}. Update plan, then run trigger again.`
-        : `Provided Squad plan is invalid: ${args.planError}. Put a complete plan in the goal and launch again, or launch with the infer (freeform) mode to let the coordinator plan.`,
+        ? `Provided Squad plan is invalid: ${reason}. Update plan, then run trigger again.`
+        : `Provided Squad plan is invalid: ${reason}. Put a complete plan in the goal and launch again, or launch with the infer (freeform) mode to let the coordinator plan.`,
       notify: 'loud'
     });
     return { ok: false, code: 'INVALID_PLAN', message: 'provided structured plan is invalid' } as TeamJobLaunchResponse;

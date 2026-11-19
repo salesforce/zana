@@ -8,6 +8,7 @@ export interface ExpandedTeamSlot {
   personaId: string;
   role: 'worker' | 'orchestrator';
   label?: string;
+  roles?: string[];
 }
 
 /** Host-owned expansion shared by Team authorization and workflow preflight. */
@@ -20,7 +21,7 @@ export function expandTeamSlots(team: Team): ExpandedTeamSlot[] {
     const quantity = Math.max(1, Math.min(TEAM_SLOT_MAX, slot.quantity ?? 1));
     for (let index = 0; index < quantity; index += 1) {
       if (slots.length >= workerLimit) break outer;
-      slots.push({ slotId: `${rowIndex}:${slot.personaId}:${index}`, personaId: slot.personaId, role: 'worker', ...(slot.label !== undefined ? { label: slot.label } : {}) });
+      slots.push({ slotId: `${rowIndex}:${slot.personaId}:${index}`, personaId: slot.personaId, role: 'worker', ...(slot.label !== undefined ? { label: slot.label } : {}), ...(slot.roles !== undefined ? { roles: [...slot.roles] } : {}) });
     }
   }
   if (orchestratorId && slots.length < MAX_TEAM_TABS) {

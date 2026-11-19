@@ -85,6 +85,7 @@ export function createPlanCorrectionHandoff(planCorrection: PlanCorrectionServic
         ?? readAuthoredPlan(projectRoot, executionId),
       review: (ctx: CoordinatorHandoffContext, read: Parameters<PlanCorrectionService['review']>[1]) => planCorrection.review(ctx, read),
       reviewInvalid: (ctx: CoordinatorHandoffContext, reason: string) => inferredPlanCorrection.reviewInvalid(ctx, reason),
+      escalateInvalid: (ctx: CoordinatorHandoffContext, reason: string) => inferredPlanCorrection.escalate(ctx, reason),
       maxNudges: INFERRED_PLAN_NUDGE_BUDGET
     }
   };

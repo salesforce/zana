@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { syncDocs } from './sync-docs.mjs';
 
-const squadSlugs = ['squads-start', 'squads-catalogue', 'squads-launch', 'squads-watch', 'squads-customize'];
+const squadSlugs = ['squads-start', 'squads-catalogue', 'squads-launch', 'squads-plans', 'squads-watch', 'squads-customize'];
 let directory: string;
 afterEach(async () => {
   vi.restoreAllMocks();

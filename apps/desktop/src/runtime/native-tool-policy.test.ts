@@ -129,6 +129,12 @@ describe('parseNativeToolHookEvent', () => {
     const body = `{"tool_use_id":"call-1","tool_name":"Bash","tool_input":{"a":${'['.repeat(depth)}${']'.repeat(depth)}}}`;
     expect(parseNativeToolHookEvent('session-1', body)).toBeNull();
   });
+
+  it('accepts nesting at the depth limit and rejects one level past it', () => {
+    const nest = (levels: number) => `{"tool_use_id":"call-1","tool_name":"Bash","tool_input":${'{"a":'.repeat(levels)}1${'}'.repeat(levels)}}`;
+    expect(parseNativeToolHookEvent('session-1', nest(63))).not.toBeNull();
+    expect(parseNativeToolHookEvent('session-1', nest(65))).toBeNull();
+  });
 });
 
 describe('createNativeToolPolicyHook', () => {

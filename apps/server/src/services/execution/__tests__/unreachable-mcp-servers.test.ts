@@ -88,12 +88,13 @@ async function running(store: Store, roster: Array<{ slotId: string; mcpServers?
 }
 
 describe('dispatch', () => {
-  it('fails the unit NO_QUALIFIED_ROUTE when no worker slot allows a required MCP server', async () => fixture(async (filePath) => {
+  it('escalates the unit (BLOCKED, coordinator) when no worker slot allows a required MCP server', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });
     const record = await running(store, [{ slotId: 'w0', mcpServers: ['zcc-inbox'] }], { requires: { mcpServers: ['slack'] } });
     const { record: after, assignments } = await store.dispatchReady(record.id);
     expect(assignments).toEqual([]);
-    expect(after.workUnits![0]).toMatchObject({ state: 'FAILED', failureCode: 'NO_QUALIFIED_ROUTE', failure: 'no authorized worker slot allows every required MCP server' });
+    expect(after.workUnits![0]).toMatchObject({ state: 'BLOCKED' });
+    expect(after.blockers).toMatchObject([{ audience: 'coordinator', noRoute: true, question: expect.stringContaining('No worker in this Squad can do step unit') }]);
   }));
   it('routes the unit to the slot whose allowlist covers the required server', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });

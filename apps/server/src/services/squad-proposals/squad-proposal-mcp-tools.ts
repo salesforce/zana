@@ -62,7 +62,7 @@ export const SQUAD_LAUNCH_DESCRIPTION =
   "Launch a Squad in YOUR project from files you wrote or read. This is the preferred way for an agent to start a Squad; do not hand-build an execution.start request. mode 'review' (the default choice) prepares the launch and the user presses Launch in the Inbox card; it behaves exactly like squad_propose. mode 'now' starts the Squad immediately with no Inbox card and makes you its owner (you answer its blockers and get its reports): use it ONLY when the user explicitly asked to run it now, start immediately or skip the Inbox. If the Squad or its Project requires review, it refuses and you must retry with mode 'review'. Use planning 'provided' with a validated portable plan as a source when list_teams says canInferPlan is false. Pass the files' exact paths, wherever they are: this project, the user's home folder or the clone root (protected locations such as ~/.ssh are refused with SOURCE_NOT_ALLOWED). Do not copy them to disk. Text that exists only in this conversation can be passed by value in attachments [{ name, text }] (files and attachments share one budget; the result lists what each name became). Members of a running Squad cannot launch.";
 
 export const SQUAD_PLAN_CHECK_DESCRIPTION =
-  'Check a portable-executable plan exactly as a Squad Launch will in Plan provided in goal mode. Pass the plan file path (in this project, the home folder or the clone root) or the plan text. Returns the parsed steps or the reason it fails. Pass teamId (from list_teams) to also get an advisory tierFit section: over-tiered, under-tiered or no-eligible-slot warnings for that Squad\'s roster; it never changes whether the plan passes. Read-only.';
+  'Check a portable-executable plan exactly as a Squad Launch will in Plan provided in goal mode. Pass the plan file path (in this project, the home folder or the clone root) or the plan text. Returns the parsed steps or the reason it fails. Pass teamId (from list_teams) to also get an advisory tierFit section: over-tiered, under-tiered or no-eligible-slot warnings for that Squad\'s roster; it never changes whether the plan passes. When no Squad is given and the plan does not name an existing one, the result carries a note saying the plan was NOT checked against any Squad\'s roster; a pass then only means the plan is readable. Read-only.';
 
 /**
  * Transport bounds only (Rule 5): four times the real limits. The proposal service enforces
@@ -93,6 +93,7 @@ const FIELD_HELP = {
   title: `Short card title (at most ${SQUAD_PROPOSAL_LIMITS.titleChars} characters).`,
   summary: `One-paragraph summary for the card (at most ${SQUAD_PROPOSAL_LIMITS.summaryChars} characters).`,
   completionInboxNotice: 'Post an Inbox notice when this agent-started Squad completes. Defaults to false.',
+  acceptFindings: "Set true only after the user chose to review the plan with its Must fix findings still in it. Without it, a plan with a Must fix is refused with NEEDS_DECISION and the options to put to the user.",
   mode: "'review': the user reviews and launches it from the Inbox (default choice). 'now': start immediately, only when the user explicitly asked for that.",
   planPath: 'Path of the plan file: relative to the project, or absolute (home folder or clone root).',
   planText: 'The plan text (at most 1 MiB).',
@@ -115,7 +116,8 @@ export const squadProposeInputSchema = {
   })).max(TRANSPORT.maxAttachments).optional().describe(FIELD_HELP.attachments),
   title: z.string().max(TRANSPORT.titleChars).optional().describe(FIELD_HELP.title),
   summary: z.string().max(TRANSPORT.summaryChars).optional().describe(FIELD_HELP.summary),
-  completionInboxNotice: z.boolean().optional().describe(FIELD_HELP.completionInboxNotice)
+  completionInboxNotice: z.boolean().optional().describe(FIELD_HELP.completionInboxNotice),
+  acceptFindings: z.boolean().optional().describe(FIELD_HELP.acceptFindings)
 };
 
 export const squadLaunchInputSchema = {
@@ -158,7 +160,8 @@ export const SQUAD_PROPOSE_JSON_SCHEMA = {
     },
     title: { type: 'string', maxLength: TRANSPORT.titleChars, description: FIELD_HELP.title },
     summary: { type: 'string', maxLength: TRANSPORT.summaryChars, description: FIELD_HELP.summary },
-    completionInboxNotice: { type: 'boolean', description: FIELD_HELP.completionInboxNotice }
+    completionInboxNotice: { type: 'boolean', description: FIELD_HELP.completionInboxNotice },
+    acceptFindings: { type: 'boolean', description: FIELD_HELP.acceptFindings }
   },
   required: ['teamId', 'goal']
 };

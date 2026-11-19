@@ -24375,6 +24375,12 @@ button.zana-assign-trigger.is-unassigned .zana-assign-caret {
 .launch-scroll::-webkit-scrollbar {
   display: none;
 }
+/* Children keep natural height and the region scrolls. Otherwise the column
+   flex container squeezes shrinkable children (resume history) and clips the
+   last row instead of scrolling. */
+.launch-scroll > * {
+  flex-shrink: 0;
+}
 
 /* Native harness controls use the same label gutter and compact two-column
    layout as portable defaults. Each adapter can supply a different field set. */
@@ -42097,6 +42103,20 @@ body.split-frame-guard webview {
   padding-left: 22px;
 }
 
+.squads-plans-copy {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.team-slot-roles-hint {
+  flex-basis: 100%;
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .team-slot-reorder {
   display: inline-flex;
   align-items: center;
@@ -42749,6 +42769,55 @@ body.split-frame-guard webview {
   clip: rect(0 0 0 0);
   opacity: 0;
 }
+
+/* Squad composer: plan review disclosure. Same rhythm as the origin banner above it and the prompt below it. */
+.team-composer-plan-review {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 19px;
+}
+.team-composer-plan-review > summary { cursor: pointer; font-weight: 600; }
+.team-composer-plan-review h4 { margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+.team-composer-plan-review ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+.team-composer-plan-review p { margin: 0; color: var(--text-muted); }
+.team-composer-plan-review table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.team-composer-plan-review caption { text-align: left; padding-bottom: 6px; font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.team-composer-plan-review th,
+.team-composer-plan-review td { padding: 6px 8px; text-align: left; border-top: 1px solid var(--border); vertical-align: top; font-weight: 400; }
+.team-composer-plan-review thead th { font-size: 12px; font-weight: 600; color: var(--text-muted); border-top: 0; }
+.team-composer-plan-review tbody th { font-weight: 600; width: 34%; }
+.team-composer-goal-hint { margin: 0 0 6px; color: var(--text-muted); font-size: 12px; line-height: 18px; }
+
+.team-composer-plan-actions { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border, rgba(127,127,127,.25)); }
+.team-composer-plan-actions h4 { margin: 0 0 4px; }
+.team-composer-plan-action-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+
+/* Severity: Must fix red, Check amber, Fixed for you green. */
+.team-composer-plan-review section[data-severity] { padding-left: 10px; border-left: 3px solid var(--border); }
+.team-composer-plan-review section[data-severity='blocking'] { border-left-color: var(--danger); }
+.team-composer-plan-review section[data-severity='blocking'] h4 { color: var(--danger); }
+.team-composer-plan-review section[data-severity='warning'] { border-left-color: var(--warning, #d29922); }
+.team-composer-plan-review section[data-severity='warning'] h4 { color: var(--warning, #d29922); }
+.team-composer-plan-review section[data-severity='repair'] { border-left-color: var(--success); }
+.team-composer-plan-review section[data-severity='repair'] h4 { color: var(--success); }
+.inbox-plan-check-item[data-severity='blocking'] { color: var(--danger); font-weight: 600; }
+.inbox-plan-check-item[data-severity='warning'] { color: var(--warning, #d29922); font-weight: 600; }
+.inbox-plan-check-item[data-severity='repair'],
+.inbox-plan-check-item[data-severity='ok'] { color: var(--success); font-weight: 600; }
+.team-composer-plan-review > summary { color: inherit; }
+.team-composer-plan-review[data-must-fix='true'] > summary { color: var(--danger); }
+.team-composer-plan-hint { min-height: 38px; }
+.team-composer-plan-status { margin-top: 4px; font-weight: 600; color: var(--success); }
+.team-composer-plan-status.thread-command-error { color: var(--danger); }
+.team-composer-plan-other { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
 
 .thread-default-hint {
   display: flex;

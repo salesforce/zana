@@ -6,7 +6,7 @@ import type { HarnessExecutionTarget } from '@zana-ai/zcc-domain/harness-adapter
 import { ExecutionConsentService } from '@zana-ai/zcc-host-daemon/harness/execution-consent';
 import { createExecutionConsentStore } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
 import type { ExecutionConsentBinding, ExecutionConsentReserveResult, ExecutionConsentScope } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
-import { collectTeamAdmissionInventory, evaluateTeamAdmission, normalizeExecutionPlan, preflightExecutionAuthorization, summarizePlanTierFit } from '../preflight.js';
+import { antiAffinityResults, collectTeamAdmissionInventory, evaluateTeamAdmission, normalizeExecutionPlan, preflightExecutionAuthorization, summarizePlanTierFit } from '../preflight.js';
 
 const target = (patch: Partial<HarnessExecutionTarget> = {}): HarnessExecutionTarget => ({
   id: 'opencode.execution.accept-edits', state: 'accept-edits', equivalence: 'closest',
@@ -165,6 +165,22 @@ describe('Team admission', () => {
     files: ['src/index.ts'], verification: ['pnpm test']
   }];
 
+  it('normalizes new routing lists and omits them when empty', () => {
+    const routed = normalizeExecutionPlan([{ ...validPlan[0], id: 'a', dependencies: [], files: ['a.ts'] }, { ...validPlan[0], id: 'b', dependencies: ['a'], files: ['b.ts'], routing: { version: 1, preferRoles: ['review', 'review'], excludeSameWorkerAs: ['a'] } }], true)[1]?.routing;
+    expect(routed).toEqual({ version: 1, preferRoles: ['review'], excludeSameWorkerAs: ['a'] });
+    expect(normalizeExecutionPlan([{ ...validPlan[0], routing: { version: 1, preferRoles: [], excludeSameWorkerAs: [] } }], true)[0]?.routing).toEqual({ version: 1 });
+  });
+
+  it('rejects Not same worker as references that are unknown or not dependency ancestors', () => {
+    const unit = (id: string, dependencies: string[], excludeSameWorkerAs?: string[]) => ({
+      id, title: id, task: id, dependencies, files: [`${id}.ts`], verification: ['pnpm test'],
+      ...(excludeSameWorkerAs ? { routing: { version: 1 as const, excludeSameWorkerAs } } : {})
+    });
+    expect(() => normalizeExecutionPlan([unit('a', []), unit('b', [], ['a'])], true)).toThrow(/Not same worker as "a".*not a step it depends on/);
+    expect(() => normalizeExecutionPlan([unit('b', [], ['ghost'])], true)).toThrow(/does not exist/);
+    expect(normalizeExecutionPlan([unit('a', []), unit('m', ['a']), unit('b', ['m'], ['a'])], true)).toHaveLength(3);
+  });
+
   it('normalizes file scopes and preserves DAG validation behavior', () => {
     expect(normalizeExecutionPlan([{ ...validPlan[0], files: ['./src\\index.ts'] }], true)[0]?.files).toEqual(['src/index.ts']);
     expect(() => normalizeExecutionPlan([
@@ -313,15 +329,37 @@ describe('Team admission', () => {
     ]) });
   });
 
-  it('keeps routing eligibility advisory when Team enforcement is off', () => {
-    const result = evaluateTeamAdmission({
+  it('keeps level routing advisory but blocks an unmatched Required role when Team enforcement is off', () => {
+    const level = evaluateTeamAdmission({
+      workUnits: [{ ...validPlan[0], routing: { version: 1, minimumLevel: 'extra-high' } }], requireCompletePlan: true,
+      slotCount: 1, maxSlots: 1, initialTasks: ['worker'], enforceRouting: false,
+      slotRoutes: [{ slotId: 'slot-1', personaId: 'writer', level: 'low' }]
+    });
+    expect(level).toMatchObject({ ready: true, checks: expect.arrayContaining([
+      expect.objectContaining({ code: 'ROUTE_ELIGIBILITY', status: 'FAIL', required: false, subject: 'build' })
+    ]) });
+    const role = evaluateTeamAdmission({
       workUnits: [{ ...validPlan[0], routing: { version: 1, requiredRole: 'reviewer' } }], requireCompletePlan: true,
       slotCount: 1, maxSlots: 1, initialTasks: ['worker'], enforceRouting: false,
       slotRoutes: [{ slotId: 'slot-1', personaId: 'writer' }]
     });
-    expect(result).toMatchObject({ ready: true, checks: expect.arrayContaining([
-      expect.objectContaining({ code: 'ROUTE_ELIGIBILITY', status: 'FAIL', required: false, subject: 'build' })
+    expect(role).toMatchObject({ ready: false, checks: expect.arrayContaining([
+      expect.objectContaining({ code: 'ROUTE_ELIGIBILITY', status: 'FAIL', required: true, subject: 'build' })
     ]) });
+  });
+
+  it('matches Required role against slot tags and requires a distinct slot for Not same worker as', () => {
+    const route = { requiredRole: 'impl' };
+    const plan = (second: object) => [
+      { ...validPlan[0], id: 'a', routing: { version: 1 as const, ...route } },
+      { ...validPlan[0], id: 'b', dependencies: ['a'], files: ['b.ts'], routing: { version: 1 as const, ...route, excludeSameWorkerAs: ['a'], ...second } }
+    ];
+    const input = (slotRoutes: object[]) => ({ workUnits: plan({}), requireCompletePlan: true, slotCount: slotRoutes.length, maxSlots: 4, initialTasks: ['x'], slotRoutes: slotRoutes as never, now: 1 });
+    const one = evaluateTeamAdmission(input([{ slotId: 's1', personaId: 'p1', roles: ['impl'] }]));
+    expect(one.ready).toBe(false);
+    expect(one.checks).toContainEqual(expect.objectContaining({ code: 'ROUTE_ELIGIBILITY', status: 'FAIL', subject: 'b', message: expect.stringContaining('no other eligible worker slot') }));
+    const two = evaluateTeamAdmission(input([{ slotId: 's1', personaId: 'p1', roles: ['impl'] }, { slotId: 's2', personaId: 'p2', roles: ['Impl'] }]));
+    expect(two.checks).toContainEqual(expect.objectContaining({ code: 'ROUTE_ELIGIBILITY', status: 'PASS', subject: 'b' }));
   });
 
   it('collects canonical required inventory and preserves required entries beyond source bounds', async () => {
@@ -479,7 +517,8 @@ describe('summarizePlanTierFit (advisory)', () => {
     expect(over.ready).toBe(true);
     const none = evaluateTeamAdmission({ ...base, workUnits: mk({ requiredRole: 'ghost' }), slotRoutes: [slot('w1', 'low')] });
     expect(none.tierFit?.findings).toMatchObject([{ unitId: 'a', kind: 'no-eligible-slot' }]);
-    expect(none.ready).toBe(true);
+    // A hard Required role miss blocks launch even when level/capacity routing is advisory.
+    expect(none.ready).toBe(false);
     const unknown = evaluateTeamAdmission({ ...base, workUnits: mk({ minimumLevel: 'high' }), slotRoutes: [slot('w1')] });
     expect(unknown.tierFit).toBeUndefined();
   });
@@ -494,5 +533,62 @@ describe('summarizePlanTierFit (advisory)', () => {
     const reach = r.checks.find((check) => check.code === 'SKILL_AVAILABLE' && check.status === 'FAIL');
     expect(reach).toMatchObject({ required: true, subject: 'a', unavailable: ['review'] });
     expect(r.ready).toBe(false);
+  });
+});
+
+describe('degraded slots skip only their own level check', () => {
+  const base = (over: Record<string, unknown>) => evaluateTeamAdmission({
+    workUnits: [{ id: 'a', title: 'A', task: 't', dependencies: [], readOnly: true, routing: { version: 1, minimumLevel: 'high', requiredRole: 'reviewer' } }],
+    slotCount: 2, maxSlots: 8, initialTasks: ['x'], enforceRouting: true,
+    slotRoutes: [{ slotId: 'w1', personaId: 'reviewer', level: undefined }, { slotId: 'w2', personaId: 'other', level: 'high' }],
+    now: 1000, ...over
+  } as never);
+  const route = (result: ReturnType<typeof base>) => result.checks.find((check) => check.code === 'ROUTE_ELIGIBILITY')!;
+
+  it('treats an unknown level as unknown, not as a pass, without the exemption', () => {
+    expect(route(base({})).status).toBe('UNKNOWN');
+  });
+  it('passes the degraded slot on level while keeping the role rule', () => {
+    expect(route(base({ levelExemptSlotIds: ['w1'] })).status).toBe('PASS');
+    const wrongRole = base({ levelExemptSlotIds: ['w1'], slotRoutes: [{ slotId: 'w1', personaId: 'other', level: undefined }] });
+    expect(route(wrongRole)).toMatchObject({ status: 'FAIL', required: true });
+  });
+  it('changes the digest only when an exemption is present', () => {
+    expect(base({ levelExemptSlotIds: [] }).digest).toBe(base({}).digest);
+    expect(base({ levelExemptSlotIds: ['w1'] }).digest).not.toBe(base({}).digest);
+  });
+});
+
+describe('antiAffinityResults and Not same worker as validation', () => {
+  const unit = (id: string, dependencies: string[], excludeSameWorkerAs?: string[], requiredRole?: string) => ({
+    id, title: id, task: id, dependencies, files: [`${id}.ts`], verification: ['pnpm test'],
+    ...(excludeSameWorkerAs || requiredRole ? { routing: { version: 1 as const, ...(excludeSameWorkerAs ? { excludeSameWorkerAs } : {}), ...(requiredRole ? { requiredRole } : {}) } } : {})
+  });
+
+  it('accepts a reference reachable through a diamond of dependencies', () => {
+    const plan = [unit('a', []), unit('l', ['a']), unit('r', ['a']), unit('z', ['l', 'r'], ['a'])];
+    expect(normalizeExecutionPlan(plan, true)).toHaveLength(4);
+  });
+
+  it('skips units without references, tolerates unknown refs, and passes when the unit has no eligible slot', () => {
+    const slots = [{ slotId: 's1', personaId: 'p1', roles: ['impl'] }, { slotId: 'orchestrator:lead', personaId: 'o', roles: ['impl'] }];
+    const units = [unit('plain', []), unit('b', [], ['ghost'], 'impl'), unit('c', [], ['b'], 'nobody')];
+    const results = antiAffinityResults(units, slots, new Set(), 1);
+    expect(results.map((r) => r.unitId)).toEqual(['b', 'c']);
+    expect(results[0]).toMatchObject({ ok: true });
+    // c has zero eligible slots: a role finding, not an anti-affinity one.
+    expect(results[1]).toMatchObject({ ok: true });
+  });
+
+  it('is not forced when the referenced step has several qualifying slots', () => {
+    const slots = [{ slotId: 's1', personaId: 'p1', roles: ['impl'] }, { slotId: 's2', personaId: 'p2', roles: ['impl'] }];
+    const units = [unit('a', [], undefined, 'impl'), unit('b', ['a'], ['a'], 'impl')];
+    expect(antiAffinityResults(units, slots, new Set(), 1)).toEqual([{ unitId: 'b', refs: ['a'], ok: true }]);
+  });
+
+  it('fails when the only own slot is the one the reference is forced onto', () => {
+    const slots = [{ slotId: 's1', personaId: 'p1', roles: ['impl'] }];
+    const units = [unit('a', [], undefined, 'impl'), unit('b', ['a'], ['a'], 'impl')];
+    expect(antiAffinityResults(units, slots, new Set(), 1)).toEqual([{ unitId: 'b', refs: ['a'], ok: false }]);
   });
 });

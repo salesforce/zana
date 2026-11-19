@@ -240,6 +240,13 @@ it('exposes Squad proposal review through its dedicated teams IPC channel', asyn
 
   await api.teams.reviewProposal('proposal-1');
   expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.teams.reviewProposal, 'proposal-1');
+
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValue({ ok: true });
+  await api.teams.recheckProposalPlan('proposal-1');
+  await api.teams.messageProposer('proposal-1');
+  expect(electron.invoke).toHaveBeenNthCalledWith(1, IPC.teams.recheckProposalPlan, 'proposal-1');
+  expect(electron.invoke).toHaveBeenNthCalledWith(2, IPC.teams.messageProposer, 'proposal-1');
 });
 
 it('answers a pending interaction through main IPC by thread or by session, never the server', async () => {
@@ -253,4 +260,15 @@ it('answers a pending interaction through main IPC by thread or by session, neve
   expect(electron.invoke).toHaveBeenLastCalledWith('interactions:respond', { sessionId: 'sess-1', interactionId: 'int-2', value: true });
   electron.invoke.mockRejectedValueOnce(new Error('Human proof required'));
   await expect(api.threads.interactions.respond('thread-1', 'int-3', null)).rejects.toThrow('Human proof required');
+});
+
+it('exposes Stop and fix the plan through its execution-board IPC channel', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  const result = { ok: true };
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValueOnce(result);
+
+  await expect(api.executionBoard.stopAndFixPlan('p1', 'exec-1', 'no-route:a')).resolves.toBe(result);
+  expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.executionBoard.stopAndFixPlan, 'p1', 'exec-1', 'no-route:a');
 });

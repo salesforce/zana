@@ -31,6 +31,9 @@ type EditorState = { kind: 'new' } | { kind: 'open'; team: Team } | null;
 
 type SourceKind = 'all' | 'builtin' | 'user' | 'project' | 'extension';
 
+/** Public docs page for writing Squad plans; opens in the OS browser like other docs links. */
+export const SQUAD_PLANS_DOCS_URL = 'https://zana-ide.com/docs/squads-plans/';
+
 const SOURCE_FILTERS: Array<{ id: SourceKind; label: string }> = [
   { id: 'all', label: 'All' },
   { id: 'builtin', label: 'Builtin' },
@@ -258,6 +261,10 @@ export function SquadsView() {
 
   return (
     <section className="settings-catalogue skills-panel squads-panel">
+        <p className="settings-help squads-plans-copy">
+          Writing a plan for this Squad? Ask an agent to brainstorm it. See{' '}
+          <a href={SQUAD_PLANS_DOCS_URL} target="_blank" rel="noopener noreferrer">Squad plans</a>.
+        </p>
         <div className="settings-catalogue-actions">
             <button
               type="button"

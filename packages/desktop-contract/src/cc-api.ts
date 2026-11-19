@@ -271,6 +271,8 @@ export interface CcApi {
     readArtifact(projectId: string, executionId: string, artifactId: string): Promise<Result<{ content: string }>>;
     dismiss(projectId: string, executionId: string): Promise<Result<{ dismissedSessionIds: string[] }>>;
     stop(projectId: string, executionId: string, expectedStateVersion: number): Promise<Result<ExecutionBoardProjection>>;
+    /** "Stop and fix the plan" on a step no worker can run: stops the run, keeps the work already done and opens a plan-fix card in the Inbox. Main re-validates the blocker; the renderer's hint is advisory. */
+    stopAndFixPlan(projectId: string, executionId: string, blockerId: string): Promise<Result<ExecutionBoardProjection>>;
     retry(projectId: string, executionId: string, expectedStateVersion: number): Promise<Result<ExecutionBoardProjection>>;
     retryWork(projectId: string, executionId: string, expectedStateVersion: number, workUnitId: string, assignedSlotId?: string): Promise<Result<ExecutionBoardProjection>>;
     releaseWork(projectId: string, executionId: string, expectedStateVersion: number, workUnitId: string): Promise<Result<ExecutionBoardProjection>>;
@@ -2111,6 +2113,17 @@ export interface CcApi {
       | { ok: true; value: SquadLaunchPrefill }
       | { ok: false; code: SquadProposalErrorCode; message: string }
     >;
+    /** Re-read a pending proposal's plan files and return fresh plan findings. Desktop window only. */
+    recheckProposalPlan(
+      proposalId: string
+    ): Promise<
+      | { ok: true; value: Pick<SquadLaunchPrefill, 'planFindings' | 'planFindingsHidden' | 'planBindings' | 'planBindingsHidden' | 'planSummary' | 'planStepCount' | 'planCanonicalText'> }
+      | { ok: false; code: SquadProposalErrorCode; message: string }
+    >;
+    /** Send the plan's current Must fix problems to the conversation that proposed the launch. Main builds the text. */
+    messageProposer(
+      proposalId: string
+    ): Promise<{ ok: true; value: { delivered: true } } | { ok: false; code: SquadProposalErrorCode; message: string }>;
     /**
      * Launch a team as an AUTONOMOUS run into a project: opens orchestrator +
      * worker tabs, the orchestrator seeded with `goal`, and a main-side

@@ -116,6 +116,8 @@ async function reviewAndLaunch(
   // A CLI Agent proposer is named by its session title; a fallback to the generic name would fail here.
   await expect(modal.locator('.team-composer-origin-banner')).toContainText(proposerTitle ? `Prepared by “${proposerTitle}”` : 'Prepared by');
   await expect(modal.locator('.team-composer-origin-banner')).toContainText('Plan checked: 4 steps.');
+  // The composer's Review plan disclosure carries the plan check; a clean plan leaves Launch enabled.
+  await expect(modal.getByTestId('team-composer-plan-review')).toContainText('Review plan: No problems found');
   const sources = modal.getByLabel('Attached sources');
   await expect(sources).toContainText('e2e-design.md');
   await expect(sources).toContainText('e2e-plan.md');

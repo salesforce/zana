@@ -345,7 +345,9 @@ describe('TeamComposer Squad target picker', () => {
     expect(screen.queryByLabelText('Named checks mode')).toBeNull();
     expect(screen.queryByLabelText('Failure policy')).toBeNull();
     expect(screen.getByText('Reviewed launch policies and target are fixed. Prepare a new proposal to change them.')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Review settings' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Review settings' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByLabelText('Reviewed launch settings')).toBeNull();
+    openReviewSettings();
     await waitFor(() => expect(reviewedSettings().textContent).toContain('Allowed (This launch)'));
     openCustomizeLaunch();
     expect(screen.getByLabelText('Title Optional')).toBeTruthy();
@@ -474,6 +476,7 @@ describe('TeamComposer Squad target picker', () => {
     previewJob.mockResolvedValue({ ok: true, value: { launchOptions: {}, resolvedLaunch: resolveAllLaunch({ plan: { push: true } }), location: { kind: 'project-root', projectId: 'p1' }, path: '/repos/one', branch: 'main', fingerprint: 'reviewed' } });
     render(<TeamComposer prefill={{ proposalId: 'proposal', projectId: 'p1', teamId: 't1', coordinationMode: 'freeform', goal: 'ship', sources: [], launchPreview: { launchOptions: {}, resolvedLaunch: resolveAllLaunch({ plan: { push: true } }), location: { kind: 'project-root', projectId: 'p1' }, path: '/repos/one', branch: 'main', fingerprint: 'reviewed' } }} />);
     expect(screen.queryByLabelText('Push')).toBeNull();
+    openReviewSettings();
     await waitFor(() => expect(reviewedSettings().textContent).toContain('Allowed (Plan)'));
     const payload = await launchAndGetPayload();
     expect(payload).toHaveProperty('proposalId', 'proposal');

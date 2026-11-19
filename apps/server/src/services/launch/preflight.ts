@@ -97,6 +97,8 @@ export interface TeamAdmissionInput {
   slotRoutes?: readonly SlotRoute[];
   /** False keeps routing checks as advisory, matching a Team with enforcement off. */
   enforceRouting?: boolean;
+  /** Slots whose level is unknown (the shared gate's degraded slots): only their own minimum-level check is skipped. */
+  levelExemptSlotIds?: readonly string[];
   now?: number;
 }
 
@@ -197,6 +199,46 @@ function highestLevel(slots: readonly SlotRoute[]): ModelLevel | undefined {
   return best < 0 ? undefined : TIER_LEVELS[best];
 }
 
+/** A degraded slot skips only its own level check; every other rule stays on. */
+function routingForSlot(routing: WorkUnitRoutingV1 | undefined, slotId: string, exempt: ReadonlySet<string>): WorkUnitRoutingV1 | undefined {
+  if (!routing?.minimumLevel || !exempt.has(slotId)) return routing;
+  const { minimumLevel: _skipped, ...rest } = routing;
+  return rest;
+}
+
+export interface AntiAffinityResult { unitId: string; refs: string[]; ok: boolean }
+
+/**
+ * `Not same worker as`: each unit that names steps needs a worker slot distinct from the one a referenced
+ * step is forced onto (a single qualifying slot). Zero eligible slots is a role finding, not an anti-affinity one.
+ */
+export function antiAffinityResults(
+  units: readonly { id: string; routing?: WorkUnitRoutingV1 }[],
+  slotRoutes: readonly SlotRouteSnapshotV1[],
+  exempt: ReadonlySet<string>,
+  now: number
+): AntiAffinityResult[] {
+  const workerRoutes = slotRoutes.filter((slot) => !isOrchestratorSlotId(slot.slotId));
+  const passingSlotIds = (unit: { routing?: WorkUnitRoutingV1 }) => workerRoutes
+    .filter((slot) => evaluateSlotEligibility(routingForSlot(unit.routing, slot.slotId, exempt), slot, now).hardFailures.length === 0)
+    .map((slot) => slot.slotId);
+  const byId = new Map(units.map((unit) => [unit.id, unit]));
+  const results: AntiAffinityResult[] = [];
+  for (const unit of units) {
+    const refs = unit.routing?.excludeSameWorkerAs;
+    if (!refs?.length) continue;
+    const forced = new Set<string>();
+    for (const ref of refs) {
+      const refUnit = byId.get(ref);
+      const refSlots = refUnit ? passingSlotIds(refUnit) : [];
+      if (refSlots.length === 1) forced.add(refSlots[0]);
+    }
+    const own = passingSlotIds(unit);
+    results.push({ unitId: unit.id, refs: [...refs], ok: own.length === 0 || own.some((slotId) => !forced.has(slotId)) });
+  }
+  return results;
+}
+
 const MAX_ADMISSION_REQUIREMENTS = 100;
 const DEFAULT_INVENTORY_MAX_AGE_MS = 30_000;
 const MAX_INVENTORY_MAX_AGE_MS = 5 * 60_000;
@@ -250,15 +292,24 @@ export function evaluateTeamAdmission(input: TeamAdmissionInput): TeamAdmissionR
   }
   modelHealthChecks(requiredModels, input.inventory?.models, inventoryFresh, add);
   healthChecks('PROVIDER_HEALTH', requiredProviders, input.inventory?.providers, inventoryFresh, add);
+  const exempt = new Set(input.levelExemptSlotIds ?? []);
   for (const unit of normalizedPlan ?? []) {
     if (!unit.routing) continue;
     const eligible = (input.slotRoutes ?? []).filter((slot) => !isOrchestratorSlotId(slot.slotId))
-      .map((slot) => evaluateSlotEligibility(unit.routing, slot, now));
+      .map((slot) => evaluateSlotEligibility(routingForSlot(unit.routing, slot.slotId, exempt), slot, now));
     const status: AdmissionCheckStatus = eligible.some((result) => result.status === 'PASS') ? 'PASS'
       : eligible.some((result) => result.status === 'UNKNOWN') ? 'UNKNOWN' : 'FAIL';
-    add({ code: 'ROUTE_ELIGIBILITY', status, required: input.enforceRouting !== false, subject: unit.id,
+    // A hard requirement (role, pinned slot) is never advisory: it blocks in every Squad. Level and capacity follow `enforceRouting`.
+    const hardMiss = status === 'FAIL' && eligible.length > 0 && eligible.every((result) => result.hardFailures.length > 0);
+    add({ code: 'ROUTE_ELIGIBILITY', status, required: input.enforceRouting !== false || hardMiss, subject: unit.id,
       message: status === 'PASS' ? `work unit ${unit.id} has a qualified route`
         : status === 'UNKNOWN' ? `work unit ${unit.id} route facts are unknown` : `work unit ${unit.id} has no qualified route` });
+  }
+  // Anti-affinity: `Not same worker as` needs a slot, distinct from where each referenced step is forced to run.
+  for (const miss of antiAffinityResults(normalizedPlan ?? [], input.slotRoutes ?? [], exempt, now)) {
+    add({ code: 'ROUTE_ELIGIBILITY', status: miss.ok ? 'PASS' : 'FAIL', required: true, subject: miss.unitId,
+      message: miss.ok ? `work unit ${miss.unitId} has a worker slot distinct from ${miss.refs.join(', ')}`
+        : `work unit ${miss.unitId} must not run on the same worker as ${miss.refs.join(', ')}, but no other eligible worker slot exists` });
   }
 
   const contextBytes = input.initialTasks.reduce((sum, value) => sum + Buffer.byteLength(value, 'utf8'), 0)
@@ -288,6 +339,7 @@ export function evaluateTeamAdmission(input: TeamAdmissionInput): TeamAdmissionR
     requiredModels,
     requiredProviders,
     budget: input.budget,
+    ...(exempt.size ? { levelExemptSlotIds: [...exempt].sort() } : {}),
     inventory: input.inventory && {
       version: input.inventory.version,
       maxAgeMs: input.inventory.maxAgeMs,
@@ -391,7 +443,33 @@ export function normalizeExecutionPlan(inputs: readonly AdmissionWorkUnitInput[]
   };
   for (const unit of units) visit(unit.id);
   validateLoops(units);
+  validateSameWorkerReferences(units);
   return units;
+}
+
+/**
+ * `Not same worker as` is only enforceable against a step that always runs earlier. A reference that is
+ * unknown, or not a (transitive) dependency, lets the excluded step claim its slot after this one dispatched.
+ */
+function validateSameWorkerReferences(units: readonly AdmissionWorkUnitInput[]): void {
+  const dependenciesById = new Map(units.map((unit) => [unit.id, unit.dependencies]));
+  for (const unit of units) {
+    const excluded = unit.routing?.excludeSameWorkerAs;
+    if (!excluded?.length) continue;
+    const ancestors = new Set<string>();
+    const stack = [...unit.dependencies];
+    while (stack.length) {
+      const next = stack.pop() as string;
+      if (ancestors.has(next)) continue;
+      ancestors.add(next);
+      stack.push(...(dependenciesById.get(next) ?? []));
+    }
+    for (const reference of excluded) {
+      if (ancestors.has(reference)) continue;
+      const known = dependenciesById.has(reference);
+      throw new PlanValidationError('dag', `step ${unit.id} Not same worker as "${reference}" ${known ? 'is not a step it depends on (directly or through other steps)' : 'names a step that does not exist'}; list only earlier steps in its Depends on chain`);
+    }
+  }
 }
 
 /** Reject a malformed review loop: missing or unordered fix unit, shared fix target, bad bound (#583). */
@@ -488,6 +566,8 @@ function normalizeRouting(routing: WorkUnitRoutingV1): WorkUnitRoutingV1 {
     : [...new Set(values.map((value) => boundedString(value, label)))].sort().slice(0, MAX_ADMISSION_REQUIREMENTS);
   const requiredCapabilities = list(routing.requiredCapabilities, 'work unit capability');
   const requiredModalities = list(routing.requiredModalities, 'work unit modality');
+  const preferRoles = list(routing.preferRoles, 'work unit preferred role');
+  const excludeSameWorkerAs = list(routing.excludeSameWorkerAs, 'work unit excluded step');
   if (routing.minimumLevel !== undefined && !['low', 'medium', 'high', 'extra-high'].includes(routing.minimumLevel)) {
     throw new PlanValidationError('dag', 'invalid work unit minimum level');
   }
@@ -503,6 +583,8 @@ function normalizeRouting(routing: WorkUnitRoutingV1): WorkUnitRoutingV1 {
     ...(routing.estimatedContextBytes === undefined ? {} : { estimatedContextBytes: routing.estimatedContextBytes }),
     ...(routing.requiredRole ? { requiredRole: boundedString(routing.requiredRole, 'work unit required role') } : {}),
     ...(routing.preferredRole ? { preferredRole: boundedString(routing.preferredRole, 'work unit preferred role') } : {}),
+    ...(preferRoles?.length ? { preferRoles } : {}),
+    ...(excludeSameWorkerAs?.length ? { excludeSameWorkerAs } : {}),
     ...(routing.hardSlotId ? { hardSlotId: boundedString(routing.hardSlotId, 'work unit hard slot') } : {})
   };
 }

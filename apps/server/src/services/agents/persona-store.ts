@@ -14,7 +14,7 @@ import {
   type FSWatcher
 } from 'node:fs';
 import { join } from 'node:path';
-import { PERSONA_REASONING_LEVELS, BUILTIN_PERSONA_SKILLS, sanitizePersonaSkills, type Project, type Persona, type CreateTerminalRequest, type PersonaHarnessIntentV1, type PersonaHarnessRoutingV1, type HarnessFamily } from '@zana-ai/zcc-domain/product';
+import { PERSONA_REASONING_LEVELS, BUILTIN_PERSONA_SKILLS, normalizeRoles, sanitizePersonaSkills, type Project, type Persona, type CreateTerminalRequest, type PersonaHarnessIntentV1, type PersonaHarnessRoutingV1, type HarnessFamily } from '@zana-ai/zcc-domain/product';
 import { VALID_PROFILES, seedPromptArgs, harnessFamilyOf } from '@zana-ai/zcc-domain/launch-provider';
 import type { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-team-registry.js';
 import { sanitizeLegacyMcpServers } from './persona-mcp-sanitize.js';
@@ -176,6 +176,7 @@ export function sanitizePersona(raw: unknown): Persona | null {
 
   const skills = sanitizePersonaSkills(r.skills);
   if (skills === null) return null;
+  const roles = normalizeRoles(r.roles) ?? undefined;
 
   const strArray = (v: unknown): string[] | undefined =>
     Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : undefined;
@@ -194,6 +195,7 @@ export function sanitizePersona(raw: unknown): Persona | null {
     ...(r.reasoningLevel !== undefined ? { reasoningLevel: r.reasoningLevel } : {}),
     executionState: r.executionState,
     ...(skills !== undefined ? { skills } : {}),
+    ...(roles !== undefined ? { roles } : {}),
     harnessRouting,
     appendSystemPrompt:
       typeof r.appendSystemPrompt === 'string' ? r.appendSystemPrompt : undefined,
@@ -291,7 +293,8 @@ const BUILTIN: Persona[] = [
     initialPrompt: 'Review the current diff for correctness and clarity.',
     // Dedicated-role persona: skills trim context. Empty list = only the always-allowed zcc-inbox.
     // A user edit or fork shadows this built-in and always wins (plan D10).
-    skills: [...BUILTIN_PERSONA_SKILLS['builtin:reviewer']]
+    skills: [...BUILTIN_PERSONA_SKILLS['builtin:reviewer']],
+    roles: ['reviewer']
   },
   {
     id: 'builtin:software-engineer',
@@ -312,7 +315,8 @@ const BUILTIN: Persona[] = [
       'Verify the whole path in the running app or tests — never claim a result you did not observe.'
     ].join('\n'),
     initialPrompt:
-      'I want to build [describe the feature]. Help me plan and implement it across the layers it touches.'
+      'I want to build [describe the feature]. Help me plan and implement it across the layers it touches.',
+    roles: ['engineer']
   },
   {
     id: 'builtin:orchestrator',

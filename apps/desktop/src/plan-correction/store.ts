@@ -16,6 +16,8 @@ export interface PlanCorrectionRecord {
   status: PlanCorrectionStatus;
   offeredActionId?: string;
   offeredDigest?: string;
+  /** Parser version that produced the offered digest; compared at reread, never part of the digest. Absent on older records, which stay valid. */
+  parserVersion?: number;
   offeredUnits?: ExecutionWorkUnitInput[];
   approvedDigest?: string;
   approvedUnits?: ExecutionWorkUnitInput[];
@@ -52,6 +54,7 @@ function validRecord(value: unknown): value is PlanCorrectionRecord {
     && ['correction-required', 'pending', 'approved', 'cancelled'].includes(record.status ?? '')
     && (record.offeredActionId === undefined || typeof record.offeredActionId === 'string')
     && (record.offeredDigest === undefined || typeof record.offeredDigest === 'string')
+    && (record.parserVersion === undefined || Number.isInteger(record.parserVersion))
     && (record.offeredUnits === undefined || record.offeredUnits.every(validUnit))
     && (record.approvedDigest === undefined || typeof record.approvedDigest === 'string')
     && (record.approvedUnits === undefined || record.approvedUnits.every(validUnit))

@@ -669,12 +669,12 @@ describe('DesignDocStore — docs', () => {
         const context = `${template.id}/${file.path}`;
         expect(file.content, context).not.toMatch(/AI Instructions|doc-manager/);
         if (['product', 'research', 'issue'].includes(template.id) && file.path === 'plan.md') {
-          expect(parsePortablePlan(file.content), context).toMatchObject({ ok: true, units: [{ id: 'step-id' }, { id: 'test-only-example' }] });
+          expect(parsePortablePlan(file.content), context).toMatchObject({ ok: true, units: [{ id: 'step-id' }, { id: 'review-example' }] });
         } else if (['product', 'research', 'issue'].includes(template.id) && file.path === 'AGENTS.md') {
           expect(file.content, context).toContain('`id: Title <!-- executable-step -->`');
           expect(file.content, context).toContain('Keep ordinary plans as ordered implementation steps when no machine execution is intended.');
           expect(hasPortablePlanStep(file.content), context).toBe(false);
-          expect(parsePortablePlan(file.content), context).toEqual({ ok: false, reason: 'no executable steps found' });
+          expect(parsePortablePlan(file.content), context).toMatchObject({ ok: false, reason: 'no executable steps found' });
         } else {
           expect(file.content, context).not.toMatch(/executable-step/);
         }

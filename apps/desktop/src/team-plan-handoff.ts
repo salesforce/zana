@@ -340,6 +340,13 @@ export interface PlanHandoffDeps {
   review?(ctx: CoordinatorHandoffContext, read: Extract<AuthoredPlanRead, { status: 'ok' }>): Promise<Extract<AuthoredPlanRead, { status: 'ok' }> | 'wait' | 'reject'>;
   /** Handle a plan file that cannot be parsed before generic handoff nudging. */
   reviewInvalid?(ctx: CoordinatorHandoffContext, reason: string): Promise<Extract<AuthoredPlanRead, { status: 'ok' }> | 'wait' | 'reject' | undefined>;
+  /**
+   * The shared Squad check on a coordinator-authored plan. Returns the correction message when it has blocking
+   * findings (sent to the coordinator once), undefined when the plan is fine or not checkable.
+   */
+  judgeAuthored?(ctx: CoordinatorHandoffContext, units: ExecutionWorkUnitInput[]): Promise<{ message: string; reason: string } | undefined>;
+  /** Opens the Plan correction decision immediately (the one automatic round was already spent). */
+  escalateInvalid?(ctx: CoordinatorHandoffContext, reason: string): Promise<Extract<AuthoredPlanRead, { status: 'ok' }> | 'wait' | 'reject' | undefined>;
   /** Re-inject a bounded nudge into the coordinator pty (fire-and-forget). */
   nudge(sessionId: string, text: string): void;
   cleanup(projectRoot: string, executionId: string): Promise<void>;
@@ -376,6 +383,8 @@ export interface PlanHandoffTrace {
 
 interface HandoffState {
   nudges: number;
+  /** The one automatic Squad-check correction round was sent. */
+  judged?: boolean;
   done: boolean;
   /** Serialize idle re-entries for one execution (idle can fire repeatedly). */
   inFlight: boolean;
@@ -431,6 +440,21 @@ export class TeamPlanHandoff {
           return;
         }
         const accepted = typeof verdict === 'object' ? verdict : read;
+        // A plan the operator already corrected is not re-judged; an authored one gets one automatic round.
+        const judged = accepted === read ? await this.deps.judgeAuthored?.(ctx, accepted.units).catch((error) => {
+          this.deps.logError(`team plan handoff judge ${ctx.sessionId}`, error);
+          return undefined;
+        }) : undefined;
+        if (judged) {
+          if (!entry.judged) {
+            entry.judged = true;
+            this.emit(ctx, () => ({ stage: 'nudge', reason: boundTraceReason(judged.reason), nudges: entry.nudges }));
+            this.deps.nudge(ctx.sessionId, `${judged.message}\nWrite the corrected plan to \`${handoffPromptPath(ctx.projectRoot, authoredPlanRelPath(ctx.executionId))}\` and end your turn.`);
+            return;
+          }
+          await this.handleInvalid(entry, maxNudges, ctx, judged.reason, judged.reason, true);
+          return;
+        }
         const registered = await this.deps.register(ctx, accepted.units);
         this.emitRegister(ctx, accepted, registered, accepted === read ? 'authored' : 'corrected');
         if (registered.ok) {
@@ -462,8 +486,8 @@ export class TeamPlanHandoff {
   }
 
   /** Shared invalid-plan path: correction review first, then bounded nudges. */
-  private async handleInvalid(entry: HandoffState, maxNudges: number, ctx: CoordinatorHandoffContext, reason: string, nudgeReason: string): Promise<void> {
-    const verdict = await this.deps.reviewInvalid?.(ctx, reason);
+  private async handleInvalid(entry: HandoffState, maxNudges: number, ctx: CoordinatorHandoffContext, reason: string, nudgeReason: string, escalate = false): Promise<void> {
+    const verdict = await (escalate && this.deps.escalateInvalid ? this.deps.escalateInvalid : this.deps.reviewInvalid)?.(ctx, reason);
     if (verdict === 'wait') return;
     if (verdict === 'reject') {
       entry.done = true;

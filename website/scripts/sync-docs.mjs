@@ -31,6 +31,7 @@ const DOCS = [
   { slug: 'squads-start', title: 'Start using Squads', group: 'Squads' },
   { slug: 'squads-catalogue', title: 'Choose a Squad', group: 'Squads' },
   { slug: 'squads-launch', title: 'Ways to start a Squad', group: 'Squads' },
+  { slug: 'squads-plans', title: 'Writing a Squad plan', group: 'Squads' },
   { slug: 'squads-watch', title: 'Watching a Squad', group: 'Squads' },
   { slug: 'squads-customize', title: 'Personas and custom Squads', group: 'Squads' },
   { slug: 'extensions-quickstart', title: 'Build your first plugin', source: 'docs/extensions-quickstart.md', group: 'Plugins' },
