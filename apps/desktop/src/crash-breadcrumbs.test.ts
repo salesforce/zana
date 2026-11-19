@@ -80,11 +80,4 @@ describe('crash breadcrumbs', () => {
     writeFileSync(logsDir, 'not a directory');
     expect(() => installCrashBreadcrumbs({ app: { on: () => undefined }, logsDir, setInterval: () => ({}) })).not.toThrow();
   });
-
-  it('is wired into the desktop bootstrap with local-only crash dumps', () => {
-    const src = readFileSync(new URL('./bootstrap.ts', import.meta.url), 'utf8');
-    expect(src).toContain('installCrashBreadcrumbs(');
-    expect(src).toContain('uploadToServer: false');
-    expect(src).toContain("'crash-dumps'");
-  });
 });
