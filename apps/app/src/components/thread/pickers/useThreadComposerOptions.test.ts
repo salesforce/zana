@@ -290,6 +290,42 @@ describe('composer host cache subscriptions', () => {
     await waitFor(() => expect(view.result.current.selectionError).toMatch(/saved role/));
   });
 
+  describe('switching to an existing thread whose scope is not loaded yet', () => {
+    const row = (model: string) => ({ model, displayName: model, supportedReasoningEfforts: [], defaultReasoningEffort: 'medium' });
+    const body = (models: string[]) => ({
+      providers: [{ id: 'pi', displayName: 'Pi', capabilities: { permissionModes: ['auto'] } }],
+      models: models.map(row), selectedOnlyModels: [], modelLoadError: null
+    });
+    // Project A is settled and has no gateway model; project B (the thread's own) has it.
+    function switchedThread(bModels: string[]) {
+      resetThreadModelCatalog(((query: { projectId?: string }) => Promise.resolve(
+        query?.projectId === 'project-b' ? body(bModels) : body(['a-model'])
+      )) as never);
+      const session = new ComposerSession();
+      session.setSetting('modern.model', 'gateway/claude-opus-5-5');
+      const view = renderHook((props: { scopePending: boolean; projectId: string }) => useThreadComposerOptions({
+        session, threadId: 't', lockedProviderId: 'pi', hostId: 'host', ...props
+      }), { initialProps: { scopePending: true, projectId: 'project-a' } });
+      return view;
+    }
+    it('never flags the saved model against the settled catalog of the previous project', async () => {
+      const view = switchedThread(['gateway/claude-opus-5-5']);
+      await waitFor(() => expect(view.result.current.modelOptions.map(r => r.value)).toEqual(['a-model']));
+      expect(view.result.current.selectionError).toBeNull();
+      expect(view.result.current.catalogSettled).toBe(false);
+      view.rerender({ scopePending: false, projectId: 'project-b' });
+      await waitFor(() => expect(view.result.current.catalogSettled).toBe(true));
+      expect(view.result.current.selectionError).toBeNull();
+    });
+    it('still flags a saved model that the own project of the thread really lacks, once settled', async () => {
+      const view = switchedThread(['other-model']);
+      await waitFor(() => expect(view.result.current.modelOptions.length).toBe(1));
+      expect(view.result.current.selectionError).toBeNull();
+      view.rerender({ scopePending: false, projectId: 'project-b' });
+      await waitFor(() => expect(view.result.current.selectionError).toMatch(/saved model/));
+    });
+  });
+
   it('does not flash an unavailable-model warning while discovery is still settling', async () => {
     let resolveDiscovery!: (value: unknown) => void;
     const discovery = new Promise((resolve) => { resolveDiscovery = resolve; });
