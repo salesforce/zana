@@ -31,6 +31,9 @@ const store = {
 
 let supportsHooks = false;
 
+const clearUnread = vi.fn();
+const ui = { unread: {} as Record<string, boolean>, clearUnread };
+
 const agentStatus = { byId: { s1: 'working' } as Record<string, string> };
 
 vi.mock('../../store.js', () => ({
@@ -38,7 +41,11 @@ vi.mock('../../store.js', () => ({
     (selector: (s: typeof store) => unknown) => selector(store),
     { getState: () => store }
   ),
-  useAgentStatus: (selector: (s: typeof agentStatus) => unknown) => selector(agentStatus)
+  useAgentStatus: (selector: (s: typeof agentStatus) => unknown) => selector(agentStatus),
+  useUi: Object.assign(
+    (selector: (s: typeof ui) => unknown) => selector(ui),
+    { getState: () => ui }
+  )
 }));
 
 vi.mock('../../components/AgentSessionView.js', () => ({
@@ -106,6 +113,18 @@ describe('AgentSessionPage', () => {
     expect(screen.queryByTestId('agent-session-view')).toBeNull();
     expect(screen.queryByTestId('agent-session-missing')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Archive' })).toBeNull();
+  });
+
+  it('clears the unread flag while the page is showing, and only then', () => {
+    ui.unread = {};
+    clearUnread.mockReset();
+    render(<AgentSessionPage projectId="p1" sessionId="s1" />);
+    expect(clearUnread).not.toHaveBeenCalled();
+    cleanup();
+    ui.unread = { s1: true };
+    render(<AgentSessionPage projectId="p1" sessionId="s1" />);
+    expect(clearUnread).toHaveBeenCalledWith('s1');
+    ui.unread = {};
   });
 
   it('renders AgentSessionView when the session exists', () => {

@@ -7,8 +7,11 @@ import {
   readApplicationTabs,
   saveApplicationTabs,
   useApplicationTabs,
+  parseAgentApplicationTab,
   parsePluginApplicationTab,
+  replaceApplicationTab,
   tryOpenApplicationTab,
+  type AgentApplicationTab,
   type ApplicationTabsState,
   type PluginApplicationTab,
   type ThreadApplicationTab
@@ -18,6 +21,7 @@ import {
   MAX_PLUGIN_ROWS_CHARS,
   MAX_PLUGIN_TABS,
   MAX_PLUGIN_TABS_PER_PLUGIN,
+  MAX_TABS,
   MAX_THREAD_TABS
 } from '../thread-tabs.js';
 const thread = (id: string, projectId = 'p'): ThreadApplicationTab => ({
@@ -56,15 +60,15 @@ it('orders all tab kinds together, deduplicates identity and updates thread scop
 });
 it('bounds conversation shortcuts and recent history without evicting setup drafts', () => {
   let state = openApplicationTab(empty(), setup);
-  for (let i = 0; i < 45; i++)
+  for (let i = 0; i < MAX_TABS + 5; i++)
     state = openApplicationTab(state, thread(String(i)));
-  expect(state.open).toHaveLength(41);
+  expect(state.open).toHaveLength(MAX_TABS + 1);
   expect(state.open[0]).toEqual(setup);
   expect(state.open[1]).toEqual(thread('5'));
-  for (let i = 5; i < 45; i++)
+  for (let i = 5; i < MAX_TABS + 5; i++)
     state = closeApplicationTab(state, `thread:${i}`);
   expect(state.closed).toHaveLength(10);
-  expect(state.closed.at(-1)).toEqual(thread('44'));
+  expect(state.closed.at(-1)).toEqual(thread(String(MAX_TABS + 4)));
   state = closeApplicationTab(state, 'setup:clone');
   expect(state.open).toEqual([]);
   expect(state.closed).toHaveLength(10);
@@ -365,14 +369,14 @@ it('parses old thread-only payloads exactly as before, including the legacy key'
     thread('b', 'q')
   ]);
   expect(readApplicationTabs(io, 'p')).toEqual({ open: [thread('a')], closed: [] });
-  const many = Array.from({ length: MAX_THREAD_TABS + 5 }, (_, i) => ({
+  const many = Array.from({ length: MAX_TABS + 5 }, (_, i) => ({
     threadId: String(i),
     projectId: 'p',
     projectScoped: false
   }));
   const big = memory(JSON.stringify({ open: many, closed: [] }));
   const read = readApplicationTabs(big.io, null).open;
-  expect(read).toHaveLength(MAX_THREAD_TABS);
+  expect(read).toHaveLength(MAX_TABS);
   expect(read[0]).toEqual(thread('5'));
 });
 
@@ -411,7 +415,7 @@ it('applies the scope rule to plugin rows and enforces caps and size on restore'
 });
 
 it('keeps every thread tab for a maximal mixed payload and bounds hostile payloads', () => {
-  const threads = Array.from({ length: MAX_THREAD_TABS }, (_, i) => ({
+  const threads = Array.from({ length: MAX_TABS }, (_, i) => ({
     threadId: `t${i}`.padEnd(500, 'x'),
     projectId: 'p'.repeat(500),
     projectScoped: false
@@ -426,6 +430,7 @@ it('keeps every thread tab for a maximal mixed payload and bounds hostile payloa
   );
   const payload = JSON.stringify({ open: [...threads, ...wide], closed: [] });
   const read = readApplicationTabs(memory(payload).io, null).open;
+  // 20 pins leave 30 slots, but conversations never drop below the long-standing 40.
   expect(read.filter((t) => t.kind === 'thread')).toHaveLength(MAX_THREAD_TABS);
   const hostile = JSON.stringify({ open: [thread('a')], pad: 'x'.repeat(300_000) });
   expect(readApplicationTabs(memory(hostile).io, null)).toEqual(empty());
@@ -452,4 +457,158 @@ it('keeps plugin tabs when initialize merges live tabs into restored ones', () =
     plugin('live')
   ]);
   expect(useApplicationTabs.getState().closed).toEqual([plugin('c')]);
+});
+
+const agent = (id: string, projectId = 'p'): AgentApplicationTab => ({
+  kind: 'agent',
+  sessionId: id,
+  projectId,
+  projectScoped: false
+});
+
+it('opens agent tabs with a stable id, deduplicates and updates scope in place', () => {
+  let state = openApplicationTab(empty(), agent('s1'));
+  expect(state.open.map(applicationTabId)).toEqual(['agent:s1']);
+  expect(openApplicationTab(state, agent('s1'))).toBe(state);
+  state = openApplicationTab(state, { ...agent('s1'), projectScoped: true });
+  expect(state.open[0]).toMatchObject({ projectScoped: true });
+  expect(state.open).toHaveLength(1);
+});
+
+it('shares one cap of 50 between threads and agents, evicting the leftmost even when active', () => {
+  let state = empty();
+  for (let i = 0; i < MAX_TABS; i++)
+    state = openApplicationTab(state, i % 2 ? agent(String(i)) : thread(String(i)));
+  expect(state.open).toHaveLength(MAX_TABS);
+  state = openApplicationTab(state, agent('new'));
+  expect(state.open).toHaveLength(MAX_TABS);
+  expect(state.open[0]).toEqual(agent('1'));
+  expect(state.open.at(-1)).toEqual(agent('new'));
+  // Eviction is not close: nothing is remembered for reopen.
+  expect(state.closed).toEqual([]);
+});
+
+it('uses pin slots above the thread cap: fewer conversations only past 40, pins never evicted, and a pin at the strip cap over 40 conversations is refused', () => {
+  let state = empty();
+  for (let i = 0; i < 5; i++) state = openApplicationTab(state, plugin(String(i)));
+  for (let i = 0; i < MAX_TABS; i++) state = openApplicationTab(state, agent(String(i)));
+  expect(state.open.filter((t) => t.kind === 'plugin')).toHaveLength(5);
+  expect(state.open.filter((t) => t.kind === 'agent')).toHaveLength(MAX_TABS - 5);
+  expect(state.open).toHaveLength(MAX_TABS);
+  const refused = tryOpenApplicationTab(state, plugin('late'));
+  expect(refused.refusal).toBe('plugin-total-cap');
+  expect(refused.state).toBe(state);
+});
+
+it('keeps 40 conversations alongside 20 pins and accepts a pin while conversations are at the thread cap', () => {
+  let state = empty();
+  for (let i = 0; i < MAX_THREAD_TABS; i++) state = openApplicationTab(state, thread(String(i)));
+  for (let i = 0; i < MAX_PLUGIN_TABS_PER_PLUGIN; i++) state = openApplicationTab(state, plugin(String(i)));
+  for (let i = 0; i < MAX_PLUGIN_TABS - MAX_PLUGIN_TABS_PER_PLUGIN; i++)
+    state = openApplicationTab(state, plugin(String(i), { pluginId: 'other' }));
+  expect(state.open.filter((t) => t.kind === 'plugin')).toHaveLength(MAX_PLUGIN_TABS);
+  expect(state.open.filter((t) => t.kind === 'thread')).toHaveLength(MAX_THREAD_TABS);
+  const again = openApplicationTab(state, thread('new'));
+  expect(again.open.filter((t) => t.kind === 'thread')).toHaveLength(MAX_THREAD_TABS);
+  const saved = JSON.stringify({ open: state.open, closed: [] });
+  expect(readApplicationTabs(memory(saved).io, null).open).toHaveLength(MAX_THREAD_TABS + MAX_PLUGIN_TABS);
+});
+
+it('remembers closed agents for reopen but not when closed without history', () => {
+  let state = openApplicationTab(empty(), agent('a'));
+  state = closeApplicationTab(state, 'agent:a');
+  expect(state.closed).toEqual([agent('a')]);
+  state = openApplicationTab(state, agent('a'));
+  expect(state.closed).toEqual([]);
+  state = closeApplicationTab(state, 'agent:a', false);
+  expect(state.closed).toEqual([]);
+});
+
+it('keeps only allowlisted agent fields and rejects bad rows', () => {
+  const ok = { kind: 'agent', sessionId: 's', projectId: 'p', projectScoped: false };
+  expect(
+    parseAgentApplicationTab({
+      ...ok,
+      title: 'x',
+      hostId: 'h',
+      restoreCapabilityId: 'secret',
+      cwd: '/tmp'
+    })
+  ).toEqual(agent('s'));
+  const bad: unknown[] = [
+    null,
+    'x',
+    { ...ok, kind: 'thread' },
+    { ...ok, sessionId: '' },
+    { ...ok, sessionId: 'a\u0000b' },
+    { ...ok, sessionId: 's'.repeat(513) },
+    { ...ok, projectId: '' },
+    { ...ok, projectScoped: 'no' }
+  ];
+  for (const row of bad) expect(parseAgentApplicationTab(row)).toBeNull();
+  expect(parseAgentApplicationTab(ok, 'q')).toBeNull();
+  expect(parseAgentApplicationTab({ ...ok, sessionId: 's'.repeat(512) })).not.toBeNull();
+});
+
+it('round-trips agent rows without extra fields and skips them in old readers by kind', () => {
+  const { io, storage } = memory();
+  const state: ApplicationTabsState = {
+    open: [thread('a'), agent('s1'), setup],
+    closed: [agent('s2')]
+  };
+  saveApplicationTabs(io, null, state);
+  const saved = JSON.parse(storage.get('zcc.application-tabs.v1:main')!);
+  expect(saved.open[1]).toEqual({ kind: 'agent', sessionId: 's1', projectId: 'p', projectScoped: false });
+  expect(readApplicationTabs(io, null)).toEqual({
+    open: [thread('a'), agent('s1')],
+    closed: [agent('s2')]
+  });
+});
+
+it('trims restored conversations to the pin-adjusted limit, dropping the oldest', () => {
+  const rows: object[] = [];
+  for (let i = 0; i < MAX_TABS; i++)
+    rows.push({ kind: 'agent', sessionId: `s${i}`, projectId: 'p', projectScoped: false });
+  for (let i = 0; i < 5; i++) rows.push(plugin(String(i)));
+  const read = readApplicationTabs(memory(JSON.stringify({ open: rows, closed: [] })).io, null).open;
+  expect(read.filter((t) => t.kind === 'agent')).toHaveLength(MAX_TABS - 5);
+  expect(read[0]).toEqual(agent('s5'));
+  expect(read.filter((t) => t.kind === 'plugin')).toHaveLength(5);
+});
+
+it('stays under the restore size limit with 30 maximal agent rows and 20 maximal pins', () => {
+  const rows: object[] = [];
+  for (let i = 0; i < 30; i++)
+    rows.push({ kind: 'agent', sessionId: `${i}`.padEnd(512, 's'), projectId: 'j'.repeat(512), projectScoped: true });
+  for (let i = 0; i < 20; i++)
+    rows.push(plugin(`${i}`.padEnd(256, 'k'), {
+      pluginId: `p${i % 2}`.padEnd(128, 'x'),
+      pageId: 'g'.repeat(128),
+      projectId: 'j'.repeat(512),
+      title: 't'.repeat(120)
+    }));
+  const { io, storage } = memory();
+  const parsed = readApplicationTabs(memory(JSON.stringify({ open: rows, closed: [] })).io, null);
+  expect(parsed.open).toHaveLength(50);
+  saveApplicationTabs(io, null, parsed);
+  expect(storage.get('zcc.application-tabs.v1:main')!.length).toBeLessThan(128_000 + MAX_PLUGIN_ROWS_CHARS);
+  expect(readApplicationTabs(io, null).open).toHaveLength(50);
+});
+
+it('replaces an agent tab in place, keeps position, removes duplicates and ignores unknown ids', () => {
+  let state: ApplicationTabsState = {
+    open: [agent('old'), thread('t'), agent('new')],
+    closed: [agent('new')]
+  };
+  const next = replaceApplicationTab(state, 'agent:old', agent('new'));
+  expect(next.open.map(applicationTabId)).toEqual(['agent:new', 'thread:t']);
+  expect(next.closed).toEqual([]);
+  expect(replaceApplicationTab(state, 'agent:missing', agent('x'))).toBe(state);
+  state = { open: [thread('t'), agent('old')], closed: [] };
+  useApplicationTabs.setState(state);
+  useApplicationTabs.getState().replaceTab('agent:old', agent('n2'));
+  expect(useApplicationTabs.getState().open.map(applicationTabId)).toEqual(['thread:t', 'agent:n2']);
+  const before = useApplicationTabs.getState().open;
+  useApplicationTabs.getState().replaceTab('agent:none', agent('n3'));
+  expect(useApplicationTabs.getState().open).toBe(before);
 });

@@ -1,4 +1,6 @@
 import { EXPLORER_FILE_ICON_THEME_DEFAULT, EXPLORER_MINIMAP_DEFAULTS, isAgentsViewId, PROJECT_EXPANDED_CAP, resolveExplorerFileIconTheme, resolveExplorerMinimap, type AgentsViewId, type CloseFollowupKeptOpen, type ExplorerFileIconTheme, type ExplorerMinimapConfig, type ExplorerMinimapPrefs } from '@zana-ai/zcc-domain/product';
+import { withAgentTabReplace } from './lib/agent-tab-resume.js';
+import { useApplicationTabs } from './lib/application-tabs.js';
 import { subscribeClientRecovery } from './lib/client-recovery.js';
 import { create } from 'zustand';
 import type {
@@ -77,7 +79,8 @@ import {
   getProjectModeRoutePath,
   getScheduleRoutePath,
   getSchedulerRoutePath,
-  getSettingsTabRoutePath
+  getSettingsTabRoutePath,
+  sessionIdFromPath
 } from './lib/route-paths.js';
 import {
   getRememberedAppRoutePath,
@@ -1607,8 +1610,13 @@ export const useUi = create<UiState>((set, get) => ({
         break;
     }
   },
+  // Output on the session whose page is open is being read: never flag it.
   markUnread: (sessionId) =>
-    set((s) => (s.unread[sessionId] ? s : { unread: { ...s.unread, [sessionId]: true } })),
+    set((s) =>
+      s.unread[sessionId] || sessionIdFromPath(window.location.pathname) === sessionId
+        ? s
+        : { unread: { ...s.unread, [sessionId]: true } }
+    ),
   clearUnread: (sessionId) =>
     set((s) => {
       if (!s.unread[sessionId]) return s;
@@ -1767,6 +1775,8 @@ interface DataState {
   configLoaded: boolean;
   projects: Project[];
   terminals: Record<string, TerminalSession[]>; // by project id
+  /** True once a project's terminals list resolved (absent = not loaded or load failed). */
+  terminalsLoaded: Record<string, boolean>;
   claudeSessions: Record<string, ClaudeSessionSummary[]>; // by project id
   closedTabs: Record<string, ClosedTab[]>; // by project id, most recent at end
   /**
@@ -2357,6 +2367,7 @@ export function _resetMinimapSyncForTesting(initial: ExplorerMinimapPrefs = EXPL
 export const useData = create<DataState>((set, get) => ({
   projects: [],
   terminals: {},
+  terminalsLoaded: {},
   claudeSessions: {},
   closedTabs: {},
   detachedStack: {},
@@ -2876,9 +2887,10 @@ export const useData = create<DataState>((set, get) => ({
         projects.map(async (p) => {
           try {
             const sessions = await product.terminals.list(p.id);
-            if (sessions.length > 0) {
-              set((s) => ({ terminals: { ...s.terminals, [p.id]: sessions } }));
-            }
+            set((s) => ({
+              terminals: sessions.length > 0 ? { ...s.terminals, [p.id]: sessions } : s.terminals,
+              terminalsLoaded: { ...s.terminalsLoaded, [p.id]: true }
+            }));
           } catch {
             /* couldn't read this project's live terminals — skip it on restore */
             hydrationFailed.add(p.id);
@@ -2950,7 +2962,7 @@ export const useData = create<DataState>((set, get) => ({
       inbox: ({ entries }) => useInbox.setState({ entries, loading: false }),
       suggestions: ({ entries }) => useSuggestions.setState({ entries, loading: false }),
       saved: records => useSaved.setState({ records, loading: false }),
-      terminals: (projectId, sessions) => set(state => ({ terminals: { ...state.terminals, [projectId]: sessions } }))
+      terminals: (projectId, sessions) => set(state => ({ terminals: { ...state.terminals, [projectId]: sessions }, terminalsLoaded: { ...state.terminalsLoaded, [projectId]: true } }))
     }, scopedProjectId ?? undefined);
 
 
@@ -3606,16 +3618,19 @@ export const useData = create<DataState>((set, get) => ({
     useSplitWorkspace.getState().forgetScope(projectSplitScopeKey(id));
     set((s) => {
       const terminals = { ...s.terminals };
+      const terminalsLoaded = { ...s.terminalsLoaded };
       const claudeSessions = { ...s.claudeSessions };
       const closedTabs = { ...s.closedTabs };
       const gitStatus = { ...s.gitStatus };
       delete terminals[id];
+      delete terminalsLoaded[id];
       delete claudeSessions[id];
       delete closedTabs[id];
       delete gitStatus[id];
       return {
         projects: s.projects.filter((p) => p.id !== id),
         terminals,
+        terminalsLoaded,
         claudeSessions,
         closedTabs,
         gitStatus
@@ -3767,6 +3782,8 @@ export const useData = create<DataState>((set, get) => ({
     if (closeFailed) {
       pushErrorToast("Removed from the board. Couldn't confirm the process stopped.");
     }
+    // Closing the process closes its nav tab; the tab never outlives the session.
+    useApplicationTabs.getState().closeTab(`agent:${sessionId}`, false);
     useUi.getState().clearUnread(sessionId);
     // If the closed tab occupied any split slot, drop it from the slots.
     useUi.getState().removeFromSplit(projectId, sessionId);
@@ -4090,7 +4107,7 @@ export const useData = create<DataState>((set, get) => ({
     return alive ? sessionId : null;
   },
 
-  async restartTerminal(sessionId, projectId) {
+  restartTerminal: (sessionId, projectId) => withAgentTabReplace(sessionId, projectId, async () => {
     const list = get().terminals[projectId] || [];
     const idx = list.findIndex((t) => t.id === sessionId);
     if (idx === -1) return null;
@@ -4192,9 +4209,9 @@ export const useData = create<DataState>((set, get) => ({
     });
     useUi.getState().selectTab(projectId, created.id);
     return created;
-  },
+  }),
 
-  async reconnectRemote(sessionId, projectId) {
+  reconnectRemote: (sessionId, projectId) => withAgentTabReplace(sessionId, projectId, async () => {
     const project = get().projects.find((p) => p.id === projectId);
     // Reconnect only applies to remote projects — a local pty that "exited"
     // really died and has no detached tmux twin to re-attach to.
@@ -4270,7 +4287,7 @@ export const useData = create<DataState>((set, get) => ({
     useCatchUpSummary.getState().clear(sessionId);
     useUi.getState().selectTab(projectId, created.id);
     return created;
-  },
+  }),
 
   async reopenLastClosed(projectId) {
     const stack = get().closedTabs[projectId] || [];

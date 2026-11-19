@@ -1,7 +1,7 @@
-import type { ComponentProps } from 'react';
+import { useEffect, type ComponentProps } from 'react';
 import { providerCapabilities } from '@zana-ai/zcc-domain/launch-provider';
 import type { TerminalSession } from '@zana-ai/zcc-domain/product';
-import { useData, useAgentStatus } from '../../store.js';
+import { useData, useAgentStatus, useUi } from '../../store.js';
 import { agentSessionAnchorId } from '../../lib/split-layout/agentSessionPortal.js';
 import { AgentSessionView } from '../../components/AgentSessionView.js';
 import { AgentSessionActions } from '../../components/AgentSessionActions.js';
@@ -52,6 +52,11 @@ function DesktopAgentSessionPage({
   );
   const state = useAgentStatus((s) => s.byId[sessionId] ?? 'unknown');
   const heartbeatEnabled = useData((s) => s.heartbeatEnabled);
+  // Output that lands while this page is showing is already seen: clear the flag.
+  const unread = useUi((s) => !!s.unread[sessionId]);
+  useEffect(() => {
+    if (unread) useUi.getState().clearUnread(sessionId);
+  }, [sessionId, unread]);
 
   if (!session || !resolvedProjectId) {
     return (

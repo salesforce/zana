@@ -11,6 +11,8 @@ export interface ThreadTabsState {
 }
 
 export const MAX_THREAD_TABS = 40;
+/** Strip-wide cap over conversations (threads and agents) plus plugin pins. */
+export const MAX_TABS = 50;
 export const MAX_CLOSED_TABS = 10;
 /** Plugin-contributed tabs are bounded separately so they never displace conversations. */
 export const MAX_PLUGIN_TABS = 20;

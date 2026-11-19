@@ -208,13 +208,24 @@ describe('desktop thread tabs inspection', () => {
     h.openThreadModal.mockReset();
     h.openAgentModal.mockReset();
   });
-  it('opens a thread page while keeping CLI agents in their inspector', () => {
+  it('opens thread and CLI agent pages on a wide viewport', () => {
     const navigate = vi.fn();
     inspectThread('tabbed', 'p', navigate);
     expect(navigate).toHaveBeenCalledWith('/threads/tabbed');
     expect(h.openThreadModal).not.toHaveBeenCalled();
     inspectAgentSession('cli', 'p', navigate);
+    expect(navigate).toHaveBeenCalledWith('/sessions/cli');
+    expect(h.openAgentModal).not.toHaveBeenCalled();
+  });
+  it('keeps CLI agents in the inspector on compact viewports or with tabs off', () => {
+    const navigate = vi.fn();
+    h.compact = true;
+    inspectAgentSession('cli', 'p', navigate);
+    h.compact = false; h.threadTabsEnabled = false;
+    inspectAgentSession('cli2', 'p', navigate);
+    expect(navigate).not.toHaveBeenCalled();
     expect(h.openAgentModal).toHaveBeenCalledWith('cli', 'p');
+    expect(h.openAgentModal).toHaveBeenCalledWith('cli2', 'p');
   });
   it('keeps the project rail when opening a tab from project view', () => {
     h.nav = 'projects'; h.focusedProjectId = 'p';
