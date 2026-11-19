@@ -33,8 +33,8 @@ vi.mock('../../components/thread/secondary-panel/ThreadFilePreviewTab.js', () =>
 vi.mock('../../components/thread/secondary-panel/ThreadExplorerTab.js', () => ({ ThreadExplorerTab: () => <div>Project files</div> }));
 vi.mock('../../components/thread/secondary-panel/ThreadInboxTab.js', () => ({ ThreadInboxTab: () => <div>Project inbox</div> }));
 vi.mock('../../components/thread/secondary-panel/DockedTerminalTab.js', () => ({ DockedTerminalTab: ({ sessionId }: { sessionId: string }) => <div>Shell: {sessionId}</div> }));
-vi.mock('../../components/thread/secondary-panel/ThreadPluginTab.js', () => ({ ThreadPluginTab: ({ params, tabState, onTabStateChange }: { params: unknown; tabState?: unknown; onTabStateChange?: (state: unknown) => void }) => (
-  <div><span>Plugin: {JSON.stringify(params)}</span><button onClick={() => onTabStateChange?.({ place: 2 })}>Save plugin state</button><output data-testid="plugin-state">{JSON.stringify(tabState ?? null)}</output></div>
+vi.mock('../../components/thread/secondary-panel/ThreadPluginTab.js', () => ({ ThreadPluginTab: ({ params, projectId, tabState, onTabStateChange }: { params: unknown; projectId: string | null; tabState?: unknown; onTabStateChange?: (state: unknown) => void }) => (
+  <div><span>Plugin: {JSON.stringify(params)}</span><button onClick={() => onTabStateChange?.({ place: 2 })}>Save plugin state</button><output data-testid="plugin-project">{String(projectId)}</output><output data-testid="plugin-state">{JSON.stringify(tabState ?? null)}</output></div>
 ) }));
 vi.mock('../../components/thread/secondary-panel/BrowserTabDeck.js', () => ({
   BrowserTabDeck: (p: ComponentProps<typeof import('../../components/thread/secondary-panel/BrowserTabDeck.js').BrowserTabDeck>) => p.activeBrowserTabId ? <div data-testid="browser" data-visible={String(p.canShowNativeBrowserView)}>
@@ -115,6 +115,12 @@ describe('New chat side panels', () => {
     expect(screen.getByRole('button', { name: 'Browser', exact: true })).toBeTruthy();
     click('Quick files'); expect(screen.getByText('Project files')).toBeTruthy();
     expect(h.file).toHaveBeenCalledWith(expect.objectContaining({ threadId: 'new-chat:p', environmentId: '/p' }));
+  });
+
+  it('mounts a saved plugin tab with no project when the draft has none', () => {
+    persistSecondaryPanelState('new-chat:p', { ...emptySecondaryPanelState(), isOpen: true, activeId: 'plugin:1', tabs: [{ id: 'plugin:1', kind: 'plugin', title: 'Docs', moduleId: 'docs', actionId: 'doc', params: { mode: 1 } }] });
+    render(<NewChatPanelLayout scopeId="p" hostId="host">{buttons}</NewChatPanelLayout>);
+    expect(screen.getByTestId('plugin-project').textContent).toBe('null');
   });
 
   it('shows a terminal failure without discarding the draft, then permits a retry', async () => {
