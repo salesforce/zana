@@ -59,6 +59,10 @@ export interface PageRect {
   right: number;
 }
 
+export type FindKey = 'open' | 'next' | 'prev' | 'close';
+export const MAX_FIND_QUERY_CHARS = 200;
+const FIND_KEYS = new Set<FindKey>(['open', 'next', 'prev', 'close']);
+
 export type FromPage =
   | { type: 'ready' }
   | { type: 'fetch'; id: number; path: string }
@@ -72,13 +76,19 @@ export type FromPage =
   | { type: 'scroll'; x: number; y: number }
   /** The page moved to another fragment of itself, so a re-render can reopen it there. */
   | { type: 'hash'; hash: string | null }
-  | { type: 'storage'; entries: Record<string, string> };
+  | { type: 'storage'; entries: Record<string, string> }
+  /** Find in the page: how many matches and which one is current (-1 when none). */
+  | { type: 'find-result'; index: number; count: number }
+  /** A find key pressed while focus is inside the page, which the app cannot see. */
+  | { type: 'find-key'; key: FindKey };
 
 export type ToPage =
   | { type: 'file'; id: number; file: PageFile | null }
   | { type: 'highlight'; quotes: string[] }
   | { type: 'focus'; quote: string }
-  | { type: 'clear-selection' };
+  | { type: 'clear-selection' }
+  /** `step` moves the current match; 0 re-runs the search. `null` means the find bar is closed. */
+  | { type: 'find'; query: string | null; step: 0 | 1 | -1 };
 
 export const MAX_PAGE_PROBLEMS = 50;
 export const MAX_PAGE_STORAGE_CHARS = 256 * 1024;
@@ -192,6 +202,13 @@ export function parseFromPage(data: unknown): FromPage | null {
       const entries = storageEntries(message.entries);
       return entries ? { type: 'storage', entries } : null;
     }
+    case 'find-result': {
+      const index = finite(message.index);
+      const count = finite(message.count);
+      return index === null || count === null || count < 0 ? null : { type: 'find-result', index: Math.floor(index), count: Math.floor(count) };
+    }
+    case 'find-key':
+      return FIND_KEYS.has(message.key as FindKey) ? { type: 'find-key', key: message.key as FindKey } : null;
     default:
       return null;
   }

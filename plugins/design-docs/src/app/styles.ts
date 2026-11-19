@@ -833,7 +833,8 @@ textarea.dd-doc-summary { display: block; }
   background-position: 0 0, 8px 8px;
 }
 .dd-image-stage img { max-width: 100%; max-height: 100%; border-radius: 4px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2); }
-.dd-html-stage { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.dd-html-stage { position: relative; outline: none; display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.dd-html-stage .dom-find-bar { top: 40px; }
 .dd-html-toolbar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid var(--border); background: var(--bg-base); }
 .dd-html-status { display: inline-flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; }
 .dd-html-widths { display: inline-flex; gap: 2px; }

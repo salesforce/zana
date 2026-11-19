@@ -212,6 +212,20 @@ describe('scrollRangeIntoView with layout', () => {
     }
   });
 
+  it('scrolls the window to the match when asked and no ancestor scrolls', () => {
+    const scrollBy = vi.spyOn(window, 'scrollBy').mockImplementation(() => undefined);
+    const height = vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(600);
+    const [range] = findTextRanges(root('<p>needle</p>'), 'needle');
+    range!.getBoundingClientRect = () => rect(1000, 20);
+    scrollRangeIntoView(range!, { scrollWindow: true });
+    expect(scrollBy).toHaveBeenCalledWith(0, 710);
+    scrollBy.mockClear();
+    scrollRangeIntoView(range!);
+    expect(scrollBy).not.toHaveBeenCalled();
+    scrollBy.mockRestore();
+    height.mockRestore();
+  });
+
   it('does nothing when no ancestor scrolls', () => {
     const [range] = findTextRanges(root('<p>needle</p>'), 'needle');
     range!.getBoundingClientRect = () => rect(10, 10);

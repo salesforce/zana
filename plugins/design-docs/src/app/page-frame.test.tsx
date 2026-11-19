@@ -4,6 +4,7 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { MutableRefObject } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { registerThreadFindTarget, threadFindClaims } from '../../../../apps/app/src/lib/thread-find.js';
 import { UI_USER } from '../server/rpc.js';
 import type { DesignDocFileMeta } from '../shared/contract.js';
 import { PAGE_HELLO, type PageConfig, type ToPage } from '../shared/frame-protocol.js';
@@ -610,4 +611,78 @@ it('adds the exact iframe selection to the owning thread and clears the selectio
   expect(view.onAddToThread).toHaveBeenCalledWith('  exact\n  passage  ');
   expect(view.onAskAbout).not.toHaveBeenCalled();
   expect(port.ofType('clear-selection')).toHaveLength(1);
+});
+
+describe('find in the open page', () => {
+  const stageOf = (frame: HTMLIFrameElement) => frame.closest('.dd-html-stage') as HTMLElement;
+  const ctrlF = (target: Element) => fireEvent.keyDown(target, { key: 'f', ctrlKey: true });
+  const finds = (port: FakePort) => port.ofType('find').map(({ query, step }) => [query, step]);
+
+  async function openedFind() {
+    const { harness, doc } = setup();
+    mount(harness, doc.id);
+    const frame = await findFrame();
+    const port = hello(frame);
+    ctrlF(stageOf(frame));
+    return { frame, port, input: screen.getByRole('searchbox', { name: 'Find in doc' }) };
+  }
+
+  it('opens the find bar on Ctrl+F and searches the page as the query is typed', async () => {
+    const { port, input } = await openedFind();
+    expect(finds(port)).toEqual([[ '', 0 ]]);
+    fireEvent.change(input, { target: { value: 'run' } });
+    expect(finds(port).at(-1)).toEqual(['run', 0]);
+    port.emit({ type: 'find-result', index: 0, count: 3 });
+    expect(screen.getByTestId('dom-find-bar-count').textContent).toBe('1/3');
+  });
+
+  it('steps with Enter, Shift+Enter and F3, and closes with Esc, clearing the page', async () => {
+    const { frame, port, input } = await openedFind();
+    fireEvent.change(input, { target: { value: 'run' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
+    fireEvent.keyDown(input, { key: 'F3' });
+    fireEvent.keyDown(input, { key: 'F3', shiftKey: true });
+    expect(finds(port).slice(-4)).toEqual([['run', 1], ['run', -1], ['run', 1], ['run', -1]]);
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByTestId('dom-find-bar')).toBeNull();
+    expect(finds(port).at(-1)).toEqual([null, 0]);
+    expect(document.activeElement).toBe(stageOf(frame));
+  });
+
+  it('follows the find keys pressed inside the page', async () => {
+    const { port } = await openedFind();
+    port.emit({ type: 'find-key', key: 'close' });
+    expect(screen.queryByTestId('dom-find-bar')).toBeNull();
+    port.emit({ type: 'find-key', key: 'open' });
+    expect(screen.getByTestId('dom-find-bar')).toBeTruthy();
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Find in doc' }), { target: { value: 'run' } });
+    port.emit({ type: 'find-key', key: 'next' });
+    port.emit({ type: 'find-key', key: 'prev' });
+    expect(finds(port).slice(-2)).toEqual([['run', 1], ['run', -1]]);
+  });
+
+  it('searches again when the page reloads while the bar is open', async () => {
+    const { frame, input } = await openedFind();
+    fireEvent.change(input, { target: { value: 'run' } });
+    const reloaded = hello(frame);
+    reloaded.emit({ type: 'ready' });
+    expect(finds(reloaded)).toEqual([['run', 0]]);
+  });
+
+  it('keeps thread find out of the page view', async () => {
+    const { frame } = await openedFind();
+    const unregister = registerThreadFindTarget({ root: () => document.body, main: () => document.body, isPrimary: () => true, open: vi.fn() });
+    try {
+      const press = (target: Element) => {
+        const event = new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true });
+        Object.defineProperty(event, 'target', { value: target });
+        return threadFindClaims(event);
+      };
+      expect(press(stageOf(frame))).toBe(false);
+      expect(press(document.body)).toBe(true);
+    } finally {
+      unregister();
+    }
+  });
 });

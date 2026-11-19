@@ -18,9 +18,19 @@ describe('parseFromPage', () => {
       { type: 'scroll', x: 0, y: 120.5 },
       { type: 'hash', hash: 'run=a/b' },
       { type: 'hash', hash: null },
-      { type: 'storage', entries: { theme: 'dark' } }
+      { type: 'storage', entries: { theme: 'dark' } },
+      { type: 'find-result', index: -1, count: 0 },
+      { type: 'find-result', index: 2, count: 5 },
+      { type: 'find-key', key: 'open' },
+      { type: 'find-key', key: 'close' }
     ];
     for (const message of messages) expect(parseFromPage(message)).toEqual(message);
+  });
+
+  it('rejects malformed find messages', () => {
+    expect(parseFromPage({ type: 'find-result', index: 'x', count: 1 })).toBeNull();
+    expect(parseFromPage({ type: 'find-result', index: 0, count: -1 })).toBeNull();
+    expect(parseFromPage({ type: 'find-key', key: 'delete' })).toBeNull();
   });
 
   it('keeps only the fields it knows', () => {
