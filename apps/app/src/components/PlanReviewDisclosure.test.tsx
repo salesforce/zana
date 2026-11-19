@@ -22,6 +22,12 @@ const repair: SquadPlanFinding = { requirement: 'format', severity: 'repair', ca
 describe('PlanReviewDisclosure', () => {
   afterEach(cleanup);
 
+  it('shows the canonical plan text in its own disclosure, even with no findings', () => {
+    render(<PlanReviewDisclosure prefill={{ planCanonicalText: '## Execution Plan\n\n### a: A' }} />);
+    expect(screen.getByTestId('plan-canonical').textContent).toContain('The plan the Squad will run');
+    expect(screen.getByTestId('plan-canonical-text').textContent).toBe('## Execution Plan\n\n### a: A');
+  });
+
   it('renders nothing without plan data and reports no Must fix', () => {
     const { container } = render(<PlanReviewDisclosure prefill={{}} />);
     expect(container.firstChild).toBeNull();

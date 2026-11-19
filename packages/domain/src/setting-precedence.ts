@@ -146,7 +146,7 @@ export const SETTING_PRECEDENCE = [
     mergeRule: 'first',
     note: 'The built-in default is Infer plan from goal when the orchestrator can write a plan, otherwise Plan provided in goal. In the composer, the Squad default applies until you pick a mode.',
     evidence: [
-      { file: 'apps/desktop/src/squad-proposals/service.ts', line: 395, contains: "planningInput ?? team.defaultPlanning ?? (canInfer ? 'infer' : 'provided')" }
+      { file: 'apps/desktop/src/squad-proposals/service.ts', line: 398, contains: "planningInput ?? team.defaultPlanning ?? (canInfer ? 'infer' : 'provided')" }
     ]
   },
   {

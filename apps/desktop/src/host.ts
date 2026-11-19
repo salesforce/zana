@@ -159,6 +159,8 @@ import { createLaunchCoordinator, LaunchSpawnError } from '@zana-ai/zcc-server/s
 import { createLaunchLedgerStore } from '@zana-ai/zcc-server/services/launch/ledger-store';
 import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, preflightLaunch, summarizePlanTierFit } from '@zana-ai/zcc-server/services/launch/preflight';
 import { planNormalizationNote, resolveSquadPlan } from './team-trigger-semantics.js';
+import { renderCanonicalPlan } from '@zana-ai/zcc-server/services/execution/portable-plan-render';
+import type { PortablePlanWorkUnitInput } from '@zana-ai/zcc-server/services/execution/portable-plan';
 import { coldStartCanceled, createDeferredSeatHooks, createDeferredSeatRegistry, createSeatApprovals, createSeatRecycler, createSeatStarter, deferredSeatsOf, freshContextSeatsOf, lateSeatApprovalProblem, lifecycleRecycleOps, preissuedDeadlineMatches, respawnApproval, respawnLaunchShape, seatApprovalId, seatApprovalWindow, seatBindExtras, seatLaunchMode, seatLaunchProblem, seatRecovery, seatRosterEntry } from './on-demand-seat.js';
 import { createSquadSourceSnapshotter, launchSquad, type SquadLaunchDeps, type SquadSourceProvider } from './squad-launch-core.js';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
@@ -7332,6 +7334,7 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
   teamHostProblem: (project) => teamHostProblem(project as Project, localHostId()),
   expandTeamSlots,
   resolveSquadPlan: (planSource, texts) => resolveSquadPlan(planSource, texts),
+  canonicalPlanText: (workUnits, options) => renderCanonicalPlan(workUnits as PortablePlanWorkUnitInput[], options),
   planFindings: (projectId, teamId, plan) => judgePlanFindings(projectId, teamId, plan),
   fs: { realpath, lstat, open: (path, flags) => openFile(path, flags) },
   sourceBases: () => squadSourceBases(),

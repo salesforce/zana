@@ -52,6 +52,7 @@ const launchNow = vi.fn<SquadLaunchNowDeps['launch']>();
 
 let planTierFitDep: SquadProposalServiceDeps['planTierFit'];
 let planFindingsDep: SquadProposalServiceDeps['planFindings'];
+let canonicalDep: SquadProposalServiceDeps['canonicalPlanText'];
 let previewDep: SquadProposalServiceDeps['resolveLaunchPreview'];
 
 const sendToProposer = vi.fn<NonNullable<SquadProposalServiceDeps['sendToProposer']>>();
@@ -71,6 +72,7 @@ function build(over: { staging?: StagingStore | null; maxRecords?: number; noSen
     expandTeamSlots: () => Array.from({ length: slotCount }),
     resolveSquadPlan: resolveSquadPlan as never,
     planTierFit: (...a) => planTierFitDep?.(...a) ?? Promise.resolve([]),
+    ...(canonicalDep ? { canonicalPlanText: (...a: Parameters<NonNullable<SquadProposalServiceDeps['canonicalPlanText']>>) => canonicalDep!(...a) } : {}),
     ...(planFindingsDep ? { planFindings: (...a: Parameters<NonNullable<SquadProposalServiceDeps['planFindings']>>) => planFindingsDep!(...a) } : {}),
     fs: {
       realpath: (p) => fsImpl.realpath(p),
@@ -134,6 +136,7 @@ beforeEach(() => {
   logError.mockReset();
   planTierFitDep = undefined;
   planFindingsDep = undefined;
+  canonicalDep = undefined;
   previewDep = async ({ projectId }) => ({
     launchOptions: {},
     resolvedLaunch: resolveAllLaunch({}),
@@ -1188,6 +1191,22 @@ describe('review', () => {
     expect(r.value.planBindingsHidden).toBe(70);
     // The summary counts every finding, not only the ones shown.
     expect(r.value.planSummary).toBe('20 Must fix before this can launch, 40 fixed for you');
+  });
+  it('carries the canonical plan text in the prefill and recheck, bounded by the plan byte limit, and survives a render failure', async () => {
+    canonicalDep = vi.fn(() => '## Execution Plan\n');
+    const svc = build().service;
+    const r = await svc.review(7, 'prop-1', allow);
+    if (!r.ok) throw new Error(JSON.stringify(r));
+    expect(r.value.planCanonicalText).toBe('## Execution Plan\n');
+    expect(canonicalDep).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ maxBytes: 1_048_576 }));
+    const again = await svc.recheck('prop-1', allow);
+    expect(again.ok && again.value.planCanonicalText).toBe('## Execution Plan\n');
+    canonicalDep = () => { throw new Error('boom'); };
+    const failed = await build().service.review(7, 'prop-1', allow);
+    expect(failed.ok && failed.value.planCanonicalText).toBeUndefined();
+    canonicalDep = () => undefined;
+    const none = await build().service.review(7, 'prop-1', allow);
+    expect(none.ok && 'planCanonicalText' in none.value).toBe(false);
   });
   it('omits the hidden counts when nothing is over the cap', async () => {
     planFindingsDep = async () => ({ findings: [], bindings: [{ stepId: 'u1', slotId: 'w1', personaId: 'p' }] });

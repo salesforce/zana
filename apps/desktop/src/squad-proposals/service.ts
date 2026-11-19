@@ -174,6 +174,8 @@ export interface SquadProposalServiceDeps {
    * declared Squad for `squad_plan_check` without one); undefined yields parser-only findings. Failures are swallowed
    * by the caller: findings never turn a good plan into an error.
    */
+  /** The checked plan re-rendered in the Squad plan grammar, or undefined when it cannot be rendered within `maxBytes`. */
+  canonicalPlanText?(workUnits: readonly unknown[], options: { declaredSquad?: string; maxBytes: number }): string | undefined;
   planFindings?(projectId: string, teamId: string | undefined, plan: { workUnits: readonly unknown[]; findings?: readonly PlanParserFinding[]; declaredSquad?: string }):
     Promise<{ findings: SquadPlanFinding[]; bindings: SquadPlanBinding[] }>;
   /**
@@ -210,7 +212,7 @@ export interface SquadProposalServiceDeps {
 }
 
 /** The plan-review part of a prefill, re-read from the plan files. */
-export type SquadPlanRecheck = Pick<SquadLaunchPrefill, 'planFindings' | 'planFindingsHidden' | 'planBindings' | 'planBindingsHidden' | 'planSummary' | 'planStepCount'>;
+export type SquadPlanRecheck = Pick<SquadLaunchPrefill, 'planFindings' | 'planFindingsHidden' | 'planBindings' | 'planBindingsHidden' | 'planSummary' | 'planStepCount' | 'planCanonicalText'>;
 
 const STAGING_RETRIES = 5;
 
@@ -269,6 +271,7 @@ interface Prepared {
   planSteps?: SquadPlanStep[];
   planFindings?: SquadPlanFinding[];
   planBindings?: SquadPlanBinding[];
+  planCanonicalText?: string;
   /** Attachments kept after de-duplication, in the order given. */
   attachments: PreparedAttachment[];
   /** One entry per attachment given; empty when none were. */
@@ -401,10 +404,14 @@ async function prepare(
   let planSteps: SquadPlanStep[] | undefined;
   let planFindings: SquadPlanFinding[] | undefined;
   let planBindings: SquadPlanBinding[] | undefined;
+  let planCanonicalText: string | undefined;
   if (planning === 'provided') {
     const plan = await checkProvidedPlan(deps, scope, sources.value, goal, attached.value.attachments);
     if (!plan.ok) return plan;
     planSteps = plan.value.steps;
+    try {
+      planCanonicalText = deps.canonicalPlanText?.(plan.value.workUnits, { declaredSquad: plan.value.declaredSquad, maxBytes: SQUAD_PROPOSAL_LIMITS.planTextBytes });
+    } catch (error) { deps.logError('canonical plan text', error); }
     // Advisory display data for the card. The launch itself re-runs the hard checks in main and never reads these back.
     if (deps.planFindings) {
       try {
@@ -431,6 +438,7 @@ async function prepare(
     project, ...(scope ? { scope } : {}), team, orchestrator, workers: Math.max(0, slots - 1), planning,
     sources: sources.value.map((s) => s.source), ...(planSteps ? { planSteps } : {}),
     ...(planFindings ? { planFindings } : {}), ...(planBindings ? { planBindings } : {}),
+    ...(planCanonicalText ? { planCanonicalText } : {}),
     attachments: attached.value.attachments, attachmentMapping: attached.value.mapping
   });
 }
@@ -548,7 +556,7 @@ function createNowDedupe(now: () => number) {
 
 /** Capped findings and binding table for the composer card, with how many were left out. */
 function planDisplay(prepared: Prepared): Partial<SquadLaunchPrefill> {
-  if (!prepared.planFindings && !prepared.planBindings) return {};
+  if (!prepared.planFindings && !prepared.planBindings && !prepared.planCanonicalText) return {};
   const capped = capSquadPlanFindings(prepared.planFindings ?? []);
   const bindings = (prepared.planBindings ?? []).slice(0, SQUAD_PLAN_BINDING_CAP);
   const bindingsHidden = Math.max(0, (prepared.planBindings?.length ?? 0) - bindings.length);
@@ -557,7 +565,8 @@ function planDisplay(prepared: Prepared): Partial<SquadLaunchPrefill> {
     ...(capped.hidden ? { planFindingsHidden: capped.hidden } : {}),
     ...(bindings.length ? { planBindings: bindings } : {}),
     ...(bindingsHidden ? { planBindingsHidden: bindingsHidden } : {}),
-    planSummary: formatSquadPlanSummary(prepared.planFindings ?? [])
+    planSummary: formatSquadPlanSummary(prepared.planFindings ?? []),
+    ...(prepared.planCanonicalText ? { planCanonicalText: prepared.planCanonicalText } : {})
   };
 }
 

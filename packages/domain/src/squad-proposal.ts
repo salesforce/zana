@@ -550,6 +550,8 @@ export interface SquadLaunchPrefill {
   planBindings?: SquadPlanBinding[];
   planBindingsHidden?: number;
   planSummary?: string;
+  /** The parsed steps re-rendered in the Squad plan grammar (what the Squad will run); within planTextBytes. Display only, never part of a digest. */
+  planCanonicalText?: string;
 }
 
 export function planningToCoordinationMode(p: SquadPlanning): 'freeform' | 'structured' {

@@ -32,6 +32,7 @@ export const IPC = {
     readArtifact: 'executionBoard:readArtifact',
     dismiss: 'executionBoard:dismiss',
     stop: 'executionBoard:stop',
+    stopAndFixPlan: 'executionBoard:stopAndFixPlan',
     retry: 'executionBoard:retry',
     retryWork: 'executionBoard:retryWork',
     releaseWork: 'executionBoard:releaseWork',

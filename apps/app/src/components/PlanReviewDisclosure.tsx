@@ -9,7 +9,7 @@ import {
 import { product } from '../lib/product-client.js';
 import { copyTextOrFail } from '../lib/copy-text.js';
 
-type PlanDisplay = Pick<SquadLaunchPrefill, 'planFindings' | 'planFindingsHidden' | 'planBindings' | 'planBindingsHidden' | 'planSummary'>;
+type PlanDisplay = Pick<SquadLaunchPrefill, 'planFindings' | 'planFindingsHidden' | 'planBindings' | 'planBindingsHidden' | 'planSummary' | 'planCanonicalText'>;
 /** What a re-check replaces: every plan field, including the ones that are now absent. */
 export type PlanRecheck = PlanDisplay & Pick<SquadLaunchPrefill, 'planStepCount'>;
 
@@ -39,7 +39,7 @@ export function PlanReviewDisclosure({ prefill, proposalId, proposerTitle, planF
   const [busy, setBusy] = useState<'send' | 'recheck' | null>(null);
   const findings = prefill.planFindings ?? [];
   const bindings = prefill.planBindings ?? [];
-  if (!prefill.planSummary && !findings.length && !bindings.length) return null;
+  if (!prefill.planSummary && !findings.length && !bindings.length && !prefill.planCanonicalText) return null;
   const mustFix = planHasMustFix(prefill);
   const blocking = findings.filter((finding) => finding.severity === 'blocking');
   const who = proposerTitle ? `the agent “${proposerTitle}”` : 'the agent that prepared this launch';
@@ -134,6 +134,12 @@ export function PlanReviewDisclosure({ prefill, proposalId, proposerTitle, planF
         </table>
       ) : null}
       {prefill.planBindingsHidden ? <p>and {prefill.planBindingsHidden} more</p> : null}
+      {prefill.planCanonicalText ? (
+        <details data-testid="plan-canonical">
+          <summary>The plan the Squad will run</summary>
+          <pre data-testid="plan-canonical-text">{prefill.planCanonicalText}</pre>
+        </details>
+      ) : null}
       {mustFix && proposalId ? (
         <div className="team-composer-plan-actions" data-testid="plan-fix-actions">
           <h4>How to fix it</h4>
