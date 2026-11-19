@@ -168,6 +168,7 @@ import type {
   UpdateStatus,
   VoiceTranscribeResult,
   WalkedFile,
+  WalkResult,
   WhatsNewEvent,
   Worktree
 } from '@zana-ai/zcc-domain/product';
@@ -1188,6 +1189,8 @@ export interface CcApi {
     resolveDoc(root: string, reportedPath: string, originCwd?: string): Promise<FsResolveDocResult>;
     writeFile(path: string, content: string, scope?: ProjectFileScope, expectedSha256?: string): Promise<FsWriteResult>;
     walkFiles(path: string): Promise<WalkedFile[]>;
+    /** Like `walkFiles`, but also reports whether a walk cap truncated the listing. */
+    walkFilesWithStatus(path: string): Promise<WalkResult>;
     searchFiles(path: string, query: string, opts?: SearchOptions): Promise<SearchResult>;
     readDataUrl(path: string, source?: ProjectFileScope): Promise<FsReadDataUrlResult>;
     /** Create an empty file at `path`, confined to `root` (project dir). */
