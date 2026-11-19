@@ -101,7 +101,11 @@ body,
 .scheduler-card,
 .library-viewer,
 .settings-panel,
-.thread-detail-timeline,
+.thread-detail-timeline {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 .thread-plan-panel,
 .thread-todo-checklist {
   user-select: text;
