@@ -29,6 +29,12 @@ describe('renderMarkdownBody', () => {
     expect(html).toContain('id="section"');
   });
 
+  it('keeps heading ids unique when a suffixed id already exists', () => {
+    const ids = [...renderMarkdownBody('# A\n\n# A\n\n# A-1\n\n# A\n', context()).matchAll(/id="([^"]+)"/g)].map((match) => match[1]);
+    expect(ids).toEqual(['a', 'a-1', 'a-1-1', 'a-2']);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
   it('drops raw html and script', () => {
     const html = renderMarkdownBody('<script>alert(1)</script>\n\n<img src=x onerror=alert(1)>\n\n[x](javascript:alert(1))\n\n[y](data:text/html;base64,AA)', context());
     expect(html).not.toMatch(/<script|onerror|javascript:|data:text/i);
@@ -60,7 +66,8 @@ describe('renderMarkdownBody', () => {
     expect(html).toContain('src="https://x.test/a.png"');
     expect(html).not.toContain('http://x.test');
     expect(html).not.toContain('alt="u"');
-    expect(html).toContain('m');
+    expect(html).toContain('t m h');
+    expect(html).not.toContain('missing.png');
     expect(html).not.toContain('<img src="docs');
   });
 
@@ -84,7 +91,20 @@ describe('limits', () => {
     expect(() => checkMarkdownLimits(`${'> '.repeat(101)}x`)).toThrow(/nested/);
     expect(() => checkMarkdownLimits(`${' '.repeat(250)}- x`)).toThrow(/nested/);
     expect(() => checkMarkdownLimits(`${'['.repeat(120)}x`)).toThrow(/nested/);
+    expect(() => checkMarkdownLimits(`${'>'.repeat(101)}x`)).toThrow(/nested/);
     expect(() => checkMarkdownLimits('> a\n> > b\n- c')).not.toThrow();
+  });
+
+  it('accepts exactly the limit, thematic breaks and fenced code', () => {
+    expect(() => checkMarkdownLimits(`${'>'.repeat(100)} x`)).not.toThrow();
+    expect(() => checkMarkdownLimits(`${'> '.repeat(100)}x`)).not.toThrow();
+    expect(() => checkMarkdownLimits(`${'['.repeat(100)}x`)).not.toThrow();
+    expect(() => checkMarkdownLimits(`${'*'.repeat(150)}\n\n${'_'.repeat(150)}\n\n${'-'.repeat(150)}\n\n${'~'.repeat(150)}`)).not.toThrow();
+    expect(() => checkMarkdownLimits(`\`\`\`\n${'>'.repeat(200)}\n${'['.repeat(200)}\n\`\`\`\n`)).not.toThrow();
+    expect(() => checkMarkdownLimits(`~~~\n${'>'.repeat(200)}\n~~~\n`)).not.toThrow();
+    // A fence closes only with the same marker, so the run after it is checked again.
+    expect(() => checkMarkdownLimits(`\`\`\`\n~~~\n${'>'.repeat(200)}\n\`\`\`\n${'>'.repeat(200)}`)).toThrow(/nested/);
+    expect(() => checkMarkdownLimits(`\`\`\`\nunclosed\n${'>'.repeat(200)}`)).not.toThrow();
   });
 
   it('throws before rendering', () => {

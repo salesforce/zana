@@ -46,7 +46,9 @@ interface HastNode {
   children?: HastNode[];
 }
 
-const REPEATED_MARK = /([>[(*_~!])\1{99,}/;
+/** Only these open a nesting level; `*`, `_` and `-` runs are thematic breaks or emphasis, not nesting. */
+const NESTING_RUN = new RegExp(`>{${MAX_MARKDOWN_NESTING + 1},}|\\[{${MAX_MARKDOWN_NESTING + 1},}`);
+const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 const QUOTE_PREFIX = /^[ \t]*((?:>[ \t]*)+)/;
 const DEEP_LIST_ITEM = /^[ \t]{200,}(?:[-*+]|\d+[.)])[ \t]/;
 
@@ -56,8 +58,19 @@ export function checkMarkdownLimits(source: string): void {
     throw new DesignDocError('limit', `markdown over ${MAX_MARKDOWN_BYTES / 1024} KB is not rendered in the browser view`);
   }
   const tooDeep = () => new DesignDocError('limit', `markdown nested more than ${MAX_MARKDOWN_NESTING} levels deep is not rendered in the browser view`);
-  if (REPEATED_MARK.test(source)) throw tooDeep();
+  let fence: string | null = null;
   for (const line of source.split('\n')) {
+    const opener = line.match(FENCE)?.[1];
+    if (fence) {
+      // Code inside a fence is literal and cannot nest.
+      if (opener && opener[0] === fence[0] && opener.length >= fence.length) fence = null;
+      continue;
+    }
+    if (opener) {
+      fence = opener;
+      continue;
+    }
+    if (NESTING_RUN.test(line)) throw tooDeep();
     const quote = line.match(QUOTE_PREFIX);
     if (quote && quote[1]!.split('>').length - 1 > MAX_MARKDOWN_NESTING) throw tooDeep();
     if (DEEP_LIST_ITEM.test(line)) throw tooDeep();
@@ -88,12 +101,17 @@ const HEADING = /^h[1-6]$/;
 
 function addHeadingIds(root: HastNode): void {
   const seen = new Map<string, number>();
+  const taken = new Set<string>();
   walk(root, (node) => {
     if (node.type !== 'element' || !node.tagName || !HEADING.test(node.tagName)) return;
     const base = slugify(textOf(node));
-    const count = seen.get(base) ?? 0;
+    let count = seen.get(base) ?? 0;
+    let id = count ? `${base}-${count}` : base;
+    // A suffixed id may collide with a heading that is literally "a-1".
+    while (taken.has(id)) id = `${base}-${++count}`;
     seen.set(base, count + 1);
-    node.properties = { ...node.properties, id: count ? `${base}-${count}` : base };
+    taken.add(id);
+    node.properties = { ...node.properties, id };
   });
 }
 

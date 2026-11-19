@@ -41,6 +41,6 @@ test('Design Docs markdown file opens rendered in the browser', async ({ app }) 
   expect(body).not.toMatch(/<script/i);
 
   // .mdx has no rendered page: the page route refuses it and the file route serves raw text.
-  const mdx = await link('notes.mdx').catch(() => null);
-  if (mdx) expect((await get(mdx.url)).status).toBe(400);
+  const mdx = await link('notes.mdx');
+  expect((await get(mdx.url)).status).toBe(400);
 });
