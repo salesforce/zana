@@ -843,18 +843,26 @@ async function applyPermissionSettings(
 ): Promise<boolean> {
   const construction = attachment.sessionConstructionConfig.sessionOptions;
   const writeRoots = params.permissionScope === "workspace" ? params.additionalWorkspaceWriteRoots ?? [] : [];
+  const sandboxEnabled = params.sandboxEnabled ?? construction.sandboxEnabled ?? true;
+  const sandboxSettingChanged = sandboxEnabled !== (construction.sandboxEnabled ?? true);
   if (attachment.approvedPlanPermissionMode === params.permissionMode &&
       construction.permissionScope === params.permissionScope &&
+      !sandboxSettingChanged &&
       isDeepStrictEqual(construction.additionalWorkspaceWriteRoots ?? [], writeRoots)) return false;
   const permissionMode = attachment.permissionMode === "plan" ? "plan" : params.permissionMode;
-  const nextConstruction = { ...construction, permissionMode, permissionScope: params.permissionScope, additionalWorkspaceWriteRoots: writeRoots };
+  const nextConstruction = { ...construction, permissionMode, permissionScope: params.permissionScope, additionalWorkspaceWriteRoots: writeRoots, sandboxEnabled };
   const rebuilt = buildSessionOptions({ ...nextConstruction, ...attachment.liveSettings, permissionMode: params.permissionMode,
     getPermissionEscalation: (context) => attachment.residentSession ? resolvePermissionEscalationForWork(attachment.residentSession, context) : null,
   }, attachment.sessionOptions.env ?? {});
-  const permissionSettings = { sandbox: rebuilt.sandbox ?? { enabled: false }, permissions: { additionalDirectories: [...(rebuilt.additionalDirectories ?? [])] } };
+  // With the provider toggle off, omit the override so Claude's own settings apply.
+  const permissionSettings = {
+    ...(sandboxEnabled ? { sandbox: rebuilt.sandbox ?? { enabled: false } } : {}),
+    permissions: { additionalDirectories: [...(rebuilt.additionalDirectories ?? [])] },
+  };
   const resident = attachment.residentSession;
   const readonlyMode = (mode: ClaudePermissionMode) => mode === "default" || mode === "dontAsk";
   const needsRestart = resident !== null && (
+    sandboxSettingChanged ||
     (params.permissionMode === "bypassPermissions" && !resident.launchedWithBypassPermissions) ||
     readonlyMode(attachment.approvedPlanPermissionMode) !== readonlyMode(params.permissionMode));
   attachment.sessionPermissionGrants = [];
@@ -874,7 +882,9 @@ async function applyPermissionSettings(
   attachment.sessionConstructionConfig.sessionOptions = nextConstruction;
   attachment.permissionMode = permissionMode;
   attachment.approvedPlanPermissionMode = params.permissionMode;
-  const currentSettings = typeof attachment.sessionOptions.settings === "object" ? attachment.sessionOptions.settings : {};
+  const currentSettings = typeof attachment.sessionOptions.settings === "object" ? { ...attachment.sessionOptions.settings } : {};
+  // Restarting also drops overrides previously applied to the resident process.
+  if (!sandboxEnabled) delete currentSettings.sandbox;
   attachment.sessionOptions.settings = { ...currentSettings, ...permissionSettings };
   attachment.sessionOptions.permissionMode = permissionMode;
   attachment.sessionOptions.allowBypassPermissions = rebuilt.allowBypassPermissions;
@@ -1155,6 +1165,7 @@ function toSessionConstructionConfig(
       additionalWorkspaceWriteRoots: params.additionalWorkspaceWriteRoots,
       baseInstructions: params.baseInstructions,
       chromeEnabled: params.chromeEnabled,
+      sandboxEnabled: params.sandboxEnabled ?? true,
       cwd: params.cwd,
       disallowedTools: params.disallowedTools,
       instructionMode: params.instructionMode,

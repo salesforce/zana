@@ -14,6 +14,7 @@ const EXECUTION_CONTEXT = {
   workflowsEnabled: true,
   idleQueryReleaseEnabled: true,
   chromeEnabled: true,
+  sandboxEnabled: false,
   memoryEnabled: false,
   providerSubagentsEnabled: false,
   instructions: "Session instructions",
@@ -30,6 +31,7 @@ function toCanonicalWireOptions(options: typeof EXECUTION_CONTEXT) {
     workflowsEnabled,
     idleQueryReleaseEnabled,
     chromeEnabled,
+    sandboxEnabled,
     memoryEnabled,
     providerSubagentsEnabled,
     ...core
@@ -41,6 +43,7 @@ function toCanonicalWireOptions(options: typeof EXECUTION_CONTEXT) {
       workflowsEnabled,
       idleQueryReleaseEnabled,
       chromeEnabled,
+      sandboxEnabled,
       memoryEnabled,
       providerSubagentsEnabled,
     },
@@ -88,6 +91,7 @@ describe("buildClaudeSessionParams", () => {
       workflowsEnabled: true,
       idleQueryReleaseEnabled: true,
       chromeEnabled: true,
+      sandboxEnabled: false,
       memoryEnabled: false,
       providerSubagentsEnabled: false,
       model: "claude-sonnet-5",
@@ -150,6 +154,7 @@ describe("buildClaudeSessionParams", () => {
       workflowsEnabled: false,
       idleQueryReleaseEnabled: false,
       chromeEnabled: false,
+      sandboxEnabled: true,
       permissionMode: "bypassPermissions",
       approvedPlanPermissionMode: "bypassPermissions",
     });
@@ -384,6 +389,15 @@ describe("stripLeadingPlanCommandText", () => {
 });
 
 describe("buildClaudeTurnParams", () => {
+  it.each([true, false])("carries sandboxEnabled=%s into follow-up turns", sandboxEnabled => {
+    const params = buildClaudeTurnParams({
+      threadId: "thread-1", providerThreadId: "provider-1", input: [{ type: "text", text: "continue", mentions: [] }],
+      options: { ...WORKSPACE_ACCEPT_EDITS_POLICY, providerOptions: { sandboxEnabled } },
+    });
+    expect(params.sandboxEnabled).toBe(sandboxEnabled);
+    expect(params.permissionMode).toBe("acceptEdits");
+  });
+
   it("leaves live-setting knobs undefined when providerOptions omits them, so the session keeps its current values", () => {
     const params = buildClaudeTurnParams({
       threadId: "thread-1",
@@ -399,6 +413,7 @@ describe("buildClaudeTurnParams", () => {
     expect(params.workflowsEnabled).toBeUndefined();
     expect(params.idleQueryReleaseEnabled).toBeUndefined();
     expect(params.chromeEnabled).toBeUndefined();
+    expect(params.sandboxEnabled).toBeUndefined();
     expect(params.memoryEnabled).toBeUndefined();
     expect(params.providerSubagentsEnabled).toBeUndefined();
     expect(params.permissionEscalation).toBeNull();

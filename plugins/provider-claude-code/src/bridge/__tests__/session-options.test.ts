@@ -9,7 +9,36 @@ import {
   mergeClaudePlanChecklistAllowedTools,
   withClaudeTodoToolsEnv,
   resolveClaudeCodeExecutable,
+  buildSessionOptions,
+  type BuildSessionOptionsArgs,
 } from "../session-options.js";
+
+describe("Claude workspace sandbox toggle", () => {
+  const base: BuildSessionOptionsArgs = {
+    cwd: "/tmp/worktree", instructionMode: "append", chromeEnabled: false,
+    workflowsEnabled: false, permissionMode: "acceptEdits", permissionScope: "workspace",
+    getPermissionEscalation: () => "ask", additionalWorkspaceWriteRoots: ["/tmp/thread-storage"],
+  };
+
+  it.each([undefined, true, false])("preserves permissions and write roots with sandboxEnabled=%s", sandboxEnabled => {
+    const options = buildSessionOptions({ ...base, ...(sandboxEnabled === undefined ? {} : { sandboxEnabled }) }, {});
+    expect(options.permissionMode).toBe("acceptEdits");
+    expect(options.allowBypassPermissions).toBe(false);
+    expect(options.additionalDirectories).toEqual(["/tmp/thread-storage"]);
+    if (sandboxEnabled === false) {
+      expect(options).not.toHaveProperty("sandbox");
+      expect(options.settings).not.toHaveProperty("sandbox");
+    } else {
+      expect(options.sandbox).toMatchObject({ enabled: true, filesystem: { allowWrite: ["/tmp/thread-storage"] } });
+    }
+  });
+
+  it.each([true, false])("leaves Full Access unchanged with sandboxEnabled=%s", sandboxEnabled => {
+    const options = buildSessionOptions({ ...base, sandboxEnabled, permissionMode: "bypassPermissions", permissionScope: "full" }, {});
+    expect(options).not.toHaveProperty("sandbox");
+    expect(options.allowBypassPermissions).toBe(true);
+  });
+});
 
 it("reads legacy Claude executable settings and prioritizes canonical overrides", () => {
   const root = mkdtempSync(join(tmpdir(), "zcc-claude-override-"));

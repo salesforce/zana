@@ -106,6 +106,26 @@ test('shipped providers register and reload without a compiler', async ({ app, h
   await expect.poll(registered).toEqual(expected);
   const { root, before } = JSON.parse(readFileSync(join(home, 'provider-artifacts.json'), 'utf8'));
   expect(artifactState(root)).toEqual(before);
+
+  await win.evaluate(() => {
+    history.pushState({}, '', '/settings/plugins/provider-claude-code');
+    dispatchEvent(new PopStateEvent('popstate'));
+  });
+  const sandbox = win.getByRole('switch', { name: 'Claude Code sandbox', exact: true });
+  await expect(sandbox).toBeChecked();
+  await expect(win.getByText(/Turn off to use Claude Code's own command approvals and sandbox settings instead/)).toBeVisible();
+  await sandbox.click();
+  await expect(sandbox).not.toBeChecked();
+  const savedSandboxSetting = () => win.evaluate(async () =>
+    (await window.cc.pluginApps.getSettings('provider-claude-code')).values.sandboxEnabled);
+  await expect.poll(savedSandboxSetting).toBe(false);
+  expect(await win.evaluate(() => window.cc.pluginApps.reload('provider-claude-code'))).toEqual({ ok: true, value: true });
+  await win.reload();
+  await expect(sandbox).not.toBeChecked();
+  await sandbox.click();
+  await expect.poll(savedSandboxSetting).toBe(true);
+  await expect(sandbox).toBeChecked();
+  expect(artifactState(root)).toEqual(before);
 });
 
 });
