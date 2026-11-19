@@ -81,6 +81,15 @@ describe('Squad declaration', () => {
     expect(parseLaunchSection(`## Launch\n- Squad: ${value}`)).toMatchObject({ ok: false });
   });
 
+  it('a Squad declaration in ## Launch does not change launchDigest(units)', () => {
+    const body = `## Execution Plan\n${step('a', '- **Work:** x')}`;
+    const plain = parsedOk(`## Launch\n- Capabilities: push\n\n${body}`);
+    const declared = parsedOk(`## Launch\n- Squad: delivery\n- Capabilities: push\n\n${body}`);
+    expect(declared.declaredSquad).toBe('delivery');
+    expect(launchDigest(declared.units)).toBe(launchDigest(plain.units));
+    expect(JSON.stringify(declared.units)).not.toContain('delivery');
+  });
+
   it('rejects a duplicate Squad declaration', () => {
     expect(parseLaunchSection('## Launch\n- Squad: a\n- Squad: b')).toMatchObject({ ok: false });
   });

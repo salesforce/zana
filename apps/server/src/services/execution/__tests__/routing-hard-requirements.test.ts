@@ -115,9 +115,25 @@ describe('hard requirements never fall back', () => {
     expect(first.assignments.map((a) => `${a.workUnitId}:${a.slotId}`)).toEqual(['a:rev:0']);
     expect(first.record.workUnits![1].state).toBe('READY');
   }));
-  it('advisory: skill and MCP misses never fall back', async () => fixture(async (filePath) => {
+  it('advisory: a TAG-only Required role mismatch never runs on a non-matching slot', async () => fixture(async (filePath) => {
+    const store = mk(filePath);
+    const record = await running(store, [eng(0, { roles: ['builder'] })], [{ id: 'unit', routing: { version: 1, requiredRole: 'auditor' } }]);
+    const { assignments, record: after } = await store.dispatchReady(record.id, { enforceRouting: false });
+    expect(assignments).toEqual([]);
+    expect(after.workUnits![0].state).toBe('BLOCKED');
+    expect(after.blockers![0].noRoute).toBe(true);
+  }));
+  it('advisory: a skill miss never falls back', async () => fixture(async (filePath) => {
     const store = mk(filePath);
     const record = await running(store, [eng(0, { skillAllowlist: ['other'] })], [{ id: 'unit', requires: { skills: ['needed'] } }]);
+    const { assignments, record: after } = await store.dispatchReady(record.id, { enforceRouting: false });
+    expect(assignments).toEqual([]);
+    expect(after.workUnits![0].state).toBe('BLOCKED');
+    expect(after.blockers![0].noRoute).toBe(true);
+  }));
+  it('advisory: an MCP miss never falls back', async () => fixture(async (filePath) => {
+    const store = mk(filePath);
+    const record = await running(store, [eng(0, { mcpServers: ['other'] })], [{ id: 'unit', requires: { mcpServers: ['needed'] } }]);
     const { assignments, record: after } = await store.dispatchReady(record.id, { enforceRouting: false });
     expect(assignments).toEqual([]);
     expect(after.workUnits![0].state).toBe('BLOCKED');

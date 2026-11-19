@@ -32,6 +32,20 @@ describe('routingPolicy gate record', () => {
   }));
 });
 
+describe('a running execution keeps its recorded policy', () => {
+  it('the recorded policy survives transitions and reload, and recordedLevelPolicy reads only the record', async () => withStore(async (store) => {
+    const policy = { version: 1 as const, hardRequirements: true, requested: false, levelEnforced: false };
+    let { record } = await claimWith(store, policy);
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    const reloaded = (await store.get(record.id))!;
+    expect(reloaded.routingPolicy).toEqual(policy);
+    // A later edit to the live Squad (routingEnforced on) is invisible here: the answer comes from the record alone.
+    expect(recordedLevelPolicy(reloaded)).toEqual({ requested: false, levelEnforced: false });
+    expect(recordedLevelPolicy({ routingPolicy: { ...policy } })).toEqual(recordedLevelPolicy(reloaded));
+  }));
+});
+
 describe('degraded slot skips only the level check', () => {
   const unit = { routing: { version: 1 as const, requiredRole: 'engineer', minimumLevel: 'high' as const } };
   const slot = { slotId: 'w:1', personaId: 'engineer' };
