@@ -39,11 +39,14 @@ function signalProcessGroup(pid: number, signal: NodeJS.Signals): boolean {
  * Windows has no process groups. node-pty's `kill(signal)` throws there for
  * any signal, and its signal-less `kill()` ends only what is attached to the
  * pseudoconsole, so children an agent starts detached (codex's app-server
- * processes) outlive it. The signal-less `kill()` still runs first: it closes
- * the pseudoconsole, without which its conhost.exe stays behind. Then taskkill
- * /T /F ends the pty's own tree by parentage, from the PID read before the
- * kill (absolute System32 path, no shell). Exit 128 there means `kill()` had
- * already ended the root.
+ * processes) outlive it. taskkill /T /F (absolute System32 path, no shell)
+ * ends the pty's own tree by parentage and is started first, so the root is
+ * normally still alive when taskkill resolves it. taskkill runs asynchronously,
+ * so this narrows the PID-reuse and already-exited window rather than closing
+ * it; waiting for taskkill before releasing the pseudoconsole is not done
+ * because that would hold the conhost open on a hung taskkill. The signal-less `kill()`
+ * follows at once: it closes the pseudoconsole, without which its conhost.exe
+ * stays behind. Exit 128 from taskkill means the root had already exited.
  */
 export function terminatePtyProcessTree(
   handle: KillablePtyHandle,
@@ -57,14 +60,17 @@ export function terminatePtyProcessTree(
   const hardKillAfterMs = options.hardKillAfterMs ?? DEFAULT_HARD_KILL_AFTER_MS;
   const pid = handle.pid;
   if (process.platform === 'win32') {
+    // node-pty reports 0 until the pseudoconsole has connected. taskkill walks
+    // descendants by parentage, so it is started before the plain kill to
+    // narrow (not remove) the window in which the root has exited and its PID
+    // could be reused. The plain kill follows at once and closes the pseudoconsole.
+    if (pid !== undefined && pid > 0) {
+      (options.stopWindowsTree ?? ((root) => stopWindowsProcessTree(root)))(pid);
+    }
     try {
       handle.kill();
     } catch {
       /* process can win the exit race */
-    }
-    // node-pty reports 0 until the pseudoconsole has connected.
-    if (pid !== undefined && pid > 0) {
-      (options.stopWindowsTree ?? ((root) => stopWindowsProcessTree(root)))(pid);
     }
     return;
   }

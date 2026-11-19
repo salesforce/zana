@@ -1,5 +1,6 @@
-import { app } from 'electron';
+import { app, crashReporter } from 'electron';
 import { join } from 'node:path';
+import { installCrashBreadcrumbs } from './crash-breadcrumbs.js';
 import { installRuntimeLog } from '@zana-ai/zcc-process-utils';
 
 // Electron ignores HOME for app.getPath('home') on macOS. Set the app path
@@ -25,5 +26,20 @@ if (!e2eHome && dataDir && !app.isPackaged) {
   app.setPath('userData', join(dataDir, 'electron-user-data'));
 }
 
-installRuntimeLog(dataDir || join(app.getPath('home'), '.zcc'), 'desktop', new URL('./main.js', import.meta.url));
+const runtimeDataDir = dataDir || join(app.getPath('home'), '.zcc');
+installRuntimeLog(runtimeDataDir, 'desktop', new URL('./main.js', import.meta.url));
+
+// Silent-exit diagnostics: local-only crash dumps plus a synchronous breadcrumb
+// trail (exit/quit/process-gone events, memory samples). Skipped under E2E.
+if (!e2eHome) {
+  try {
+    app.setPath('crashDumps', join(runtimeDataDir, 'crash-dumps'));
+    crashReporter.start({ uploadToServer: false, compress: true });
+  } catch { /* Diagnostics must never block startup. */ }
+  installCrashBreadcrumbs({
+    app,
+    logsDir: join(runtimeDataDir, 'logs'),
+    systemMemory: () => process.getSystemMemoryInfo?.()
+  });
+}
 void import('./main.js');
