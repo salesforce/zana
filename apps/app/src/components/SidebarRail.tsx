@@ -11,6 +11,7 @@ import {
   type ReactElement,
   type ReactNode
 } from 'react';
+import type { AppCommandId } from '@zana-ai/zcc-domain/thread-runtime';
 import { DndContext } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { Link } from 'react-router-dom';
@@ -23,6 +24,7 @@ import { resolveIcon } from '../lib/resolveIcon.js';
 import { listSidebarFooterActions, subscribePluginSlots } from '../plugins/plugin-slots.js';
 import { hrefForPluginNavPanel } from '../plugins/plugin-nav-href.js';
 import { getPluginSettingsRoutePath } from '../lib/route-paths.js';
+import { titleWithShortcut } from '../lib/keyboard-shortcut-settings.js';
 import { appNavigate } from '../lib/app-navigate.js';
 import { SidebarResizer } from './SidebarResizer.js';
 import {
@@ -53,6 +55,8 @@ export interface SidebarRailRow {
   testId: string;
   active: boolean;
   title?: string;
+  /** App command whose current shortcut is appended to the tooltip (never to the accessible name). */
+  command?: AppCommandId;
   badge?: ReactNode;
   running?: boolean;
   onClick?: (event: { preventDefault: () => void; metaKey?: boolean; ctrlKey?: boolean }) => void;
@@ -70,6 +74,11 @@ export interface SidebarRailSection {
 }
 
 export type SidebarRailItem = SidebarRailRow | SidebarRailSection;
+
+/** Tooltip text for a row: its title (or label) plus the bound shortcut, if any. */
+export function railRowTitle(item: Pick<SidebarRailRow, 'title' | 'label' | 'command'>): string | undefined {
+  return item.command ? titleWithShortcut(item.title ?? item.label, item.command) : item.title;
+}
 
 /**
  * Shared sortable rail chrome for the global Sidebar and the project rail.
@@ -199,7 +208,7 @@ export function SidebarRail({
         icon={item.icon}
         active={item.active}
         collapsed={inMenu ? false : collapsed}
-        title={item.title}
+        title={railRowTitle(item)}
         testId={item.testId}
         badge={item.badge}
         running={item.running}
@@ -287,7 +296,7 @@ export function SidebarRail({
           className={`sidebar-utility-button sidebar-utility-button--settings ${nav === 'settings' ? 'active' : ''}`}
           aria-label="Settings"
           aria-current={nav === 'settings' ? 'page' : undefined}
-          title="Settings"
+          title={titleWithShortcut('Settings', 'settings.open')}
           onClick={() => dismissMobileNav?.()}
         >
           <Settings size={16} strokeWidth={1.7} aria-hidden="true" />
@@ -380,7 +389,7 @@ function SplitEnabledNavRow({
       icon={item.icon}
       active={item.active}
       collapsed={collapsed}
-      title={item.title}
+      title={railRowTitle(item)}
       testId={item.testId}
       badge={item.badge}
       running={item.running}

@@ -198,6 +198,7 @@ export function Sidebar({ railVariant = 'expanded' }: { railVariant?: 'expanded'
       running,
       badge,
       splitContent,
+      command: item.id === 'home' ? 'thread.new' : undefined,
       title: collapsed || rail
         ? running
           ? `${item.label} — ${isAgents ? agentsTitle : scheduleTitle}`

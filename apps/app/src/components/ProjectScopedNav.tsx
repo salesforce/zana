@@ -169,6 +169,7 @@ export function ProjectScopedNav({
       active: route.isNewThread,
       mobileGroup: 'featured',
       title: `New chat in ${project.name}`,
+      command: 'thread.new',
       splitContent: { kind: 'new-thread', projectId: project.id }
     },
     { kind: 'row', id: 'conversation-history', label: 'History', icon: <History size={16} />,
@@ -274,6 +275,7 @@ export function ProjectScopedNav({
         to: getProjectModeRoutePath(project.id, item.mode),
         testId: `project-nav-${item.mode}`,
         active,
+        command: item.mode === 'explorer' ? 'sidebar.toggle' : undefined,
         mobileGroup: item.mode === 'agents' ? undefined : 'tools',
         running: agentsLive || goalsActive || followupsOpen || terminalsRunning,
         badge,

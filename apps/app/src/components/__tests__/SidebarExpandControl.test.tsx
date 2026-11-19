@@ -44,7 +44,7 @@ describe('SidebarTriggerOverlay', () => {
 
     expect(markup).toContain('class="sidebar-expand-control"');
     expect(markup).toContain('aria-label="Collapse sidebar"');
-    expect(markup).toContain('title="Collapse sidebar"');
+    expect(markup).toContain('title="Collapse sidebar (Ctrl + Shift + B)"');
     expect(markup).toContain('aria-expanded="true"');
     expect(markup).not.toContain('data-testid="sidebar-trigger-collapsed-actions"');
   });

@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ComponentProps, ReactElement } from 'react';
 import type { SidebarRailItem } from '../SidebarRail.js';
 import type { AppModule } from '@zana-ai/zcc-extension-sdk/renderer';
@@ -126,6 +126,8 @@ vi.mock('../../plugins/PluginExclusiveThreadList', () => ({
 }));
 
 import { ProjectScopedNav } from '../ProjectScopedNav.js';
+import { setCommandShortcutOverride } from '../../lib/keyboard-shortcut-settings.js';
+import { stubKeybindingStorage } from '../../__tests__/helpers/keybinding-storage.js';
 
 function renderNav(node: ReactElement, path = '/') {
   return renderToStaticMarkup(<MemoryRouter initialEntries={[path]}>{node}</MemoryRouter>);
@@ -421,5 +423,34 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     expect(css).toContain('.project-scoped-nav .project-terminals {\n  margin: 1px 0 4px 8px;\n}');
     expect(css).toContain('.sidebar-section-sortable:last-child:has(.sidebar-projects:not(.sidebar-projects--collapsed)) .sidebar-projects');
     expect(css).toMatch(/\.settings-app-back \{[\s\S]*?-webkit-app-region: no-drag;/);
+  });
+});
+
+
+describe('ProjectScopedNav shortcut tooltips', () => {
+  beforeEach(() => stubKeybindingStorage());
+  afterEach(() => vi.unstubAllGlobals());
+
+  const tag = (markup: string, testId: string) => {
+    const at = markup.indexOf(`data-testid="${testId}"`);
+    return markup.slice(markup.lastIndexOf('<a ', at), markup.indexOf('>', at));
+  };
+
+  it.each(['focus', 'window'] as const)('adds shortcuts to New Chat, Explorer and Settings in the %s rail', (variant) => {
+    const markup = renderNav(<ProjectScopedNav project={project} variant={variant} />);
+    expect(tag(markup, 'project-nav-home')).toContain('title="New chat in zana-command-center (Ctrl + N)"');
+    expect(tag(markup, 'project-nav-explorer')).toContain('title="Explorer (Ctrl + B)"');
+    expect(markup).toContain('title="Settings (Ctrl + ,)"');
+    expect(markup).toContain('aria-label="Settings"');
+    expect(tag(markup, 'project-nav-inbox')).toContain('title="Inbox for this project"');
+    expect(tag(markup, 'project-nav-agents')).toContain('title="Agents"');
+  });
+
+  it('follows a rebinding and drops the suffix when unbound', () => {
+    setCommandShortcutOverride('sidebar.toggle', { key: 'k', mod: true, meta: false, control: false, alt: true, shift: false });
+    setCommandShortcutOverride('thread.new', null);
+    const markup = renderNav(<ProjectScopedNav project={project} variant="focus" />);
+    expect(tag(markup, 'project-nav-explorer')).toContain('title="Explorer (Ctrl + Alt + K)"');
+    expect(tag(markup, 'project-nav-home')).toContain('title="New chat in zana-command-center"');
   });
 });

@@ -1,5 +1,6 @@
 import { Menu, PanelLeft, PanelLeftClose, PanelLeftOpen, Plus, Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { titleWithShortcut } from '../lib/keyboard-shortcut-settings.js';
 import { useUi } from '../store.js';
 import { useCompactLayout } from '../hooks/useCompactLayout.js';
 import { useEnsureThreads } from '../hooks/useEnsureThreads.js';
@@ -57,7 +58,7 @@ export function SidebarTriggerOverlay({
         onClick={onToggle ?? toggleSidebar}
         aria-label={label}
         aria-expanded={!collapsed}
-        title={label}
+        title={titleWithShortcut(label, 'sidebar.rail.toggle')}
       >
         {compact ? <Menu size={20} aria-hidden="true" /> : hidden ? <PanelLeft size={18} aria-hidden="true" /> : collapsed ? <PanelLeftOpen size={18} aria-hidden="true" /> : <PanelLeftClose size={18} aria-hidden="true" />}
       </button>
@@ -71,7 +72,7 @@ export function SidebarTriggerOverlay({
             className="sidebar-expand-control"
             onClick={() => setPaletteOpen(true)}
             aria-label="Search"
-            title="Search"
+            title={titleWithShortcut('Search', 'thread.search')}
             data-testid="sidebar-collapsed-search"
           >
             <Search size={18} aria-hidden="true" />
@@ -81,7 +82,7 @@ export function SidebarTriggerOverlay({
             className="sidebar-expand-control"
             onClick={() => navigate(projectId ? getNewThreadRoutePath(projectId) : getRootRoutePath())}
             aria-label="New Chat"
-            title="New Chat"
+            title={titleWithShortcut('New Chat', 'thread.new')}
             data-testid="sidebar-collapsed-new-chat"
           >
             <Plus size={18} aria-hidden="true" />
