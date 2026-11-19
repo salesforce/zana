@@ -220,7 +220,8 @@ function ThreadComposerContent({
   const options = useThreadComposerOptions({
     session,
     threadId,
-    lockedProviderId,
+    // The thread row already knows its provider, so the composer need not wait for the detail load.
+    lockedProviderId: lockedProviderId ?? currentThread?.providerId,
     initialModel,
     initialReasoningLevel,
     initialAcpMode: executionModeRequested ?? initialAcpMode,
