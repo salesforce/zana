@@ -229,6 +229,7 @@ function ThreadComposerContent({
       : threadDefault.providerId,
     hostId: catalogHostId,
     projectId: currentThread?.projectId ?? selectedProject?.id,
+    scopePending: Boolean(threadId && !currentThread),
     hostPending: !catalogHostId && hosts.length === 0
   });
   // The tier is inherited from the thread, never picked here, so an unoffered

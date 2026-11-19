@@ -64,6 +64,11 @@ export function useThreadComposerOptions(input: {
   projectId?: string;
   /** True while the host roster is still hydrating — do not treat missing hostId as a machine change. */
   hostPending?: boolean;
+  /**
+   * An existing thread's own project/host isn't known yet, so hostId/projectId point at the
+   * previously selected scope. That catalog is settled but not the thread's: don't validate.
+   */
+  scopePending?: boolean;
 }) {
   const fallbackSession = useComposerSession();
   const session = input.session ?? fallbackSession;
@@ -187,7 +192,7 @@ export function useThreadComposerOptions(input: {
   const loading = Boolean(input.hostPending) || (!cached && catalog.inflight.has(providerId));
   // Warm rows inherited from another project stay visible, but are not
   // authoritative enough to snap a model or report a saved choice as unavailable.
-  const settling = loading || catalog.provisionalProviders.has(providerId);
+  const settling = loading || Boolean(input.scopePending) || catalog.provisionalProviders.has(providerId);
   const modelLoadError = cached?.modelLoadError ?? null;
   const modelLoadErrorDetail = cached?.modelLoadErrorDetail ?? null;
   const acpModeOptions = cached?.acpMode?.options ?? [];
