@@ -253,6 +253,7 @@ export const IPC = {
     resolveDoc: 'fs:resolveDoc',
     writeFile: 'fs:writeFile',
     walkFiles: 'fs:walkFiles',
+    walkFilesWithStatus: 'fs:walkFilesWithStatus',
     searchFiles: 'fs:searchFiles',
     readDataUrl: 'fs:readDataUrl',
     createFile: 'fs:createFile',

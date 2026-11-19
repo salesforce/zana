@@ -2,6 +2,7 @@ import type { SettingsSearchEntry } from '../types';
 
 const onOff = (value: boolean | undefined, fallback: boolean) => ((value ?? fallback) ? 'On' : 'Off');
 const SEND_MODES: Record<string, string> = { auto: 'Auto', steer: 'Steer', 'queue-if-active': 'Queue' };
+const PERMISSIONS: Record<string, string> = { 'accept-edits': 'Accept Edits', auto: 'Approve for me', full: 'Full Access' };
 
 /** Settings > Composer. */
 export const entries: readonly SettingsSearchEntry[] = [
@@ -54,13 +55,15 @@ export const entries: readonly SettingsSearchEntry[] = [
     kind: 'subsection'
   },
   {
-    id: 'composer.full-access',
+    id: 'composer.default-permissions',
     section: 'composer',
     anchor: 'composer',
-    label: 'Full access by default',
-    help: 'Start new Modern and CLI agents in Full mode (YOLO): no sandbox or approval prompts. Off starts in Approve for me when available, otherwise Accept Edits. You can change permissions in the composer before launching.',
-    keywords: ['yolo', 'permissions', 'sandbox', 'approval', 'skip permissions', 'accept edits'],
-    kind: 'setting'
+    label: 'Default permissions',
+    help: 'Used by Modern and CLI composers and direct thread actions such as Reply in thread. Explicit launch and harness choices take priority. Existing threads keep their permissions.',
+    options: ['Keep existing defaults', 'Accept Edits', 'Approve for me', 'Full Access'],
+    keywords: ['yolo', 'permissions', 'sandbox', 'approval', 'skip permissions', 'accept edits', 'full access by default', 'reply in thread'],
+    kind: 'setting',
+    value: (s) => PERMISSIONS[s.config.defaultThreadPermissionMode ?? ''] ?? 'Keep existing defaults'
   },
   {
     id: 'composer.navigate-on-create',

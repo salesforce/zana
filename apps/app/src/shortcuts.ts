@@ -41,6 +41,14 @@ export function installShortcuts(): () => void {
     const activeTabId = projectId ? ui.selectedTabId[projectId] : undefined;
     const activeIdx = activeTabId ? tabs.findIndex((t) => t.id === activeTabId) : -1;
 
+    // cmd+shift+b — cycle the sidebar per Customize navigation > Collapsed behavior
+    // (expanded <-> hidden by default, or expanded -> rail -> hidden). Works without a selected project.
+    if (shortcutForCommand('sidebar.rail.toggle', e)) {
+      e.preventDefault();
+      ui.cycleSidebarMode();
+      if (typeof document !== 'undefined') document.querySelector<HTMLElement>('.sidebar-expand-control')?.focus();
+      return;
+    }
     // cmd+b — toggle terminals/explorer mode (flips between the two
     // text-editing modes). Remappable in Settings → Shortcuts.
     if (shortcutForCommand('sidebar.toggle', e)) {
@@ -127,11 +135,11 @@ export function installShortcuts(): () => void {
       ui.exitProjectFocus();
       return;
     }
-    // cmd+j — toggle Scheduler. Round-trip back to Home when already on
-    // scheduler so it works as a single key from anywhere.
+    // cmd+j — toggle Scheduler. From the Scheduler, returns to the view that
+    // was open before it (store.toggleScheduler), like cmd+i with the Inbox.
     if (e.key === 'j' && !e.shiftKey) {
       e.preventDefault();
-      ui.setNav(ui.nav === 'scheduler' ? 'home' : 'scheduler');
+      ui.toggleScheduler();
       return;
     }
     // cmd+/ or cmd+? — keyboard shortcuts help

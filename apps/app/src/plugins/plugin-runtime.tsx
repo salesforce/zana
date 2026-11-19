@@ -44,6 +44,7 @@ import { requestPluginPanelAgent } from './plugin-panel-agent.js';
 import { requestPluginPageContext, requestPluginPanelScope, requestPluginPanelTool, usePluginPagePanel, usePluginPagePanelOpen, usePluginPagePublicationScope } from './plugin-page-panel.js';
 import { resolveThreadPanelOwnerId, useThreadPanelOwnerId } from './thread-panel-owner.js';
 import { subscribeProductEvent } from '../lib/product-ws.js';
+import { isPluginTabPinned, pinPluginTab, subscribePluginPins, unpinPluginTab, updatePluginPinnedItem } from './plugin-pinned-tabs.js';
 import { deepLinksFor } from './plugin-deep-links.js';
 import { HarnessRoutingEditor } from '../views/settings/HarnessRoutingEditor.js';
 
@@ -266,6 +267,23 @@ function useZccNavigateImpl(): ZccNavigate {
       },
       openPanelTool(options) {
         return requestPluginPanelTool(pluginId, options, sidePanel);
+      },
+      pinTab(item) {
+        // Pins belong to the main window's strip, and the page is the one the host mounted for this plugin.
+        if (view || !sidePanel) return false;
+        return pinPluginTab({ pluginId, pageId: sidePanel.page }, item);
+      },
+      unpinTab(itemKey) {
+        unpinPluginTab(pluginId, itemKey);
+      },
+      isPinned(itemKey) {
+        return isPluginTabPinned(pluginId, itemKey);
+      },
+      onPinnedChange(callback) {
+        return subscribePluginPins(pluginId, callback);
+      },
+      updatePinnedItem(itemKey, update) {
+        updatePluginPinnedItem(pluginId, itemKey, update);
       }
     };
   }, [navigate, panelOwnerId, pluginId, route.sessionId, route.threadId, sidePanel, enclosing, publicationScope]);

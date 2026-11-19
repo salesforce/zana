@@ -12,10 +12,12 @@ const h = vi.hoisted(() => ({
   threads: [{ id: 't1', projectId: 'p1', title: 'Review component spacing', providerId: 'codex', createdAt: 1 }],
   commands: [{ id: 'review', invocation: '/review', description: 'Review changes' }],
   files: [{ path: '/design/notes.md', rel: 'notes.md' }],
+  truncated: false,
+  walk: vi.fn(),
   actions: []
 }));
 vi.mock('../../../lib/product-client.js', () => ({ product: {
-  commands: { list: async () => h.commands }, fs: { walkFiles: async () => h.files },
+  commands: { list: async () => h.commands }, fs: { walkFilesWithStatus: (p: string) => h.walk(p) },
   ssh: { listHosts: async () => [] },
   config: { get: async () => ({}), onChanged: () => () => {} },
   pluginApps: { list: async () => [], onChanged: () => () => {} },
@@ -57,6 +59,8 @@ beforeEach(() => {
   h.project.favorite = false;
   h.favoriteIds = {};
   h.commands = [{ id: 'review', invocation: '/review', description: 'Review changes' }];
+  h.truncated = false;
+  h.walk.mockImplementation(async () => ({ files: h.files, truncated: h.truncated }));
   HTMLElement.prototype.scrollIntoView = vi.fn();
 });
 afterEach(cleanup);
@@ -229,5 +233,84 @@ describe('command palette integration', () => {
     expect(screen.queryAllByRole('option')).toHaveLength(0);
     expect(screen.getByText('No results found')).toBeTruthy();
   });
-});
 
+  describe('file index (@ mode)', () => {
+    // The file cache is module-level, so each test uses its own project path.
+    const useRoot = (path: string) => { h.project.path = path; };
+    afterEach(() => { vi.useRealTimers(); h.project.path = '/design'; });
+
+    it('explains a truncated index in the empty state, and only then', async () => {
+      useRoot('/trunc');
+      h.truncated = true;
+      const first = render(<CommandPalette onClose={h.close} />);
+      fireEvent.change(screen.getByRole('combobox'), { target: { value: '@zzzqqq' } });
+      await waitFor(() => expect(screen.getByText(/only part of it is indexed/)).toBeTruthy());
+      first.unmount();
+
+      useRoot('/complete');
+      h.truncated = false;
+      render(<CommandPalette onClose={h.close} />);
+      fireEvent.change(screen.getByRole('combobox'), { target: { value: '@zzzqqq' } });
+      await waitFor(() => expect(screen.getByText('No matching files')).toBeTruthy());
+      expect(screen.queryByText(/only part of it is indexed/)).toBeNull();
+    });
+
+    it('serves a fresh cache without walking, then re-walks a stale one while showing the old index', async () => {
+      useRoot('/ttl');
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const open = async (query: string) => {
+        const view = render(<CommandPalette onClose={h.close} />);
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: query } });
+        return view;
+      };
+      let view = await open('@notes');
+      await waitFor(() => expect(screen.getByRole('option', { name: 'notes.md' })).toBeTruthy());
+      expect(h.walk).toHaveBeenCalledTimes(1);
+      view.unmount();
+
+      view = await open('@notes');
+      await waitFor(() => expect(screen.getByRole('option', { name: 'notes.md' })).toBeTruthy());
+      expect(h.walk).toHaveBeenCalledTimes(1);
+      view.unmount();
+
+      vi.setSystemTime(Date.now() + 60_000);
+      h.files = [{ path: '/design/new.md', rel: 'new.md' }];
+      view = await open('@');
+      expect(screen.getByRole('option', { name: 'notes.md' })).toBeTruthy(); // stale shown immediately
+      await waitFor(() => expect(screen.getByRole('option', { name: 'new.md' })).toBeTruthy());
+      expect(h.walk).toHaveBeenCalledTimes(2);
+      h.files = [{ path: '/design/notes.md', rel: 'notes.md' }];
+    });
+
+    it('keeps a stale index when the re-walk fails, and shows empty when a first walk fails', async () => {
+      useRoot('/fail');
+      h.walk.mockRejectedValueOnce(new Error('boom'));
+      const first = render(<CommandPalette onClose={h.close} />);
+      fireEvent.change(screen.getByRole('combobox'), { target: { value: '@x' } });
+      await waitFor(() => expect(screen.getByText('No matching files')).toBeTruthy());
+      first.unmount();
+    });
+
+    it('bounds the cache to a limited number of project roots', async () => {
+      for (let i = 0; i < 20; i++) {
+        useRoot(`/many-${i}`);
+        const view = render(<CommandPalette onClose={h.close} />);
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: '@notes' } });
+        await waitFor(() => expect(screen.getByRole('option', { name: 'notes.md' })).toBeTruthy());
+        view.unmount();
+      }
+      h.walk.mockClear();
+      useRoot('/many-0'); // evicted: walks again
+      const view = render(<CommandPalette onClose={h.close} />);
+      fireEvent.change(screen.getByRole('combobox'), { target: { value: '@notes' } });
+      await waitFor(() => expect(h.walk).toHaveBeenCalledTimes(1));
+      view.unmount();
+      h.walk.mockClear();
+      useRoot('/many-19'); // retained: no walk
+      render(<CommandPalette onClose={h.close} />);
+      fireEvent.change(screen.getByRole('combobox'), { target: { value: '@notes' } });
+      await waitFor(() => expect(screen.getByRole('option', { name: 'notes.md' })).toBeTruthy());
+      expect(h.walk).not.toHaveBeenCalled();
+    });
+  });
+});

@@ -493,6 +493,12 @@ export class AgentStatusTracker extends EventEmitter {
     const entry = this.entries.get(sessionId);
     if (!entry || entry.toolsInFlight === 0) return;
     entry.toolsInFlight -= 1;
+    // A permission prompt opens after the tool's PreToolUse, so the waiting tool
+    // is still counted in flight. Its PostToolUse can only arrive once the user
+    // approved it, and with nothing else in flight no other request can still be
+    // waiting: the hook-set overlay is stale. Without this the overlay stays until
+    // the next prompt, because no other hook reports an approval.
+    if (entry.toolsInFlight === 0) entry.blocked = false;
     this.schedule(sessionId, entry);
   }
 

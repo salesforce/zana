@@ -1,6 +1,8 @@
 import type { PluginDatabase } from '@zana-ai/zcc-plugin-sdk/server';
 import { assertRegisteredProject, type ProjectLister } from './project-guard.js';
 import { DesignDocError } from './store.js';
+import { MAX_TITLE_LENGTH } from '../shared/limits.js';
+import { MAX_LABEL_CODE_POINTS, sanitizeLabel } from '../shared/label.js';
 
 /**
  * Local-only project bookkeeping, kept out of the append-only migration book and
@@ -38,6 +40,7 @@ export interface ProjectMapping {
 
 const MAX_MAPPINGS = 200;
 const MAX_ID_LENGTH = 512;
+export const MAX_FOREIGN_ID_LENGTH = MAX_ID_LENGTH;
 const MAX_UNASSIGNED = 200;
 const SAMPLE_TITLES = 3;
 /** Cap for the on-demand title listing (decision D1: bounded, no pagination). */
@@ -58,13 +61,14 @@ export const MAPPED_TO_ANY = `EXISTS (SELECT 1 FROM sync_doc_references r JOIN d
 export const MAPPED_TO_PROJECT = `EXISTS (SELECT 1 FROM sync_doc_references r JOIN dd_project_aliases a
   ON a.foreign_project_id = json_extract(r.project_json, '$') WHERE r.doc_id = d.id AND a.local_project_id = ? AND ${ALIAS_LIVE})`;
 
-/** Display-safe doc title: sanitized like labels; a title that is blank after cleaning keeps its row as 'Untitled'. */
-const displayTitle = (title: string): string => cleanLabel(title) ?? 'Untitled';
+/** Display-safe doc title: sanitized like labels but kept to the title limit, not the label cap; blank after cleaning keeps its row as 'Untitled'. */
+const displayTitle = (title: string): string => sanitizeLabel(title, MAX_TITLE_LENGTH) ?? 'Untitled';
 
-/** Display-safe text: control and bidirectional characters removed, blank as null. */
+export { MAX_LABEL_CODE_POINTS };
+
+/** Display-safe peer label (sender name or tag), capped at 80 code points. See `sanitizeLabel`. */
 export function cleanLabel(value: string | null | undefined): string | null {
-  // eslint-disable-next-line no-control-regex
-  return (value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, '').trim() || null;
+  return sanitizeLabel(value);
 }
 
 function cleanId(value: unknown, label: string): string {

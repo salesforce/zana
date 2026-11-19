@@ -1,4 +1,5 @@
 import type { DesignDocSummary } from '../shared/contract.js';
+import { GROUP_KEY_PREFIX } from './unassigned-groups.js';
 
 export type SectionKind = 'pinned' | 'needs-me' | 'project' | 'recent';
 
@@ -114,10 +115,29 @@ export function expandAll(): string {
   return '[]';
 }
 
-/** True when at least one of the sections is currently open. */
-export function anyOpen(keys: readonly string[], collapsedRaw: string): boolean {
+/** True when at least one of the sections is currently open; `extraOpen` counts a section whose state is held outside the collapsed set. */
+export function anyOpen(keys: readonly string[], collapsedRaw: string, extraOpen = false): boolean {
+  if (extraOpen) return true;
   const collapsed = parseCollapsed(collapsedRaw);
   return keys.some((key) => !collapsed.has(key));
+}
+
+/** Prefix of collapse keys for peer-project subgroups of the Unassigned section. */
+export const SUBGROUP_PREFIX = GROUP_KEY_PREFIX;
+/** Most remembered collapse keys; the oldest are evicted first. */
+export const MAX_COLLAPSED_KEYS = 500;
+
+/**
+ * Forget collapse keys of subgroups that no longer exist and bound the set. `liveIds` is the unfiltered
+ * set of foreign project ids still unmapped, or null when it cannot be trusted (loading, failed, capped,
+ * searching or filtering): then only the size bound applies. Other keys are never pruned. Returns the
+ * input unchanged when nothing needs to go.
+ */
+export function pruneCollapsed(raw: string, liveIds: ReadonlySet<string> | null): string {
+  const keys = parseCollapsed(raw);
+  let kept = [...keys].filter((key) => liveIds === null || !key.startsWith(SUBGROUP_PREFIX) || liveIds.has(key.slice(SUBGROUP_PREFIX.length)));
+  if (kept.length > MAX_COLLAPSED_KEYS) kept = kept.slice(kept.length - MAX_COLLAPSED_KEYS);
+  return kept.length === keys.size ? raw : JSON.stringify(kept);
 }
 
 const NEEDS_ALL_PROJECTS = 'Show All projects to';

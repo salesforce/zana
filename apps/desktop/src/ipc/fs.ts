@@ -183,9 +183,17 @@ export function registerFsIpc(): void {
     IPC.fs.walkFiles,
     async (p: string) => {
       const real = await trustedReadPath(p);
-      return real ? walkFiles(real) : [];
+      return real ? (await walkFiles(real)).files : [];
     },
     () => []
+  );
+  ctx.safeHandle(
+    IPC.fs.walkFilesWithStatus,
+    async (p: string) => {
+      const real = await trustedReadPath(p);
+      return real ? walkFiles(real) : { files: [], truncated: false };
+    },
+    () => ({ files: [], truncated: false })
   );
   ctx.safeHandle(
     IPC.fs.searchFiles,

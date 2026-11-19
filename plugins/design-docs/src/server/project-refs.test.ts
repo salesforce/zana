@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PluginDatabase } from '@zana-ai/zcc-plugin-sdk/server';
 import { createProjectNames } from './project-names.js';
-import { cleanLabel, DesignDocProjectRefs, MAX_TITLES } from './project-refs.js';
+import { cleanLabel, DesignDocProjectRefs, MAX_LABEL_CODE_POINTS, MAX_TITLES } from './project-refs.js';
 import { createRpcHandlers, UI_USER } from './rpc.js';
 import { DesignDocStore } from './store.js';
 import { DesignDocSyncStore } from './sync-store.js';
@@ -211,6 +211,63 @@ describe('mapping and scoping', () => {
     expect(cleanLabel('Bi‮g\u0007 Name\n')).toBe('Big Name');
   });
 
+  it('cleanLabel hardens hostile peer text and bounds length', () => {
+    expect(cleanLabel('A\u{e0041}\u{e007f}B')).toBe('AB'); // tag characters
+    expect(cleanLabel('A\ufe0fB\u{e0100}C')).toBe('ABC'); // variation selectors
+    expect(cleanLabel('\u3164\u2800 \u00ad\u061c\u180e\ufeff\u2028\u2029\u2060')).toBeNull(); // blank fillers
+    expect(cleanLabel('x\u2066y\u206fz')).toBe('xyz');
+    expect(cleanLabel('Z' + '\u0300'.repeat(40) + 'a')).toBe('Z\u0300\u0300\u0300a'); // zalgo run capped
+    expect(Array.from(cleanLabel('n'.repeat(10_000))!)).toHaveLength(80);
+    expect(cleanLabel(`${'😀'.repeat(79)}${'a'.repeat(5)}`)).toBe(`${'😀'.repeat(79)}a`);
+    expect(cleanLabel(`${'a'.repeat(79)} ${'b'.repeat(10)}`)).toBe('a'.repeat(79)); // trailing space after cut
+    expect(cleanLabel(null)).toBeNull();
+    expect(cleanLabel('   ')).toBeNull();
+  });
+
+  it('exposes foreignProjectId only on unassigned lists', () => {
+    const { db, store, received, refs } = setup();
+    received('Foreign A', 'f1');
+    received('Foreign B', 'f2');
+    received('Numeric', null);
+    const numeric = received('Not a string', 'x');
+    db.prepare('UPDATE sync_doc_references SET project_json = ? WHERE doc_id = ?').run('123', numeric.id);
+    const oversized = received('Oversized', 'y');
+    db.prepare('UPDATE sync_doc_references SET project_json = ? WHERE doc_id = ?').run(JSON.stringify('z'.repeat(600)), oversized.id);
+    store.create({ title: 'Own', projectId: 'p1', template: 'blank' }, UI_USER);
+    const byTitle = Object.fromEntries(store.list({ unassigned: true }).map((doc) => [doc.title, doc.foreignProjectId]));
+    expect(byTitle['Foreign A']).toBe('f1');
+    expect(byTitle['Foreign B']).toBe('f2');
+    expect(Object.keys(byTitle)).not.toContain('Received global');
+    expect(byTitle['Not a string']).toBeUndefined();
+    expect(byTitle['Oversized']).toBeUndefined();
+    expect('foreignProjectId' in store.list({ unassigned: true }).find((doc) => doc.title === 'Not a string')!).toBe(false);
+    for (const filter of [{}, { projectId: 'p1' }, { projectId: null }, { excludeUnassigned: true }]) {
+      expect(store.list(filter).every((doc) => !('foreignProjectId' in doc))).toBe(true);
+    }
+    expect(store.summary(store.list({ unassigned: true })[0]!.id)).not.toHaveProperty('foreignProjectId');
+    expect(refs.available).toBe(true);
+  });
+
+  it('resolves foreign ids for more than 500 unassigned docs', () => {
+    const { db, store, refs } = setup();
+    refs.observe(PROJECTS);
+    for (let i = 0; i < 520; i += 1) {
+      const doc = store.create({ title: `D${i}`, template: 'blank' }, UI_USER);
+      db.prepare('INSERT INTO sync_doc_references (doc_id, project_json, threads_json) VALUES (?, ?, ?)').run(doc.id, JSON.stringify(`f${i % 3}`), '[]');
+    }
+    const listed = store.list({ unassigned: true, limit: 200 });
+    expect(listed).toHaveLength(200);
+    expect(listed.every((doc) => /^f[012]$/.test(doc.foreignProjectId ?? ''))).toBe(true);
+  });
+
+  it('omits foreignProjectId when the alias tables are unavailable', () => {
+    const real = createTestDatabase();
+    const failing: PluginDatabase = { ...real, runScript: (sql) => { if (sql.includes('dd_project_refs')) throw new Error('readonly'); real.runScript(sql); } };
+    const { received, store } = setup(failing);
+    received('Foreign', 'f1');
+    expect(store.list({ unassigned: true })[0]).not.toHaveProperty('foreignProjectId');
+  });
+
   it('observe skips the write transaction when the list is unchanged', () => {
     const { db, refs } = setup();
     const spy = vi.spyOn(db, 'transaction');
@@ -359,6 +416,13 @@ describe('listForeignProjectTitles', () => {
     expect(unassigned[0]!.sampleTitles).toEqual(['Eviltxt.exe', 'Untitled']);
     await refs.mapForeignProject(list, 'f1', 'p1');
     expect(refs.listProjectMappings(PROJECTS)[0]!.sampleTitles).toEqual(['Eviltxt.exe', 'Untitled']);
+  });
+
+  it('keeps long doc titles up to the title limit while peer labels stay capped at 80', () => {
+    const { received, refs } = setup();
+    received('t'.repeat(120), 'f1');
+    expect(refs.listForeignProjectTitles('f1')).toEqual(['t'.repeat(120)]);
+    expect(Array.from(cleanLabel('n'.repeat(500))!)).toHaveLength(MAX_LABEL_CODE_POINTS);
   });
 
   it('throws on a DB error after tables looked available and re-probes afterwards', () => {

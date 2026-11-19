@@ -36,6 +36,8 @@ export interface PluginAppModule extends AppModule {
 interface PluginAppModulesState {
   modules: PluginAppModule[];
   runtimeLoadedIds: ReadonlySet<string>;
+  /** False until the first reconcile has finished; the module lists are empty-by-default before that. */
+  reconciled: boolean;
   setSnapshot: (modules: PluginAppModule[], runtimeLoadedIds: ReadonlySet<string>) => void;
 }
 
@@ -43,7 +45,8 @@ interface PluginAppModulesState {
 export const usePluginAppModules = create<PluginAppModulesState>((set) => ({
   modules: [],
   runtimeLoadedIds: new Set(),
-  setSnapshot: (modules, runtimeLoadedIds) => set({ modules, runtimeLoadedIds })
+  reconciled: false,
+  setSnapshot: (modules, runtimeLoadedIds) => set({ modules, runtimeLoadedIds, reconciled: true })
 }));
 
 interface PluginAppLoadOutcome {

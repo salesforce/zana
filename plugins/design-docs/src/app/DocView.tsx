@@ -3,7 +3,7 @@ import { passageContext } from '../shared/passage-context.js';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, FileWarning, History, MessageSquare, Bot, PanelLeftOpen, X } from 'lucide-react';
 import type { DesignDocComment, DesignDocDetail, DesignDocRevision } from '../shared/contract.js';
-import { AgentsPane, AskAgentButton, type AskRequest } from './Agents.js';
+import { activateDocAgent, AgentsPane, AskAgentButton, type AskRequest } from './Agents.js';
 import { PublishButton } from './Publish.js';
 import { isMissingDoc, toast } from './api.js';
 import type { DocKind } from './api.js';
@@ -181,7 +181,8 @@ export function DocView({
   contextProjectId = null,
   onDeleted,
   headerExtra,
-  kind = 'doc'
+  kind = 'doc',
+  openAgent = false
 }: {
   docId: string;
   path: string | null;
@@ -192,6 +193,8 @@ export function DocView({
   onDeleted(): void;
   headerExtra?: ReactNode;
   kind?: DocKind;
+  /** Opened from a pinned tab: show the doc's agent beside it once the doc has loaded. */
+  openAgent?: boolean;
 }) {
   const doc = useDoc(docId, kind === 'template' ? kind : undefined);
   const projects = useProjects();
@@ -247,6 +250,28 @@ export function DocView({
     });
     return () => publishPageContext?.(null);
   }, [publishPageContext, docId, data?.id, data?.title, activePath, kind, deletedElsewhere, doc.error]);
+  // Only a pinned doc has a tab to update; the host ignores anything else.
+  const reportPinned = contextNavigate.updatePinnedItem && contextNavigate.isPinned
+    ? (id: string, update: { title?: string; available?: boolean }) => {
+        if (contextNavigate.isPinned!(id)) contextNavigate.updatePinnedItem!(id, update);
+      }
+    : undefined;
+  const missing = deletedElsewhere || (!data && !!doc.error && isMissingDoc(doc.error));
+  // A pinned tab's page is not mounted while hidden, so tell the host here what this visit learned.
+  useEffect(() => {
+    if (kind !== 'doc' || !data || doc.error) return;
+    reportPinned?.(docId, { title: data.title.slice(0, 120), available: true });
+  }, [contextNavigate, kind, docId, data?.title, doc.error]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (kind === 'doc' && missing) reportPinned?.(docId, { available: false });
+  }, [contextNavigate, kind, docId, missing]); // eslint-disable-line react-hooks/exhaustive-deps
+  const agentOpenedFor = useRef<string | null>(null);
+  useEffect(() => {
+    // The page is reused across pinned docs, and `data` can still be the previous doc's while the next loads.
+    if (!openAgent || !data || data.id !== docId || doc.error || agentOpenedFor.current === docId) return;
+    agentOpenedFor.current = docId;
+    activateDocAgent(contextNavigate, data);
+  }, [openAgent, data, docId, doc.error, contextNavigate]);
   const latest = useRef({ onDeleted, title: data?.title ?? '' });
   latest.current = { onDeleted, title: data?.title ?? latest.current.title };
 
@@ -387,7 +412,10 @@ export function DocView({
         projects={projects.data ?? []}
         compact={compact}
         collapsible={narrow}
-        onDeleted={onDeleted}
+        onDeleted={() => {
+          if (kind === 'doc') reportPinned?.(docId, { available: false });
+          onDeleted();
+        }}
         onOpenHistory={() => { setTab('history'); setRailOpen(true); }}
         template={kind === 'template'}
         actions={

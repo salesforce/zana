@@ -1910,6 +1910,8 @@ export interface AppConfig {
   defaultHarness?: HarnessFamily;
   /** Explicit default for new threads, independent of the CLI-agent default. */
   defaultThreadProviderId?: string | null;
+  /** Shared default for new conversations and composers. Null preserves legacy defaults. */
+  defaultThreadPermissionMode?: 'accept-edits' | 'auto' | 'full' | null;
   /** Structured global model defaults, keyed by owning harness. */
   harnessRouting?: HarnessModelRoutingV1;
   /** User-declared provider models merged over live discovery (bounded and main-validated). */
@@ -3878,6 +3880,12 @@ export interface FsReadDataUrlResult {
 export interface WalkedFile {
   rel: string;
   path: string;
+}
+
+/** Result of a bounded project walk; `truncated` means a cap cut the listing short. */
+export interface WalkResult {
+  files: WalkedFile[];
+  truncated: boolean;
 }
 
 export interface SearchOptions {

@@ -114,7 +114,7 @@ export async function waitForPeerConnect(
   }
 }
 
-export type HostBootstrapStage = 'ssh' | 'tunnel' | 'install' | 'wait' | 'register' | 'connected';
+export type HostBootstrapStage = 'prepare' | 'ssh' | 'tunnel' | 'install' | 'wait' | 'register' | 'connected';
 
 export type HostBootstrapEvent =
   | { type: 'log'; text: string }
@@ -375,7 +375,7 @@ export function installStageReason(text: string): string | null {
 }
 
 const SSH_CLIENT_FAILURE_RE =
-  /^(?:ssh: .+|.*Permission denied \(.+|Host key verification failed\.?|.*Could not resolve hostname.+|kex_exchange_identification: .+)$/m;
+  /^(?:ssh: .+|.*Permission denied \(.+|Host key verification failed\.?|.*Could not resolve hostname.+|kex_exchange_identification: .+|Connection (?:closed by|to) UNKNOWN port 65535.*|.*failed to get authentication JWT:.*|.*failed to establish connection to proxy:.*)$/m;
 
 function sshFailureReason(text: string): string | null {
   return SSH_CLIENT_FAILURE_RE.exec(text)?.[0].trim() ?? null;

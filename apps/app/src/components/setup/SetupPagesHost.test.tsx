@@ -33,13 +33,14 @@ const h = vi.hoisted(() => ({
   props: {} as any
 }));
 vi.mock('../../store.js', () => ({
-  useData: Object.assign((fn: any) => fn({ projects: [] }), {
+  useData: Object.assign((fn: any) => fn({ projects: [], terminals: {}, terminalsLoaded: {} }), {
     getState: () => ({ addProjectByPath: h.add })
   }),
-  useUi: {
+  useUi: Object.assign((fn: any) => fn({ unread: {} }), {
     getState: () => ({ ...h.ui, pushToast: h.toast, selectProject: (id: string) => { h.ui.selectedProjectId = id; } }),
     setState: (patch: any) => { Object.assign(h.ui, patch); }
-  }
+  }),
+  useAgentStatus: (fn: any) => fn({ byId: {} })
 }));
 vi.mock('../../lib/product-client.js', () => ({
   product: {

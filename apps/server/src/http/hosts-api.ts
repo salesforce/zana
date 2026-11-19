@@ -14,6 +14,7 @@ import {
   updateHostPermissionCeilingRequestSchema
 } from '@zana-ai/zcc-server-contract';
 import {
+  findHostBySsh,
   destroyHost,
   getHost,
   renameHost,
@@ -27,8 +28,9 @@ import { listPublicHosts, parseHostUpdate, toPublicHost } from '../services/host
 import { forgetLeftover, listPeerLeftovers, listPeerLinks, pausePeerLink, peerLinkActivity, removePeerLink, removePeerLinkUse, repairPeerLink, resumePeerLink, type PeerLinkRemoval } from '../services/hosts/peer-link-view.js';
 import { relaunchLocalHostDaemon } from '../services/hosts/host-relaunch.js';
 import { HostUnavailableError } from './host-hub.js';
-import { bootstrapHostBySsh, bootstrapHostForProject, parseSshIdentity, reconcileRemoteProjectBindings, repairHost, type HostBootstrapEvent } from '../services/hosts/host-bootstrap.js';
+import { HostBootstrapError, bootstrapHostBySsh, bootstrapHostForProject, parseSshIdentity, sshRemoteFromProject, reconcileRemoteProjectBindings, repairHost, type HostBootstrapEvent } from '../services/hosts/host-bootstrap.js';
 import { closeTunnelHost } from '../services/hosts/tunnel-hosts.js';
+import { prepareSshConnection } from './ssh-connection-preparation.js';
 import { issueConnectHostCode, revokeConnectHost, usesConnect, connectInstallCommand } from '../services/hosts/connect-enrollment.js';
 
 function routeParams(pathname: string, pattern: string): Record<string, string> | null {
@@ -253,12 +255,19 @@ export async function handleHostsApi(
     const stream = beginNdjson(response);
     try {
       const write = (event: HostBootstrapEvent) => stream.write(event);
+      const input = parsed.data;
+      const project = 'projectId' in input ? ctx.projects.list().find(row => row.id === input.projectId) : undefined;
+      const projectRemote = project ? sshRemoteFromProject(project) : null;
+      const remote = 'ssh' in input ? parseSshIdentity(input.ssh) : projectRemote ? parseSshIdentity(projectRemote) : null;
+      const existing = remote ? findHostBySsh(ctx.db, remote) : null;
+      const connected = existing && !existing.isPrimary && ctx.hostHub.connectedHostIds().includes(existing.id);
+      if (remote && !connected && !(await prepareSshConnection(ctx, response, remote, write))) return true;
       if ('ssh' in parsed.data) await bootstrapHostBySsh(ctx, parsed.data.ssh, write);
       else await bootstrapHostForProject(ctx, parsed.data.projectId, write);
     } catch (error) {
       stream.write({
         type: 'error',
-        code: 'unknown',
+        code: error instanceof HostBootstrapError ? error.code : 'unknown',
         message: error instanceof Error ? error.message : 'Host install failed'
       });
     } finally {
@@ -299,6 +308,8 @@ export async function handleHostsApi(
     }
     const stream = beginNdjson(response);
     try {
+      if (host.sshHost && !host.isPrimary && !(await prepareSshConnection(ctx, response,
+        parseSshIdentity({ host: host.sshHost, user: host.sshUser, proxyJump: host.sshProxyJump }), event => stream.write(event)))) return true;
       await repairHost(ctx, host.id, (event) => stream.write(event));
     } catch (error) {
       stream.write({

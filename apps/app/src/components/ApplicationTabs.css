@@ -36,6 +36,9 @@
 .titlebar-thread-close { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 18px; height: 20px; border: 0; background: none; color: var(--text-dim); border-radius: 4px; display: flex; align-items: center; justify-content: center; padding: 0; opacity: 0; cursor: pointer; }
 .titlebar-thread:hover .titlebar-thread-close, .titlebar-thread:focus-within .titlebar-thread-close, .titlebar-thread.is-active .titlebar-thread-close { opacity: 1; }
 .titlebar-thread-close:hover { color: var(--text-primary); background: var(--bg-hover); }
+.titlebar-thread.is-dimmed > button[role='tab'] { opacity: .55; }
+.titlebar-thread.is-dimmed .titlebar-thread-name { font-style: italic; }
+.titlebar-thread.is-dimmed .titlebar-thread-close { opacity: 1; }
 .titlebar-thread-close:disabled { opacity: .4; cursor: default; }
 .titlebar-tabs-empty-results { padding: 8px; font-size: 12px; color: var(--text-muted); }
 .titlebar-threads-action { display: flex; align-items: center; justify-content: center; flex: 0 0 25px; width: 25px; height: 26px; border: 0; border-radius: 5px; padding: 0; background: transparent; color: var(--text-muted); cursor: pointer; }

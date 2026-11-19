@@ -698,6 +698,12 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (isSelectableHarness(input.defaultHarness)) normalized.defaultHarness = input.defaultHarness;
   const threadDefault = normalizeThreadProviderDefault(input.defaultThreadProviderId);
   if (threadDefault !== undefined) normalized.defaultThreadProviderId = threadDefault;
+  if (input.defaultThreadPermissionMode === null
+    || input.defaultThreadPermissionMode === 'accept-edits'
+    || input.defaultThreadPermissionMode === 'auto'
+    || input.defaultThreadPermissionMode === 'full') {
+    normalized.defaultThreadPermissionMode = input.defaultThreadPermissionMode;
+  }
   if (input.theme === 'dark' || input.theme === 'light' || input.theme === 'system') {
     normalized.theme = input.theme;
   }

@@ -1672,6 +1672,7 @@ export interface PluginStatusApi {
  * against.
  */
 export interface ZccPluginApi {
+  readonly sshConnections: import('./ssh-connections.js').PluginSshConnections;
   /** The plugin's own id (namespaces storage, routes, commands). */
   readonly pluginId: string;
   /** Leveled, plugin-scoped logger. */

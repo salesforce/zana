@@ -130,8 +130,12 @@ describe('UnassignedProjectsDialog', () => {
     expect(loads).toEqual([]);
     const toggle = screen.getByRole('button', { name: 'Show docs' });
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    // Affordance: chevron plus a visual-only count, so the accessible name stays "Show docs".
+    expect(toggle.querySelector('svg')).toBeTruthy();
+    expect(toggle.querySelector('.dd-map-link-count')?.textContent).toBe('(340)');
     fireEvent.click(toggle);
     const list = await screen.findByRole('list', { name: 'Doc titles' });
+    expect(screen.getByRole('button', { name: 'Hide docs' }).querySelector('.dd-map-link-count')).toBeNull();
     expect(within(list).getAllByRole('listitem')).toHaveLength(201);
     expect(within(list).getByText('and 140 more')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Hide docs' }).getAttribute('aria-expanded')).toBe('true');
@@ -399,7 +403,7 @@ describe('Already mapped', () => {
 
 describe('Workbench unassigned bucket', () => {
   it('lists unassigned docs in their own group, shows removed names, and opens the mapping dialog', async () => {
-    const doc = (id: string, title: string, projectId: string | null) => ({ id, title, summary: '', tags: [], status: 'draft', projectId, openComments: 0, pinnedAt: null, alternativeTo: null, lastComment: null, updatedAt: Date.now(), createdAt: Date.now(), updatedBy: { kind: 'user', label: 'me' } });
+    const doc = (id: string, title: string, projectId: string | null) => ({ id, title, summary: '', tags: [], status: 'draft', projectId, openComments: 0, pinnedAt: null, alternativeTo: null, lastComment: null, updatedAt: Date.now(), createdAt: Date.now(), updatedBy: { kind: 'user', label: 'me' }, ...(projectId === null ? { foreignProjectId: 'far-1' } : {}) });
     const calls: unknown[] = [];
     const { harness } = setup(async () => ({}), {
       list: (args) => (calls.push(args), (args as { unassigned?: boolean } | null)?.unassigned ? [doc('u1', 'Peer doc', null)] : [doc('d1', 'Gone doc', 'gone')]),

@@ -6,8 +6,8 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 const state = vi.hoisted(() => ({ focusedProjectId: null as string | null, scopedProjectId: null as string | null }));
 vi.mock('../../store', () => ({
   useUi: (selector: (s: unknown) => unknown) => selector({
-    focusedProjectId: state.focusedProjectId, sidebarCollapsed: true,
-    toggleSidebar: vi.fn(), setPaletteOpen: vi.fn()
+    focusedProjectId: state.focusedProjectId, sidebarMode: 'hidden', setSidebarMode: vi.fn(),
+    cycleSidebarMode: vi.fn(), setPaletteOpen: vi.fn()
   })
 }));
 vi.mock('../../lib/windowScope', () => ({ getScopedProjectId: () => state.scopedProjectId }));

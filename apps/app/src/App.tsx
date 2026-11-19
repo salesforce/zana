@@ -1,5 +1,6 @@
 import { SetupPagesHost } from './components/setup/SetupPagesHost.js';
 import { SETUP_ROUTE_PATH, useSetupPages } from './components/setup/setup-pages.js';
+import { useApplicationTabs } from './lib/application-tabs.js';
 import {
   recoverModelCatalogsAfterWake,
   recoverStaleModelCatalogs,
@@ -46,7 +47,7 @@ import { QuickOpen } from './components/QuickOpen.js';
 import { ResumePicker } from './components/ResumePicker.js';
 import { SearchPanel } from './components/SearchPanel.js';
 import { ShortcutsHelp } from './components/ShortcutsHelp.js';
-import { AgentTerminalModal } from './components/AgentTerminalModal.js';
+import { AgentModalHost } from './components/AgentModalHost.js';
 import { ThreadModal } from './components/ThreadModal.js';
 import { SessionMoveDialog } from './components/SessionMoveDialog.js';
 import { FavoriteAgentsDrawer } from './components/FavoriteAgentsDrawer.js';
@@ -80,7 +81,6 @@ import {
   useData,
   useUi,
   usePersonas,
-  useAgentStatus,
   useUnreadInboxCount,
   useInbox,
   useInboxRead,
@@ -89,6 +89,7 @@ import {
   isUpdateBannerVisible,
   visibleTerminals,
   installInboxCrossWindowSync,
+  installSidebarCollapseBehaviorSync,
   useFavoriteAgents,
   mergeFavoritesFromMain,
   ptyFavoriteKeys,
@@ -98,6 +99,7 @@ import { useFavoriteCount } from './hooks/useAgentCards.js';
 import { useCompactLayout } from './hooks/useCompactLayout.js';
 import { useIsCompactViewport } from './hooks/useIsCompactViewport.js';
 import { focusInboxEntry } from './lib/inboxNavigation.js';
+import { resolveSidebarShellState } from './lib/sidebar-shell-state.js';
 import { projectDefaultLaunch } from './lib/launchProfile.js';
 import { getScopedProjectId, isScopedWindow } from './lib/windowScope.js';
 import { ShellTitlebarTitle } from './components/TitlebarProjectButton.js';
@@ -151,7 +153,6 @@ import {
   TOOLS_PLUGINS_ROUTE_PATH,
   TOOLS_ROUTE_PATH,
   TOOLS_SKILLS_ROUTE_PATH,
-  getAgentSessionRoutePath,
   getProjectSettingsRoutePath,
   getThreadRoutePath
 } from './lib/route-paths.js';
@@ -249,6 +250,7 @@ export function App() {
 
 function AppShell() {
   const hasSetupPages = useSetupPages(s => s.pages.length > 0);
+  const hasPluginTabs = useApplicationTabs(s => s.open.some(tab => tab.kind === 'plugin' && (!getScopedProjectId() || tab.projectId === getScopedProjectId())));
   const onboardingActive = useOnboarding(s => !s.loaded || s.open);
   const threadTabsEnabled = useData((s) => s.threadTabsEnabled);
   useRouteSync();
@@ -261,11 +263,11 @@ function AppShell() {
   navigateRef.current = navigate;
   const splitWorkspaceShowing = isSplitWorkspacePath(location.pathname);
   const nav = route.nav;
-  const desktopSidebarCollapsed = useUi((s) => s.sidebarCollapsed);
+  const sidebarMode = useUi((s) => s.sidebarMode);
   const mobileNavigation = useMobileNavigation();
   const sidebarCollapsed = mobileNavigation.isCompact
     ? !mobileNavigation.drawerOpen
-    : desktopSidebarCollapsed;
+    : sidebarMode === 'hidden';
   const storeFocusedProjectId = useUi((s) => s.focusedProjectId);
   // URL project wins; the store keeps sticky focus for Inbox / Next Steps /
   // Settings so the project rail stays while those destinations have no
@@ -480,6 +482,7 @@ function AppShell() {
     // this re-hydrates them when another window writes (e.g. a per-project
     // window marks an entry read, the main window reflects it immediately).
     const offInboxSync = installInboxCrossWindowSync();
+    const offCollapseBehaviorSync = installSidebarCollapseBehaviorSync();
     const offData = product.terminals.onData((id) => {
       const ui = useUi.getState();
       const data = useData.getState();
@@ -655,6 +658,7 @@ function AppShell() {
       offFocusInboxEntry();
       offDeepLinks();
       offInboxSync();
+      offCollapseBehaviorSync();
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
       offWake();
@@ -777,9 +781,17 @@ function AppShell() {
     ? (nav === 'extensions' ? (({ skills: 'Skills', mcp: 'MCP servers', marketplace: 'Browse plugins' } as Record<string, string>)[route.extensionsTab ?? ''] ?? 'Plugins') : mobileTitles[nav] ?? modules.find((module) => module.id === nav)?.title ?? desktopTitle)
     : desktopTitle;
 
+  // Settings / Plugins show rail expanded; compact never gets rail (see helper).
+  const { effectiveMode, railVariant, railClass, overlayCollapsed } = resolveSidebarShellState({
+    isCompact: mobileNavigation.isCompact,
+    sidebarMode,
+    shellRail: shellLayout.rail,
+    sidebarCollapsed
+  });
+
   return (
     <div
-      className={`app-shell nav-${nav} shell-rail-${shellLayout.rail} ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''} scoped-no-list ${
+      className={`app-shell nav-${nav} shell-rail-${shellLayout.rail} ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''} ${railClass} scoped-no-list ${
         updateBannerVisible ? 'has-update-banner' : ''
       }${!mobileNavigation.isCompact ? ' shell-inset' : ''}`}
       data-mobile={mobileNavigation.isCompact}
@@ -792,7 +804,7 @@ function AppShell() {
         {mobileNavigation.isCompact && <MobileSettingsBack hidden={mobileNavigation.drawerOpen} />}
         {/* Keep portal targets mounted while independent viewport subscribers update. */}
         <div id={MOBILE_THREAD_TITLE_ID} className="mobile-thread-title-slot" />
-        {(threadTabsEnabled || hasSetupPages) && !mobileNavigation.isCompact ? <ApplicationTabs includeThreads={threadTabsEnabled} project={titlebarProject} /> : (
+        {(threadTabsEnabled || hasSetupPages || hasPluginTabs) && !mobileNavigation.isCompact ? <ApplicationTabs includeThreads={threadTabsEnabled} project={titlebarProject} /> : (
           <ShellTitlebarTitle
             project={titlebarProject}
             label={titlebarLabel}
@@ -873,18 +885,19 @@ function AppShell() {
         projectId={scopedProject?.id}
       >
       {sidebarCollapsed ? null : scopedProject ? (
-        <ProjectScopedNav project={scopedProject} variant="window" />
+        <ProjectScopedNav project={scopedProject} variant="window" railVariant={railVariant} />
       ) : focusedProject && keepsProjectFocusRail(nav, focusedProjectId) ? (
         <ProjectScopedNav
           project={focusedProject}
           variant="focus"
+          railVariant={railVariant}
         />
       ) : shellLayout.rail === 'settings' ? (
         <SettingsPane />
       ) : shellLayout.rail === 'extensions' ? (
         <ExtensionsPane />
       ) : (
-        <Sidebar />
+        <Sidebar railVariant={railVariant} />
       )}
       </MobileAgentNavigation>
       </MobileNavDrawer>
@@ -912,7 +925,10 @@ function AppShell() {
         />
       )}
       <SidebarTriggerOverlay
-        collapsed={sidebarCollapsed}
+        collapsed={overlayCollapsed}
+        // Display the mode actually rendered (Settings/Plugins show rail expanded);
+        // the click still cycles from the stored mode.
+        mode={effectiveMode}
         onToggle={mobileNavigation.isCompact
           ? () => mobileNavigation.setDrawerOpen(!mobileNavigation.drawerOpen)
           : undefined}
@@ -1009,46 +1025,6 @@ function ShortcutsHelpHost() {
   const close = () => useUi.getState().setShortcutsOpen(false);
   if (!open) return null;
   return <ShortcutsHelp onClose={close} ctrlVPasteEnabled={ctrlVPasteEnabled} />;
-}
-
-function AgentModalHost() {
-  const classicSessionViewEnabled = useData((s) => s.classicSessionViewEnabled);
-  const fullPageView = useCompactLayout() || classicSessionViewEnabled;
-  const agentModal = useUi((s) => s.agentModal);
-  const projects = useData((s) => s.projects);
-  const terminals = useData((s) => s.terminals);
-  const navigate = useNavigate();
-  const state = useAgentStatus((s) => (agentModal ? s.byId[agentModal.sessionId] : undefined));
-  const close = () => useUi.getState().closeAgentModal();
-  useEffect(() => {
-    if (!fullPageView || !agentModal) return;
-    navigate(
-      getAgentSessionRoutePath(
-        agentModal.sessionId,
-        inspectRouteProjectId(agentModal.projectId)
-      )
-    );
-    useUi.getState().closeAgentModal();
-  }, [fullPageView, agentModal, navigate]);
-  if (fullPageView || !agentModal) return null;
-  const session = (terminals[agentModal.projectId] ?? []).find(
-    (t) => t.id === agentModal.sessionId
-  );
-  // The session can vanish while the modal is open (process terminated and the
-  // tombstone dismissed). Drop the modal rather than render an empty shell.
-  if (!session) return null;
-  const project = projects.find((p) => p.id === agentModal.projectId);
-  return (
-    <AgentTerminalModal
-      session={session}
-      projectId={agentModal.projectId}
-      projectName={project?.name ?? 'Unknown'}
-      projectColor={project?.color}
-      projectRemote={!!project?.remote}
-      state={state ?? 'unknown'}
-      onClose={close}
-    />
-  );
 }
 
 function ThreadModalHost() {

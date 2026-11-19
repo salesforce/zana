@@ -6,6 +6,7 @@
 import { act, cleanup, configure, render, type RenderResult } from '@testing-library/react';
 import { createElement, useEffect, useRef, type ReactElement } from 'react';
 import { afterEach, beforeEach, vi } from 'vitest';
+import type { ZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { installTestPluginRuntime, type NavigateCall, type RpcCall } from '@zana-ai/zcc-plugin-sdk/testing/app';
 import { RenderReports } from '../server/render-reports.js';
 import { createRpcHandlers } from '../server/rpc.js';
@@ -46,6 +47,8 @@ export interface HarnessOptions {
   /** Whether the page has a side panel for agents (`navigate.openPanelAgent`). */
   panelAgent?: boolean;
   contextReferences?: boolean;
+  /** Whether `navigate.pinTab` accepts a pin (the host refuses without a user gesture or room). Defaults to true. */
+  pinTab?: boolean;
   context?: { projectId?: string | null; threadId?: string | null };
   /** Serve standalone pages at this URL (`pageLink`); unset, the RPC refuses. */
   pageUrl?(docId: string, path: string): string;
@@ -89,6 +92,8 @@ export interface Harness {
   hostProjects: { status?: 'loading' | 'ready'; projects?: Array<{ id: string; name: string; icon?: string; color?: string; quickAgent?: boolean }> };
   render(element: ReactElement): RenderResult;
   call(method: string, args?: unknown): Promise<unknown>;
+  /** The host's navigate API, for acting outside the page (closing a pinned tab with its ×). */
+  hostNavigate(): ZccNavigate;
   /** Deliver a deep link to the handlers the app registered with `deepLinks.on(route, …)`. */
   emitDeepLink(route: string, payload?: string | null): void;
 }
@@ -143,7 +148,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
 
   Object.assign(rpc, options.rpcOverrides);
   const hostProjects = options.hostProjects ?? { status: 'ready' as const, projects };
-  const installed = installTestPluginRuntime({ projects: hostProjects as never, onOpenProjectAppearanceMenu: options.onOpenProjectAppearanceMenu, rpc, deepLinkBase: options.deepLinkBase, context: options.context ?? {}, panelAgent: options.panelAgent });
+  const installed = installTestPluginRuntime({ projects: hostProjects as never, onOpenProjectAppearanceMenu: options.onOpenProjectAppearanceMenu, rpc, deepLinkBase: options.deepLinkBase, context: options.context ?? {}, panelAgent: options.panelAgent, pinTab: options.pinTab });
   const runtime = (globalThis as { __ZCC_PLUGIN_RUNTIME__?: Record<string, unknown> }).__ZCC_PLUGIN_RUNTIME__!;
   if (options.contextReferences) {
     const navigate = (runtime.useZccNavigate as () => Record<string, unknown>)();
@@ -208,6 +213,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     },
     render: (element) => render(element),
     call: (method, args) => rpc[method]!(args ?? null) as Promise<unknown>,
+    hostNavigate: () => (runtime.useZccNavigate as () => ZccNavigate)(),
     emitDeepLink: (route, payload) => act(() => installed.emitDeepLink(route, payload))
   };
 }

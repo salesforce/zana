@@ -1,11 +1,13 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { Archive, ArchiveRestore, Copy, Download, FolderInput, FolderOpen, GitFork, Hash, Link2, Pencil, Pin, PinOff, Trash2 } from 'lucide-react';
+import { useContext, useEffect, useState, type ReactNode } from 'react';
+import { useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
+import { Archive, ArchiveRestore, Copy, Download, FolderInput, FolderOpen, GitFork, Hash, Link2, PanelTop, PanelTopClose, Pencil, Pin, PinOff, Trash2 } from 'lucide-react';
 import { designDocDirective, type DesignDocSummary } from '../shared/contract.js';
 import { crossDocMarkdownLink } from '../shared/paths.js';
 import { copyText } from './clipboard.js';
 import { errorMessage, toast, useApi, type DocKind, type ProjectInfo, type UpdateArgs } from './api.js';
 import { saveBytes, siteZip } from './download.js';
 import { useDocs, useUnassignedProjects } from './hooks.js';
+import { PinnableContext, usePinnedChanges } from './pin.js';
 import { UnassignedProjectsDialog } from './UnassignedProjects.js';
 import { ConfirmDialog, Dialog, MenuItem, Spinner, type ConfirmRequest } from './ui.js';
 
@@ -250,6 +252,9 @@ export function useDocActions(projects: ProjectInfo[]): {
   dialogs: ReactNode;
 } {
   const api = useApi();
+  const navigate = useZccNavigate();
+  const pinnable = useContext(PinnableContext) && !!navigate.pinTab;
+  usePinnedChanges();
   const [moving, setMoving] = useState<DesignDocSummary | null>(null);
   const [linking, setLinking] = useState<DesignDocSummary | null>(null);
   const [mapping, setMapping] = useState(false);
@@ -297,6 +302,13 @@ export function useDocActions(projects: ProjectInfo[]): {
         ) : (
           <MenuItem icon={Pin} label="Pin to top" onSelect={run(() => void pin(doc, true))} />
         )}
+        {pinnable ? (
+          navigate.isPinned?.(doc.id) ? (
+            <MenuItem icon={PanelTopClose} label="Remove from tab bar" onSelect={run(() => navigate.unpinTab?.(doc.id))} />
+          ) : (
+            <MenuItem icon={PanelTop} label="Add to tab bar" onSelect={run(() => void navigate.pinTab?.({ itemKey: doc.id, title: doc.title, ...(doc.projectId ? { projectId: doc.projectId } : {}) }))} />
+          )
+        ) : null}
         <MenuDivider />
         <MenuItem icon={Copy} label="Copy chat reference" hint="Paste into any thread" onSelect={run(() => void copy(designDocDirective(doc.id), 'reference'))} />
         <MenuItem icon={Link2} label="Copy doc link" hint="Paste into another doc" onSelect={run(() => void copy(crossDocMarkdownLink(doc), 'doc link'))} />

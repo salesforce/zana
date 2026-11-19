@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * Every return path (Ctrl/Cmd+I, Ctrl/Cmd+, and the Back links) checks that
+ * Every return path (Ctrl/Cmd+I, Ctrl/Cmd+J, Ctrl/Cmd+, and the Back links) checks that
  * the remembered thread or session still exists. Driven through the real
  * keydown handler, store, thread store and router sync. A removed thread or
  * session falls back to its project's home, or Home outside a project.
@@ -216,6 +216,51 @@ describe('Ctrl+I from the Inbox skips a removed thread or session', () => {
     removeThread['archived here']('thread-2');
 
     press('i');
+    expect(currentPath).toBe('/threads/thread-1');
+  });
+});
+
+describe('Ctrl+J from the Scheduler skips a removed thread or session', () => {
+  for (const [how, remove] of Object.entries(removeThread)) {
+    it(`goes Home when the thread it came from was ${how}`, () => {
+      mountAt('/threads/thread-1');
+      press('j');
+      expect(currentPath).toBe('/scheduler');
+      remove('thread-1');
+
+      press('j');
+      expect(currentPath).toBe('/');
+      expect(useUi.getState().nav).toBe('home');
+    });
+  }
+
+  it("goes to the project's home when a project thread was archived", () => {
+    mountAt(`/projects/${PROJECT_ID}/threads/thread-1`);
+    press('j');
+    expect(currentPath).toBe('/scheduler');
+    removeThread['archived here']('thread-1');
+
+    press('j');
+    expect(currentPath).toBe(`/projects/${PROJECT_ID}`);
+    expect(useUi.getState().focusedProjectId).toBe(PROJECT_ID);
+  });
+
+  it("goes to the project's home when the session it came from was closed", async () => {
+    mountAt(`/projects/${PROJECT_ID}/sessions/sess-1`);
+    press('j');
+    expect(currentPath).toBe('/scheduler');
+    await removeSession.closed('sess-1');
+
+    press('j');
+    expect(currentPath).toBe(`/projects/${PROJECT_ID}`);
+  });
+
+  it('still returns to a live thread when another one was archived', () => {
+    mountAt('/threads/thread-1');
+    press('j');
+    removeThread['archived here']('thread-2');
+
+    press('j');
     expect(currentPath).toBe('/threads/thread-1');
   });
 });

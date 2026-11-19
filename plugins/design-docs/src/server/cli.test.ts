@@ -56,6 +56,21 @@ describe('parseArgs', () => {
 });
 
 describe('zcc design-docs', () => {
+  it('list --json never carries the foreign project grouping key', async () => {
+    const db = createTestDatabase();
+    const store = new DesignDocStore(db);
+    const actor = { kind: 'user' as const, label: 'CLI', threadId: null };
+    const deps: CliDeps = { store, changed: vi.fn(), caller: async () => ({ actor, projectId: null, files: REPO }) };
+    const doc = store.create({ title: 'Peer doc', template: 'blank' }, actor);
+    db.prepare('INSERT INTO sync_doc_references (doc_id, project_json, threads_json) VALUES (?, ?, ?)').run(doc.id, JSON.stringify('secret-foreign-id'), '[]');
+    expect(store.list({ unassigned: true })[0]?.foreignProjectId).toBe('secret-foreign-id');
+    for (const argv of [['list', '--json'], ['list', '--all-projects'], ['show', doc.id, '--json']]) {
+      const out = await runCli(deps, argv, { pluginId: 'design-docs', argv, projectId: null } as PluginCliContext);
+      expect(out.stdout).not.toContain('secret-foreign-id');
+      expect(out.stdout).not.toContain('foreignProjectId');
+    }
+  });
+
   it('reports template command input and capability failures', async () => {
     const store = new DesignDocStore(createTestDatabase());
     const actor = { kind: 'user' as const, label: 'CLI', threadId: null };

@@ -601,6 +601,7 @@ export function LegacyAgentHomeComposer({
     && resolvedProjectId === projectId
     && !launching
     && remoteHarnessReady
+    && !permissionSelectionError
   );
 
   const launch = async () => {
@@ -777,6 +778,7 @@ export function LegacyAgentHomeComposer({
       {error ? (
         <p className="thread-command-error" data-testid="legacy-agent-command-error">{error}</p>
       ) : null}
+      {permissionSelectionError && !error ? <p className="thread-command-error" role="status">{permissionSelectionError}</p> : null}
       {selectionState === 'unavailable' && selectionMessage ? (
         <p className="thread-command-error" role="status">{selectionMessage}</p>
       ) : null}
@@ -973,7 +975,7 @@ export function LegacyAgentHomeComposer({
           </button>
         </div>
         <div className="thread-command-composer-meta-end">
-          {permissionOptions.length > 1 && (
+          {(permissionOptions.length > 1 || (permissionOptions.length > 0 && permissionSelectionError)) && (
             <PopoverPicklist
               value={permissionMode}
               options={permissionOptions.map((row) => ({

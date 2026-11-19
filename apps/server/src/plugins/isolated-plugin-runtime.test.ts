@@ -48,6 +48,28 @@ it('bounds synchronous factory and top-level import CPU work without blocking th
     await expect(f.runtime.started).rejects.toThrow('timed out'); expect(ticks).toBeGreaterThan(10); expect(f.failure).toHaveBeenCalledOnce();
   } finally { clearInterval(timer); }
 });
+
+it('registers SSH preparation across the real worker bridge and propagates cancellation', async () => {
+  const f = await fixture(`export default async api => {
+    await api.sshConnections.register({
+      owns: async (remote, signal) => { signal.throwIfAborted(); return remote.host === 'managed'; },
+      prepare: async (_remote, signal) => new Promise(resolve => {
+        const cancelled = async () => { await api.storage.kv.set('ssh-cancelled', true); resolve({ status: 'blocked', message: 'Cancelled' }); };
+        if (signal.aborted) void cancelled(); else signal.addEventListener('abort', cancelled, { once: true });
+      })
+    });
+  }`);
+  await f.runtime.started; const provider = f.handle.sshConnection.provider!;
+  const controller = new AbortController();
+  expect(await provider.owns({ host: 'managed' }, controller.signal)).toBe(true);
+  expect(await provider.owns({ host: 'personal' }, controller.signal)).toBe(false);
+  const pending = provider.prepare({ host: 'managed' }, controller.signal);
+  const assertion = expect(pending).rejects.toThrow();
+  controller.abort();
+  await assertion;
+  await vi.waitFor(async () => expect(await f.handle.api.storage.kv.get('ssh-cancelled')).toBe(true));
+  await f.handle.dispose(); expect(f.handle.sshConnection.lifetime.aborted).toBe(true);
+});
 it('terminates a callback that blocks after await and rejects its pending request', async () => {
   const f = await fixture(`export default api => api.rpc.method('busy', async () => { await new Promise(r => setTimeout(r, 10)); while (true) {} });`, { heartbeatTimeoutMs: 400 });
   await f.runtime.started; let ticks = 0; const timer = setInterval(() => ticks++, 10);

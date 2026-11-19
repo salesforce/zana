@@ -35,16 +35,16 @@ describe('asynchronous project scans', () => {
     file('src/a.ts'); file('node_modules/hidden.ts'); file('.git/hidden');
     let ticked = false;
     const tick = new Promise<void>((resolve) => setImmediate(() => { ticked = true; resolve(); }));
-    const files = await walkFiles(root);
+    const { files } = await walkFiles(root);
     expect(ticked).toBe(true);
     expect(files).toEqual([{ rel: 'src/a.ts', path: join(root, 'src/a.ts') }]);
     await tick;
   });
 
   it('returns an empty list for missing and unreadable roots', async () => {
-    expect(await walkFiles(join(root, 'missing'))).toEqual([]);
+    expect(await walkFiles(join(root, 'missing'))).toEqual({ files: [], truncated: false });
     vi.mocked(opendir).mockRejectedValueOnce(new Error('denied'));
-    expect(await walkFiles(root)).toEqual([]);
+    expect((await walkFiles(root)).files).toEqual([]);
   });
 
   it('deduplicates symlink cycles and rejects external and broken links', async () => {
@@ -55,7 +55,7 @@ describe('asynchronous project scans', () => {
     symlinkSync(join(root, 'missing'), join(root, 'broken'));
     symlinkSync(join(root, 'src/a.ts'), join(root, 'linked.ts'));
     symlinkSync(join(tmpdir(), 'external-secret'), join(root, 'external-file'));
-    const files = await walkFiles(root);
+    const { files } = await walkFiles(root);
     expect(files).toHaveLength(2);
     expect(files.some((f) => f.rel === 'linked.ts')).toBe(true);
     expect(files.some((f) => /outside|loop|broken|external-file/.test(f.rel))).toBe(false);
@@ -63,11 +63,11 @@ describe('asynchronous project scans', () => {
 
   it('limits file count and directory depth', async () => {
     for (let i = 0; i < 8001; i++) file(`flat/${i}.ts`);
-    expect(await walkFiles(root)).toHaveLength(8000);
+    expect((await walkFiles(root)).files).toHaveLength(8000);
     rmSync(join(root, 'flat'), { recursive: true });
     file(`${Array(12).fill('dir').join('/')}/kept.ts`);
     file(`${Array(13).fill('dir').join('/')}/deep.ts`);
-    expect((await walkFiles(root)).map((f) => f.rel)).toEqual([`${Array(12).fill('dir').join('/')}/kept.ts`]);
+    expect((await walkFiles(root)).files.map((f) => f.rel)).toEqual([`${Array(12).fill('dir').join('/')}/kept.ts`]);
   });
 
   it('bounds examined entries even when none are returned', async () => {
@@ -80,7 +80,7 @@ describe('asynchronous project scans', () => {
         }
       }
     } as unknown as Awaited<ReturnType<typeof opendir>>);
-    expect(await walkFiles(root)).toEqual([]);
+    expect((await walkFiles(root)).files).toEqual([]);
     expect(examined).toBe(32_001);
   });
 

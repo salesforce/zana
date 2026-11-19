@@ -183,6 +183,47 @@ it('always applies the inset workspace design on desktop and retains compact chr
   }
 });
 
+it('keeps the tab strip for a plugin tab while thread tabs are disabled, and drops it with the last plugin tab', async () => {
+  fixtures.compact = false;
+  const { useApplicationTabs } = await import('./lib/application-tabs.js');
+  const original = useApplicationTabs.getState();
+  store.useData.setState({ threadTabsEnabled: false });
+  const view = render(<MemoryRouter><App /></MemoryRouter>);
+  try {
+    expect(screen.queryByTestId('thread-tabs-shell')).toBeNull();
+    act(() => useApplicationTabs.setState({ open: [{ kind: 'plugin', pluginId: 'test-plugin', pageId: 'docs', itemKey: 'one', title: 'One', projectId: 'p' }] }));
+    expect(screen.getByTestId('thread-tabs-shell')).toBeTruthy();
+    act(() => useApplicationTabs.setState({ open: [] }));
+    expect(screen.queryByTestId('thread-tabs-shell')).toBeNull();
+  } finally {
+    view.unmount();
+    useApplicationTabs.setState({ open: original.open });
+    store.useData.setState({ threadTabsEnabled: true });
+  }
+});
+
+it('in a project-scoped window, only that project\'s plugin tabs keep the tab strip', async () => {
+  fixtures.compact = false;
+  const { useApplicationTabs } = await import('./lib/application-tabs.js');
+  const scope = await import('./lib/windowScope.js');
+  const spy = vi.spyOn(scope, 'getScopedProjectId').mockReturnValue('p');
+  const original = useApplicationTabs.getState();
+  store.useData.setState({ threadTabsEnabled: false });
+  const tab = (projectId: string) => ({ kind: 'plugin' as const, pluginId: 'test-plugin', pageId: 'docs', itemKey: 'one', title: 'One', projectId });
+  const view = render(<MemoryRouter><App /></MemoryRouter>);
+  try {
+    act(() => useApplicationTabs.setState({ open: [tab('other')] }));
+    expect(screen.queryByTestId('thread-tabs-shell')).toBeNull();
+    act(() => useApplicationTabs.setState({ open: [tab('other'), tab('p')] }));
+    expect(screen.getByTestId('thread-tabs-shell')).toBeTruthy();
+  } finally {
+    view.unmount();
+    spy.mockRestore();
+    useApplicationTabs.setState({ open: original.open });
+    store.useData.setState({ threadTabsEnabled: true });
+  }
+});
+
 it('promotes an existing thread inspector when thread tabs are enabled', async () => {
   fixtures.compact = false;
   const original = store.useUi.getState();
@@ -351,4 +392,61 @@ it.each([
   fixtures.nav = 'home'; fixtures.compact = false;
   render(<MemoryRouter initialEntries={[url]}><App /></MemoryRouter>);
   expect((await screen.findByTestId('location')).textContent).toBe(expected);
+});
+
+it('reflects the sidebar mode on the shell and forces rail expanded on Settings', async () => {
+  fixtures.compact = false;
+  const shell = () => document.querySelector('.app-shell')!;
+  const mount = (path: string) => render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
+  try {
+    store.useUi.setState({ sidebarMode: 'hidden', sidebarCollapsed: true });
+    let view = mount('/');
+    expect(shell().className).toContain('sidebar-is-collapsed');
+    expect(shell().className).not.toContain('sidebar-is-rail');
+    view.unmount();
+
+    store.useUi.setState({ sidebarMode: 'rail', sidebarCollapsed: false });
+    view = mount('/');
+    expect(shell().className).toContain('sidebar-is-rail');
+    expect(shell().className).not.toContain('sidebar-is-collapsed');
+    view.unmount();
+
+    fixtures.nav = 'settings';
+    view = mount('/settings');
+    expect(shell().className).toContain('shell-rail-settings');
+    expect(shell().className).not.toContain('sidebar-is-rail');
+    expect(store.useUi.getState().sidebarMode).toBe('rail'); // override is not persisted
+    view.unmount();
+  } finally {
+    fixtures.nav = 'home';
+    store.useUi.setState({ sidebarMode: 'expanded', sidebarCollapsed: false });
+  }
+});
+
+it('renders the project-scoped rail in a project window and when a project is focused', async () => {
+  fixtures.compact = false;
+  const scope = await import('./lib/windowScope.js');
+  const project = { id: 'p-rail', name: 'Rail project', path: '/tmp/rail-project', createdAt: 0, lastActiveAt: 0 };
+  store.useData.setState({ projects: [project] });
+  store.useUi.setState({ sidebarMode: 'rail', sidebarCollapsed: false });
+  const spy = vi.spyOn(scope, 'getScopedProjectId').mockReturnValue('p-rail');
+  try {
+    // Scoped window: the project rail shows with the rail class.
+    let view = render(<MemoryRouter><App /></MemoryRouter>);
+    expect(document.querySelector('.app-shell')!.className).toContain('sidebar-is-rail');
+    view.unmount();
+
+    // Main window drilled into a project on a focus-rail destination.
+    spy.mockReturnValue(null);
+    fixtures.nav = 'projects';
+    store.useUi.setState({ focusedProjectId: 'p-rail' });
+    view = render(<MemoryRouter><App /></MemoryRouter>);
+    expect(document.querySelector('.app-shell')!.className).toContain('sidebar-is-rail');
+    view.unmount();
+  } finally {
+    spy.mockRestore();
+    fixtures.nav = 'home';
+    store.useData.setState({ projects: [] });
+    store.useUi.setState({ sidebarMode: 'expanded', sidebarCollapsed: false, focusedProjectId: null });
+  }
 });

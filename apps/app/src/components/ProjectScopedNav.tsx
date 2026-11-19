@@ -100,12 +100,15 @@ const MODE_ITEMS: ModeItem[] = [
 export function ProjectScopedNav({
   project,
   variant = 'window',
+  railVariant = 'expanded',
   onBack
 }: {
   project: Project;
   /** `'window'` for a per-project window, `'focus'` for the main window drilled
    *  into a project. `'focus'` shows the back control + Settings dock. */
   variant?: 'window' | 'focus';
+  /** Icon-only 52px rail form. */
+  railVariant?: 'expanded' | 'rail';
   /** Return to the cross-project home. Only used in the `'focus'` variant. */
   onBack?: () => void;
 }) {
@@ -328,6 +331,7 @@ export function ProjectScopedNav({
       pinnedIds={PINNED_PROJECT_NAV_IDS}
       trailingIds={TRAILING_PROJECT_NAV_IDS}
       items={items}
+      railVariant={railVariant}
       settingsRoutePath={getProjectSettingsRoutePath(project.id)}
       header={
         isFocus ? (

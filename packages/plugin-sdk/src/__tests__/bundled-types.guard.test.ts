@@ -106,6 +106,22 @@ describe('bundled SDK types and reference doc cover the public API', () => {
     expect(without).not.toMatch(/\bregisterProjectTabAvailability\b/);
   });
 
+  it('typechecks SSH preparation from standalone plugin declarations', () => {
+    expect(pageContextTypeDiagnostics(`
+      import type { PluginSshConnectionProvider } from '@zana-ai/zcc-plugin-sdk';
+      import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
+      declare const zcc: ZccPluginApi;
+      const provider: PluginSshConnectionProvider = {
+        owns(remote, signal) { signal.throwIfAborted(); return remote.host === 'managed'; },
+        async prepare(remote, signal) {
+          signal.throwIfAborted();
+          return remote.proxyJump ? { status: 'blocked', message: 'Check the SSH alias' } : { status: 'ready' };
+        }
+      };
+      zcc.sshConnections.register(provider);
+    `)).toEqual([]);
+  });
+
   it('typechecks page-context publication against standalone bundled declarations', () => {
     expect(pageContextTypeDiagnostics(`
       import { useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';

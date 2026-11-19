@@ -28,6 +28,7 @@
   --sidebar-border: var(--border);
   --focus-ring: var(--accent-blue);
 
+  --col-nav-rail: 52px; /* icon-only rail; fixed, not resizable */
   --col-nav: 256px; /* default and minimum; drag-resized via --col-nav inline */
   --col-list: 280px;
   --tab-h: 36px;
@@ -42769,4 +42770,88 @@ body.split-frame-guard webview {
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+
+/* ---- Rail mode: 52px icon-only navigation (sidebar-is-rail) ----------------
+ * The class sits on .app-shell, a descendant of :root, so it wins over the
+ * inline --col-nav that applySidebarWidth writes on :root. The grid keeps its
+ * two columns; no width transition (avoids per-frame terminal relayout).
+ * Never reuse `.sidebar.collapsed`: its :has() rule zeroes --col-nav. */
+.app-shell.sidebar-is-rail {
+  --col-nav: var(--col-nav-rail);
+}
+
+.sidebar--rail {
+  padding: 8px 6px 10px;
+  align-items: center;
+}
+
+.sidebar--rail .sidebar-sections,
+.sidebar--rail .sidebar-nav,
+.sidebar--rail .rail-projects {
+  width: 100%;
+}
+
+.sidebar--rail .nav-item {
+  position: relative;
+  justify-content: center;
+  width: 40px;
+  min-height: 36px;
+  margin: 0 auto;
+  padding: 0;
+  gap: 0;
+}
+
+.sidebar--rail .nav-item-label {
+  display: none;
+}
+
+/* Back keeps its text node (and aria-label); hide the visible text only. */
+.sidebar--rail .settings-app-back {
+  font-size: 0;
+  justify-content: center;
+  width: 40px;
+  padding: 0;
+}
+
+.sidebar--rail .rail-projects {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--sidebar-border);
+  overflow-y: auto;
+}
+
+.sidebar--rail .rail-project {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: inherit;
+}
+
+/* Badge becomes a corner pip hugging the icon. */
+.sidebar--rail .nav-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 12px;
+  padding: 0 3px;
+  font-size: 8px;
+  font-weight: 600;
+}
+
+.sidebar--rail .sidebar-utility-bar {
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0 0;
+}
+
+@media (forced-colors: active) {
+  .sidebar--rail .nav-badge {
+    border: 1px solid CanvasText;
+  }
 }
