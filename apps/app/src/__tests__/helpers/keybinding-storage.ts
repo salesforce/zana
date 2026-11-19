@@ -9,3 +9,9 @@ export function stubKeybindingStorage(): void {
     removeItem: (key: string) => void store.delete(key)
   });
 }
+
+/** The opening `<a …>` tag of the element with `data-testid`, for asserting its attributes in SSR markup. */
+export function anchorTag(markup: string, testId: string): string {
+  const at = markup.indexOf(`data-testid="${testId}"`);
+  return markup.slice(markup.lastIndexOf('<a ', at), markup.indexOf('>', at));
+}

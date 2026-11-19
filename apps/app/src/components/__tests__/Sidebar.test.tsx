@@ -80,7 +80,7 @@ vi.mock('../../plugins/plugin-slots', () => ({
 
 import { Sidebar } from '../Sidebar.js';
 import { setCommandShortcutOverride } from '../../lib/keyboard-shortcut-settings.js';
-import { stubKeybindingStorage } from '../../__tests__/helpers/keybinding-storage.js';
+import { anchorTag, stubKeybindingStorage } from '../../__tests__/helpers/keybinding-storage.js';
 import { MobileNavDrawer } from '../MobileShellChrome.js';
 
 function renderSidebar() {
@@ -433,26 +433,21 @@ describe('Sidebar shortcut tooltips', () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  const tag = (markup: string, testId: string) => {
-    const at = markup.indexOf(`data-testid="${testId}"`);
-    return markup.slice(markup.lastIndexOf('<a ', at), markup.indexOf('>', at));
-  };
-
   it('shows the bound shortcut on New Chat and Settings, and keeps accessible names', () => {
     const markup = renderSidebar();
-    expect(tag(markup, 'nav-home')).toContain('title="New Chat (Ctrl + N)"');
+    expect(anchorTag(markup, 'nav-home')).toContain('title="New Chat (Ctrl + N)"');
     expect(markup).toContain('title="Settings (Ctrl + ,)"');
     expect(markup).toContain('aria-label="Settings"');
     // Rows without a command keep their plain tooltip.
-    expect(tag(markup, 'nav-inbox')).toContain('title="Inbox"');
-    expect(tag(markup, 'nav-agents')).toContain('title="Agents"');
+    expect(anchorTag(markup, 'nav-inbox')).toContain('title="Inbox"');
+    expect(anchorTag(markup, 'nav-agents')).toContain('title="Agents"');
   });
 
   it('follows a rebinding and drops the suffix when unbound', () => {
     setCommandShortcutOverride('thread.new', { key: 'j', mod: true, meta: false, control: false, alt: false, shift: true });
     setCommandShortcutOverride('settings.open', null);
     const markup = renderSidebar();
-    expect(tag(markup, 'nav-home')).toContain('title="New Chat (Ctrl + Shift + J)"');
+    expect(anchorTag(markup, 'nav-home')).toContain('title="New Chat (Ctrl + Shift + J)"');
     expect(markup).toContain('title="Settings"');
     expect(markup).not.toContain('Settings (');
   });

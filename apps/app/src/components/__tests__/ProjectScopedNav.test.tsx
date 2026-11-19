@@ -127,7 +127,7 @@ vi.mock('../../plugins/PluginExclusiveThreadList', () => ({
 
 import { ProjectScopedNav } from '../ProjectScopedNav.js';
 import { setCommandShortcutOverride } from '../../lib/keyboard-shortcut-settings.js';
-import { stubKeybindingStorage } from '../../__tests__/helpers/keybinding-storage.js';
+import { anchorTag, stubKeybindingStorage } from '../../__tests__/helpers/keybinding-storage.js';
 
 function renderNav(node: ReactElement, path = '/') {
   return renderToStaticMarkup(<MemoryRouter initialEntries={[path]}>{node}</MemoryRouter>);
@@ -431,26 +431,21 @@ describe('ProjectScopedNav shortcut tooltips', () => {
   beforeEach(() => stubKeybindingStorage());
   afterEach(() => vi.unstubAllGlobals());
 
-  const tag = (markup: string, testId: string) => {
-    const at = markup.indexOf(`data-testid="${testId}"`);
-    return markup.slice(markup.lastIndexOf('<a ', at), markup.indexOf('>', at));
-  };
-
   it.each(['focus', 'window'] as const)('adds shortcuts to New Chat, Explorer and Settings in the %s rail', (variant) => {
     const markup = renderNav(<ProjectScopedNav project={project} variant={variant} />);
-    expect(tag(markup, 'project-nav-home')).toContain('title="New chat in zana-command-center (Ctrl + N)"');
-    expect(tag(markup, 'project-nav-explorer')).toContain('title="Explorer (Ctrl + B)"');
+    expect(anchorTag(markup, 'project-nav-home')).toContain('title="New chat in zana-command-center (Ctrl + N)"');
+    expect(anchorTag(markup, 'project-nav-explorer')).toContain('title="Explorer (Ctrl + B)"');
     expect(markup).toContain('title="Settings (Ctrl + ,)"');
     expect(markup).toContain('aria-label="Settings"');
-    expect(tag(markup, 'project-nav-inbox')).toContain('title="Inbox for this project"');
-    expect(tag(markup, 'project-nav-agents')).toContain('title="Agents"');
+    expect(anchorTag(markup, 'project-nav-inbox')).toContain('title="Inbox for this project"');
+    expect(anchorTag(markup, 'project-nav-agents')).toContain('title="Agents"');
   });
 
   it('follows a rebinding and drops the suffix when unbound', () => {
     setCommandShortcutOverride('sidebar.toggle', { key: 'k', mod: true, meta: false, control: false, alt: true, shift: false });
     setCommandShortcutOverride('thread.new', null);
     const markup = renderNav(<ProjectScopedNav project={project} variant="focus" />);
-    expect(tag(markup, 'project-nav-explorer')).toContain('title="Explorer (Ctrl + Alt + K)"');
-    expect(tag(markup, 'project-nav-home')).toContain('title="New chat in zana-command-center"');
+    expect(anchorTag(markup, 'project-nav-explorer')).toContain('title="Explorer (Ctrl + Alt + K)"');
+    expect(anchorTag(markup, 'project-nav-home')).toContain('title="New chat in zana-command-center"');
   });
 });
