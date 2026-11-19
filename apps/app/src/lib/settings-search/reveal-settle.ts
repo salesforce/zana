@@ -32,7 +32,14 @@ function scrollContainer(el: HTMLElement): HTMLElement {
  * growing or shrinking above the row changes it.
  */
 function contentOffset(el: HTMLElement, container: HTMLElement): number {
-  return el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
+  const top = el.getBoundingClientRect().top;
+  // The document scroller's own rect scrolls with the page (its top is
+  // -scrollTop), so subtracting it would count the scroll twice. Its viewport
+  // origin is 0.
+  if (container === document.scrollingElement || container === document.documentElement) {
+    return top + container.scrollTop;
+  }
+  return top - container.getBoundingClientRect().top + container.scrollTop;
 }
 
 /** Stop the running settle watch, if any. */

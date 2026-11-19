@@ -127,6 +127,32 @@ describe('keepRevealedInPlace', () => {
     frames();
     expect(recenter).toHaveBeenCalledTimes(1);
   });
+
+  it('document scroller: scrolling alone is not a layout shift, content growth is', () => {
+    const root = document.documentElement;
+    const row = document.createElement('div');
+    document.body.appendChild(row);
+    // Real page geometry: the page origin sits at -scrollTop, the row at pageY - scrollTop.
+    let scrollTop = 0;
+    let pageY = 900;
+    Object.defineProperty(root, 'scrollTop', { configurable: true, get: () => scrollTop });
+    vi.spyOn(root, 'getBoundingClientRect').mockImplementation(() => ({ top: -scrollTop }) as DOMRect);
+    vi.spyOn(row, 'getBoundingClientRect').mockImplementation(() => ({ top: pageY - scrollTop }) as DOMRect);
+    try {
+      const recenter = vi.fn();
+      keepRevealedInPlace(row, recenter);
+      for (const next of [200, 450, 700]) { // a smooth scroll in progress
+        scrollTop = next;
+        frames();
+      }
+      expect(recenter).not.toHaveBeenCalled();
+      pageY += 400; // content above the row grew
+      frames();
+      expect(recenter).toHaveBeenCalledTimes(1);
+    } finally {
+      delete (root as { scrollTop?: number }).scrollTop;
+    }
+  });
 });
 
 describe('revealElement keeps the row centred while the page settles', () => {
