@@ -10,7 +10,9 @@ import { ThreadPlanPanel } from './secondary-panel/ThreadPlanPanel.js';
 // The app chrome sets `user-select: none` on <body>. The to-do checklist shows
 // in the composer dock (outside the timeline) and in the plan panel, so it must
 // opt back in itself, or its text can't be selected or copied.
-const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../styles/global.css'), 'utf8');
+// Comments sit between rules and would otherwise be parsed as part of a selector.
+const COMMENT = /\/\*[\s\S]*?\*\//g;
+const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../styles/global.css'), 'utf8').replace(COMMENT, '');
 const items = [{ id: 'a', text: 'Start items 94 and 96', status: 'pending' }];
 
 afterEach(cleanup);
