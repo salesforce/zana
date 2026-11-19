@@ -211,7 +211,9 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           '`scopes` default to `["thread"]`. Include `"agent-session"` for the CLI-agent inspector.',
           'Include `"plugin-page"` to list the tab beside your own pages; `pages` narrows it to some `navPanel` / `projectTab` ids. Open it from the page with `useZccNavigate().openPanelTool`.',
           'The `surface` prop says which side panel shows the tab; `threadId` is empty beside a plugin page.',
-          '`tabId` is stable across tab switches and new when a closed tab reopens, so state can reset there.'
+          '`tabId` is stable across tab switches and new when a closed tab reopens, so state can reset there.',
+          'The host keeps opened tabs mounted while hidden (the 4 most recent, plus the active one), so in-memory state survives a switch. `active` is false while hidden: pause polling then. An older hidden tab is unmounted and remounts later.',
+          'To survive a reload or that remount, save small JSON (8 KiB at most) with `onTabStateChange(state)`. It returns as `tabState` and resets when the tab reopens with different `params`. Both props are absent on older hosts.'
         ],
         firstParty: ['Tasks', 'Side chat', 'Workflows']
       },

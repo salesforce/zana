@@ -12,6 +12,7 @@ import { ThreadNewTabPage } from '../../components/thread/secondary-panel/Thread
 import { ThreadFilePreviewTab } from '../../components/thread/secondary-panel/ThreadFilePreviewTab.js';
 import { ThreadExplorerTab } from '../../components/thread/secondary-panel/ThreadExplorerTab.js';
 import { ThreadInboxTab } from '../../components/thread/secondary-panel/ThreadInboxTab.js';
+import { PluginTabDeck } from '../../components/thread/secondary-panel/PluginTabDeck.js';
 import { ThreadPluginTab } from '../../components/thread/secondary-panel/ThreadPluginTab.js';
 import { DockedTerminalTab } from '../../components/thread/secondary-panel/DockedTerminalTab.js';
 import { BrowserTabDeck } from '../../components/thread/secondary-panel/BrowserTabDeck.js';
@@ -117,8 +118,6 @@ function DraftChatPanel({ scopeId, project, hostId, children, onHandoff }: NewCh
     body = <ThreadInboxTab projectId={project?.id ?? null} />;
   } else if (closable.kind === 'terminal' && closable.sessionId) {
     body = <DockedTerminalTab sessionId={closable.sessionId} />;
-  } else if (closable.kind === 'plugin' && closable.moduleId) {
-    body = <ThreadPluginTab moduleId={closable.moduleId} projectId={project?.id ?? null} actionId={closable.actionId} params={closable.params} layout={closable.layout} surface="thread" tabId={closable.id} />;
   }
 
   return <ThreadPanelOwnerProvider ownerId={ownerId}>
@@ -137,6 +136,9 @@ function DraftChatPanel({ scopeId, project, hostId, children, onHandoff }: NewCh
         onToggleMaximized={panel.toggleMaximized} onHide={panel.close} onResize={panel.setWidth}>
         {error && <p role="alert" className="thread-detail-empty">{error}</p>}
         {body}
+        <PluginTabDeck tabs={panel.state.tabs} activeId={panel.state.activeId} ownerId={ownerId}
+          render={(tab, active) => <ThreadPluginTab moduleId={tab.moduleId!} projectId={project?.id ?? null} actionId={tab.actionId} params={tab.params} layout={tab.layout} surface="thread" tabId={tab.id}
+            active={active} tabState={tab.tabState} onTabStateChange={(next) => panel.setTabState(tab.id, next)} />} />
         <BrowserTabDeck browserTabs={panel.state.tabs.filter(tab => tab.kind === 'browser')}
           activeBrowserTabId={closable?.kind === 'browser' ? closable.id : null}
           canShowNativeBrowserView={open && pane?.isFocused !== false} threadId={ownerId}

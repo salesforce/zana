@@ -2,7 +2,11 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect } from './fixtures/app.js';
 
-test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
+// With thread tabs on, a card opens the thread in its own tab. The inspector modal, whose URL has no thread, needs them off.
+test.use({
+  launchEnv: { ZCC_FAKE_PROVIDER: '1' },
+  initialConfig: { classicSessionViewEnabled: false, threadTabsEnabled: false, agentsBoardView: 'board', sponsorPromptDismissed: true }
+});
 
 test('a Docs card opens inside its thread inspector when the URL has no thread', async ({ app }) => {
   const { window, home } = app;

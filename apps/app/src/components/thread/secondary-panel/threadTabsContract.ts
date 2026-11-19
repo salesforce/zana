@@ -170,9 +170,14 @@ export function applyContractTabs(
 ): ThreadSecondaryPanelState {
   const nextTabs = contractTabsToClosable(tabs).map((tab) => {
     const local = state.tabs.find((existing) => existing.id === tab.id);
-    return local?.kind === tab.kind && local.path === tab.path && local.previewRevision !== undefined
+    const kept = local?.kind === tab.kind && local.path === tab.path && local.previewRevision !== undefined
       ? { ...tab, previewRevision: local.previewRevision }
       : tab;
+    // tabState is local-only (not in the server contract): keep it while the tab is unchanged.
+    return local?.kind === 'plugin' && tab.kind === 'plugin' && local.tabState != null
+      && JSON.stringify(local.params ?? null) === JSON.stringify(tab.params ?? null)
+      ? { ...kept, tabState: local.tabState }
+      : kept;
   });
   const known = new Set(nextTabs.map((tab) => tab.id));
   const activeId = known.has(state.activeId)

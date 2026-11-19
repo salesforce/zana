@@ -27,7 +27,9 @@ import {
   activePinnedView,
   applySecondaryPanelOpenWidth,
   secondaryPanelOpenWidthPx,
-  secondaryPanelShowsInspectorFooter
+  secondaryPanelShowsInspectorFooter,
+  setClosableTabState,
+  MAX_TAB_STATE_BYTES
 } from './threadSecondaryPanelState.js';
 
 describe('thread secondary panel state', () => {
@@ -525,5 +527,58 @@ describe('openPluginTool', () => {
     expect(patched.tabs[0]).toMatchObject({ params: { node: 'n1' } });
     // Another plugin's action with the same id is its own tab.
     expect(openPluginTool(patched, { pluginId: 'gus', actionId: 'graph', title: 'Graph' }).tabs).toHaveLength(3);
+  });
+});
+
+describe('plugin tab state', () => {
+  const open = () => addClosableTab(emptySecondaryPanelState(), {
+    kind: 'plugin', title: 'Docs', moduleId: 'm', actionId: 'a', params: { docId: 'd1' }
+  });
+
+  it('stores state without changing tab identity', () => {
+    const state = open();
+    const id = state.tabs[0]!.id;
+    const saved = setClosableTabState(state, id, { docId: 'd2' });
+    expect(saved.tabs[0]!.tabState).toEqual({ docId: 'd2' });
+    expect(saved.tabs[0]!.params).toEqual({ docId: 'd1' });
+    // Re-opening with the original params still focuses the same tab.
+    const reopened = addClosableTab({ ...saved, activeId: 'info' }, { kind: 'plugin', title: 'Docs', moduleId: 'm', actionId: 'a', params: { docId: 'd1' } });
+    expect(reopened.tabs).toHaveLength(1);
+    expect(reopened.activeId).toBe(id);
+  });
+
+  it('ignores equal, unknown, non-plugin and oversized writes', () => {
+    const state = open();
+    const id = state.tabs[0]!.id;
+    const saved = setClosableTabState(state, id, { a: 1 });
+    expect(setClosableTabState(saved, id, { a: 1 })).toBe(saved);
+    expect(setClosableTabState(state, 'missing', { a: 1 })).toBe(state);
+    const withTerminal = addClosableTab(state, { kind: 'terminal', title: 'T', sessionId: 's' });
+    expect(setClosableTabState(withTerminal, withTerminal.activeId, { a: 1 })).toBe(withTerminal);
+    expect(setClosableTabState(saved, id, 'x'.repeat(MAX_TAB_STATE_BYTES + 1))).toBe(saved);
+    expect(setClosableTabState(saved, id, null).tabs[0]!.tabState).toBeNull();
+  });
+
+  it('clears state when params change and keeps it otherwise', () => {
+    const state = open();
+    const id = state.tabs[0]!.id;
+    const saved = setClosableTabState(state, id, { a: 1 });
+    expect(patchClosableTab(saved, id, { title: 'Renamed' }).tabs[0]!.tabState).toEqual({ a: 1 });
+    expect(patchClosableTab(saved, id, { params: { docId: 'd1' } })).toBe(saved);
+    const changed = patchClosableTab(saved, id, { params: { docId: 'd9' } });
+    expect(changed.tabs[0]!.tabState).toBeUndefined();
+    expect(changed.tabs[0]!.params).toEqual({ docId: 'd9' });
+  });
+
+  it('persists valid state and drops invalid or oversized stored state', () => {
+    const raw = (tabState: unknown) => ({
+      version: 1, isOpen: true, isMaximized: false, widthPx: 400, activeId: 'p',
+      tabs: [{ id: 'p', kind: 'plugin', title: 'Docs', moduleId: 'm', tabState }]
+    });
+    expect(parseSecondaryPanelState(raw({ docId: 'd' })).tabs[0]!.tabState).toEqual({ docId: 'd' });
+    expect(parseSecondaryPanelState(raw('x'.repeat(MAX_TAB_STATE_BYTES + 1))).tabs[0]!.tabState).toBeUndefined();
+    expect(parseSecondaryPanelState(raw(null)).tabs[0]!.tabState).toBeUndefined();
+    const notPlugin = { ...raw({ a: 1 }), tabs: [{ id: 't', kind: 'terminal', title: 'T', tabState: { a: 1 } }], activeId: 't' };
+    expect(parseSecondaryPanelState(notPlugin).tabs[0]!.tabState).toBeUndefined();
   });
 });

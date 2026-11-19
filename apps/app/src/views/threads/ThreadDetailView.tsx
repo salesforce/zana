@@ -64,6 +64,7 @@ import { DockedTerminalTab } from '../../components/thread/secondary-panel/Docke
 import { useThreadToolDock } from '../../components/thread/secondary-panel/useThreadToolDock.js';
 import { clampDockHeight, isDockPinnedView, resolveToolDock, type ToolDockSide } from '../../components/thread/secondary-panel/threadToolDock.js';
 import '../../components/thread/secondary-panel/thread-tool-dock.css';
+import { PluginTabDeck } from '../../components/thread/secondary-panel/PluginTabDeck.js';
 import { ThreadPluginTab } from '../../components/thread/secondary-panel/ThreadPluginTab.js';
 import { ThreadExplorerTab } from '../../components/thread/secondary-panel/ThreadExplorerTab.js';
 import { ThreadInboxTab } from '../../components/thread/secondary-panel/ThreadInboxTab.js';
@@ -773,19 +774,6 @@ function ThreadDetailBody({
     panelBody = <ThreadExplorerTab projectId={projectId} scope={projectId && hostId ? { projectId, hostId, ...(environmentId ? { environmentId } : {}) } : undefined} checkoutPath={cwd ?? undefined} />;
   } else if (closable?.kind === 'inbox') {
     panelBody = <ThreadInboxTab projectId={projectId} />;
-  } else if (closable?.kind === 'plugin' && closable.moduleId) {
-    panelBody = (
-      <ThreadPluginTab
-        moduleId={closable.moduleId}
-        projectId={projectId}
-        threadId={threadId}
-        actionId={closable.actionId}
-        params={closable.params}
-        layout={closable.layout}
-        surface="thread"
-        tabId={closable.id}
-      />
-    );
   } else if (pin === 'diff') {
     panelBody = <p className="thread-detail-empty">No environment is attached to this agent.</p>;
   } else if (pin === 'plan') {
@@ -833,6 +821,26 @@ function ThreadDetailBody({
           onResize={panel.setWidth}
         >
           {renderPanelBody(state)}
+          <PluginTabDeck
+            tabs={state.tabs}
+            activeId={state.activeId}
+            ownerId={threadId}
+            render={(tab, active) => (
+              <ThreadPluginTab
+                moduleId={tab.moduleId!}
+                projectId={projectId}
+                threadId={threadId}
+                actionId={tab.actionId}
+                params={tab.params}
+                layout={tab.layout}
+                surface="thread"
+                tabId={tab.id}
+                active={active}
+                tabState={tab.tabState}
+                onTabStateChange={(next) => panel.setTabState(tab.id, next)}
+              />
+            )}
+          />
           <BrowserTabDeck
             browserTabs={panel.state.tabs.filter((tab) => tab.kind === 'browser')}
             activeBrowserTabId={closable?.kind === 'browser' ? closable.id : null}

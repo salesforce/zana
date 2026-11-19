@@ -282,6 +282,25 @@ export interface PluginThreadPanelProps {
    * Absent on older hosts.
    */
   tabId?: string;
+  /**
+   * False while the tab is mounted but hidden behind another tab: pause
+   * polling and timers. Absent on older hosts; treat that as `true`. The host
+   * keeps a bounded number of hidden tabs mounted, so a hidden tab can still be
+   * unmounted and remounted: persist what matters with `onTabStateChange`.
+   */
+  active?: boolean;
+  /**
+   * The last value passed to `onTabStateChange` for this tab, or `null`. It is
+   * restored after a reload or after the host unmounts a hidden tab, and is
+   * cleared when the tab is reopened with different `params`. Absent on older
+   * hosts.
+   */
+  tabState?: JsonValue | null;
+  /**
+   * Save small view state (at most 8 KiB as JSON) with this tab. An oversized
+   * value is ignored and the previous one kept. Absent on older hosts.
+   */
+  onTabStateChange?: (state: JsonValue | null) => void;
 }
 
 export interface PluginThreadPanelActionContext {

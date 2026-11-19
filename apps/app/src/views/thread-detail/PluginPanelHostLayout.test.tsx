@@ -391,7 +391,8 @@ describe('PluginPanelHostLayout', () => {
       shown = requestPluginPanelTool('salesforce', { actionId: 'studio-graph', params: { node: 'n1' } });
     });
     expect(shown).toBe(true);
-    const tool = () => screen.getByTestId('plugin-tool');
+    // Opened tabs stay mounted while hidden; the shown tool is the one in the visible slot.
+    const tool = () => screen.getAllByTestId('plugin-tool').find((el) => !el.closest('[hidden]'))!;
     expect(tool().dataset).toMatchObject({ tool: 'salesforce/studio-graph', params: '{"node":"n1"}', layout: 'flush', surface: 'plugin-page', project: 'p1' });
     // Asking again focuses the same tab with the new params.
     act(() => {
@@ -414,6 +415,8 @@ describe('PluginPanelHostLayout', () => {
     expect(tabLabels()).toEqual(['Close Graph view']);
     expect(tool().dataset.tool).toBe('salesforce/studio-graph');
     expect(tool().dataset.tab).toMatch(/\S/);
+    // The closed tab is unmounted, not just hidden.
+    expect(screen.getAllByTestId('plugin-tool')).toHaveLength(1);
 
     view.unmount();
     expect(requestPluginPanelTool('salesforce', { actionId: 'studio-graph' })).toBe(false);
