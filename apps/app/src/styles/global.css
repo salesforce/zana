@@ -12511,6 +12511,56 @@ body.resizing-col .explorer-resizer::after {
   max-width: 900px;
 }
 
+/* Find in the markdown preview (and other rendered surfaces, see useDomFind).
+   The host keeps the bar pinned while .explorer-md-preview scrolls inside it. */
+.explorer-md-find-host {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  outline: none;
+}
+
+.dom-find-bar {
+  position: absolute;
+  top: 8px;
+  right: 20px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.dom-find-bar input {
+  width: 11rem;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+.dom-find-bar-count {
+  min-width: 3em;
+  margin-right: 4px;
+  text-align: right;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.dom-find-bar-count.is-empty {
+  color: var(--danger, var(--text-muted));
+}
+
+/* `::highlight()` rules for find matches are injected per instance by
+   createFindHighlighter (lib/dom-find.ts), since each surface owns its names. */
+
 /* Inline image preview in the Explorer viewer (mirrors .library-image-preview). */
 .explorer-image-preview {
   height: 100%;

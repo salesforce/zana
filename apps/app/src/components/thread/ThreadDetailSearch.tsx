@@ -1,28 +1,14 @@
 import { useEffect, useRef, type FormEvent, type KeyboardEvent } from 'react';
 import { Search, X } from 'lucide-react';
 import { titleWithShortcut } from '../../lib/keyboard-shortcut-settings.js';
+import { THREAD_SEARCH_PARTIAL_NOTE, threadSearchAnnouncement, threadSearchCounterText } from '../../lib/find-counter.js';
 import { THREAD_SEARCH_QUERY_MAX } from '@zana-ai/zcc-thread-view';
 
 export function threadDetailSearchClassName(draft: string): string {
   return draft.trim().length > 0 ? 'thread-detail-search has-query' : 'thread-detail-search';
 }
 
-/** Why a partial count may be low: the server could not count unloaded or collapsed messages. */
-export const THREAD_SEARCH_PARTIAL_NOTE = 'Some messages weren’t searched';
-
-/** The visible counter: `3/7`, or `0/0` when nothing matches; `+` marks a partial count. */
-export function threadSearchCounterText(index: number, count: number, partial = false): string {
-  const text = count === 0 ? '0/0' : `${index + 1}/${count}`;
-  return partial ? `${text}+` : text;
-}
-
-/** What screen readers hear when the counter changes. */
-export function threadSearchAnnouncement(index: number, count: number, partial = false): string {
-  const text = count === 0
-    ? 'No matches'
-    : index < 0 ? `${count} ${count === 1 ? 'match' : 'matches'}` : `Match ${index + 1} of ${count}`;
-  return partial ? `${text}. ${THREAD_SEARCH_PARTIAL_NOTE}` : text;
-}
+export { THREAD_SEARCH_PARTIAL_NOTE, threadSearchAnnouncement, threadSearchCounterText };
 
 export function ThreadDetailSearch({
   value,

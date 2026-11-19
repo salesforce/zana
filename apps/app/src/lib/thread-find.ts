@@ -8,7 +8,8 @@ import { shortcutForCommand } from './keyboard-shortcut-settings.js';
  *
  * - focus (or, with nothing focused, the last click) inside a thread's main
  *   column opens that thread's search;
- * - focus in a terminal, a Monaco editor, or a thread's side panel (the
+ * - focus in a terminal, a Monaco editor, a surface marked `data-own-find`,
+ *   or a thread's side panel (the
  *   in-app browser keeps ⌘F for find in page) is left to that surface;
  * - focus in a dialog (the palette, Settings, a popover) stays there, and an
  *   open modal hides the threads behind it;
@@ -27,7 +28,14 @@ export interface ThreadFindTarget {
 const targets: ThreadFindTarget[] = [];
 let lastPointerTarget: Element | null = null;
 
-const SURFACES_WITH_OWN_FIND = '.xterm, .monaco-editor';
+/**
+ * A surface that handles ⌘F / Ctrl+F itself marks its root with this
+ * attribute (`<div data-own-find>`); thread find then stays out of it. The
+ * markdown preview uses it (see `useDomFind`); the terminal and Monaco are
+ * matched by class.
+ */
+export const OWN_FIND_ATTRIBUTE = 'data-own-find';
+const SURFACES_WITH_OWN_FIND = `.xterm, .monaco-editor, [${OWN_FIND_ATTRIBUTE}]`;
 const OVERLAYS = '[role="dialog"], [role="alertdialog"], [aria-modal="true"]';
 
 function rememberPointer(event: PointerEvent) {
