@@ -2,13 +2,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { InboxEntry } from '@zana-ai/zcc-domain/product';
 
 const respond = vi.fn<(...args: unknown[]) => Promise<unknown>>();
+const stopAndFixPlan = vi.fn<(...args: unknown[]) => Promise<unknown>>();
 const markAnswered = vi.fn();
 const pushToast = vi.fn();
 
 vi.mock('../product-client.js', () => ({
   product: {
     executionBoard: {
-      respond: (...args: unknown[]) => respond(...args)
+      respond: (...args: unknown[]) => respond(...args),
+      stopAndFixPlan: (...args: unknown[]) => stopAndFixPlan(...args)
     }
   }
 }));
@@ -18,7 +20,7 @@ vi.mock('../../store.js', () => ({
   useUi: { getState: () => ({ pushToast }) }
 }));
 
-const { respondToInboxBlocker } = await import('../inboxBlockerRespond.js');
+const { respondToInboxBlocker, isNoRouteBlockerEntry, stopAndFixPlanFromInbox } = await import('../inboxBlockerRespond.js');
 
 function makeEntry(overrides: Partial<InboxEntry> = {}): InboxEntry {
   return {
@@ -105,5 +107,41 @@ describe('respondToInboxBlocker', () => {
 
     expect(ok).toBe(false);
     expect(respond).not.toHaveBeenCalled();
+  });
+});
+
+describe('stop and fix the plan', () => {
+  afterEach(() => {
+    stopAndFixPlan.mockReset();
+    markAnswered.mockReset();
+    pushToast.mockReset();
+  });
+
+  it('recognises a no-route blocker card by its id prefix', () => {
+    expect(isNoRouteBlockerEntry(makeEntry({ blockerId: 'no-route:1:a:1:0' }))).toBe(true);
+    expect(isNoRouteBlockerEntry(makeEntry())).toBe(false);
+    expect(isNoRouteBlockerEntry(makeEntry({ executionId: undefined, blockerId: 'no-route:1' }))).toBe(false);
+  });
+
+  it('sends project, execution and blocker, then marks the card answered and tells the person', async () => {
+    stopAndFixPlan.mockResolvedValue({ ok: true, value: {} });
+    const entry = makeEntry({ blockerId: 'no-route:1:a:1:0' });
+    expect(await stopAndFixPlanFromInbox(entry)).toBe(true);
+    expect(stopAndFixPlan).toHaveBeenCalledWith('proj-1', 'exec-1', 'no-route:1:a:1:0');
+    expect(markAnswered).toHaveBeenCalledWith('entry-1');
+    expect(pushToast).toHaveBeenCalledWith(expect.stringContaining('Work already done is kept'), 'info');
+  });
+
+  it('surfaces a refusal or a thrown IPC error and leaves the card open', async () => {
+    stopAndFixPlan.mockResolvedValueOnce({ ok: false, message: 'This run has already ended.' });
+    expect(await stopAndFixPlanFromInbox(makeEntry())).toBe(false);
+    expect(pushToast).toHaveBeenLastCalledWith('This run has already ended.', 'error');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    stopAndFixPlan.mockRejectedValueOnce(new Error('ipc down'));
+    expect(await stopAndFixPlanFromInbox(makeEntry())).toBe(false);
+    expect(pushToast).toHaveBeenLastCalledWith('ipc down', 'error');
+    log.mockRestore();
+    expect(await stopAndFixPlanFromInbox(makeEntry({ blockerId: undefined }))).toBe(false);
+    expect(markAnswered).not.toHaveBeenCalled();
   });
 });

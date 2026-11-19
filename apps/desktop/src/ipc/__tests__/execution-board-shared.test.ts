@@ -7,7 +7,7 @@ vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({ store: { listPro
 vi.mock('../shared-product-registry.js', () => ({ registerSharedProduct: (channel: string, fn: Function) => { state.shared.set(channel, fn); } }));
 import { bindIpcCtx } from '../ctx.js';
 import { registerExecutionBoardIpc } from '../execution-board.js';
-const get = vi.fn(), stop = vi.fn(), start = vi.fn(), list = vi.fn(), clear = vi.fn(), recoverTimedOut = vi.fn(), recoverRetained = vi.fn(), exactNativeRecoveryAvailability = vi.fn(), squadWorktreeAction = vi.fn(), dismiss = vi.fn(), retirePlanHandoff = vi.fn();
+const get = vi.fn(), stop = vi.fn(), start = vi.fn(), list = vi.fn(), clear = vi.fn(), recoverTimedOut = vi.fn(), recoverRetained = vi.fn(), exactNativeRecoveryAvailability = vi.fn(), squadWorktreeAction = vi.fn(), dismiss = vi.fn(), retirePlanHandoff = vi.fn(), stopForPlanCorrection = vi.fn(), appendOnce = vi.fn(), logMainError = vi.fn(), getRecord = vi.fn();
 const execution = { id: 'execution', projectId: 'registered', teamId: 'team-1', request: {}, jobTitle: 'Job', state: 'RUNNING', attempt: 1, stateVersion: 4, createdAt: 1, updatedAt: 2, workUnits: [] };
 beforeEach(() => {
   state.shared.clear(); state.windows.clear(); state.teams = []; state.lifecycle = []; state.lifecycleFail = false; state.lifecycleFailRaw = undefined; vi.clearAllMocks();
@@ -16,7 +16,7 @@ beforeEach(() => {
    recoverTimedOut.mockResolvedValue({ ok: false, code: 'CONFLICT', message: 'Already recovered' }); recoverRetained.mockResolvedValue({ ok: false, code: 'CONFLICT', message: 'Already recovered' });
    dismiss.mockResolvedValue({ ok: false, code: 'DISMISS_NOT_ALLOWED', message: 'only terminal executions can be dismissed' }); retirePlanHandoff.mockResolvedValue(undefined);
    start.mockResolvedValue({ ok: true }); list.mockResolvedValue({ records: [], hasMore: false }); exactNativeRecoveryAvailability.mockReturnValue({ available: false, restorableSlots: 0 });
-     bindIpcCtx({ safeHandle: vi.fn(), safeHandleFromWindow: (channel: string, fn: Function) => state.windows.set(channel, fn), ptys: { list: () => [] }, teams: { list: () => state.teams }, teamLifecycle: { list: async () => { if (state.lifecycleFailRaw !== undefined) throw state.lifecycleFailRaw; if (state.lifecycleFail) throw new Error('corrupt lifecycle store'); return state.lifecycle; } }, personas: { list: () => [] }, windows: new Map([[7, { projectId: 'different' }]]), executionStore: { getInProject: get }, executionResumeTokens: { clear, status: () => ({ state: 'missing' }) }, executionSources: {}, squadExecutionService: { stop, listProject: list, recoverTimedOut, recoverRetained, dismiss }, startTeamJobFromUi: start, exactNativeRecoveryAvailability, squadWorktreeAction, retirePlanHandoff } as any);
+     bindIpcCtx({ safeHandle: vi.fn(), safeHandleFromWindow: (channel: string, fn: Function) => state.windows.set(channel, fn), ptys: { list: () => [] }, teams: { list: () => state.teams }, teamLifecycle: { list: async () => { if (state.lifecycleFailRaw !== undefined) throw state.lifecycleFailRaw; if (state.lifecycleFail) throw new Error('corrupt lifecycle store'); return state.lifecycle; } }, personas: { list: () => [] }, windows: new Map([[7, { projectId: 'different' }]]), executionStore: { getInProject: (...a: unknown[]) => (getRecord.getMockImplementation() ? getRecord(...a) : get(...a)) }, inboxStore: { appendOnce }, logMainError, executionResumeTokens: { clear, status: () => ({ state: 'missing' }) }, executionSources: {}, squadExecutionService: { stop, stopForPlanCorrection, listProject: list, recoverTimedOut, recoverRetained, dismiss }, startTeamJobFromUi: start, exactNativeRecoveryAvailability, squadWorktreeAction, retirePlanHandoff } as any);
   registerExecutionBoardIpc();
    });
   it('authorizes typed retained recovery and forwards only valid recovery inputs', async () => {
@@ -256,4 +256,40 @@ it('projects Modern squad members from the team lifecycle onto their execution o
   state.lifecycle = [];
   list.mockResolvedValueOnce({ records: [execution], hasMore: false });
   expect((await state.shared.get(IPC.executionBoard.listProject)!('registered')).executions[0]).not.toHaveProperty('modernMembers');
+});
+
+it('stop and fix the plan: main re-validates project, run and blocker before stopping, and keeps the run record', async () => {
+  const channel = state.windows.get(IPC.executionBoard.stopAndFixPlan)!;
+  const run = { ...execution, id: 'execution', projectId: 'registered', state: 'BLOCKED', stateVersion: 5, workUnits: [], blockers: [
+    { id: 'no-route:1:a:1:0', workUnitId: 'a', question: 'No worker can do step a.', noRoute: true, resolved: false },
+    { id: 'plain', workUnitId: 'a', question: 'q', resolved: false },
+    { id: 'done', workUnitId: 'a', question: 'q', noRoute: true, resolved: true }
+  ] };
+  getRecord.mockImplementation(async (projectId: string, id: string) => projectId === 'registered' && id === 'execution' ? run : undefined);
+  stopForPlanCorrection.mockResolvedValue({ ...run, state: 'STOPPED' });
+  appendOnce.mockResolvedValue({ id: 'card' });
+  // A window scoped to another project, malformed ids and an unknown run are refused before anything stops.
+  await expect(channel({ id: 7 }, 'registered', 'execution', 'no-route:1:a:1:0')).resolves.toMatchObject({ code: 'NOT_FOUND' });
+  await expect(channel({ id: 8 }, 'registered', 'execution', '  ')).resolves.toMatchObject({ code: 'INVALID' });
+  await expect(channel({ id: 8 }, 'registered', 'execution', 'x'.repeat(257))).resolves.toMatchObject({ code: 'INVALID' });
+  await expect(channel({ id: 8 }, 'registered', 42, 'a')).resolves.toMatchObject({ code: 'INVALID' });
+  await expect(channel({ id: 8 }, 'registered', 'missing', 'no-route:1:a:1:0')).resolves.toMatchObject({ code: 'NOT_FOUND' });
+  // A forged or stale blocker id cannot stop a run: only an open no-route blocker qualifies.
+  for (const id of ['plain', 'done', 'unknown']) await expect(channel({ id: 8 }, 'registered', 'execution', id)).resolves.toMatchObject({ code: 'INVALID' });
+  expect(stopForPlanCorrection).not.toHaveBeenCalled();
+  const ok = await channel({ id: 8 }, 'registered', 'execution', 'no-route:1:a:1:0');
+  expect(ok).toMatchObject({ ok: true, value: { executionId: 'execution' } });
+  expect(stopForPlanCorrection).toHaveBeenCalledExactlyOnceWith('execution');
+  expect(appendOnce).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'registered', executionId: 'execution', dedupeKey: 'plan-fix:execution:no-route:1:a:1:0' }));
+  // A failing Inbox append does not undo the stop.
+  appendOnce.mockRejectedValueOnce(new Error('inbox down'));
+  await expect(channel({ id: 8 }, 'registered', 'execution', 'no-route:1:a:1:0')).resolves.toMatchObject({ ok: true });
+  expect(logMainError).toHaveBeenCalled();
+  // A vanished run after the stop reports not found; an ended run is refused without stopping again.
+  stopForPlanCorrection.mockResolvedValueOnce(undefined);
+  await expect(channel({ id: 8 }, 'registered', 'execution', 'no-route:1:a:1:0')).resolves.toMatchObject({ code: 'NOT_FOUND' });
+  getRecord.mockImplementation(async () => ({ ...run, state: 'STOPPED' }));
+  stopForPlanCorrection.mockClear();
+  await expect(channel({ id: 8 }, 'registered', 'execution', 'no-route:1:a:1:0')).resolves.toMatchObject({ code: 'INVALID' });
+  expect(stopForPlanCorrection).not.toHaveBeenCalled();
 });

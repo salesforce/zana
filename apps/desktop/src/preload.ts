@@ -345,6 +345,7 @@ const api: CcApi = {
     dismiss: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.dismiss, projectId, executionId),
     stop: (projectId, executionId, expectedStateVersion) =>
       ipcRenderer.invoke(IPC.executionBoard.stop, projectId, executionId, expectedStateVersion),
+    stopAndFixPlan: (projectId, executionId, blockerId) => ipcRenderer.invoke(IPC.executionBoard.stopAndFixPlan, projectId, executionId, blockerId),
     retry: (projectId, executionId, expectedStateVersion) =>
       ipcRenderer.invoke(IPC.executionBoard.retry, projectId, executionId, expectedStateVersion),
     retryWork: (projectId, executionId, expectedStateVersion, workUnitId, assignedSlotId) =>

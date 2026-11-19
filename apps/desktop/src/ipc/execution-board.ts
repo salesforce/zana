@@ -29,6 +29,8 @@ const DEFAULT_EXECUTION_PAGE_LIMIT = 50;
 const RELAUNCH_MONITOR_SOURCE_READ_MAX_BYTES = 64 * 1024;
 /** Exponential backoff base (ms) between resume-binding retries during monitor relaunch. */
 const RELAUNCH_MONITOR_BIND_RETRY_BASE_MS = 100;
+/** Cap on a blocker id crossing IPC (rule 5). */
+const STOP_AND_FIX_ID_MAX = 256;
 type ExecutionCaller = { kind: 'window'; window: BrowserWindow } | { kind: 'shared-owner' };
 
 export function registerExecutionBoardIpc(): void {
@@ -208,6 +210,43 @@ export function registerExecutionBoardIpc(): void {
       return result.ok
         ? { ok: true, value: executionProjection(result.value) }
         : { ok: false, code: result.code, message: result.message };
+    },
+    () => ({ ok: false, code: 'UNAVAILABLE', message: 'execution control unavailable' })
+  );
+
+  // "Stop and fix the plan" on the runtime no-route blocker. Main re-reads the run and the blocker: the renderer only
+  // hints that a card is a no-route card. Work already done stays on the record; only the run stops.
+  handleFromCaller<[string, string, string], Result<ExecutionBoardProjection>>(
+    IPC.executionBoard.stopAndFixPlan,
+    async (win, projectId, executionId, blockerId) => {
+      if (typeof projectId !== 'string' || typeof executionId !== 'string' || typeof blockerId !== 'string'
+        || !blockerId.trim() || blockerId.length > STOP_AND_FIX_ID_MAX) {
+        return { ok: false, code: 'INVALID', message: 'invalid execution control request' };
+      }
+      if (!isExecutionProjectAllowed(win, projectId)) return { ok: false, code: 'NOT_FOUND', message: 'execution not found' };
+      const record = await executionStore.getInProject(projectId, executionId);
+      if (!record) return { ok: false, code: 'NOT_FOUND', message: 'execution not found' };
+      const blocker = record.blockers?.find((candidate: { id: string }) => candidate.id === blockerId);
+      if (!blocker || blocker.resolved || blocker.noRoute !== true) {
+        return { ok: false, code: 'INVALID', message: 'This step is no longer waiting on a plan fix.' };
+      }
+      if (record.state === 'COMPLETED' || record.state === 'FAILED' || record.state === 'STOPPED') {
+        return { ok: false, code: 'INVALID', message: 'This run has already ended.' };
+      }
+      const stopped = await squadExecutionService.stopForPlanCorrection(executionId);
+      if (!stopped) return { ok: false, code: 'NOT_FOUND', message: 'execution not found' };
+      try {
+        await ctx.inboxStore.appendOnce({
+          projectId,
+          executionId,
+          subject: 'Fix the plan, then launch again',
+          comments: `You stopped the run so the plan can be fixed. Work already done is kept. Step ${blocker.workUnitId} could not be given to anyone in the Squad: ${blocker.question}\n\nFix the plan (or ask the agent that wrote it to revise it), then launch the Squad again.`,
+          dedupeKey: `plan-fix:${executionId}:${blockerId}`
+        });
+      } catch (error) {
+        ctx.logMainError(`stop and fix plan inbox card (executionId=${executionId})`, error);
+      }
+      return { ok: true, value: executionProjection(stopped) };
     },
     () => ({ ok: false, code: 'UNAVAILABLE', message: 'execution control unavailable' })
   );
