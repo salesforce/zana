@@ -120,7 +120,7 @@ function parseJsonValue(value: unknown): JsonValue | null {
 
 function tabStateWithinCap(value: JsonValue | null): boolean {
   try {
-    return (JSON.stringify(value ?? null) ?? 'null').length <= MAX_TAB_STATE_BYTES;
+    return new TextEncoder().encode(JSON.stringify(value ?? null) ?? 'null').length <= MAX_TAB_STATE_BYTES;
   } catch {
     return false;
   }
@@ -299,9 +299,18 @@ function mintTabId(kind: ClosableSecondaryTabKind): string {
   return `${kind}:${uniqueTabSuffix(globalThis.crypto?.randomUUID?.bind(globalThis.crypto))}`;
 }
 
-function stableParams(value: unknown): string {
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeys);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortKeys((value as Record<string, unknown>)[key])]));
+  }
+  return value;
+}
+
+/** JSON text of a value with object keys sorted, so key order never makes equal values differ. */
+export function stableParams(value: unknown): string {
   try {
-    return JSON.stringify(value ?? null);
+    return JSON.stringify(sortKeys(value ?? null)) ?? 'null';
   } catch {
     return 'null';
   }

@@ -179,6 +179,16 @@ export function mediaTypeOf(path: string): string {
   return `${TEXT_MEDIA_TYPES[ext] ?? 'text/plain'};charset=utf-8`;
 }
 
+/**
+ * Whether a doc path is markdown the standalone browser view renders: `.md` and
+ * `.markdown` (any case). `.mdx` carries JSX and stays raw, and the agent
+ * instructions file is never rendered into a page.
+ */
+export function isRenderableMarkdownPath(path: string): boolean {
+  const ext = extensionOf(path);
+  return (ext === 'md' || ext === 'markdown') && !isAgentInstructionsPath(path);
+}
+
 const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 
 /**

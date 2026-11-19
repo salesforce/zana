@@ -557,6 +557,8 @@ describe('plugin tab state', () => {
     expect(setClosableTabState(withTerminal, withTerminal.activeId, { a: 1 })).toBe(withTerminal);
     expect(setClosableTabState(saved, id, 'x'.repeat(MAX_TAB_STATE_BYTES + 1))).toBe(saved);
     expect(setClosableTabState(saved, id, null).tabs[0]!.tabState).toBeNull();
+    // The cap counts UTF-8 bytes: 3-byte characters pass by length but not by size.
+    expect(setClosableTabState(saved, id, '€'.repeat(MAX_TAB_STATE_BYTES / 3 + 1))).toBe(saved);
   });
 
   it('clears state when params change and keeps it otherwise', () => {

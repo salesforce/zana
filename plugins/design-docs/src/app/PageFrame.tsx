@@ -29,6 +29,7 @@ import { escapeAttribute, prependToHead } from '../shared/html-scan.js';
 import { MAX_FILES_PER_DOC } from '../shared/limits.js';
 import { MAX_RPC_PAYLOAD_BYTES, renderIsStale, scriptJson, withFetched, type PageRenderReport, type RenderedPage } from '../shared/page.js';
 import { errorMessage, toast, useApi, type DocKind } from './api.js';
+import { useOpenInBrowser } from './hooks.js';
 import { readThemeTokens, themedHtml } from './content.js';
 import type { PreviewFile, PreviewHandle } from './FilePreview.js';
 import { IconButton, Popover, Spinner } from './ui.js';
@@ -488,14 +489,7 @@ export function PageFrame({
   );
   const allProblems = [...renderProblems, ...problems];
 
-  const openInBrowser = async () => {
-    try {
-      const { url } = await api.pageLink(docId, path);
-      globalThis.open(url, '_blank', 'noopener,noreferrer');
-    } catch (failure) {
-      toast(errorMessage(failure), 'error');
-    }
-  };
+  const openInBrowser = useOpenInBrowser(docId, path);
 
   const applyChip = (handler: ((text: string) => void) | undefined) => {
     if (!chip || !handler) return;

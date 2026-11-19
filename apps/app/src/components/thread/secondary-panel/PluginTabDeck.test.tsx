@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
-import { cleanup, render, screen } from '@testing-library/react';
+import { useState } from 'react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { nextLivePluginTabIds, PluginTabDeck } from './PluginTabDeck.js';
 import type { ClosableSecondaryTab } from './threadSecondaryPanelState.js';
@@ -60,6 +61,20 @@ describe('PluginTabDeck', () => {
     view.rerender(<PluginTabDeck tabs={tabs} activeId="c" ownerId="other" cap={1} render={renderTab} />);
     expect(screen.queryByTestId('body-b')).toBeNull();
     expect(screen.getByTestId('body-c')).toBeTruthy();
+  });
+
+  it('remounts a tab with the same id when the owner changes', () => {
+    const Stateful = () => {
+      const [n, setN] = useState(0);
+      return <button data-testid="counter" onClick={() => setN(n + 1)}>{n}</button>;
+    };
+    const tabs = [tab('a')];
+    const deck = (ownerId: string) => <PluginTabDeck tabs={tabs} activeId="a" ownerId={ownerId} render={() => <Stateful />} />;
+    const view = render(deck('one'));
+    fireEvent.click(screen.getByTestId('counter'));
+    expect(screen.getByTestId('counter').textContent).toBe('1');
+    view.rerender(deck('two'));
+    expect(screen.getByTestId('counter').textContent).toBe('0');
   });
 
   it('skips tabs the layout does not accept or that lack a module', () => {

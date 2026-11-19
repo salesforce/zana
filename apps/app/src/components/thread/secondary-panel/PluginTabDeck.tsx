@@ -49,7 +49,7 @@ export function PluginTabDeck({ tabs, activeId, ownerId, accepts, cap = PLUGIN_T
       {pluginTabs.filter((tab) => mounted.has(tab.id)).map((tab) => {
         const active = tab.id === activeId;
         return (
-          <div key={tab.id} className="thread-plugin-tab-slot" hidden={!active} data-testid="plugin-tab-slot" data-tab-id={tab.id}>
+          <div key={`${ownerId ?? ''}:${tab.id}`} className="thread-plugin-tab-slot" hidden={!active} data-testid="plugin-tab-slot" data-tab-id={tab.id}>
             {render(tab, active)}
           </div>
         );

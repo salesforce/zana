@@ -11,6 +11,7 @@ import {
   isBinaryKind,
   mediaTypeOf,
   isCrossDocScheme,
+  isRenderableMarkdownPath,
   normalizeDocPath,
   crossDocMarkdownLink,
   localizeDocLink,
@@ -224,5 +225,17 @@ describe('renameClashingPaths', () => {
     ]);
     expect([...renameClashingPaths(['a.md', 'a-2.md'], ['a.md'])]).toEqual([['a.md', 'a-3.md']]);
     expect([...renameClashingPaths(['LICENSE'], ['LICENSE', 'LICENSE-2'])]).toEqual([['LICENSE', 'LICENSE-3']]);
+  });
+});
+
+describe('isRenderableMarkdownPath', () => {
+  it('accepts md and markdown in any case, not mdx, other files or agent instructions', () => {
+    expect(isRenderableMarkdownPath('a.md')).toBe(true);
+    expect(isRenderableMarkdownPath('docs/A.MD')).toBe(true);
+    expect(isRenderableMarkdownPath('b.markdown')).toBe(true);
+    expect(isRenderableMarkdownPath('c.mdx')).toBe(false);
+    expect(isRenderableMarkdownPath('d.html')).toBe(false);
+    expect(isRenderableMarkdownPath('noext')).toBe(false);
+    expect(isRenderableMarkdownPath('AGENTS.md')).toBe(false);
   });
 });

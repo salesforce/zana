@@ -1,6 +1,6 @@
 import type { ThreadTab, ThreadTabsResponse } from '@zana-ai/zcc-server-contract';
 import type { ClosableSecondaryTab, ThreadSecondaryPanelState } from './threadSecondaryPanelState.js';
-import { emptySecondaryPanelState } from './threadSecondaryPanelState.js';
+import { emptySecondaryPanelState, stableParams } from './threadSecondaryPanelState.js';
 
 function lineRangeFromNumber(lineNumber?: number | null): {
   startLineNumber: number;
@@ -175,7 +175,7 @@ export function applyContractTabs(
       : tab;
     // tabState is local-only (not in the server contract): keep it while the tab is unchanged.
     return local?.kind === 'plugin' && tab.kind === 'plugin' && local.tabState != null
-      && JSON.stringify(local.params ?? null) === JSON.stringify(tab.params ?? null)
+      && stableParams(local.params) === stableParams(tab.params)
       ? { ...kept, tabState: local.tabState }
       : kept;
   });
