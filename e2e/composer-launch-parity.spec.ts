@@ -108,8 +108,9 @@ test('composer attached plan survives repeated previews and launch', async ({ ap
   try {
     initSquadRepo(ctx);
     await launchSquadFixture(ctx, [], { teamExtra: { worktreeOnComplete: 'merge' } });
+    // Agents open as a full-page tab (no dialog) when thread tabs are on; close the modal only when one exists.
     const owner = ctx.window.getByRole('dialog', { name: /^Agent / }).first();
-    await owner.getByRole('button', { name: 'Close' }).click();
+    if (await owner.count()) await owner.getByRole('button', { name: 'Close' }).click();
     await ctx.window.getByTestId('nav-agents').or(ctx.window.getByTestId('project-nav-agents')).click();
     await ctx.window.getByTestId('agents-board-new-thread').first().click();
     const modal = ctx.window.getByTestId('launch-modal');
