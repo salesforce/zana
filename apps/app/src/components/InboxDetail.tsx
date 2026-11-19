@@ -661,6 +661,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
   const squadProposalSurface = entry.squadProposal ? (
     <InboxSquadProposalSurface
       hostAction={hostAction}
+      planCheck={entry.squadProposal.planCheck}
       ownershipLoading={ownershipLoading}
       ownershipError={ownershipError}
       projectAlive={projectAlive}

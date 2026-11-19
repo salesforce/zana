@@ -69,7 +69,8 @@ test('a plan with a Must fix is explained in plain language and cannot be launch
 
     // Inbox card: one short summary line, no internal terms.
     const detail = await openSquadReview(ctx, TITLE);
-    await expect(detail.getByText('Plan check: 1 Must fix before this can launch. Review shows the details.')).toBeVisible();
+    await expect(detail.getByTestId('inbox-plan-check')).toHaveText('Plan check: 1 Must fix before this can launch. Review shows the details.');
+    await expect(detail.getByTestId('inbox-plan-check').locator('[data-severity="blocking"]')).toHaveCSS('color', /rgb/);
     expect(await detail.innerText()).not.toMatch(INTERNAL_TERMS);
 
     // Composer: the disclosure opens on the Must fix, in the Squad's own terms; Launch is held.

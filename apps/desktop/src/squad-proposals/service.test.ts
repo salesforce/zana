@@ -675,11 +675,12 @@ describe('propose', () => {
     }
     const judged = await build().service.propose(route, { ...input, acceptFindings: true });
     expect(judged.ok).toBe(true);
-    expect(appendOnce.mock.calls.at(-1)![0].comments).toContain('- Plan check: 1 Must fix before this can launch, 1 fixed for you. Review shows the details.');
+    expect(appendOnce.mock.calls.at(-1)![0].squadProposal).toMatchObject({ planCheck: { mustFix: 1, check: 0, fixedForYou: 1 } });
+    expect(appendOnce.mock.calls.at(-1)![0].comments).not.toContain('Plan check:');
     appendOnce.mockClear();
     planFindingsDep = undefined;
     await build().service.propose(route, { ...input, goal: 'second' });
-    expect(appendOnce.mock.calls.at(-1)![0].comments).not.toContain('Plan check:');
+    expect(appendOnce.mock.calls.at(-1)![0].squadProposal).not.toHaveProperty('planCheck');
   });
 
   it('creates the record and the Inbox card', async () => {

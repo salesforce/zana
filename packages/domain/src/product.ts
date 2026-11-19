@@ -686,7 +686,7 @@ export interface InboxEntry {
    * Host-stamped marker linking this entry to a pending Squad launch proposal.
    * Never agent-supplied; presentation only (main re-authorizes on review).
    */
-  squadProposal?: { proposalId: string };
+  squadProposal?: { proposalId: string; planCheck?: { mustFix: number; check: number; fixedForYou: number } };
   /**
    * Optional host-authored decision context. Main content stays plain-language;
    * technical material appears only after the user opens its Details disclosure.

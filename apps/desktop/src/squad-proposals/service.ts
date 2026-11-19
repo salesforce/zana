@@ -26,6 +26,7 @@ import {
   formatSquadPlanDecision,
   formatSquadPlanFindingProblem,
   formatSquadPlanSummary,
+  summarizeSquadPlanFindings,
   type SquadPlanTierFitFinding,
   type SquadPlanStep,
   type SquadPlanning,
@@ -477,8 +478,7 @@ function proposalCard(record: SquadProposalRecord, prepared: Prepared, proposer:
   const comments = [
     `- Squad: ${team.name} (${orchestrator.name} + ${plural(workers, 'worker')})`,
     `- Planning: ${PLANNING_LABEL[planning]}${planSteps ? ` — plan checked: ${plural(planSteps.length, 'step')}` : ''}`,
-    // One line only; the binding table and each finding live in the composer that Review opens.
-    ...(prepared.planFindings ? [`- Plan check: ${formatSquadPlanSummary(prepared.planFindings)}. Review shows the details.`] : []),
+    // The plan check line is coloured, so it is drawn from `squadProposal.planCheck`, not written here.
     // Location and launch policies are in the composer under Review settings; the card stays short.
     ...(sources.length ? [`- Files: ${sources.map((s) => (s.attachment ? `${s.relPath} (attached)` : s.outsideProject ? `${s.relPath} (outside the Project)` : s.relPath)).join(', ')}`] : []),
     ...(attached ? [`- ${SQUAD_ATTACHMENT_FROZEN_NOTE}`] : []),
@@ -493,7 +493,7 @@ function proposalCard(record: SquadProposalRecord, prepared: Prepared, proposer:
     // Inbox documents open inside the project; a file outside it is named in the comments instead.
     docs: sources.filter((s) => !s.outsideProject && !s.attachment).map((s) => ({ path: s.relPath })),
     hostActionRequired: true,
-    squadProposal: { proposalId: record.id },
+    squadProposal: { proposalId: record.id, ...(prepared.planFindings ? { planCheck: summarizeSquadPlanFindings(prepared.planFindings) } : {}) },
     questions: [{ prompt: 'Squad launch', options: [{ id: 'dismiss', label: 'Dismiss' }] }],
     dedupeKey: `squad-proposal:${record.id}`,
     sessionId: proposer.id,

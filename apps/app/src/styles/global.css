@@ -42758,6 +42758,10 @@ body.split-frame-guard webview {
 .team-composer-plan-review section[data-severity='warning'] h4 { color: var(--warning, #d29922); }
 .team-composer-plan-review section[data-severity='repair'] { border-left-color: var(--success); }
 .team-composer-plan-review section[data-severity='repair'] h4 { color: var(--success); }
+.inbox-plan-check-item[data-severity='blocking'] { color: var(--danger); font-weight: 600; }
+.inbox-plan-check-item[data-severity='warning'] { color: var(--warning, #d29922); font-weight: 600; }
+.inbox-plan-check-item[data-severity='repair'],
+.inbox-plan-check-item[data-severity='ok'] { color: var(--success); font-weight: 600; }
 .team-composer-plan-review > summary { color: inherit; }
 .team-composer-plan-review[data-must-fix='true'] > summary { color: var(--danger); }
 .team-composer-plan-hint { min-height: 38px; }
