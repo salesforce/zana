@@ -59,6 +59,15 @@ describe('terminatePtyProcessTree on Windows', () => {
     expect(stopWindowsTree).toHaveBeenCalledWith(4242);
   });
 
+  it('uses the shared Windows tree kill by default and still releases the pty', () => {
+    setPlatform('win32');
+    // Under the test runner the shared helper refuses a PID this process did
+    // not spawn, so no real taskkill runs.
+    const handle = windowsPtyHandle();
+    expect(() => terminatePtyProcessTree(handle)).not.toThrow();
+    expect(handle.kill).toHaveBeenCalledWith();
+  });
+
   it.each([undefined, 0])('never runs taskkill for pid %s', (pid) => {
     setPlatform('win32');
     const stopWindowsTree = vi.fn();
