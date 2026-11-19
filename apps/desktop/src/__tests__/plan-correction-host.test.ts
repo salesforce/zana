@@ -142,7 +142,8 @@ describe('createPlanCorrectionHandoff', () => {
 
   it('builds hooks that defer to the service', async () => {
     const reviewInvalid = vi.fn(async () => 'wait');
-    m.createInferred.mockReturnValue({ reviewInvalid });
+    const escalate = vi.fn(async () => 'wait');
+    m.createInferred.mockReturnValue({ reviewInvalid, escalate });
     const pc: any = { approvedPlan: vi.fn(async () => undefined), review: vi.fn(async () => 'wait') };
     const { hooks, inferredPlanCorrection } = createPlanCorrectionHandoff(pc);
     expect(m.createInferred).toHaveBeenCalledWith(pc);
@@ -159,5 +160,7 @@ describe('createPlanCorrectionHandoff', () => {
     expect(pc.review).toHaveBeenCalledWith(ctx, { status: 'ok' });
     await expect(hooks.reviewInvalid(ctx, 'why')).resolves.toBe('wait');
     expect(reviewInvalid).toHaveBeenCalledWith(ctx, 'why');
+    await expect(hooks.escalateInvalid(ctx, 'spent')).resolves.toBe('wait');
+    expect(escalate).toHaveBeenCalledWith(ctx, 'spent');
   });
 });

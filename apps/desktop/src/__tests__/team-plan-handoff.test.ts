@@ -511,6 +511,64 @@ describe('TeamPlanHandoff.onCoordinatorIdle', () => {
   });
 });
 
+describe('TeamPlanHandoff one automatic Squad-check round', () => {
+  const ctx: CoordinatorHandoffContext = { sessionId: 's-1', projectId: 'p-1', projectRoot: '/root', executionId: 'exec-1', slotId: 'orchestrator:lead' };
+  const units: ExecutionWorkUnitInput[] = [{ id: 'a', title: 'A', task: 'do a', dependencies: [] }];
+  function build(judge: () => Promise<{ message: string; reason: string } | undefined>) {
+    const nudge = vi.fn();
+    const register = vi.fn(async () => ({ ok: true }));
+    const escalateInvalid = vi.fn(async () => 'wait' as const);
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/root/.zana/execution-plan-exec-1.md' }),
+      register, nudge, cleanup: async () => {}, logError: () => {},
+      judgeAuthored: judge, escalateInvalid
+    });
+    return { handoff, nudge, register, escalateInvalid };
+  }
+
+  it('a bad-role inferred plan triggers exactly one correction round, a second bad plan escalates instead of re-sending', async () => {
+    const judge = vi.fn(async () => ({ message: 'Your plan failed the Squad check.\n- Step `a`', reason: 'Step a asks for a role this Squad does not have.' }));
+    const { handoff, nudge, register, escalateInvalid } = build(judge);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(nudge).toHaveBeenCalledOnce();
+    expect(nudge.mock.calls[0]![1]).toContain('Your plan failed the Squad check');
+    expect(register).not.toHaveBeenCalled();
+    await handoff.onCoordinatorIdle(ctx);
+    expect(nudge).toHaveBeenCalledOnce();
+    expect(escalateInvalid).toHaveBeenCalledWith(ctx, 'Step a asks for a role this Squad does not have.');
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it('a corrected plan after the round registers normally', async () => {
+    const judge = vi.fn().mockResolvedValueOnce({ message: 'fix', reason: 'r' }).mockResolvedValueOnce(undefined);
+    const { handoff, nudge, register } = build(judge);
+    await handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(nudge).toHaveBeenCalledOnce();
+    expect(register).toHaveBeenCalledOnce();
+  });
+
+  it('a throwing judge fails open and still registers', async () => {
+    const { handoff, register } = build(async () => { throw new Error('boom'); });
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenCalledOnce();
+  });
+
+  it('escalation falls back to reviewInvalid when no escalate hook is wired', async () => {
+    const reviewInvalid = vi.fn(async () => 'reject' as const);
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/root/p.md' }),
+      register: vi.fn(async () => ({ ok: true })), nudge: vi.fn(), cleanup: async () => {}, logError: () => {},
+      judgeAuthored: async () => ({ message: 'm', reason: 'r' }), reviewInvalid
+    });
+    await handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(reviewInvalid).toHaveBeenCalledOnce();
+  });
+});
+
 describe('TeamPlanHandoff review verdicts', () => {
   const ctx: CoordinatorHandoffContext = {
     sessionId: 's-1', projectId: 'p-1', projectRoot: '/root', executionId: 'exec-1', slotId: 'orchestrator:lead'

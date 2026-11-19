@@ -37,6 +37,14 @@ function publicUsage<T extends NonNullable<ExecutionBoardProjection['usage']>>(u
 type WorkProjection = NonNullable<ExecutionBoardProjection['work']>;
 
 /** The unit's API-error recovery, only while Zana is still working through the ladder. */
+/** Latest recorded routing decision's chosen worker for a unit (display only). */
+function chosenRouteProjection(record: ExecutionRecord, workUnitId: string): { chosenSlotId?: string; chosenReason?: string } {
+  const decisions = (record.routingDecisions ?? []).filter((decision) => decision.workUnitId === workUnitId && decision.chosenSlotId);
+  const latest = decisions[decisions.length - 1];
+  if (!latest) return {};
+  return { chosenSlotId: latest.chosenSlotId, ...(latest.chosenReason ? { chosenReason: latest.chosenReason } : {}) };
+}
+
 function recoveryProjection(unit: ExecutionWorkUnit, now: number): Pick<WorkProjection['assignments'][number], 'recovery'> {
   const recovery = unit.apiErrorRecovery;
   if (!recovery || !isWorkerRecoveryLive(unit, now)) return {};
@@ -67,6 +75,7 @@ function workProjection(record: ExecutionRecord, now: number): WorkProjection {
       ...(unit.claimId !== undefined ? { claimId: unit.claimId } : {}),
       ...(unit.claimGeneration !== undefined ? { claimGeneration: unit.claimGeneration } : {})
       , ...recoveryProjection(unit, now)
+      , ...chosenRouteProjection(record, unit.id)
       , healthState: (unit.noProgressSlots?.some((entry) => entry.executionAttempt === record.attempt) ? 'NO_PROGRESS' : 'HEALTHY') as 'NO_PROGRESS' | 'HEALTHY'
       , reclaimCount: (unit.noProgressSlots ?? []).filter((entry) => entry.executionAttempt === record.attempt).length
       , attemptedSlots: [...new Set(unit.history.filter((entry) => entry.action === 'claimed' && entry.slotId).map((entry) => entry.slotId!))]

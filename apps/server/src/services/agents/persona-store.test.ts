@@ -60,6 +60,7 @@ describe('PersonaStore', () => {
     expect(reviewer?.source).toBe('builtin');
     expect(reviewer?.baseProfile).toBeUndefined();
     expect(reviewer?.modelLevel).toBe('high');
+    expect(reviewer?.roles).toEqual(['reviewer']);
     expect(reviewer?.executionState).toBeUndefined();
     expect(reviewer?.allowedTools).toBeUndefined();
     expect(reviewer?.appendSystemPrompt).toContain('senior code reviewer');
@@ -71,6 +72,7 @@ describe('PersonaStore', () => {
     expect(engineer?.source).toBe('builtin');
     expect(engineer?.baseProfile).toBeUndefined();
     expect(engineer?.modelLevel).toBe('medium');
+    expect(engineer?.roles).toEqual(['engineer']);
 
     const orchestrator = personas.find((p) => p.id === 'builtin:orchestrator');
     expect(orchestrator).toBeDefined();
@@ -603,6 +605,12 @@ describe('PersonaStore', () => {
     expect(reloaded && 'reasoningLevel' in reloaded).toBe(false);
     expect(reloaded?.modelLevel).toBe('high');
     expect(toPersonaSummary(reloaded as Persona).reasoningLevel).toBeUndefined();
+  });
+
+  it('sanitizePersona normalizes routing roles and omits them when absent or malformed', () => {
+    expect(sanitizePersona({ id: 'p', name: 'P', roles: [' Reviewer ', 'reviewer', 'QA'] })?.roles).toEqual(['reviewer', 'qa']);
+    expect(sanitizePersona({ id: 'p', name: 'P' })).not.toHaveProperty('roles');
+    expect(sanitizePersona({ id: 'p', name: 'P', roles: 'reviewer' })).not.toHaveProperty('roles');
   });
 
   it('OBL-001/REQ-5: sanitizePersona keeps each allowed level, omits absence, nulls every other defined value (#584)', () => {

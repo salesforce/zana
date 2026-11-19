@@ -159,6 +159,17 @@ function assembledResultLines(assembled: ExecutionProjection['assembledResult'])
   return lines;
 }
 
+/** Chosen route facts the host adds to an assignment once dispatch has picked a worker. */
+export type AssignmentRoute = { chosenSlotId?: string; chosenReason?: string };
+
+/** Plain-language route line for an assignment, or undefined until a route was recorded. */
+export function chosenRouteText(assignment: AssignmentRoute): string | undefined {
+  const slot = assignment.chosenSlotId?.trim();
+  if (!slot) return undefined;
+  const reason = assignment.chosenReason?.trim();
+  return reason ? `Chosen worker: ${slot} (${reason})` : `Chosen worker: ${slot}`;
+}
+
 /** Route-fit proposal (when present) + the final summary. */
 function routeAndFinalLines(execution: ExecutionProjection): string[] {
   const lines: string[] = [];
@@ -423,6 +434,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
         const assignedSlotId = assignmentDrafts[assignment.workUnitId] ?? assignment.slotId ?? execution.work?.rosterSlotIds[0] ?? '';
         return <div key={assignment.workUnitId}>
           {assignment.title} → {assignment.slotId ?? 'unassigned'} · {assignment.state}
+          {chosenRouteText(assignment as AssignmentRoute) && <p role="status" className="execution-details-route">{chosenRouteText(assignment as AssignmentRoute)}</p>}
           {assignment.slotId !== undefined && freshSlots.has(assignment.slotId) && <span className="scheduler-pill">Fresh session per unit</span>}
           {assignment.loopRound !== undefined && assignment.loopMax !== undefined && <p role="status" className="execution-details-recovery-reason">{reviewRoundText(assignment.loopRound, assignment.loopMax)}</p>}
           {assignment.recovery && <p role="status" className="execution-details-recovery-reason">Recovering engineer after API error: {RECOVERY_TEXT[assignment.recovery.step] ?? assignment.recovery.step}</p>}

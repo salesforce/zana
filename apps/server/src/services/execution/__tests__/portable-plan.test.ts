@@ -104,7 +104,7 @@ describe('parsePortablePlan', () => {
 - **Required role:** \`builtin:squad-worker-high\`
 - **Work:** Review the completed change.
 `);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
       units: [expect.objectContaining({
         id: 'review',
@@ -150,7 +150,7 @@ describe('parsePortablePlan', () => {
 
   it('rejects text with no executable-step markers', () => {
     const result = parsePortablePlan('# Plan\n\n### home: Write\n\n- **Work:** do it\n');
-    expect(result).toEqual({ ok: false, reason: 'no executable steps found' });
+    expect(result).toMatchObject({ ok: false, reason: 'no executable steps found' });
   });
 
   it('recognizes indented headings and case-insensitive, whitespace-padded markers', () => {
@@ -161,7 +161,7 @@ describe('parsePortablePlan', () => {
   });
 
   it('rejects empty text', () => {
-    expect(parsePortablePlan('   ')).toEqual({ ok: false, reason: 'empty plan text' });
+    expect(parsePortablePlan('   ')).toMatchObject({ ok: false, reason: 'empty plan text' });
   });
 
   it('fails when a step is missing Work', () => {
@@ -182,7 +182,7 @@ describe('parsePortablePlan', () => {
       '- **Verification:** Read `note.md`'
     ].join('\n');
 
-    expect(parsePortablePlan(text)).toEqual({
+    expect(parsePortablePlan(text)).toMatchObject({
       ok: false,
       reason: 'step contains an unterminated code fence: direct: Direct execution'
     });
@@ -200,7 +200,7 @@ describe('parsePortablePlan', () => {
   it('fails on a step id that normalizes to nothing', () => {
     const text = '### ---: Title <!-- executable-step -->\n\n- **Work:** do it\n';
     const result = parsePortablePlan(text);
-    expect(result).toEqual({ ok: false, reason: 'invalid step id: ---' });
+    expect(result).toMatchObject({ ok: false, reason: 'invalid step id: ---' });
   });
 
   it('captures a multi-line Work body and the labels that follow it', () => {

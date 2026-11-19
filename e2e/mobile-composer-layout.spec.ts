@@ -300,13 +300,25 @@ for (const engine of [chromium, webkit]) {
       page.setDefaultTimeout(15_000);
       page.setDefaultNavigationTimeout(15_000);
       let modelLabel = 'Auto';
-      await page.route('**/api/v1/system/execution-options*', (route) => route.fulfill({ json: {
+      const executionOptions = () => ({
         providers: [{ id: 'fake', displayName: 'Fake', available: true,
           composerActions: [], capabilities: { permissionModes: ['full', 'accept-edits'] } }],
         models: [{ id: 'fake-model', model: 'fake-model', displayName: modelLabel, isDefault: true,
           supportedReasoningEfforts: [{ reasoningEffort: 'medium', description: 'Medium' }], defaultReasoningEffort: 'medium' }],
         selectedOnlyModels: [], permissionCeiling: 'full', modelLoadError: null
-      } }));
+      });
+      // The picker batches same-scope provider discoveries into one ?stream=1
+      // request that answers with one NDJSON row per provider (product-api.ts).
+      // Whether a batch forms depends on render timing, so serve both shapes.
+      await page.route('**/api/v1/system/execution-options*', (route) => {
+        const url = new URL(route.request().url());
+        if (url.searchParams.get('stream') !== '1') return route.fulfill({ json: executionOptions() });
+        return route.fulfill({
+          contentType: 'application/x-ndjson',
+          body: url.searchParams.getAll('providerId')
+            .map((providerId) => `${JSON.stringify({ providerId, options: executionOptions() })}\n`).join('')
+        });
+      });
 
       // Both the standalone new-agent page and an existing conversation keep
       // the draft and actions in the visible area when only visualViewport moves.

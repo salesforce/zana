@@ -59,6 +59,18 @@ import { CodeBlockWithCopy, fencedCodeText } from './FencedCodeBlock.js';
  * @param copyableCode  Pin a "Copy code" button to fenced code blocks. On by
  *   default; the PDF export turns it off so the button isn't printed.
  */
+type MdNode = { type: string; value?: string; children?: MdNode[] };
+
+/** An HTML comment is a note for tools (such as `<!-- executable-step -->`), never text for the reader. Code blocks are untouched. */
+function remarkDropHtmlComments() {
+  const prune = (node: MdNode): void => {
+    if (!node.children) return;
+    node.children = node.children.filter((child) => !(child.type === 'html' && /^\s*<!--[\s\S]*-->\s*$/u.test(child.value ?? '')));
+    node.children.forEach(prune);
+  };
+  return (tree: MdNode) => prune(tree);
+}
+
 export function DocContent({
   path,
   content,
@@ -208,6 +220,7 @@ export const MarkdownContent = memo(function MarkdownContent({
     () => [
       remarkGfm,
       remarkMath,
+      remarkDropHtmlComments,
       ...(breaks ? [remarkBreaks] : []),
       ...(threadMentions ? [remarkThreadMentions] : [])
     ],

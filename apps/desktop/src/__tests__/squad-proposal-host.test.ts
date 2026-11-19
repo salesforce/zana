@@ -284,18 +284,20 @@ describe('squadProposalMcpDeps', () => {
       expect(await host.startTeamJobFromUi({ ...input, previewToken: fresh.previewToken }, { windowId: 7 })).toMatchObject({ ok: false, code: 'LAUNCH_CHANGED' });
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
+  // A plan with steps that do not parse still gets the card; step-less prose on an inferable Squad infers instead.
+  const BROKEN_PLAN_GOAL = '### a: Step A <!-- executable-step -->\n\n- **Mode:** Mutating';
   it.each(['nonGit', 'quick', 'detached'])('previews no-declaration %s launches without inventing a branch', async kind => {
     const dir = mkdtempSync(join(tmpdir(), 'legacy-preview-'));
     try {
       if (kind !== 'nonGit') initializeRepo(dir);
       if (kind === 'detached') execFileSync('git', ['-C', dir, 'checkout', '--detach']);
       h.projects = [{ id: 'p1', path: dir, name: 'Repo', ...(kind === 'quick' ? { quickAgent: true } : {}) }];
-      const preview = await host.resolveSquadComposerPreview({ teamId: 'team1', projectId: 'p1', goal: 'Needs attended plan correction', coordinationMode: 'structured' }, { kind: 'window', windowId: 7 });
+      const preview = await host.resolveSquadComposerPreview({ teamId: 'team1', projectId: 'p1', goal: BROKEN_PLAN_GOAL, coordinationMode: 'structured' }, { kind: 'window', windowId: 7 });
       expect(preview).toMatchObject({ location: { kind: 'project-root' }, path: realpathSync(dir), previewToken: expect.any(String) });
       if (kind !== 'quick') expect(preview.branch).toBeUndefined();
       const start = vi.spyOn(SquadExecutionService.prototype, 'start').mockResolvedValue({ ok: true, value: { id: 'correction', state: 'RUNNING' } } as never);
-      expect(await host.startTeamJobFromUi({ teamId: 'team1', projectId: 'p1', goal: 'Needs attended plan correction', coordinationMode: 'structured', previewToken: preview.previewToken }, { windowId: 7 })).toMatchObject({ ok: true });
-      expect(start.mock.calls[0]?.[2]).toMatchObject({ coordinationMode: 'structured', slots: [expect.objectContaining({ initialTask: expect.stringContaining('no executable steps found') })] });
+      expect(await host.startTeamJobFromUi({ teamId: 'team1', projectId: 'p1', goal: BROKEN_PLAN_GOAL, coordinationMode: 'structured', previewToken: preview.previewToken }, { windowId: 7 })).toMatchObject({ ok: true });
+      expect(start.mock.calls[0]?.[2]).toMatchObject({ coordinationMode: 'structured', slots: [expect.objectContaining({ initialTask: expect.stringContaining('Provided structured plan is invalid') })] });
       expect(start.mock.calls[0]?.[2]).not.toHaveProperty('workUnits');
       await expect(host.resolveSquadComposerPreview({ teamId: 'team1', projectId: 'p1', goal: 'go', worktree: true }, { kind: 'window', windowId: 7 })).rejects.toThrow();
     } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -509,6 +511,47 @@ describe('squad_plan_check tier fit (host planTierFit)', () => {
     knownTeam('opus');
     const result = await checkPlan()({ projectId: 'p1' }, { text: PLAN, teamId: 'team1' });
     expect(result).toMatchObject({ ok: true, value: { ok: true, tierFit: { findings: [{ unitId: 'only-step', kind: 'over-tiered' }] } } });
+  });
+});
+
+describe('judgePlanFindings (shared Squad check)', () => {
+  const dirs: string[] = [];
+  afterAll(() => dirs.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
+  const unit = (id: string, requiredRole?: string) => ({ id, title: id, task: 't', dependencies: [], ...(requiredRole ? { routing: { requiredRole } } : {}) });
+  function squad() {
+    const dir = mkdtempSync(join(tmpdir(), 'squad-host-judge-'));
+    dirs.push(dir);
+    initializeRepo(dir);
+    h.projects = [{ id: 'p1', name: 'Proj', path: dir }];
+    h.teams = [{ id: 'team1', name: 'Team', orchestratorPersonaId: 'orch', slots: [{ personaId: 'worker', quantity: 1, label: 'Builder' }] }];
+    h.personas = [{ id: 'orch', name: 'Orch', baseProfile: 'claude' }, { id: 'worker', name: 'Worker', baseProfile: 'claude', roles: ['builder'] }];
+  }
+
+  it('without a Squad returns only parser findings and no bindings', async () => {
+    const result = await host.judgePlanFindings('p1', undefined, {
+      workUnits: [unit('a')], findings: [{ severity: 'warning', requirement: 'format', stepId: 'a', message: 'odd heading' }]
+    });
+    expect(result.bindings).toEqual([]);
+    expect(result.findings).toEqual([expect.objectContaining({ stepId: 'a', severity: 'warning', requirement: 'format' })]);
+  });
+
+  it('an unknown team id behaves like no Squad', async () => {
+    squad();
+    expect((await host.judgePlanFindings('p1', 'ghost', { workUnits: [unit('a')] })).bindings).toEqual([]);
+  });
+
+  it('a required role the Squad lacks is blocking and names the Squad roles', async () => {
+    squad();
+    const result = await host.judgePlanFindings('p1', 'team1', { workUnits: [unit('a', 'wizard')] });
+    expect(result.findings).toEqual([expect.objectContaining({ stepId: 'a', requirement: 'required-role', severity: 'blocking' })]);
+    expect(result.findings[0]!.suggestion).toContain('builder');
+  });
+
+  it('a matching required role has no blocking finding and binds the step to its slot', async () => {
+    squad();
+    const result = await host.judgePlanFindings('p1', 'team1', { workUnits: [unit('a', 'builder')] });
+    expect(result.findings.filter((finding) => finding.severity === 'blocking')).toEqual([]);
+    expect(result.bindings).toEqual([expect.objectContaining({ stepId: 'a' })]);
   });
 });
 

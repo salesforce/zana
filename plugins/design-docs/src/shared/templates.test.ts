@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderTemplateFiles, templateById } from './templates.js';
 import { PLAN_MD_CONTENT, RESEARCH_AGENTS_CONTENT, ISSUE_AGENTS_CONTENT, PRODUCT_AGENTS_CONTENT } from './template-docs.js';
-import { parsePortablePlan } from '../../../../apps/server/src/services/execution/portable-plan.js';
+import { parsePortablePlan, parseLaunchSection } from '../../../../apps/server/src/services/execution/portable-plan.js';
 
 describe('templates helpers', () => {
   it('ships parser-compatible executable examples without invented completion checks', () => {
@@ -9,10 +9,21 @@ describe('templates helpers', () => {
     expect(PLAN_MD_CONTENT).not.toContain('Stop conditions');
     expect(PLAN_MD_CONTENT.match(/\*\*On failure:\*\* fail run/g)).toHaveLength(2);
     expect(PLAN_MD_CONTENT).toContain('### step-id: Step Title <!-- executable-step -->');
-    expect(PLAN_MD_CONTENT).toContain('### test-only-example: Test-Only Example <!-- executable-step -->');
+    expect(PLAN_MD_CONTENT).toContain('### review-example: Review Example <!-- executable-step -->');
     const parsed = parsePortablePlan(PLAN_MD_CONTENT);
-    expect(parsed).toMatchObject({ ok: true, units: [{ id: 'step-id', onFailure: { kind: 'fail-run' } }, { id: 'test-only-example', onFailure: { kind: 'fail-run' } }] });
+    expect(parsed).toMatchObject({ ok: true, units: [{ id: 'step-id', onFailure: { kind: 'fail-run' } }, { id: 'review-example', onFailure: { kind: 'fail-run' } }] });
     if (parsed.ok) expect(parsed.units.every((unit) => !unit.checks?.length)).toBe(true);
+  });
+
+  it('carries the Squad grammar and no Salesforce-only rules', () => {
+    const parsed = parsePortablePlan(PLAN_MD_CONTENT);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.findings ?? []).toEqual([]);
+    expect(parsed.units[1]).toMatchObject({ routing: { preferRoles: ['Reviewer'], excludeSameWorkerAs: ['step-id'] } });
+    expect(parseLaunchSection(PLAN_MD_CONTENT)).toEqual({ ok: true, launch: { declaredSquad: 'delivery' } });
+    for (const label of ['Required role', 'Prefer role', 'Not same worker as', 'Requires', 'Loop']) expect(PLAN_MD_CONTENT).toContain(label);
+    for (const gone of ['Proposal Traceability', 'Snippet', 'Obligation ID', 'coverage']) expect(PLAN_MD_CONTENT).not.toContain(gone);
   });
 
   it.each([RESEARCH_AGENTS_CONTENT, ISSUE_AGENTS_CONTENT, PRODUCT_AGENTS_CONTENT])('teaches deterministic completion grammar in plan instructions', (content) => {
@@ -25,6 +36,8 @@ describe('templates helpers', () => {
     expect(content).toContain('On failure: fail run');
     expect(content).toContain('[A-Za-z_][A-Za-z0-9_-]*');
     expect(content).toContain('100 characters');
+    for (const label of ['Required role', 'Prefer role', 'Not same worker as', 'Requires:', 'Loop:', '`- Squad: <id>`', 'squad_plan_check']) expect(content).toContain(label);
+    for (const gone of ['Proposal Traceability', 'Snippet', 'Obligation ID', 'coverage', 'fenced Markdown code block']) expect(content).not.toContain(gone);
   });
 
   it('looks up built-ins by id and returns null for unknown ids', () => {

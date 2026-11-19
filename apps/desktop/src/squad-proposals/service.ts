@@ -18,6 +18,15 @@ import {
   type SquadLaunchNowResult,
   type SquadLaunchPrefill,
   type SquadPlanCheckResult,
+  type SquadPlanFinding,
+  type SquadPlanBinding,
+  SQUAD_PLAN_BINDING_CAP,
+  buildSquadPlanDecision,
+  capSquadPlanFindings,
+  formatSquadPlanDecision,
+  formatSquadPlanFindingProblem,
+  formatSquadPlanSummary,
+  summarizeSquadPlanFindings,
   type SquadPlanTierFitFinding,
   type SquadPlanStep,
   type SquadPlanning,
@@ -126,6 +135,14 @@ export interface SquadLaunchNowDeps {
   }>;
 }
 
+/** A finding as the plan parser emits it, before it is judged against a roster. */
+export interface PlanParserFinding {
+  severity: SquadPlanFinding['severity'];
+  requirement: SquadPlanFinding['requirement'];
+  stepId?: string;
+  message: string;
+}
+
 export interface SquadLaunchPreviewRequest {
   teamId: string;
   projectId: string;
@@ -149,7 +166,19 @@ export interface SquadProposalServiceDeps {
   resolveSquadPlan(
     planSource: 'provided',
     texts: string[]
-  ): { workUnits?: Array<{ id: string; title: string; dependencies: string[]; files?: string[] }>; planError?: string };
+  ): {
+    workUnits?: Array<{ id: string; title: string; dependencies: string[]; files?: string[] }>; planError?: string;
+    findings?: readonly PlanParserFinding[]; declaredSquad?: string;
+  };
+  /**
+   * Judges a checked plan against a Squad's roster in the one finding shape. `teamId` is the launch target (or the
+   * declared Squad for `squad_plan_check` without one); undefined yields parser-only findings. Failures are swallowed
+   * by the caller: findings never turn a good plan into an error.
+   */
+  /** The checked plan re-rendered in the Squad plan grammar, or undefined when it cannot be rendered within `maxBytes`. */
+  canonicalPlanText?(workUnits: readonly unknown[], options: { declaredSquad?: string; maxBytes: number }): string | undefined;
+  planFindings?(projectId: string, teamId: string | undefined, plan: { workUnits: readonly unknown[]; findings?: readonly PlanParserFinding[]; declaredSquad?: string }):
+    Promise<{ findings: SquadPlanFinding[]; bindings: SquadPlanBinding[] }>;
   /**
    * Advisory tier-fit findings for a checked plan against a Squad's roster (squad_plan_check with a teamId).
    * Must not throw for a missing roster; failures are swallowed by the caller since the result is advisory.
@@ -179,7 +208,12 @@ export interface SquadProposalServiceDeps {
   staging?: StagingStore;
   /** Absent ⇒ an agent cannot start a Squad without review. */
   launchNow?: SquadLaunchNowDeps;
+  /** Sends text into the proposing conversation. Absent ⇒ the fix request can only be copied. */
+  sendToProposer?(proposer: SquadProposer, projectId: string, text: string): Promise<{ ok: boolean; reason?: string }>;
 }
+
+/** The plan-review part of a prefill, re-read from the plan files. */
+export type SquadPlanRecheck = Pick<SquadLaunchPrefill, 'planFindings' | 'planFindingsHidden' | 'planBindings' | 'planBindingsHidden' | 'planSummary' | 'planStepCount' | 'planCanonicalText'>;
 
 const STAGING_RETRIES = 5;
 
@@ -236,6 +270,9 @@ interface Prepared {
   planning: SquadPlanning;
   sources: SquadProposalSource[];
   planSteps?: SquadPlanStep[];
+  planFindings?: SquadPlanFinding[];
+  planBindings?: SquadPlanBinding[];
+  planCanonicalText?: string;
   /** Attachments kept after de-duplication, in the order given. */
   attachments: PreparedAttachment[];
   /** One entry per attachment given; empty when none were. */
@@ -318,7 +355,7 @@ async function confineSources(fs: SquadProposalFs, scope: SquadSourceScope | und
 async function checkProvidedPlan(
   deps: SquadProposalServiceDeps, scope: SquadSourceScope | undefined, sources: ConfinedSource[], goal: string,
   attachments: readonly PreparedAttachment[] = []
-): Promise<SquadProposalOutcome<SquadPlanStep[]>> {
+): Promise<SquadProposalOutcome<{ steps: SquadPlanStep[]; workUnits: readonly unknown[]; findings?: readonly PlanParserFinding[]; declaredSquad?: string }>> {
   let texts: string[];
   try { texts = await Promise.all(sources.map((s) => readConfinedSource(deps.fs, scope!, s))); } catch {
     return fail('SOURCE_UNREADABLE', 'A source file could not be read, or it changed after it was checked.');
@@ -326,7 +363,7 @@ async function checkProvidedPlan(
   const plan = deps.resolveSquadPlan('provided', [...texts, ...attachments.map((a) => a.text), goal]);
   if (plan.planError) return fail('INVALID_PLAN', plan.planError);
   if (!plan.workUnits?.length) return fail('INVALID_PLAN', 'No plan steps were found in the goal or the source files.');
-  return ok(toPlanSteps(plan.workUnits));
+  return ok({ steps: toPlanSteps(plan.workUnits), workUnits: plan.workUnits, findings: plan.findings, declaredSquad: plan.declaredSquad });
 }
 
 /** Checks 4-10 of §5, shared by propose and review (which re-runs them on current files). */
@@ -366,10 +403,24 @@ async function prepare(
       `${orchestrator.name} ${reason}, so Infer plan from goal can't finish. Write a portable plan, check it with squad_plan_check, and propose with planning 'provided'.`);
   }
   let planSteps: SquadPlanStep[] | undefined;
+  let planFindings: SquadPlanFinding[] | undefined;
+  let planBindings: SquadPlanBinding[] | undefined;
+  let planCanonicalText: string | undefined;
   if (planning === 'provided') {
     const plan = await checkProvidedPlan(deps, scope, sources.value, goal, attached.value.attachments);
     if (!plan.ok) return plan;
-    planSteps = plan.value;
+    planSteps = plan.value.steps;
+    try {
+      planCanonicalText = deps.canonicalPlanText?.(plan.value.workUnits, { declaredSquad: plan.value.declaredSquad, maxBytes: SQUAD_PROPOSAL_LIMITS.planTextBytes });
+    } catch (error) { deps.logError('canonical plan text', error); }
+    // Advisory display data for the card. The launch itself re-runs the hard checks in main and never reads these back.
+    if (deps.planFindings) {
+      try {
+        const judged = await deps.planFindings(projectId, teamId, plan.value);
+        planFindings = judged.findings;
+        planBindings = judged.bindings;
+      } catch (error) { deps.logError('plan findings', error); }
+    }
   }
   if (!deps.resolveLaunchPreview && launchOptions && Object.keys(launchOptions).length) {
     return fail('INVALID', 'Launch preview is unavailable; requested options and target cannot be verified.');
@@ -387,6 +438,8 @@ async function prepare(
     ...(launchPreview ? { launchPreview } : {}),
     project, ...(scope ? { scope } : {}), team, orchestrator, workers: Math.max(0, slots - 1), planning,
     sources: sources.value.map((s) => s.source), ...(planSteps ? { planSteps } : {}),
+    ...(planFindings ? { planFindings } : {}), ...(planBindings ? { planBindings } : {}),
+    ...(planCanonicalText ? { planCanonicalText } : {}),
     attachments: attached.value.attachments, attachmentMapping: attached.value.mapping
   });
 }
@@ -425,7 +478,8 @@ function proposalCard(record: SquadProposalRecord, prepared: Prepared, proposer:
   const comments = [
     `- Squad: ${team.name} (${orchestrator.name} + ${plural(workers, 'worker')})`,
     `- Planning: ${PLANNING_LABEL[planning]}${planSteps ? ` — plan checked: ${plural(planSteps.length, 'step')}` : ''}`,
-    ...launchPreviewLines(record.launchPreview),
+    // The plan check line is coloured, so it is drawn from `squadProposal.planCheck`, not written here.
+    // Location and launch policies are in the composer under Review settings; the card stays short.
     ...(sources.length ? [`- Files: ${sources.map((s) => (s.attachment ? `${s.relPath} (attached)` : s.outsideProject ? `${s.relPath} (outside the Project)` : s.relPath)).join(', ')}`] : []),
     ...(attached ? [`- ${SQUAD_ATTACHMENT_FROZEN_NOTE}`] : []),
     '- Nothing starts until you press Launch.'
@@ -439,22 +493,12 @@ function proposalCard(record: SquadProposalRecord, prepared: Prepared, proposer:
     // Inbox documents open inside the project; a file outside it is named in the comments instead.
     docs: sources.filter((s) => !s.outsideProject && !s.attachment).map((s) => ({ path: s.relPath })),
     hostActionRequired: true,
-    squadProposal: { proposalId: record.id },
+    squadProposal: { proposalId: record.id, ...(prepared.planFindings ? { planCheck: summarizeSquadPlanFindings(prepared.planFindings) } : {}) },
     questions: [{ prompt: 'Squad launch', options: [{ id: 'dismiss', label: 'Dismiss' }] }],
     dedupeKey: `squad-proposal:${record.id}`,
     sessionId: proposer.id,
     ...(origin ? { origin } : {})
   };
-}
-
-function launchPreviewLines(preview?: SquadLaunchPreview): string[] {
-  if (!preview) return ['- Location: unavailable; host preview must be wired before target selection.'];
-  const location = preview.location;
-  const description = location.kind === 'new-worktree'
-    ? `New worktree from ${location.baseBranch} — isolation: ${location.isolationSource} (path assigned at launch)`
-    : `${preview.branch ?? 'HEAD'}${location.kind === 'worktree' ? ' (user-owned)' : ' (Project)'} — ${preview.path}`;
-  return [`- Location: ${description}`, ...Object.entries(preview.resolvedLaunch).map(([name, setting]) =>
-    `- ${name}: ${Array.isArray(setting.value) ? setting.value.join(', ') || 'none' : setting.value} (${setting.source})`)];
 }
 
 /** What the agent is told about the Squad, its plan and its files, proposed or started. */
@@ -510,6 +554,22 @@ function createNowDedupe(now: () => number) {
   };
 }
 
+/** Capped findings and binding table for the composer card, with how many were left out. */
+function planDisplay(prepared: Prepared): Partial<SquadLaunchPrefill> {
+  if (!prepared.planFindings && !prepared.planBindings && !prepared.planCanonicalText) return {};
+  const capped = capSquadPlanFindings(prepared.planFindings ?? []);
+  const bindings = (prepared.planBindings ?? []).slice(0, SQUAD_PLAN_BINDING_CAP);
+  const bindingsHidden = Math.max(0, (prepared.planBindings?.length ?? 0) - bindings.length);
+  return {
+    ...(capped.findings.length ? { planFindings: capped.findings } : {}),
+    ...(capped.hidden ? { planFindingsHidden: capped.hidden } : {}),
+    ...(bindings.length ? { planBindings: bindings } : {}),
+    ...(bindingsHidden ? { planBindingsHidden: bindingsHidden } : {}),
+    planSummary: formatSquadPlanSummary(prepared.planFindings ?? []),
+    ...(prepared.planCanonicalText ? { planCanonicalText: prepared.planCanonicalText } : {})
+  };
+}
+
 function launchPrefill(record: SquadProposalRecord, prepared: Prepared, issued: SquadLaunchPrefill['sources']): SquadLaunchPrefill {
   return {
     proposalId: record.id,
@@ -531,7 +591,8 @@ function launchPrefill(record: SquadProposalRecord, prepared: Prepared, issued: 
       };
     }),
     ...(record.proposer.title ? { proposerTitle: record.proposer.title } : {}),
-    ...(prepared.planSteps ? { planStepCount: prepared.planSteps.length } : {})
+    ...(prepared.planSteps ? { planStepCount: prepared.planSteps.length } : {}),
+    ...planDisplay(prepared)
   };
 }
 
@@ -724,6 +785,34 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
   }
 
   /** The pending record behind a Review or a Launch, or why it can't be used. */
+  /** The proposal's files read again and its plan re-checked, as review and recheck both need. Fails when the launch target changed. */
+  async function reprepareRecord(record: SquadProposalRecord): Promise<SquadProposalOutcome<Prepared>> {
+    const stagedAttachments: SquadLaunchAttachment[] = [];
+    for (const source of record.sources.filter((entry) => entry.attachment)) {
+      const project = deps.projects.get(record.projectId);
+      if (!project) return fail('NOT_FOUND', 'Project not found.');
+      const scope = await sourceScope(deps.fs, project.path, deps.sourceBases(), { remote: Boolean(project.remote) });
+      if (!scope) return fail('NOT_FOUND', 'The project folder is not available.');
+      const confined = await confineSource(deps.fs, scope, source.path);
+      if (!confined.ok) return confined;
+      stagedAttachments.push({ name: basename(source.relPath), text: await readConfinedSource(deps.fs, scope, confined) });
+    }
+    const prepared = await prepare(deps, record.projectId, record.teamId, record.goal, record.planning,
+      record.sources.filter((source) => !source.attachment).map((source) => source.path), stagedAttachments, record.launchOptions);
+    if (!prepared.ok) return prepared;
+    if (record.launchPreview && record.launchPreview.fingerprint !== prepared.value.launchPreview?.fingerprint) return fail('INVALID', 'Launch target changed since proposal. Prepare a new launch; no fallback was used.');
+    // A staged copy is an ordinary file to the policy; here it is named and flagged as the attachment it is.
+    const attachments = new Map(record.sources.filter((s) => s.attachment).map((s) => [s.path, s]));
+    const reviewed: Prepared = {
+      ...prepared.value,
+      sources: [...prepared.value.sources, ...record.sources.filter((source) => source.attachment)].map((s) => {
+        const kept = attachments.get(s.path);
+        return kept ? { path: s.path, relPath: kept.relPath, bytes: s.bytes, attachment: true } : s;
+      })
+    };
+    return ok(reviewed);
+  }
+
   async function pendingRecord(proposalId: string, inProject: (projectId: string) => boolean): Promise<SquadProposalOutcome<SquadProposalRecord>> {
     await sweepExpired();
     const record = await store.get(proposalId);
@@ -765,6 +854,9 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         if (await pendingCapReached(route.projectId)) return tooManyProposals();
         const prepared = await prepare(deps, route.projectId, input.teamId, input.goal, input.planning, input.sources ?? [], input.attachments ?? [], input.launchOptions);
         if (!prepared.ok) return prepared;
+        // A plan with a Must fix is put to the user first; they can still choose to review it as it is.
+        const decision = input.acceptFindings ? undefined : buildSquadPlanDecision(prepared.value.planFindings ?? []);
+        if (decision) return fail('NEEDS_DECISION', formatSquadPlanDecision(decision));
         const files: StagedFile[] = prepared.value.attachments.map(({ name, text }) => ({ name, text }));
         let staged: Parameters<typeof newRecord>[5];
         if (files.length) {
@@ -806,6 +898,14 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         if (invalid) return fail('INVALID', invalid);
         const prepared = await prepare(deps, route.projectId, input.teamId, input.goal, input.planning, input.sources ?? [], input.attachments ?? [], input.launchOptions);
         if (!prepared.ok) return prepared;
+        // A Must fix cannot run unattended. Refuse before launching so no "needs correction" card reaches the Inbox;
+        // the agent asks the user, and "as it is" goes through review mode where the Must fix stays visible.
+        const nowDecision = buildSquadPlanDecision(prepared.value.planFindings ?? []);
+        if (nowDecision) {
+          // acceptFindings is ignored here: a Must fix never starts now, so the agent must ask the user and use review mode.
+          return fail('NEEDS_DECISION',
+            `${formatSquadPlanDecision(nowDecision)} This plan cannot start now, so do not stop here: ask the user now. The "${nowDecision.asIsLabel}" answer means calling squad_launch with mode 'review' and acceptFindings: true (not mode 'now').`);
+        }
         let approval: LaunchApproval;
         try {
           approval = await launchNow.launchApproval(prepared.value.team.id, route.projectId);
@@ -871,8 +971,24 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         const text = hasText ? ok(input.text!) : await readPlanFile(route.projectId, input.path!);
         if (!text.ok) return text;
         const plan = deps.resolveSquadPlan('provided', [text.value]);
-        if (plan.planError) return ok({ ok: false, reason: plan.planError });
-        if (!plan.workUnits?.length) return ok({ ok: false, reason: 'No plan steps were found.' });
+        // An explicit teamId wins; otherwise the plan's own `Squad:` declaration picks the roster it is judged against.
+        const judgedAgainst = input.teamId ?? (plan.declaredSquad && deps.teams.get(plan.declaredSquad) ? plan.declaredSquad : undefined);
+        const unjudgedNote = (judgedFindings: boolean): { note: string } | Record<string, never> => {
+          if (judgedFindings && judgedAgainst) return {};
+          return { note: plan.declaredSquad && !judgedAgainst
+            ? `This plan names the Squad "${plan.declaredSquad}", but no Squad by that name exists. It was NOT checked against any Squad's roster, so a pass only means the plan is readable, not that a Squad can run it. Pass a Squad to check it against.`
+            : 'This plan was NOT checked against any Squad\'s roster, so a pass only means the plan is readable, not that a Squad can run it. Pass a Squad, or add a "Squad:" line to the plan, to check it.' };
+        };
+        const judge = async (workUnits: readonly unknown[]) => {
+          if (!deps.planFindings) return undefined;
+          try { return await deps.planFindings(route.projectId, judgedAgainst, { workUnits, findings: plan.findings, declaredSquad: plan.declaredSquad }); }
+          catch (error) { deps.logError('plan check findings', error); return undefined; }
+        };
+        if (plan.planError) {
+          const judged = await judge([]);
+          return ok({ ok: false, reason: plan.planError, ...(judged?.findings.length ? { findings: capSquadPlanFindings(judged.findings).findings } : {}), ...(plan.declaredSquad ? { declaredSquad: plan.declaredSquad } : {}), ...unjudgedNote(!!judged) });
+        }
+        if (!plan.workUnits?.length) return ok({ ok: false, reason: 'No plan steps were found.', ...unjudgedNote(false) });
         const steps = toPlanSteps(plan.workUnits);
         // Advisory only: any failure here leaves the pass/fail result untouched.
         let findings: readonly SquadPlanTierFitFinding[] = [];
@@ -880,7 +996,18 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
           try { findings = await deps.planTierFit(route.projectId, input.teamId, plan.workUnits); }
           catch (error) { deps.logError('plan check tier fit', error); }
         }
-        return ok({ ok: true, steps, ...(findings.length ? { tierFit: { findings: [...findings] } } : {}) });
+        const judged = await judge(plan.workUnits);
+        const capped = judged ? capSquadPlanFindings(judged.findings) : undefined;
+        const bindings = judged?.bindings.slice(0, SQUAD_PLAN_BINDING_CAP);
+        return ok({
+          ok: true, steps, ...(findings.length ? { tierFit: { findings: [...findings] } } : {}),
+          ...(capped ? { findings: capped.findings, ...(capped.hidden ? { findingsHidden: capped.hidden } : {}), summary: formatSquadPlanSummary(judged!.findings) } : {}),
+          ...(judged && buildSquadPlanDecision(judged.findings) ? { decision: buildSquadPlanDecision(judged.findings)! } : {}),
+          ...(bindings?.length ? { bindings, ...(judged!.bindings.length > bindings.length ? { bindingsHidden: judged!.bindings.length - bindings.length } : {}) } : {}),
+          ...(plan.declaredSquad ? { declaredSquad: plan.declaredSquad } : {}),
+          ...(judged && judgedAgainst ? { judgedAgainst } : {}),
+          ...unjudgedNote(!!judged)
+        });
       } catch (error) {
         return unexpected('plan check', error, 'The plan check failed unexpectedly. Try again.');
       }
@@ -907,29 +1034,9 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         if (!pending.ok) return pending;
         const record = pending.value;
         if (leases.active(proposalId)) return fail('NOT_PENDING', 'This Squad launch is already starting.');
-        const stagedAttachments: SquadLaunchAttachment[] = [];
-        for (const source of record.sources.filter((entry) => entry.attachment)) {
-          const project = deps.projects.get(record.projectId);
-          if (!project) return fail('NOT_FOUND', 'Project not found.');
-          const scope = await sourceScope(deps.fs, project.path, deps.sourceBases(), { remote: Boolean(project.remote) });
-          if (!scope) return fail('NOT_FOUND', 'The project folder is not available.');
-          const confined = await confineSource(deps.fs, scope, source.path);
-          if (!confined.ok) return confined;
-          stagedAttachments.push({ name: basename(source.relPath), text: await readConfinedSource(deps.fs, scope, confined) });
-        }
-        const prepared = await prepare(deps, record.projectId, record.teamId, record.goal, record.planning,
-          record.sources.filter((source) => !source.attachment).map((source) => source.path), stagedAttachments, record.launchOptions);
-        if (!prepared.ok) return prepared;
-        if (record.launchPreview && record.launchPreview.fingerprint !== prepared.value.launchPreview?.fingerprint) return fail('INVALID', 'Launch target changed since proposal. Prepare a new launch; no fallback was used.');
-        // A staged copy is an ordinary file to the policy; here it is named and flagged as the attachment it is.
-        const attachments = new Map(record.sources.filter((s) => s.attachment).map((s) => [s.path, s]));
-        const reviewed: Prepared = {
-          ...prepared.value,
-          sources: [...prepared.value.sources, ...record.sources.filter((source) => source.attachment)].map((s) => {
-            const kept = attachments.get(s.path);
-            return kept ? { path: s.path, relPath: kept.relPath, bytes: s.bytes, attachment: true } : s;
-          })
-        };
+        const again = await reprepareRecord(record);
+        if (!again.ok) return again;
+        const reviewed = again.value;
         let issued: Awaited<ReturnType<SquadProposalServiceDeps['issueSources']>> = [];
         try {
           const { scope } = reviewed;
@@ -946,6 +1053,50 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         return ok(launchPrefill(record, reviewed, issued));
       } catch (error) {
         return unexpected(`${proposalId} review`, error, 'Opening this Squad launch failed unexpectedly. Try again.');
+      }
+    },
+
+    /** Reads the plan files again and returns fresh findings, so an edited plan can clear its Must fix without a new proposal. */
+    async recheck(proposalId: string, allowProject: (projectId: string) => boolean): Promise<SquadProposalOutcome<SquadPlanRecheck>> {
+      try {
+        if (!deps.enabled()) return fail('DISABLED', 'Squad launches are turned off in Settings.');
+        const pending = await pendingRecord(proposalId, allowProject);
+        if (!pending.ok) return pending;
+        if (leases.active(proposalId)) return fail('NOT_PENDING', 'This Squad launch is already starting.');
+        const again = await reprepareRecord(pending.value);
+        if (!again.ok) return again;
+        return ok({ ...planDisplay(again.value), ...(again.value.planSteps ? { planStepCount: again.value.planSteps.length } : {}) });
+      } catch (error) {
+        return unexpected(`${proposalId} recheck`, error, 'Checking the plan failed unexpectedly. Try again.');
+      }
+    },
+
+    /** Sends the plan's current Must fix problems to the conversation that proposed the launch. The text is built here, never taken from the renderer. */
+    async messageProposer(proposalId: string, allowProject: (projectId: string) => boolean): Promise<SquadProposalOutcome<{ delivered: true }>> {
+      try {
+        if (!deps.enabled()) return fail('DISABLED', 'Squad launches are turned off in Settings.');
+        if (!deps.sendToProposer) return fail('INVALID', 'This app cannot message the conversation. Copy the request instead.');
+        const pending = await pendingRecord(proposalId, allowProject);
+        if (!pending.ok) return pending;
+        const record = pending.value;
+        if (leases.active(proposalId)) return fail('NOT_PENDING', 'This Squad launch is already starting.');
+        const again = await reprepareRecord(record);
+        if (!again.ok) return again;
+        const problems = (again.value.planFindings ?? []).filter((finding) => finding.severity === 'blocking');
+        if (problems.length === 0) return fail('INVALID', 'The plan has nothing left to fix.');
+        const files = record.sources.filter((source) => !source.attachment).map((source) => `${source.relPath} (full path: ${source.path})`);
+        const text = [
+          `The Squad launch you prepared${record.title ? ` ("${record.title}")` : ''} cannot start yet. ${problems.length === 1 ? 'One problem' : `${problems.length} problems`} in the plan:`,
+          ...problems.slice(0, 10).map((finding) => `- ${formatSquadPlanFindingProblem(finding)}`),
+          ...(problems.length > 10 ? [`- and ${problems.length - 10} more`] : []),
+          '',
+          `Please revise the plan${files.length ? ` (${files.join(', ')})` : ''}: save the fix as a copy and leave my original file alone. Check the copy with squad_plan_check, and when it has no Must fix, prepare the Squad launch again with squad_propose (do not pass acceptFindings). Use the full path above, not just the file name.`
+        ].join('\n');
+        const sent = await deps.sendToProposer(record.proposer, record.projectId, text);
+        if (!sent.ok) return fail('NOT_FOUND', 'That conversation is no longer open. Copy the request and paste it into a new one.');
+        return ok({ delivered: true });
+      } catch (error) {
+        return unexpected(`${proposalId} messageProposer`, error, 'Sending the request failed unexpectedly. Try again.');
       }
     },
 

@@ -134,7 +134,10 @@ describe('design-docs plugin contract', () => {
     expect(page.headers['content-security-policy']).toMatch(/^sandbox allow-scripts/);
     expect(page.body).toContain('"endpoint":"/api/v1/plugins/design-docs/http"');
     expect(page.body).toContain('<script type="text/x-dd-script">1</script>');
-    expect(call('/file', { doc: created.id, path: 'README.md' }).headers['content-type']).toBe('text/plain; charset=utf-8');
+    const markdown = call('/file', { doc: created.id, path: 'README.md' });
+    expect(markdown.headers['content-type']).toBe('text/html; charset=utf-8');
+    expect(markdown.headers['content-security-policy']).toContain("script-src 'none'");
+    expect(markdown.body).not.toContain('<script');
 
     const preview = await harness.runCli(['preview', created.id, 'index.html']);
     expect(preview.stdout).toContain(`/api/v1/plugins/design-docs/http/page?doc=${created.id}&path=index.html`);

@@ -97,6 +97,7 @@ import { resolveIconPath } from './resolve-icon-path.js';
 import { createProductRouteSquadRuntime, startRuntimeSupervisor, type RuntimeSupervisor } from './runtime/runtime-supervisor.js';
 import { createRuntimeRecovery } from './runtime/runtime-recovery.js';
 import { createTeamProductOps } from './team-product-ops.js';
+import { judgeInferredPlan } from './plan-correction/findings.js';
 import { jobCoordinatorPrompt, rosterWithTiers, type RosterEntry } from './team-coordinator-prompt.js';
 import {
   createDesktopNativeRecovery, gateInvalidProvidedPlan, recoverSquadStateAtBoot, runSpawnLifecycle, slotRecoveryLaunch,
@@ -148,7 +149,7 @@ import { resolveModernMcpAllowlist } from '@zana-ai/zcc-server/services/threads/
 import { narrowAutomatedSkillIds, providerSkillAllowlist, resolvePersonaSkillSelection } from '@zana-ai/zcc-server/services/threads/persona-skill-selection';
 import { resolveSkillSettings } from '@zana-ai/zcc-host-daemon/skill-allowlist-settings';
 import type { SkillSettings } from '@zana-ai/zcc-host-daemon/harness/registration';
-import { effectiveSkills, isOrchestratorSlotId } from '@zana-ai/zcc-domain/product';
+import { effectiveRoles, effectiveSkills, isOrchestratorSlotId } from '@zana-ai/zcc-domain/product';
 import { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
 import { AgentLivenessCache } from '@zana-ai/zcc-host-daemon/harness/agent-liveness';
 import { resolveMaxLiveSessions } from '@zana-ai/zcc-host-daemon/capacity';
@@ -158,6 +159,8 @@ import { createLaunchCoordinator, LaunchSpawnError } from '@zana-ai/zcc-server/s
 import { createLaunchLedgerStore } from '@zana-ai/zcc-server/services/launch/ledger-store';
 import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, preflightLaunch, summarizePlanTierFit } from '@zana-ai/zcc-server/services/launch/preflight';
 import { planNormalizationNote, resolveSquadPlan } from './team-trigger-semantics.js';
+import { renderCanonicalPlan } from '@zana-ai/zcc-server/services/execution/portable-plan-render';
+import type { PortablePlanWorkUnitInput } from '@zana-ai/zcc-server/services/execution/portable-plan';
 import { coldStartCanceled, createDeferredSeatHooks, createDeferredSeatRegistry, createSeatApprovals, createSeatRecycler, createSeatStarter, deferredSeatsOf, freshContextSeatsOf, lateSeatApprovalProblem, lifecycleRecycleOps, preissuedDeadlineMatches, respawnApproval, respawnLaunchShape, seatApprovalId, seatApprovalWindow, seatBindExtras, seatLaunchMode, seatLaunchProblem, seatRecovery, seatRosterEntry } from './on-demand-seat.js';
 import { createSquadSourceSnapshotter, launchSquad, type SquadLaunchDeps, type SquadSourceProvider } from './squad-launch-core.js';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
@@ -167,7 +170,7 @@ import { SQUAD_SEAT_MARKER, squadSeatRefusal } from './squad-seat-launch.js';
 import { createRestoreCapabilityStore, type RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
 import { createTeamLifecycleIntegration, createTeamLifecycleStore, type TeamLifecycleRecord, type TeamModernWorkerObservation } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
 import { createRemoteReapLedger, remoteReapOrphans, type RemoteReapEntry } from '@zana-ai/zcc-server/services/launch/remote-reap-ledger';
-import { createExecutionStore, isUserOwnedSquadWorktree, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
+import { createExecutionStore, isUserOwnedSquadWorktree, recordedLevelPolicy, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
 import { KeyedColdStartSemaphore, SquadExecutionService, type ExecutionRequestV1 } from '@zana-ai/zcc-server/services/execution/service';
@@ -195,7 +198,7 @@ import { OutputActivityMonitor } from '@zana-ai/zcc-host-daemon/output-activity'
 import { ScreenScanBlockedDetector } from '@zana-ai/zcc-server/services/agents/screen-scan-blocked-detector';
 import { HARNESS_REGISTRATIONS, providerFor, registrationFor, harnessAdapterDescriptorsFromVerify, refreshDynamicHarnessCatalogs } from '@zana-ai/zcc-host-daemon/harness/registry';
 import { liveScopedProviderFor, memoizedLiveScopedProviderFor, resolveSlotModel } from './team-model-routing.js';
-import { decideTeamRoutingEnforcement } from './team-routing-enforcement.js';
+import { resolveRoutingEnforcement, routingPolicyOf } from './team-routing-enforcement.js';
 import { extraArgsPinSession } from '@zana-ai/zcc-spawn-plan';
 import { createExecutionConsentStore } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
 import { createExecutionConsentManagement } from '@zana-ai/zcc-host-daemon/harness/execution-consent-management';
@@ -358,7 +361,8 @@ import { listCommands } from '@zana-ai/zcc-server/services/skills/commands';
 import { ScheduleGroupsStore } from '@zana-ai/zcc-server/services/scheduler/schedule-groups-store';
 import { watch as fsWatch, mkdirSync, type FSWatcher } from 'node:fs';
 import { lstat, open as openFile, realpath, rm } from 'node:fs/promises';
-import { canAuthorAndRegisterPlan, planAuthoringTransportOf, resolveLaunchApproval, type SquadProposalInput } from '@zana-ai/zcc-domain/squad-proposal';
+import { canAuthorAndRegisterPlan, planAuthoringTransportOf, resolveLaunchApproval, type SquadPlanBinding, type SquadPlanFinding, type SquadProposalInput } from '@zana-ai/zcc-domain/squad-proposal';
+import { buildPlanFindings, hardFindingCounts, planBindings } from '@zana-ai/zcc-server/services/launch/plan-findings';
 import { createSquadProposalStore } from './squad-proposals/store.js';
 import { createStagingStore, SQUAD_STAGING_DIR_NAME, SQUAD_STAGING_PARENT_DIR_NAME } from './squad-proposals/staging.js';
 import { createSquadProposalService, SQUAD_LAUNCH_PROPOSAL_ACTION, SquadPreviewAdmissionError, type SquadProposalServiceDeps } from './squad-proposals/service.js';
@@ -2818,6 +2822,7 @@ const personaTeamRegistry = new PersonaTeamRegistry(() => extensionEntries);
 const sshHostProviderRegistry = new SshHostProviderRegistry();
 const personas = new PersonaStore(() => localMetadataStore.listProjects(), personaTeamRegistry, () => projectCatalogs.sources('personas'), () => store.listProjects().map(project => project.id));
 const teams = new TeamStore(() => localMetadataStore.listProjects(), personaTeamRegistry, () => projectCatalogs.sources('teams'), () => store.listProjects().map(project => project.id));
+teams.setPersonaRoleLookup((personaId) => personas.list().find((persona) => persona.id === personaId)?.roles);
 
 // --- microVM playground pool (Rule 3/7) ------------------------------------
 // A host-managed pool of persistent, isolated microVM guests a NATIVE agent
@@ -3821,7 +3826,9 @@ export async function resolveSquadComposerPreview(input: Parameters<import('@zan
     for (const text of texts) {
       const declarations = parseLaunchSection(text ?? '');
       if (!declarations.ok) throw new Error(declarations.reason);
-      if (Object.keys(declarations.launch).length) throw new Error('Correct the supplied plan before previewing its launch declarations');
+      // `Squad:` is advisory and never a launch default, so it alone must not trip the guard.
+      const { declaredSquad: _declaredSquad, ...defaulting } = declarations.launch;
+      if (Object.keys(defaulting).length) throw new Error('Correct the supplied plan before previewing its launch declarations');
     }
     if (caller.kind !== 'window') throw new Error(plan.planError);
   }
@@ -5886,6 +5893,7 @@ async function resolveTeamModelSnapshots(
       slotId: slots[index].slotId,
       personaId: slot.personaId,
       ...(slot.label !== undefined ? { label: slot.label } : {}),
+      ...(effectiveRoles(slot, persona) !== undefined ? { roles: effectiveRoles(slot, persona) } : {}),
       provider: team.transport === 'MODERN' ? canonicalThreadProviderId(harnessFamilyOf(profile) ?? profile) : provider.adapter.descriptor.id,
       ...(roleOwnedModel || !model.targetId ? {} : { model: model.targetId }),
       ...(model.level ? { level: model.level } : {}),
@@ -7029,6 +7037,7 @@ export async function launchTeam(
           executionId: structured.executionId,
           job: structured.jobContext,
           roster: rosterWithTiers(roster, seededRecord?.resolvedModels),
+          personaById: (id) => personaSnapshot.find((candidate) => candidate.id === id),
            planReady,
             recoveryResume: orchestratorRecovery.recoveryResume,
           workUnits: seededWorkUnits,
@@ -7325,6 +7334,8 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
   teamHostProblem: (project) => teamHostProblem(project as Project, localHostId()),
   expandTeamSlots,
   resolveSquadPlan: (planSource, texts) => resolveSquadPlan(planSource, texts),
+  canonicalPlanText: (workUnits, options) => renderCanonicalPlan(workUnits as PortablePlanWorkUnitInput[], options),
+  planFindings: (projectId, teamId, plan) => judgePlanFindings(projectId, teamId, plan),
   fs: { realpath, lstat, open: (path, flags) => openFile(path, flags) },
   sourceBases: () => squadSourceBases(),
   inbox: { appendOnce: (input) => inboxStore.appendOnce(input) },
@@ -7358,7 +7369,9 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
       if (!record) throw new Error('launched execution receipt unavailable');
       return { ...result, value: { ...result.value, ...await describeExecutionLocation(project, record) } };
     }
-  }
+  },
+  // Lazy: the notifier is created after this service.
+  sendToProposer: (proposer, projectId, text) => squadProposalNotifier.sendToConversation({ kind: proposer.kind, id: proposer.id }, projectId, text)
 };
 export const squadProposalService = createSquadProposalService(squadProposalServiceDeps);
 // squad_plan_check's route carries no session id: the MCP tool has already
@@ -7367,6 +7380,7 @@ const squadPlanCheckService = createSquadProposalService({
   ...squadProposalServiceDeps,
   lookupProposer: async () => ({ kind: 'pty' as const, id: 'mcp-route', squadMember: false }),
   // Advisory tier fit against the Squad's roster; planless runs keep their roster untouched.
+  planFindings: (projectId, teamId, plan) => judgePlanFindings(projectId, teamId, plan),
   planTierFit: async (projectId, teamId, workUnits) => {
     try {
       const team = teams.list().find((candidate) => candidate.id === teamId);
@@ -7450,7 +7464,34 @@ export function canInferPlanForTeam(team: { orchestratorPersonaId?: string; tran
 
 /** `list_teams` MCP output: the summary plus whether the orchestrator can write a plan. */
 export function listTeamSummariesForMcp() {
-  return teams.list().map((team) => ({ ...toTeamSummary(team), canInferPlan: canInferPlanForTeam(team) }));
+  const personaById = new Map(personas.list().map((persona) => [persona.id, persona]));
+  return teams.list().map((team) => ({ ...toTeamSummary(team, (id) => personaById.get(id)), canInferPlan: canInferPlanForTeam(team) }));
+}
+
+/**
+ * Judges a checked plan against a Squad's roster in the one finding shape (squad_plan_check and the composer card).
+ * Advisory display: launch re-runs the hard checks in main. Without a Squad only the parser's findings are returned.
+ */
+export async function judgePlanFindings(
+  projectId: string,
+  teamId: string | undefined,
+  plan: { workUnits: readonly unknown[]; findings?: readonly { severity: 'blocking' | 'warning' | 'repair'; requirement: SquadPlanFinding['requirement']; stepId?: string; message: string }[]; declaredSquad?: string }
+): Promise<{ findings: SquadPlanFinding[]; bindings: SquadPlanBinding[] }> {
+  const team = teamId ? teams.list().find((candidate) => candidate.id === teamId) : undefined;
+  const units = plan.workUnits as ExecutionWorkUnitInput[];
+  if (!team) return { findings: buildPlanFindings({ units, slotRoutes: [], parserFindings: plan.findings, declaredSquad: plan.declaredSquad }), bindings: [] };
+  const slots = expandTeamSlots(team);
+  const models = await resolveTeamModelSnapshots(projectId, { teamId: team.id, slots: slots.map(() => ({ initialTask: '' })) });
+  const slotRoutes = models.map((model) => ({ ...model, personaId: model.personaId ?? '' }));
+  const workerIds = slotRoutes.filter((slot) => !isOrchestratorSlotId(slot.slotId)).map((slot) => slot.slotId);
+  const gate = resolveRoutingEnforcement(team, globalRoutingEnforcement(), slotRoutes, workerIds);
+  const findings = buildPlanFindings({
+    units, slotRoutes, parserFindings: plan.findings, declaredSquad: plan.declaredSquad,
+    launchSquad: { id: team.id, name: team.name }, degradedSlots: gate.degradedSlots
+  });
+  const counts = hardFindingCounts(findings);
+  if (Object.keys(counts).length) logMainInfo('plan findings', `Squad ${team.id} blocking findings by requirement ${JSON.stringify(counts)}`);
+  return { findings, bindings: planBindings(units, slotRoutes, new Set(gate.degradedSlots.map((slot) => slot.slotId))) };
 }
 
 /** MCP deps for squad_propose / squad_plan_check; empty while Team jobs are off. */
@@ -7515,6 +7556,9 @@ export async function runSquadNamedCheck(record: ExecutionRecord, reference: str
 export async function disposeSquadNamedChecks(): Promise<void> {
   await namedCheckRunner.dispose();
 }
+
+const teamRoutingFor = (teamId: string) => teams.list().find((candidate) => candidate.id === teamId);
+const globalRoutingEnforcement = () => store.getConfig().teamRoutingEnforcementEnabled === true;
 
 const squadExecutionService = new SquadExecutionService({
   resolveLaunchOptions: resolveSquadLaunchOptions,
@@ -7653,25 +7697,30 @@ const squadExecutionService = new SquadExecutionService({
         };
       })()
     : undefined
+  // One gate (team-routing-enforcement.ts). A run launched with a recorded `routingPolicy` reads that record, never the live Squad;
+  // only a run from before the policy existed re-derives it, with the old all-levels-known rule.
+  , resolveRoutingPolicy: (_projectId, request, resolvedModels) => {
+    const team = teamRoutingFor(request.teamId);
+    const slotIds = team ? expandTeamSlots(team).map((slot) => slot.slotId) : resolvedModels.map((model) => model.slotId);
+    const workerSlotIds = slotIds.filter((slotId) => !isOrchestratorSlotId(slotId));
+    return routingPolicyOf(resolveRoutingEnforcement(team, globalRoutingEnforcement(), resolvedModels, workerSlotIds));
+  }
   , routingEnforcementEnabled: (record) => {
+    const recorded = recordedLevelPolicy(record);
+    if (recorded) return recorded.levelEnforced;
     const workerSlotIds = (record.authorizationContext?.slots ?? [])
       .map((slot) => slot.slotId)
       .filter((slotId) => !isOrchestratorSlotId(slotId));
     // Startup dispatch can run before launch authorization records its worker
     // roster. Do not freeze advisory routing before route facts exist.
     if (workerSlotIds.length === 0) return false;
-    const team = teams.list().find((candidate) => candidate.id === record.teamId);
-    const decision = decideTeamRoutingEnforcement(
-      team,
-      store.getConfig().teamRoutingEnforcementEnabled === true,
-      record.resolvedModels,
-      workerSlotIds
-    );
-    return decision.enforced;
+    const gate = resolveRoutingEnforcement(teamRoutingFor(record.teamId), globalRoutingEnforcement(), record.resolvedModels, workerSlotIds);
+    return gate.levelEnforced && gate.degradedSlots.length === 0;
   }
   , routingEnforcementRequested: (record) => {
-    const team = teams.list().find((candidate) => candidate.id === record.teamId);
-    return team?.routingEnforced ?? store.getConfig().teamRoutingEnforcementEnabled === true;
+    const recorded = recordedLevelPolicy(record);
+    if (recorded) return recorded.requested;
+    return resolveRoutingEnforcement(teamRoutingFor(record.teamId), globalRoutingEnforcement(), [], []).requested;
   }
   , claimRecoveryObserveEnabled: () => store.getConfig().executionClaimRecoveryObserveEnabled === true
   , claimRecoveryEnforceEnabled: () => store.getConfig().executionClaimRecoveryEnforceEnabled === true
@@ -7784,10 +7833,11 @@ const squadExecutionService = new SquadExecutionService({
         { provider: model.provider, remoteCli: team?.transport !== 'MODERN' && !!project?.remote })
     }));
     const workerRoutes = slotRoutes.filter((slot) => !isOrchestratorSlotId(slot.slotId));
-    const routingRequested = team?.routingEnforced ?? config.teamRoutingEnforcementEnabled === true;
     // Advisory mode passes an explicit false so ROUTE_ELIGIBILITY stays non-required;
-    // tier-fit findings are warnings and never change `ready`.
-    const enforceRouting: boolean = routingRequested && workerRoutes.length > 0 && workerRoutes.every((slot) => !!slot.level);
+    // tier-fit findings are warnings and never change `ready`. Degraded slots are surfaced by findings-preflight.
+    const gate = resolveRoutingEnforcement(team, config.teamRoutingEnforcementEnabled === true, slotRoutes, workerRoutes.map((slot) => slot.slotId));
+    // Per-slot admission: a degraded slot skips only its own level check; role, tag, skill, MCP and anti-affinity stay on.
+    const enforceRouting: boolean = gate.levelEnforced;
     return {
       workUnits: request.workUnits,
       requireCompletePlan: isDurableCoordination(request.coordinationMode),
@@ -7796,7 +7846,8 @@ const squadExecutionService = new SquadExecutionService({
       initialTasks: request.slots.map((slot) => slot.initialTask),
       sourceBytes: request.sourceBundle?.sources.reduce((sum, source) => sum + source.byteSize, 0),
       requiredMcpServers, requiredModels, requiredProviders, inventory, slotRoutes,
-      enforceRouting
+      enforceRouting,
+      ...(gate.degradedSlots.length ? { levelExemptSlotIds: gate.degradedSlots.map((slot) => slot.slotId) } : {})
     };
   }
   , authorizePlanRegistration: (record, workUnits, submitter) => {
@@ -7838,6 +7889,16 @@ teamPlanHandoff = new TeamPlanHandoff({
     return (record?.workUnits?.length ?? 0) === 0;
   },
   ...planCorrectionHandoffHooks,
+  // One automatic correction round for a coordinator-authored plan the shared Squad check rejects.
+  judgeAuthored: (ctx, units) => judgeInferredPlan({
+    execution: async (projectId, executionId) => await executionStore.getInProject(projectId, executionId),
+    judge: async (projectId, teamId, planUnits) => {
+      const team = teams.list().find((candidate) => candidate.id === teamId);
+      if (!team) return undefined;
+      const personaById = new Map(personas.list().map((persona) => [persona.id, persona]));
+      return { findings: (await judgePlanFindings(projectId, teamId, { workUnits: planUnits })).findings, summary: toTeamSummary(team, (id) => personaById.get(id)) };
+    }
+  }, ctx, units),
   register: async (ctx, units) => {
     const result = await squadExecutionService.registerPlan(
       { role: 'orchestrator', slotId: ctx.slotId, executionId: ctx.executionId, projectId: ctx.projectId, principalId: ctx.sessionId },
@@ -8040,6 +8101,11 @@ const squadLaunchDeps: SquadLaunchDeps = {
   newLaunchRequestId: () => `ui:${randomUUID()}`,
   inboxStore,
   planCorrectionLaunchBinding,
+  canInferPlanForTeam: (teamId) => { const team = teams.list().find((candidate) => candidate.id === teamId); return !!team && canInferPlanForTeam(team); },
+  planFindings: async (projectId, teamId, workUnits) => ({
+    findings: (await judgePlanFindings(projectId, teamId, { workUnits })).findings,
+    squadName: teams.list().find((candidate) => candidate.id === teamId)?.name ?? teamId
+  }),
   nameTeamExecution: (launchId, objective, explicitTitle, sourceTexts) => nameTeamExecution(launchId, objective, explicitTitle, sourceTexts),
   autonomousTimeoutMs: () => store.getConfig().autonomousTimeoutMs,
   autonomousBlockedWaitMs: () => store.getConfig().autonomousBlockedWaitMs,
@@ -11072,7 +11138,10 @@ async function bootstrapNormal() {
     // reader can't see.
     listPersonas: () => personas.list().map(toPersonaSummary),
     // Team catalogue → non-sensitive metadata; the `team.list` control-plane op.
-    listTeams: () => teams.list().map(toTeamSummary),
+    listTeams: () => {
+      const personaById = new Map(personas.list().map((persona) => [persona.id, persona]));
+      return teams.list().map((team) => toTeamSummary(team, (id) => personaById.get(id)));
+    },
     // Mirror the agent_send MCP tool: resolve handle (any project) → session id,
     // inject if the target is at rest (any harness), always audit to the message log.
     sendToAgent: (to, message) => {

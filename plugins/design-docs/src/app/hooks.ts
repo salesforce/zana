@@ -6,7 +6,7 @@ import {
   type DesignDocFile,
   type DesignDocSummary
 } from '../shared/contract.js';
-import { errorMessage, useApi, type DocKind, type ListArgs, type ProjectInfo, type TemplateInfo, type ProjectMapping, type UnassignedProject } from './api.js';
+import { errorMessage, toast, useApi, type DocKind, type ListArgs, type ProjectInfo, type TemplateInfo, type ProjectMapping, type UnassignedProject } from './api.js';
 
 export interface Resource<T> {
   data: T | null;
@@ -219,4 +219,17 @@ export function useNow(intervalMs = 60_000): number {
     return () => clearInterval(timer);
   }, [intervalMs]);
   return now;
+}
+
+/** Opens a doc file's standalone page in the system browser; failures show as a toast. */
+export function useOpenInBrowser(docId: string, path: string): () => Promise<void> {
+  const api = useApi();
+  return useCallback(async () => {
+    try {
+      const { url } = await api.pageLink(docId, path);
+      globalThis.open(url, '_blank', 'noopener,noreferrer');
+    } catch (failure) {
+      toast(errorMessage(failure), 'error');
+    }
+  }, [api, docId, path]);
 }

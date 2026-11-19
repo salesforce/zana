@@ -4,7 +4,7 @@ import { validateSquadExecutionTarget, type Project, type SquadExecutionTargetSe
 import { AUTONOMOUS_DEFAULTS } from '@zana-ai/zcc-server/services/agents/autonomous-run-supervisor';
 import type { ExpandedTeamSlot } from '@zana-ai/zcc-server/services/agents/team-slot-expansion';
 import type { ExecutionRequestV1, SquadExecutionService } from '@zana-ai/zcc-server/services/execution/service';
-import { ExecutionSourceError, type createExecutionSourceRegistry, type ExecutionSourcePathDescriptor } from '@zana-ai/zcc-server/services/execution/source-registry';
+import { ExecutionSourceError, snapshotKeyForLaunch, type createExecutionSourceRegistry, type ExecutionSourcePathDescriptor } from '@zana-ai/zcc-server/services/execution/source-registry';
 import { resolveSourcePolicy, type SourcePolicy } from '@zana-ai/zcc-server/services/execution/source-policy';
 import type { ExecutionRecord, ExecutionReportTarget } from '@zana-ai/zcc-server/services/execution/store';
 import { squadGoalTooLongMessage, squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
@@ -13,6 +13,9 @@ import type { LaunchItemMapping } from './squad-proposals/sources.js';
 import { PlanCorrectionService } from './plan-correction/service.js';
 import { gateInvalidProvidedPlan, splitProposedGoalSources, teamJobFailureResponse, type ProvidedPlanGateDeps } from './team-launch-support.js';
 import { planNormalizationNote, resolveSquadPlan } from './team-trigger-semantics.js';
+import { hasPortablePlanStep } from '@zana-ai/zcc-server/services/execution/portable-plan';
+import { formatSquadPlanFinding, type SquadPlanFinding } from '@zana-ai/zcc-domain/squad-proposal';
+import { planCorrectionReason, planIntakeDisposition } from './plan-correction/findings.js';
 
 type ExecutionSourceRegistry = ReturnType<typeof createExecutionSourceRegistry>;
 export type SquadSourceBundle = Awaited<ReturnType<ExecutionSourceRegistry['resolve']>>;
@@ -66,6 +69,10 @@ export interface SquadLaunchDeps {
   autonomousTimeoutMs(): number | undefined;
   autonomousBlockedWaitMs(): number | undefined;
   squadExecutionService: Pick<SquadExecutionService, 'start'>;
+  /** Whether the Squad's orchestrator can write and register a plan (infer-plan fallback for attended prose). */
+  canInferPlanForTeam?(teamId: string): boolean;
+  /** The shared roster check (host `judgePlanFindings`); an unattended launch with a blocking finding is refused. */
+  planFindings?(projectId: string, teamId: string, workUnits: readonly unknown[]): Promise<{ findings: readonly SquadPlanFinding[]; squadName: string }>;
   /** Reports a cleanup failure that was swallowed so the launch outcome stands. */
   log?(message: string, error: unknown): void;
 }
@@ -142,7 +149,7 @@ async function snapshotWindowSources(
   const capabilityIds = [...new Set([...args.sourceCapabilityIds, ...goalSourceCapabilities.map(({ id }) => id)])];
   if (!capabilityIds.length) return undefined;
   return registry.resolve({
-    windowId, projectId, capabilityIds, snapshotKey: args.launchRequestId.replace(/[^a-zA-Z0-9:_-]/g, '_')
+    windowId, projectId, capabilityIds, snapshotKey: snapshotKeyForLaunch(args.launchRequestId)
   });
 }
 
@@ -177,7 +184,7 @@ async function snapshotSessionSources(
     : undefined;
   const capabilityIds = [...pathViews.map(({ id }) => id), ...(attached?.views.map(({ id }) => id) ?? [])];
   if (!capabilityIds.length) return {};
-  const sourceBundle = await registry.resolve({ binding, projectId, capabilityIds, snapshotKey: args.launchRequestId.replace(/[^a-zA-Z0-9:_-]/g, '_') });
+  const sourceBundle = await registry.resolve({ binding, projectId, capabilityIds, snapshotKey: snapshotKeyForLaunch(args.launchRequestId) });
   return { sourceBundle, ...(attached ? { attachmentMapping: attached.mapping } : {}) };
 }
 
@@ -285,6 +292,13 @@ export function redactCapturedExecutionSourcePaths(text: string | undefined, des
   return paths.reduce((sanitized, path) => sanitized.split(path).join(`[captured execution source: ${basename(path)}]`), text);
 }
 
+/** Human reason for an unattended launch stopped by blocking roster findings; undefined when none block. */
+export function unattendedRosterBlock(judged: { findings: readonly SquadPlanFinding[]; squadName: string } | undefined): string | undefined {
+  const blocking = judged?.findings.filter((finding) => finding.severity === 'blocking') ?? [];
+  if (!judged || !blocking.length) return undefined;
+  return `Squad "${judged.squadName}" cannot run this plan unattended. ${blocking.slice(0, 5).map(formatSquadPlanFinding).join(' ')}${blocking.length > 5 ? ` (${blocking.length - 5} more)` : ''}`;
+}
+
 /**
  * Redact captured source paths, resolve the plan and build the Squad start request. An
  * invalid provided plan parks for correction (attended) or is refused (unattended).
@@ -324,12 +338,28 @@ async function buildSquadStartRequest(deps: SquadLaunchDeps, args: {
   // One resolver for interactive and triggered launches: "Plan provided in goal"
   // (structured) must yield a complete durable DAG or park for plan correction;
   // "Infer plan from goal" (freeform) leaves planning to the coordinator.
-  const resolvedPlan = resolveSquadPlan(
-    args.coordinationMode === 'structured' ? 'provided' : 'infer',
-    [...(sourceBundle?.sources ?? []).map((source) => source.extractedText), args.goal]
-  );
+  const planTexts = [...(sourceBundle?.sources ?? []).map((source) => source.extractedText), args.goal];
+  let coordinationMode = args.coordinationMode;
+  let resolvedPlan = resolveSquadPlan(coordinationMode === 'structured' ? 'provided' : 'infer', planTexts);
+  // Attended prose with no steps on a Squad that can plan infers a plan from the goal; schedules and triggers never do.
+  if (coordinationMode === 'structured'
+    && planIntakeDisposition({ planError: resolvedPlan.planError, attended: args.attended, canInfer: deps.canInferPlanForTeam?.(args.teamId) ?? false, hasSteps: planTexts.some((text) => typeof text === 'string' && hasPortablePlanStep(text)) }) === 'infer') {
+    coordinationMode = 'freeform';
+    resolvedPlan = resolveSquadPlan('infer', planTexts);
+  }
   const plannedWorkUnits = resolvedPlan.workUnits;
-  const providedPlanError = resolvedPlan.planError;
+  let providedPlanError = resolvedPlan.planError
+    ? planCorrectionReason(resolvedPlan.planError, resolvedPlan.findings)
+    : undefined;
+  // Unattended launches (schedules, triggers) have no operator to fix a roster mismatch: refuse with an
+  // Inbox notice naming the Squad and the step rather than starting a run that would fail at dispatch.
+  if (!providedPlanError && !args.attended && plannedWorkUnits?.length && deps.planFindings) {
+    const judged = await deps.planFindings(args.projectId, args.teamId, plannedWorkUnits).catch((error) => {
+      deps.log?.('squad launch roster check', error);
+      return undefined;
+    });
+    providedPlanError = unattendedRosterBlock(judged);
+  }
   const planRefusal = await gateInvalidProvidedPlan(
     { inboxStore: deps.inboxStore, planCorrectionLaunchBinding: deps.planCorrectionLaunchBinding },
     { planError: providedPlanError, unattended: !args.attended, projectId: args.projectId, projectName: args.projectName, launchRequestId }
@@ -359,7 +389,7 @@ async function buildSquadStartRequest(deps: SquadLaunchDeps, args: {
       version: 1,
       teamId: args.teamId,
       launchRequestId,
-      coordinationMode: args.coordinationMode,
+      coordinationMode,
       origin: 'explicit',
       jobTitle: sanitizedJobTitle,
       objective: sanitizedGoal,

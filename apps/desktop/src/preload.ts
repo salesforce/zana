@@ -345,6 +345,7 @@ const api: CcApi = {
     dismiss: (projectId, executionId) => ipcRenderer.invoke(IPC.executionBoard.dismiss, projectId, executionId),
     stop: (projectId, executionId, expectedStateVersion) =>
       ipcRenderer.invoke(IPC.executionBoard.stop, projectId, executionId, expectedStateVersion),
+    stopAndFixPlan: (projectId, executionId, blockerId) => ipcRenderer.invoke(IPC.executionBoard.stopAndFixPlan, projectId, executionId, blockerId),
     retry: (projectId, executionId, expectedStateVersion) =>
       ipcRenderer.invoke(IPC.executionBoard.retry, projectId, executionId, expectedStateVersion),
     retryWork: (projectId, executionId, expectedStateVersion, workUnitId, assignedSlotId) =>
@@ -978,6 +979,8 @@ const api: CcApi = {
     startJob: (input: TeamJobLaunchInput) => ipcRenderer.invoke(IPC.teams.startJob, input),
     preview: (input) => ipcRenderer.invoke(IPC.teams.preview, input),
     reviewProposal: (proposalId: string) => ipcRenderer.invoke(IPC.teams.reviewProposal, proposalId),
+    recheckProposalPlan: (proposalId: string) => ipcRenderer.invoke(IPC.teams.recheckProposalPlan, proposalId),
+    messageProposer: (proposalId: string) => ipcRenderer.invoke(IPC.teams.messageProposer, proposalId),
     launchAutonomous: (teamId, projectId, goal) =>
       ipcRenderer.invoke(IPC.teams.launchAutonomous, teamId, projectId, goal),
     stopAutonomous: (runId) => ipcRenderer.invoke(IPC.teams.stopAutonomous, runId),

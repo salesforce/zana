@@ -11,6 +11,7 @@ import {
   createRuntimeSource,
   docPageReader,
   FILE_CSP,
+  MD_PAGE_CSP,
   NO_KIT,
   packFiles,
   PAGE_CSP,
@@ -18,6 +19,7 @@ import {
   productServerUrl,
   rawFileType,
   renderPage,
+  standaloneMarkdownHtml,
   standalonePageHtml,
   standalonePageUrl
 } from './pages.js';
@@ -246,6 +248,75 @@ describe('page routes', () => {
     expect(rawFileType('a.svg')).toBe('image/svg+xml');
     expect(rawFileType('a.js')).toBe('text/plain; charset=utf-8');
     expect(rawFileType('a.html')).toBe('text/plain; charset=utf-8');
+  });
+});
+
+describe('markdown page routes', () => {
+  const files = [
+    ...SITE,
+    { path: 'notes/A.MD', content: '# Upper' },
+    { path: 'notes/b.markdown', content: '# Mdn' },
+    { path: 'notes/c.mdx', content: '# Mdx' },
+    { path: 'big.md', content: 'x'.repeat(600 * 1024) }
+  ];
+  const setup = (kit = NO_KIT) => {
+    const { store, doc } = siteStore(files);
+    const routes = createPageRoutes({ store, kit, endpoint: '/x', runtime: () => '/*runtime*/' });
+    const get = (route: 'page' | 'file', query: Record<string, string>) => routes[route]({ method: 'GET', path: `/${route}`, query, body: undefined });
+    return { store, doc, get };
+  };
+
+  it('serves markdown on /page with a script-free policy', () => {
+    const { doc, get } = setup();
+    const response = get('page', { doc: doc.id, path: 'runs/r1.md' });
+    expect(response.status).toBe(200);
+    expect(response.body).toContain('<h1 id="run-1">Run 1</h1>');
+    expect(response.body).not.toMatch(/<script|<base/);
+    expect(response.headers).toMatchObject({ 'content-security-policy': MD_PAGE_CSP, 'cache-control': 'no-store', 'content-type': 'text/html; charset=utf-8' });
+    expect(MD_PAGE_CSP).toContain("script-src 'none'");
+    expect(MD_PAGE_CSP).not.toContain('allow-scripts');
+    expect(MD_PAGE_CSP).not.toContain('allow-same-origin');
+  });
+
+  it('serves markdown on /file, case-insensitively, and keeps .mdx raw', () => {
+    const { doc, get } = setup();
+    expect(get('file', { doc: doc.id, path: 'runs/r1.md' }).headers!['content-security-policy']).toBe(MD_PAGE_CSP);
+    expect(get('file', { doc: doc.id, path: 'notes/A.MD' }).body).toContain('Upper');
+    expect(get('file', { doc: doc.id, path: 'notes/b.markdown' }).body).toContain('Mdn');
+    const mdx = get('file', { doc: doc.id, path: 'notes/c.mdx' });
+    expect(mdx.headers).toMatchObject({ 'content-type': 'text/plain; charset=utf-8', 'content-security-policy': FILE_CSP });
+    expect(get('page', { doc: doc.id, path: 'notes/c.mdx' }).status).toBe(400);
+  });
+
+  it('uses the kit stylesheet when there is one', () => {
+    const { doc, get } = setup(createKitReader(kitDir()));
+    expect(get('page', { doc: doc.id, path: 'runs/r1.md' }).body).toContain('body { color: teal }');
+  });
+
+  it('answers errors in plain text', () => {
+    const { doc, get } = setup();
+    expect(get('page', { doc: doc.id, path: 'gone.md' }).status).toBe(404);
+    expect(get('file', { doc: 'nope', path: 'runs/r1.md' }).status).toBe(404);
+    expect(get('page', { doc: doc.id, path: 'big.md' })).toMatchObject({ status: 400, body: expect.stringContaining('512 KB') });
+  });
+
+  it('hides a renderer failure', () => {
+    const { store, doc } = setup();
+    expect(() => standaloneMarkdownHtml(store, NO_KIT, { doc: doc.id, path: 'runs/r1.md' }, '/x')).not.toThrow();
+    const broken = { ...store, summary: store.summary.bind(store), readFile: () => { throw new Error('/secret/db'); } } as unknown as DesignDocStore;
+    const routes = createPageRoutes({ store: broken, kit: NO_KIT, endpoint: '/x', runtime: () => '' });
+    expect(routes.page({ method: 'GET', path: '/page', query: { doc: doc.id, path: 'runs/r1.md' }, body: undefined })).toMatchObject({
+      status: 500,
+      body: 'The page could not be rendered.\n'
+    });
+  });
+
+  it('still serves html pages and raw files unchanged', () => {
+    const { doc, get } = setup();
+    expect(get('page', { doc: doc.id }).headers!['content-security-policy']).toBe(PAGE_CSP);
+    expect(get('file', { doc: doc.id, path: 'index.html' }).headers!['content-security-policy']).toBe(PAGE_CSP);
+    expect(get('file', { doc: doc.id, path: 'logo.png' }).headers!['content-type']).toBe('image/png');
+    expect(get('file', { doc: doc.id, path: 'app.js' }).headers!['content-type']).toBe('text/plain; charset=utf-8');
   });
 });
 

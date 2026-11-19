@@ -2,14 +2,16 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEven
 import { copyContextSelection, MAX_CONTEXT_REFERENCE_TEXT, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { passageContext } from '../shared/passage-context.js';
 import { Markdown } from '@zana-ai/zcc-plugin-sdk/app';
-import { MessageSquarePlus, Sparkles } from 'lucide-react';
+import { ExternalLink, MessageSquarePlus, Sparkles } from 'lucide-react';
 import type { DesignDocFileMeta } from '../shared/contract.js';
 import { MAX_QUOTE_LENGTH } from '../shared/limits.js';
-import { isCrossDocScheme, parseCrossDocLink, shieldCrossDocLinks, unshieldCrossDocHref, type FileKind } from '../shared/paths.js';
+import { isCrossDocScheme, isRenderableMarkdownPath, parseCrossDocLink, shieldCrossDocLinks, unshieldCrossDocHref, type FileKind } from '../shared/paths.js';
 import { toast, useApi, type DocKind } from './api.js';
 import { codeFence, fenced, fileDataUrl, formatSubPath, inlineImages, referencedImages, resolveDocLink } from './content.js';
 import { COMMENT_HIGHLIGHT, FOCUS_HIGHLIGHT, findQuoteRanges, paintRanges } from './highlight.js';
+import { useOpenInBrowser } from './hooks.js';
 import { PageFrame } from './PageFrame.js';
+import { IconButton } from './ui.js';
 import { findHeading, onAnchorRequest, requestAnchor, takeAnchor } from './anchors.js';
 
 export interface PreviewFile {
@@ -130,6 +132,9 @@ export function FilePreview({
   const navigate = useZccNavigate();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const openInBrowser = useOpenInBrowser(docId, file.path);
+  // The standalone view serves saved docs only: not a draft or old revision, not a template.
+  const canOpenInBrowser = file.kind === 'markdown' && isRenderableMarkdownPath(file.path) && !draft && kind !== 'template';
   const owner = useRef({});
   const [chip, setChip] = useState<SelectionChip | null>(null);
   // HTML pages are bundled by the server, images included.
@@ -349,6 +354,15 @@ export function FilePreview({
         if (!(event.target as Element).closest?.('.dd-selection-chip')) setChip(null);
       }}
     >
+      {canOpenInBrowser ? (
+        <div className="dd-html-toolbar dd-md-toolbar">
+          <span />
+          <span />
+          <div className="dd-html-actions">
+            <IconButton icon={ExternalLink} label="Open in browser" onClick={() => void openInBrowser()} />
+          </div>
+        </div>
+      ) : null}
       {body}
       {chip ? (
         <div className="dd-selection-chip" style={{ top: chip.top, left: chip.left }}>

@@ -686,7 +686,7 @@ export interface InboxEntry {
    * Host-stamped marker linking this entry to a pending Squad launch proposal.
    * Never agent-supplied; presentation only (main re-authorizes on review).
    */
-  squadProposal?: { proposalId: string };
+  squadProposal?: { proposalId: string; planCheck?: { mustFix: number; check: number; fixedForYou: number } };
   /**
    * Optional host-authored decision context. Main content stays plain-language;
    * technical material appears only after the user opens its Details disclosure.
@@ -4808,8 +4808,26 @@ export interface Persona {
    * ones. Resolve with {@link effectiveSkills}, which always adds `zcc-inbox`.
    */
   skills?: string[];
+  /** Routing tags used by Squad plans. Stored lowercase and matched case-insensitively. */
+  roles?: string[];
   /** Set by the loader/host for UI display; never read from disk / trusted from the renderer. */
   source?: PersonaSource;
+}
+
+export const ROLES_MAX = 16;
+export const ROLE_MAX_CHARS = 64;
+
+/** Normalize bounded routing tags without retaining empty or duplicate values. */
+export function normalizeRoles(value: unknown): string[] | undefined | null {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return null;
+  const roles = [...new Set(value.slice(0, ROLES_MAX).map((role) => typeof role === 'string' ? role.trim().toLowerCase().slice(0, ROLE_MAX_CHARS) : '').filter(Boolean))];
+  return roles;
+}
+
+/** Slot tags override persona tags; this keeps one source of truth for every roster projection. */
+export function effectiveRoles(slot: Pick<TeamSlot, 'roles'>, persona: Pick<Persona, 'roles'> | undefined): string[] | undefined {
+  return slot.roles ?? persona?.roles;
 }
 
 /**
@@ -5095,6 +5113,8 @@ export interface TeamSlot {
   quantity?: number;
   /** Optional tab label override. */
   label?: string;
+  /** Slot-specific routing tags. When absent, the persona's roles apply. */
+  roles?: string[];
   /**
    * Opt-in: keep this seat closed until the engine has a first unit for it.
    * Only the boolean `true` is stored; absent means the seat starts at launch.
@@ -5335,6 +5355,8 @@ export interface TeamSummary {
   description?: string;
   /** Number of slot rows (NOT the total tab count — slots may have quantity > 1). */
   slotCount: number;
+  /** Launchable roster, excluding prompts and other launch internals. */
+  slots: Array<{ label?: string; personaId: string; level?: Persona['modelLevel']; roles?: string[] }>;
   source?: PersonaSource;
   /** Planning mode preselected for this Squad. Absent ⇒ the built-in default (infer when the orchestrator can plan). */
   defaultPlanning?: SquadPlanning;
@@ -5540,12 +5562,22 @@ export interface SquadFlowGraph {
 }
 
 /** Project a full {@link Team} down to its non-sensitive {@link TeamSummary}. */
-export function toTeamSummary(t: Team): TeamSummary {
+export function toTeamSummary(t: Team, personaById?: (id: string) => Pick<Persona, 'modelLevel' | 'roles'> | undefined): TeamSummary {
   return {
     id: t.id,
     name: t.name,
     description: t.description,
     slotCount: Array.isArray(t.slots) ? t.slots.length : 0,
+    slots: (Array.isArray(t.slots) ? t.slots : []).map((slot) => {
+      const persona = personaById?.(slot.personaId);
+      const roles = effectiveRoles(slot, persona);
+      return {
+        personaId: slot.personaId,
+        ...(slot.label ? { label: slot.label } : {}),
+        ...(persona?.modelLevel ? { level: persona.modelLevel } : {}),
+        ...(roles !== undefined ? { roles } : {})
+      };
+    }),
     source: t.source,
     ...(t.defaultPlanning ? { defaultPlanning: t.defaultPlanning } : {}),
     ...(t.launchApproval ? { launchApproval: t.launchApproval } : {})
@@ -6991,6 +7023,9 @@ export interface ExecutionBoardProjection {
       title: string;
       dependencies: string[];
       slotId?: string;
+      /** Worker the routing decision picked and why (display only). */
+      chosenSlotId?: string;
+      chosenReason?: string;
       state: 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'SKIPPED';
       failureCode?: ExecutionFailureCode;
       result?: string;

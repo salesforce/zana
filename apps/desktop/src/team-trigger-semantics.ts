@@ -1,5 +1,5 @@
 import { normalizeExecutionPlan } from '@zana-ai/zcc-server/services/launch/preflight';
-import { hasPortablePlanStep, parsePortablePlan, type PortablePlanIdRename } from '@zana-ai/zcc-server/services/execution/portable-plan';
+import { hasPortablePlanStep, parsePortablePlan, type PortablePlanFinding, type PortablePlanIdRename } from '@zana-ai/zcc-server/services/execution/portable-plan';
 import type { ExecutionWorkUnitInput } from '@zana-ai/zcc-server/services/execution/store';
 import type { PlanLaunch } from '@zana-ai/zcc-domain/launch-options';
 
@@ -14,15 +14,21 @@ export interface ResolvedSquadPlan {
   /** Step ids rewritten to their registered form; the only repairs agents are told about. */
   idRenames?: PortablePlanIdRename[];
   planError?: string;
+  /** Parser findings (repairs, warnings, blocking defects), in the one finding shape's parser subset. */
+  findings?: PortablePlanFinding[];
+  /** Stored on the plan-correction offer record; never mixed into the launch digest. */
+  parserVersion?: number;
+  /** Advisory `Squad: <id>` from `## Launch`; an explicit launch target wins. */
+  declaredSquad?: string;
 }
 
 type CandidateCheck =
-  | { units: ExecutionWorkUnitInput[]; launch?: PlanLaunch; normalizations?: string[]; idRenames?: PortablePlanIdRename[] }
-  | { reason: string };
+  | { units: ExecutionWorkUnitInput[]; launch?: PlanLaunch; normalizations?: string[]; idRenames?: PortablePlanIdRename[]; findings?: PortablePlanFinding[]; parserVersion: number; declaredSquad?: string }
+  | { reason: string; findings?: PortablePlanFinding[]; parserVersion?: number };
 
 function checkCandidatePlan(text: string): CandidateCheck {
   const parsed = parsePortablePlan(text);
-  if (!parsed.ok) return { reason: parsed.reason };
+  if (!parsed.ok) return { reason: parsed.reason, findings: parsed.findings, parserVersion: parsed.parserVersion };
   try {
     const parsedUnits = new Map(parsed.units.map(unit => [unit.id, unit]));
     const units = (normalizeExecutionPlan(parsed.units, true) as ExecutionWorkUnitInput[]).map(unit => {
@@ -34,10 +40,14 @@ function checkCandidatePlan(text: string): CandidateCheck {
       units,
       ...(parsed.launch && Object.keys(parsed.launch).length ? { launch: { ...parsed.launch, checks: parsed.launch.checks ? [...parsed.launch.checks] : undefined } } : {}),
       ...(parsed.normalizations ? { normalizations: parsed.normalizations } : {}),
-      ...(parsed.idRenames ? { idRenames: parsed.idRenames } : {})
+      ...(parsed.idRenames ? { idRenames: parsed.idRenames } : {}),
+      ...(parsed.findings ? { findings: parsed.findings } : {}),
+      parserVersion: parsed.parserVersion,
+      ...(parsed.declaredSquad ?? parsed.launch?.declaredSquad ? { declaredSquad: (parsed.declaredSquad ?? parsed.launch?.declaredSquad)! } : {})
     };
   } catch (error) {
-    return { reason: error instanceof Error ? error.message : String(error) };
+    const reason = error instanceof Error ? error.message : String(error);
+    return { reason, parserVersion: parsed.parserVersion, findings: [...(parsed.findings ?? []), { severity: 'blocking', requirement: 'plan', message: reason }] };
   }
 }
 
@@ -60,6 +70,7 @@ export function resolveSquadPlan(
   if (planSource !== 'provided') return { coordinationMode: 'freeform' };
   let stepFailure: string | undefined;
   let anyFailure: string | undefined;
+  let failedChecked: { findings?: PortablePlanFinding[]; parserVersion?: number } | undefined;
   for (const text of candidateTexts) {
     if (typeof text !== 'string' || !text.trim()) continue;
     const checked = checkCandidatePlan(text);
@@ -69,16 +80,22 @@ export function resolveSquadPlan(
         workUnits: checked.units,
         ...(checked.launch ? { launch: checked.launch } : {}),
         ...(checked.normalizations ? { normalizations: checked.normalizations } : {}),
-        ...(checked.idRenames ? { idRenames: checked.idRenames } : {})
+        ...(checked.idRenames ? { idRenames: checked.idRenames } : {}),
+        ...(checked.findings ? { findings: checked.findings } : {}),
+        parserVersion: checked.parserVersion,
+        ...(checked.declaredSquad ? { declaredSquad: checked.declaredSquad } : {})
       };
     }
     anyFailure ??= checked.reason;
     // Prefer the reason from a candidate that really contains plan steps.
-    if (stepFailure === undefined && hasPortablePlanStep(text)) stepFailure = checked.reason;
+    if (stepFailure === undefined && hasPortablePlanStep(text)) { stepFailure = checked.reason; failedChecked = checked; }
+    failedChecked ??= checked;
   }
   return {
     coordinationMode: 'freeform',
-    planError: stepFailure ?? anyFailure ?? NO_PLAN_STEPS_REASON
+    planError: stepFailure ?? anyFailure ?? NO_PLAN_STEPS_REASON,
+    ...(failedChecked?.findings?.length ? { findings: failedChecked.findings } : {}),
+    ...(failedChecked?.parserVersion !== undefined ? { parserVersion: failedChecked.parserVersion } : {})
   };
 }
 

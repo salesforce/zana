@@ -94,7 +94,7 @@ export type SquadProposalErrorCode =
   | 'NO_ORCHESTRATOR' | 'HOST_UNSUPPORTED' | 'SOURCE_NOT_ALLOWED' | 'SOURCE_NOT_FILE'
   | 'SOURCE_TOO_LARGE' | 'TOO_MANY_SOURCES' | 'INVALID_PLAN' | 'ORCHESTRATOR_CANNOT_PLAN'
   | 'PROPOSER_IN_SQUAD' | 'TOO_MANY_PROPOSALS' | 'NOT_FOUND' | 'EXPIRED' | 'NOT_PENDING'
-  | 'SOURCE_UNREADABLE';
+  | 'SOURCE_UNREADABLE' | 'NEEDS_DECISION';
 
 export interface SquadAttachmentInput {
   name: string;
@@ -121,6 +121,8 @@ export interface SquadProposalInput {
   summary?: string;
   /** Request a completion Inbox notice for an agent-started Squad. */
   completionInboxNotice?: boolean;
+  /** The user chose to review the plan with its Must fix findings still in it; without this a review launch asks first. */
+  acceptFindings?: boolean;
 }
 
 export interface SquadProposer {
@@ -276,9 +278,252 @@ export interface SquadPlanTierFitFinding {
   detail: string;
 }
 
+export const ROSTER_TEXT_MAX_CHARS = 60;
+
+/**
+ * Squad roster text (labels, persona ids, role tags) is user-authored and ends up in agent prompts, plan cards and
+ * Markdown. Display copy only: matching always uses the raw value. Drops control and bidi characters, folds every
+ * whitespace run (newlines included) to one space, removes characters that open Markdown, code, headings, quotes or
+ * prompt-section delimiters, and caps the length so one name cannot crowd out the rest of a prompt.
+ */
+export function sanitizeRosterText(value: unknown, max = ROSTER_TEXT_MAX_CHARS): string {
+  if (typeof value !== 'string') return '';
+  const cleaned = value
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g, ' ')
+    .replace(/[`*_#>|<>\[\]{}\\~]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned.length > max ? `${cleaned.slice(0, Math.max(0, max - 1)).trimEnd()}…` : cleaned;
+}
+
+/** Caps on what one surface carries (requirement 23/24); the card says how many were hidden. */
+export const SQUAD_PLAN_BINDING_CAP = 50;
+export const SQUAD_PLAN_FINDING_CAP = 50;
+
+/**
+ * One finding shape for `squad_plan_check`, launch preflight, `squad_launch` and the Plan correction card.
+ * `blocking` is the "hard" of the design notes. The machine fields keep their form; people read
+ * {@link formatSquadPlanFinding}, never these fields directly.
+ */
+export interface SquadPlanFinding {
+  /** Absent for document-level findings (`squad`, and any plan-wide `plan` or `format` finding). */
+  stepId?: string;
+  requirement: 'required-role' | 'prefer-role' | 'not-same-worker' | 'tier' | 'skill' | 'mcp' | 'format' | 'plan' | 'squad';
+  severity: 'blocking' | 'warning' | 'repair';
+  candidateSlots: { slotId: string; label?: string; personaId: string; reason: string }[];
+  /** The most likely fix, naming the Squad's own roles; empty when there is no single fix. */
+  suggestion: string;
+  degraded?: { slotId: string; why: 'level-unknown' }[];
+  /** What the plan said or what changed, for requirements without candidate slots (format, plan, squad, tier). */
+  detail?: string;
+}
+
+/** Which Squad slot a step will run on (or the offered slots when more than one qualifies). */
+export interface SquadPlanBinding {
+  stepId: string;
+  slotId?: string;
+  label?: string;
+  personaId?: string;
+  /** Why no slot is bound (the step has no qualifying worker slot). */
+  unbound?: true;
+}
+
+export interface SquadPlanCheckSummary {
+  mustFix: number;
+  check: number;
+  fixedForYou: number;
+}
+
+const FINDING_SEVERITY_LABEL: Record<SquadPlanFinding['severity'], string> = {
+  blocking: 'Must fix',
+  warning: 'Check (launch is still allowed)',
+  repair: 'Fixed for you'
+};
+
+export function squadFindingSeverityLabel(severity: SquadPlanFinding['severity']): string {
+  return FINDING_SEVERITY_LABEL[severity];
+}
+
+export function summarizeSquadPlanFindings(findings: readonly SquadPlanFinding[]): SquadPlanCheckSummary {
+  return {
+    mustFix: findings.filter((finding) => finding.severity === 'blocking').length,
+    check: findings.filter((finding) => finding.severity === 'warning').length,
+    fixedForYou: findings.filter((finding) => finding.severity === 'repair').length
+  };
+}
+
+/** One line for the launch card, e.g. "2 Must fix before this can launch, 1 to check, 3 fixed for you". */
+export function formatSquadPlanSummary(findings: readonly SquadPlanFinding[]): string {
+  const { mustFix, check, fixedForYou } = summarizeSquadPlanFindings(findings);
+  const parts = [
+    mustFix ? `${mustFix} Must fix before this can launch` : '',
+    check ? `${check} to check` : '',
+    fixedForYou ? `${fixedForYou} fixed for you` : ''
+  ].filter(Boolean);
+  return parts.length ? parts.join(', ') : 'No problems found';
+}
+
+function slotName(slot: { label?: string; personaId: string }): string {
+  return sanitizeRosterText(slot.label) || sanitizeRosterText(slot.personaId) || 'a member';
+}
+
+function nameList(names: readonly string[]): string {
+  return names.length <= 2 ? names.join(' and ') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/**
+ * The one human-text formatter every surface uses (requirement 23): what the plan asked for, what is wrong in the
+ * Squad's own terms, the likely fix, and who acts. No internal terms (severity names, requirement ids, codes).
+ */
+/** A parser/preflight detail as a sentence: without the step id the heading already names, and ending in a full stop. */
+function tidyDetail(detail: string | undefined, stepId: string | undefined): string {
+  let text = (detail ?? '').trim();
+  if (!text) return '';
+  if (stepId) {
+    const lead = /^(?:step|work unit)\s+(\S+?):?\s+/i.exec(text);
+    if (lead && lead[1] === stepId) text = text.slice(lead[0].length);
+  }
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
+export function formatSquadPlanFinding(finding: SquadPlanFinding): string {
+  const step = finding.stepId ? `Step ${finding.stepId}` : 'The plan';
+  const offered = nameList([...new Set(finding.candidateSlots.map(slotName))]);
+  const fix = finding.suggestion ? ` ${finding.suggestion}` : '';
+  const detail = tidyDetail(finding.detail, finding.stepId);
+  switch (finding.requirement) {
+    case 'required-role':
+      return `${step} asks for a role this Squad does not have.${offered ? ` This Squad offers ${offered}.` : ''}${fix} Ask the agent to revise the plan, or edit the plan and launch again.`;
+    case 'prefer-role':
+      return `${step} prefers a role no member of this Squad has, so it will run on whichever member fits best.${offered ? ` This Squad offers ${offered}.` : ''}${fix} Launch is still allowed.`;
+    case 'not-same-worker':
+      return `${step} must run on a different member than the steps it names, but this Squad has no other member that fits.${offered ? ` Members that fit: ${offered}.` : ''}${fix} Add a member to the Squad, or ask the agent to revise the plan.`;
+    case 'tier':
+      return `${step}: ${detail || 'the model level it needs does not match this Squad.'}${fix} Launch is still allowed. You can launch as is, or ask the agent to revise the plan.`.trim();
+    case 'skill':
+      return `${step} needs a skill that no member of this Squad is allowed to use.${fix} Change the member's skills, or ask the agent to revise the plan.`;
+    case 'mcp':
+      return `${step} needs a tool server that no member of this Squad is allowed to use.${fix} Change the member's tools, or ask the agent to revise the plan.`;
+    case 'squad': // Document-level: the step id is never used.
+      return `${detail || 'The plan was written for a different Squad than the one launching it.'}${fix} Role checks use the Squad you are launching.`.trim();
+    case 'format':
+      return `${step}: ${detail}${finding.severity === 'repair' ? ' Zana fixed this for you.' : `${fix} Launch is still allowed. You can launch as is, or ask the agent to revise the plan.`}`.trim();
+    case 'plan':
+    default:
+      return `${step}: ${detail || 'the plan has a problem.'}${fix} Ask the agent to revise the plan, or edit it and launch again.`.trim();
+  }
+}
+
+/**
+ * Only what is wrong, in the Squad's own terms: no remedy sentence and no internal ids from the suggestion.
+ * The composer shows this beside its own action buttons, so it must not tell the user to go elsewhere.
+ * Agent-facing text and the Inbox card keep `formatSquadPlanFinding`.
+ */
+export function formatSquadPlanFindingProblem(finding: SquadPlanFinding): string {
+  const step = finding.stepId ? `Step ${finding.stepId}` : 'The plan';
+  const offered = nameList([...new Set(finding.candidateSlots.map(slotName))]);
+  const detail = tidyDetail(finding.detail, finding.stepId);
+  switch (finding.requirement) {
+    case 'required-role':
+      return `${step} asks for a role this Squad does not have.${offered ? ` This Squad offers ${offered}.` : ''}`;
+    case 'prefer-role':
+      return `${step} prefers a role no member of this Squad has, so it will run on whichever member fits best.${offered ? ` This Squad offers ${offered}.` : ''}`;
+    case 'not-same-worker':
+      return `${step} must run on a different member than the steps it names, but this Squad has no other member that fits.${offered ? ` Members that fit: ${offered}.` : ''}`;
+    case 'tier':
+      return `${step}: ${detail || 'the model level it needs does not match this Squad.'}`;
+    case 'skill':
+      return `${step} needs a skill that no member of this Squad is allowed to use.`;
+    case 'mcp':
+      return `${step} needs a tool server that no member of this Squad is allowed to use.`;
+    case 'squad':
+      return detail || 'The plan was written for a different Squad than the one launching it.';
+    case 'format':
+      return `${step}: ${detail}`.trim();
+    case 'plan':
+    default:
+      return `${step}: ${detail || 'the plan has a problem.'}`;
+  }
+}
+
+/** Findings capped for a surface, blocking first; `hidden` is what the card must say it left out. */
+export function capSquadPlanFindings(findings: readonly SquadPlanFinding[], cap = SQUAD_PLAN_FINDING_CAP): { findings: SquadPlanFinding[]; hidden: number } {
+  const rank = { blocking: 0, warning: 1, repair: 2 } as const;
+  const ordered = findings.map((finding, index) => ({ finding, index }))
+    .sort((a, b) => rank[a.finding.severity] - rank[b.finding.severity] || a.index - b.index)
+    .map(({ finding }) => finding);
+  return { findings: ordered.slice(0, cap), hidden: Math.max(0, ordered.length - cap) };
+}
+
+/**
+ * What to ask the user when a plan they own has a Must fix: concrete fixes first, the unchanged plan last.
+ * Built in code so the options do not depend on how an agent words them; the agent only relays it.
+ */
+export interface SquadPlanDecision {
+  question: string;
+  options: { label: string; description: string }[];
+  /** The option that prepares the launch unchanged. Choosing it means calling squad_launch again with acceptFindings. */
+  asIsLabel: string;
+  instructions: string;
+}
+
+const AS_IS_LABEL = 'Prepare the launch as it is';
+
+export function buildSquadPlanDecision(findings: readonly SquadPlanFinding[]): SquadPlanDecision | undefined {
+  const blocking = findings.filter((finding) => finding.severity === 'blocking');
+  const first = blocking[0];
+  if (!first) return undefined;
+  const options: SquadPlanDecision['options'] = [];
+  const step = first.stepId ? `step ${first.stepId}` : 'the plan';
+  if (first.requirement === 'required-role') {
+    const labels = [...new Set(first.candidateSlots.map(slotName))].slice(0, 3);
+    for (const label of labels) {
+      options.push({ label: `Change Required role to ${label}`, description: `Edit ${step} in a copy of the plan. Your file stays as it is.` });
+    }
+    options.push({ label: 'Remove the role requirement', description: `Edit ${step} in a copy of the plan so any member can take it. Your file stays as it is.` });
+  } else if (first.suggestion) {
+    options.push({ label: 'Apply the suggested fix', description: `${first.suggestion} Edit a copy of the plan; your file stays as it is.` });
+  }
+  options.push({ label: AS_IS_LABEL, description: 'The launch card shows the Must fix and Launch stays blocked until the plan is fixed.' });
+  const lead = blocking.length > 1 ? `${blocking.length} Must fix in this plan. The first: ` : '';
+  return {
+    question: `${lead}${formatSquadPlanFinding(first)} Which fix should I use?`,
+    options,
+    asIsLabel: AS_IS_LABEL,
+    instructions: `Ask the user with the ask-user-question tool using exactly these options (it adds a free-text answer). A fix: apply it to a copy of the plan, never their file, run squad_plan_check again, then call squad_launch with the copy. "${AS_IS_LABEL}": call squad_launch again with acceptFindings: true and the original plan. A free-text answer: follow it.`
+  };
+}
+
+/** The decision as the plain text a refused squad_launch hands the agent. */
+export function formatSquadPlanDecision(decision: SquadPlanDecision): string {
+  const lines = decision.options.map((option, index) => `${index + 1}. ${option.label}: ${option.description}`);
+  return `${decision.question}\nOptions:\n${lines.join('\n')}\n${decision.instructions}`;
+}
+
 export type SquadPlanCheckResult =
-  | { ok: true; steps: SquadPlanStep[]; /** Advisory warnings; present only when a teamId was given and there are findings. */ tierFit?: { findings: SquadPlanTierFitFinding[] } }
-  | { ok: false; reason: string };
+  | {
+    ok: true; steps: SquadPlanStep[];
+    /** Advisory warnings; present only when a teamId was given and there are findings. */
+    tierFit?: { findings: SquadPlanTierFitFinding[] };
+    /** Every finding for the plan against the launch Squad (`teamId`, else the plan's declared Squad). Capped. */
+    findings?: SquadPlanFinding[];
+    /** How many findings were left out by the cap. */
+    findingsHidden?: number;
+    /** Step-to-slot binding table; capped. */
+    bindings?: SquadPlanBinding[];
+    bindingsHidden?: number;
+    /** The Squad the plan said it was written for (`Squad:` in `## Launch`). */
+    declaredSquad?: string;
+    /** The Squad the findings were judged against. */
+    judgedAgainst?: string;
+    /** One line for the launch card. */
+    summary?: string;
+    /** Present when a Must fix remains: the question and options to put to the user. */
+    decision?: SquadPlanDecision;
+    /** Plain-language warning, present only when no Squad judged the plan (a pass then means "readable", not "runnable"). */
+    note?: string;
+  }
+  | { ok: false; reason: string; findings?: SquadPlanFinding[]; declaredSquad?: string; note?: string };
 
 /** Shown wherever a reviewer sees attached content: it is a private copy, so later edits to the original are not picked up. */
 export const SQUAD_ATTACHMENT_FROZEN_NOTE =
@@ -299,6 +544,14 @@ export interface SquadLaunchPrefill {
   sources: Array<{ id: string; name: string; byteSize: number; expiresAt: number; path?: string; outsideProject?: boolean; attachment?: true }>;
   proposerTitle?: string;
   planStepCount?: number;
+  /** Capped (see SQUAD_PLAN_*_CAP). Output only: main re-runs the checks at launch and never reads these back. */
+  planFindings?: SquadPlanFinding[];
+  planFindingsHidden?: number;
+  planBindings?: SquadPlanBinding[];
+  planBindingsHidden?: number;
+  planSummary?: string;
+  /** The parsed steps re-rendered in the Squad plan grammar (what the Squad will run); within planTextBytes. Display only, never part of a digest. */
+  planCanonicalText?: string;
 }
 
 export function planningToCoordinationMode(p: SquadPlanning): 'freeform' | 'structured' {

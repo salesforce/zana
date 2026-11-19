@@ -51,9 +51,13 @@ const executionState = vi.fn<NonNullable<SquadLaunchNowDeps['executionState']>>(
 const launchNow = vi.fn<SquadLaunchNowDeps['launch']>();
 
 let planTierFitDep: SquadProposalServiceDeps['planTierFit'];
+let planFindingsDep: SquadProposalServiceDeps['planFindings'];
+let canonicalDep: SquadProposalServiceDeps['canonicalPlanText'];
 let previewDep: SquadProposalServiceDeps['resolveLaunchPreview'];
 
-function build(over: { staging?: StagingStore | null; maxRecords?: number } = {}) {
+const sendToProposer = vi.fn<NonNullable<SquadProposalServiceDeps['sendToProposer']>>();
+
+function build(over: { staging?: StagingStore | null; maxRecords?: number; noSender?: boolean } = {}) {
   const store = createSquadProposalStore({ filePath: join(root, 'state', 'squad-proposals.json'), now: () => clock, ...(over.maxRecords ? { maxRecords: over.maxRecords } : {}) });
   const staging = over.staging === null ? undefined : over.staging ?? createStagingStore({ root: join(homeDir, '.zcc', 'squad-proposals', 'staged') });
   const service = createSquadProposalService({
@@ -68,6 +72,8 @@ function build(over: { staging?: StagingStore | null; maxRecords?: number } = {}
     expandTeamSlots: () => Array.from({ length: slotCount }),
     resolveSquadPlan: resolveSquadPlan as never,
     planTierFit: (...a) => planTierFitDep?.(...a) ?? Promise.resolve([]),
+    ...(canonicalDep ? { canonicalPlanText: (...a: Parameters<NonNullable<SquadProposalServiceDeps['canonicalPlanText']>>) => canonicalDep!(...a) } : {}),
+    ...(planFindingsDep ? { planFindings: (...a: Parameters<NonNullable<SquadProposalServiceDeps['planFindings']>>) => planFindingsDep!(...a) } : {}),
     fs: {
       realpath: (p) => fsImpl.realpath(p),
       lstat: (p) => fsImpl.lstat(p),
@@ -81,6 +87,7 @@ function build(over: { staging?: StagingStore | null; maxRecords?: number } = {}
     sourceBases: () => ({ home: homeDir, cloneRoot: cloneDir, dataDirs: [join(homeDir, '.zcc')] }),
     logError,
     resolveLaunchPreview: (...a) => previewDep!(...a),
+    ...(over.noSender ? {} : { sendToProposer: (...a: Parameters<NonNullable<SquadProposalServiceDeps['sendToProposer']>>) => sendToProposer(...a) }),
     launchNow: {
       launchApproval: (...a) => launchApproval(...a),
       activeOwnedRuns: (...a) => activeOwnedRuns(...a),
@@ -128,6 +135,8 @@ beforeEach(() => {
   fsImpl = realFs;
   logError.mockReset();
   planTierFitDep = undefined;
+  planFindingsDep = undefined;
+  canonicalDep = undefined;
   previewDep = async ({ projectId }) => ({
     launchOptions: {},
     resolvedLaunch: resolveAllLaunch({}),
@@ -167,7 +176,9 @@ describe('trusted launch preview', () => {
   it('shows prospective base and isolation source without inventing a path', async () => {
     previewDep = async () => ({ launchOptions: {}, resolvedLaunch: resolveAllLaunch({ plan: { worktree: true } }), location: { kind: 'new-worktree', projectId: 'p1', baseBranch: 'main', isolationSource: 'plan' }, fingerprint: 'new-v1' });
     expect(await svc.service.propose(route, input)).toMatchObject({ ok: true });
-    expect(appendOnce.mock.calls[0]![0].comments).toContain('New worktree from main — isolation: plan (path assigned at launch)');
+    // Location and policies live in the composer's Review settings, not on the card.
+    expect(appendOnce.mock.calls[0]![0].comments).not.toContain('Location');
+    expect(await svc.store.get('prop-1')).toMatchObject({ location: { kind: 'new-worktree', baseBranch: 'main', isolationSource: 'plan' } });
     expect(appendOnce.mock.calls[0]![0].comments).not.toContain(join(root, 'proj'));
   });
 
@@ -177,7 +188,7 @@ describe('trusted launch preview', () => {
       location: { kind: 'project-root', projectId }, path: join(root, 'proj'), fingerprint: 'detached-v1'
     });
     expect(await svc.service.propose(route, input)).toMatchObject({ ok: true });
-    expect(appendOnce.mock.calls[0]![0].comments).toContain(`- Location: HEAD (Project) — ${join(root, 'proj')}`);
+    expect(appendOnce.mock.calls[0]![0].comments).not.toContain('Location');
     expect(appendOnce.mock.calls[0]![0].comments).not.toContain('undefined');
   });
 
@@ -193,7 +204,7 @@ describe('trusted launch preview', () => {
     });
     expect(await service.propose(route, { ...input, launchOptions: { target: { kind: 'project-root' } } })).toMatchObject({ ok: false, code: 'INVALID', message: expect.stringContaining('unavailable') });
     expect(await service.propose(route, input)).toMatchObject({ ok: true });
-    expect(appendOnce.mock.calls[0]![0].comments).toContain('Location: unavailable');
+    expect(appendOnce.mock.calls[0]![0].comments).not.toContain('Location');
   });
 
   it('logs resolver failure and refuses invalid prospective location', async () => {
@@ -216,10 +227,7 @@ describe('trusted launch preview', () => {
     expect(proposed.ok).toBe(true);
     expect(await svc.store.get('prop-1')).toMatchObject({ launchOptions, location: preview.location, launchPreview: preview });
     expect(previewDep).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'p1', teamId: 'team1', planning: 'provided', launchOptions, sourcePaths: [join(root, 'proj', 'plan.md')] }));
-    expect(appendOnce.mock.calls[0]![0].comments).toContain('/trusted/worktree');
-    expect(appendOnce.mock.calls[0]![0].comments).toContain('feature/x (user-owned)');
-    expect(appendOnce.mock.calls[0]![0].comments).toContain('push: true (launch)');
-    expect(appendOnce.mock.calls[0]![0].comments).toContain('checks: unit (launch)');
+    for (const hidden of ['/trusted/worktree', 'feature/x', 'push:', 'checks:', 'worktree:']) expect(appendOnce.mock.calls[0]![0].comments).not.toContain(hidden);
     expect(await svc.service.review(7, 'prop-1', () => true)).toMatchObject({ ok: true, value: { launchOptions, launchPreview: preview } });
     expect(await svc.service.beginLaunch('prop-1', 'p1')).toMatchObject({ ok: true, value: { launchOptions, launchPreview: preview } });
   });
@@ -378,6 +386,8 @@ describe('reading confined sources', () => {
   });
 });
 
+const NOT_JUDGED = expect.stringContaining('NOT checked against any Squad');
+
 describe('checkPlan tier fit (advisory)', () => {
   const units = [{ id: 'u1', title: 'One', dependencies: [] }];
   const finding = (kind: 'over-tiered' | 'under-tiered' | 'no-eligible-slot') => ({ unitId: 'u1', kind, detail: `d-${kind}` });
@@ -387,13 +397,13 @@ describe('checkPlan tier fit (advisory)', () => {
     resolveSquadPlan.mockReturnValue({ workUnits: units });
     const planTierFit = vi.fn(async () => [finding(kind)]);
     const res = await withFit(planTierFit).checkPlan(route, { text: '# p', teamId: 't1' });
-    expect(res).toEqual({ ok: true, value: { ok: true, steps: [{ id: 'u1', title: 'One', dependencies: [], writeScope: [] }], tierFit: { findings: [finding(kind)] } } });
+    expect(res).toEqual({ ok: true, value: { ok: true, steps: [{ id: 'u1', title: 'One', dependencies: [], writeScope: [] }], tierFit: { findings: [finding(kind)] }, note: NOT_JUDGED } });
     expect(planTierFit).toHaveBeenCalledWith(route.projectId, 't1', units);
   });
 
   it('omits tierFit with no findings, no teamId, no dep, or a failing dep', async () => {
     resolveSquadPlan.mockReturnValue({ workUnits: units });
-    const plain = { ok: true, value: { ok: true, steps: [{ id: 'u1', title: 'One', dependencies: [], writeScope: [] }] } };
+    const plain = { ok: true, value: { ok: true, steps: [{ id: 'u1', title: 'One', dependencies: [], writeScope: [] }], note: NOT_JUDGED } };
     expect(await withFit(async () => []).checkPlan(route, { text: '# p', teamId: 't1' })).toEqual(plain);
     const spy = vi.fn(async () => [finding('over-tiered')]);
     expect(await withFit(spy).checkPlan(route, { text: '# p' })).toEqual(plain);
@@ -405,8 +415,78 @@ describe('checkPlan tier fit (advisory)', () => {
   it('does not run tier fit for an invalid plan', async () => {
     resolveSquadPlan.mockReturnValue({ planError: 'bad' });
     const spy = vi.fn(async () => [finding('over-tiered')]);
-    expect(await withFit(spy).checkPlan(route, { text: '# p', teamId: 't1' })).toEqual({ ok: true, value: { ok: false, reason: 'bad' } });
+    expect(await withFit(spy).checkPlan(route, { text: '# p', teamId: 't1' })).toEqual({ ok: true, value: { ok: false, reason: 'bad', note: NOT_JUDGED } });
     expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe('checkPlan findings', () => {
+  const units = [{ id: 'u1', title: 'One', dependencies: [] }];
+  const blocking = { stepId: 'u1', requirement: 'required-role' as const, severity: 'blocking' as const, candidateSlots: [], suggestion: 'Use "Reviewer".' };
+  const warn = { requirement: 'squad' as const, severity: 'warning' as const, candidateSlots: [], suggestion: '', detail: 'written for A, launching B' };
+  const withFindings = (planFindings: SquadProposalServiceDeps['planFindings']) => { planFindingsDep = planFindings; return build().service; };
+
+  it('returns findings, bindings, summary and the judged Squad', async () => {
+    resolveSquadPlan.mockReturnValue({ workUnits: units, declaredSquad: 'team1', findings: [{ severity: 'repair', requirement: 'format', message: 'm' }] });
+    const planFindings = vi.fn(async () => ({ findings: [blocking, warn], bindings: [{ stepId: 'u1', slotId: 's1', personaId: 'p' }] }));
+    const res = await withFindings(planFindings).checkPlan(route, { text: '# p' });
+    expect(res).toMatchObject({ ok: true, value: {
+      ok: true, declaredSquad: 'team1', judgedAgainst: 'team1', summary: '1 Must fix before this can launch, 1 to check',
+      findings: [blocking, warn], bindings: [{ stepId: 'u1', slotId: 's1', personaId: 'p' }]
+    } });
+    expect(planFindings).toHaveBeenCalledWith(route.projectId, 'team1', expect.objectContaining({ declaredSquad: 'team1' }));
+  });
+
+  it('prefers an explicit teamId and ignores an unknown declared Squad', async () => {
+    resolveSquadPlan.mockReturnValue({ workUnits: units, declaredSquad: 'ghost' });
+    const planFindings = vi.fn(async () => ({ findings: [], bindings: [] }));
+    const svc2 = withFindings(planFindings);
+    await svc2.checkPlan(route, { text: '# p', teamId: 'team9' });
+    expect(planFindings).toHaveBeenLastCalledWith(route.projectId, 'team9', expect.anything());
+    const res = await svc2.checkPlan(route, { text: '# p' });
+    expect(planFindings).toHaveBeenLastCalledWith(route.projectId, undefined, expect.anything());
+    expect(res).toMatchObject({ value: { ok: true, declaredSquad: 'ghost', summary: 'No problems found' } });
+  });
+
+  it('says no Squad judged the plan unless one did', async () => {
+    resolveSquadPlan.mockReturnValue({ workUnits: units });
+    const planFindings = vi.fn(async () => ({ findings: [], bindings: [] }));
+    const svc2 = withFindings(planFindings);
+    const none = await svc2.checkPlan(route, { text: '# p' }) as unknown as { value: { note?: string } };
+    expect(none.value.note).toMatch(/NOT checked against any Squad's roster.*readable/);
+    expect(none.value.note).not.toMatch(/blocking|repair|digest|parserVersion/);
+    const withTeam = await svc2.checkPlan(route, { text: '# p', teamId: 'team9' }) as unknown as { value: { note?: string } };
+    expect(withTeam.value.note).toBeUndefined();
+    resolveSquadPlan.mockReturnValue({ workUnits: units, declaredSquad: 'team1' });
+    const declared = await svc2.checkPlan(route, { text: '# p' }) as unknown as { value: { note?: string } };
+    expect(declared.value.note).toBeUndefined();
+    resolveSquadPlan.mockReturnValue({ workUnits: units, declaredSquad: 'ghost' });
+    const ghost = await svc2.checkPlan(route, { text: '# p' }) as unknown as { value: { note?: string } };
+    expect(ghost.value.note).toMatch(/"ghost".*no Squad by that name.*NOT checked/);
+    resolveSquadPlan.mockReturnValue({});
+    expect(await svc2.checkPlan(route, { text: '# p' })).toMatchObject({ value: { ok: false, note: NOT_JUDGED } });
+  });
+
+  it('caps findings and bindings and says how many were hidden', async () => {
+    resolveSquadPlan.mockReturnValue({ workUnits: units });
+    const many = Array.from({ length: 53 }, () => ({ ...warn }));
+    const bindings = Array.from({ length: 52 }, (_, i) => ({ stepId: `s${i}`, unbound: true as const }));
+    const res = await withFindings(async () => ({ findings: [...many, blocking], bindings })).checkPlan(route, { text: '# p' });
+    const value = (res as unknown as { value: { findings: unknown[]; findingsHidden: number; bindings: unknown[]; bindingsHidden: number } }).value;
+    expect(value.findings).toHaveLength(50);
+    expect(value.findings[0]).toEqual(blocking);
+    expect(value.findingsHidden).toBe(4);
+    expect(value.bindings).toHaveLength(50);
+    expect(value.bindingsHidden).toBe(2);
+  });
+
+  it('keeps pass/fail when findings throw, and returns findings for an invalid plan', async () => {
+    resolveSquadPlan.mockReturnValue({ workUnits: units });
+    expect(await withFindings(async () => { throw new Error('boom'); }).checkPlan(route, { text: '# p' }))
+      .toMatchObject({ ok: true, value: { ok: true } });
+    resolveSquadPlan.mockReturnValue({ planError: 'bad', declaredSquad: 'team1', findings: [] });
+    const res = await withFindings(async () => ({ findings: [blocking], bindings: [] })).checkPlan(route, { text: '# p' });
+    expect(res).toEqual({ ok: true, value: { ok: false, reason: 'bad', findings: [blocking], declaredSquad: 'team1' } });
   });
 });
 
@@ -581,6 +661,28 @@ describe('propose', () => {
     expect(logError).toHaveBeenCalledWith('squad proposal propose', expect.objectContaining({ message: expect.stringContaining('SQLITE_BUSY') }));
   });
 
+  it('puts one plan-check summary line on the card and none when no findings were judged', async () => {
+    planFindingsDep = async () => ({ findings: [
+      { stepId: 'u1', requirement: 'required-role', severity: 'blocking', candidateSlots: [], suggestion: '' },
+      { requirement: 'format', severity: 'repair', candidateSlots: [], suggestion: '', detail: 'x' }
+    ], bindings: [] });
+    const refused = await build().service.propose(route, input);
+    expect(refused).toMatchObject({ ok: false, code: 'NEEDS_DECISION' });
+    expect(appendOnce).not.toHaveBeenCalled();
+    if (!refused.ok) {
+      expect(refused.message).toContain('Options:');
+      expect(refused.message).toContain('Prepare the launch as it is');
+    }
+    const judged = await build().service.propose(route, { ...input, acceptFindings: true });
+    expect(judged.ok).toBe(true);
+    expect(appendOnce.mock.calls.at(-1)![0].squadProposal).toMatchObject({ planCheck: { mustFix: 1, check: 0, fixedForYou: 1 } });
+    expect(appendOnce.mock.calls.at(-1)![0].comments).not.toContain('Plan check:');
+    appendOnce.mockClear();
+    planFindingsDep = undefined;
+    await build().service.propose(route, { ...input, goal: 'second' });
+    expect(appendOnce.mock.calls.at(-1)![0].squadProposal).not.toHaveProperty('planCheck');
+  });
+
   it('creates the record and the Inbox card', async () => {
     const r = await svc.service.propose(route, input);
     expect(r).toMatchObject({ ok: true, value: {
@@ -599,12 +701,6 @@ describe('propose', () => {
     expect(card.comments).toBe([
       '- Squad: Crew (Lead + 3 workers)',
       '- Planning: Plan provided in goal — plan checked: 2 steps',
-      `- Location: main (Project) — ${join(root, 'proj')}`,
-      '- worktree: false (default)',
-      '- onComplete: leave (default)',
-      '- push: false (default)',
-      '- checks: none (default)',
-      '- failurePolicyDefault: fail-run (default)',
       '- Files: plan.md',
       '- Nothing starts until you press Launch.'
     ].join('\n'));
@@ -701,6 +797,20 @@ describe('launchSquadNow', () => {
   it('refuses when Team jobs are off, before anything else', async () => {
     enabledFlag = false;
     expect(code(await now())).toBe('DISABLED');
+    nothingStarted();
+  });
+
+  it('asks for a decision on a Must fix, and points "as it is" at review mode, without starting or posting a card', async () => {
+    planFindingsDep = async () => ({ findings: [
+      { stepId: 'u1', requirement: 'required-role', severity: 'blocking', candidateSlots: [], suggestion: '' }
+    ], bindings: [] });
+    const svcNow = build().service;
+    const asked = await svcNow.launchSquadNow(route, input as never);
+    expect(asked).toMatchObject({ ok: false, code: 'NEEDS_DECISION' });
+    expect(!asked.ok && asked.message).toContain('Prepare the launch as it is');
+    const accepted = await svcNow.launchSquadNow(route, { ...input, acceptFindings: true } as never);
+    expect(accepted).toMatchObject({ ok: false, code: 'NEEDS_DECISION' });
+    expect(!accepted.ok && accepted.message).toContain("mode 'review'");
     nothingStarted();
   });
 
@@ -1007,7 +1117,7 @@ describe('checkPlan', () => {
     expect(resolveSquadPlan).toHaveBeenCalledWith('provided', ['# plan']);
     expect(await s.checkPlan(route, { text: 'inline' })).toMatchObject({ ok: true, value: { ok: true } });
     resolveSquadPlan.mockReturnValue({ planError: 'bad' });
-    expect(await s.checkPlan(route, { text: 'inline' })).toEqual({ ok: true, value: { ok: false, reason: 'bad' } });
+    expect(await s.checkPlan(route, { text: 'inline' })).toEqual({ ok: true, value: { ok: false, reason: 'bad', note: NOT_JUDGED } });
     resolveSquadPlan.mockReturnValue({});
     expect(await s.checkPlan(route, { text: 'inline' })).toMatchObject({ ok: true, value: { ok: false } });
   });
@@ -1066,6 +1176,46 @@ describe('review', () => {
     expect(issueSources).toHaveBeenCalledWith(7, 'p1', [join(root, 'proj', 'plan.md')], expect.objectContaining({
       roots: [join(root, 'proj'), homeDir, cloneDir], home: homeDir
     }));
+  });
+  it('caps the findings and the binding table in the prefill and says how many were left out, blocking first', async () => {
+    const finding = (severity: 'blocking' | 'warning' | 'repair', i: number) => ({ stepId: `s${i}`, requirement: 'plan' as const, severity, candidateSlots: [], suggestion: '', detail: 'x' });
+    planFindingsDep = async () => ({
+      findings: [...Array.from({ length: 40 }, (_, i) => finding('repair', i)), ...Array.from({ length: 20 }, (_, i) => finding('blocking', 100 + i))],
+      bindings: Array.from({ length: 120 }, (_, i) => ({ stepId: `s${i}`, slotId: 'w1', personaId: 'p' }))
+    });
+    const r = await build().service.review(7, 'prop-1', allow);
+    if (!r.ok) throw new Error(JSON.stringify(r));
+    expect(r.value.planFindings).toHaveLength(50);
+    expect(r.value.planFindingsHidden).toBe(10);
+    expect(r.value.planFindings!.slice(0, 20).every((entry) => entry.severity === 'blocking')).toBe(true);
+    expect(r.value.planBindings).toHaveLength(50);
+    expect(r.value.planBindingsHidden).toBe(70);
+    // The summary counts every finding, not only the ones shown.
+    expect(r.value.planSummary).toBe('20 Must fix before this can launch, 40 fixed for you');
+  });
+  it('carries the canonical plan text in the prefill and recheck, bounded by the plan byte limit, and survives a render failure', async () => {
+    canonicalDep = vi.fn(() => '## Execution Plan\n');
+    const svc = build().service;
+    const r = await svc.review(7, 'prop-1', allow);
+    if (!r.ok) throw new Error(JSON.stringify(r));
+    expect(r.value.planCanonicalText).toBe('## Execution Plan\n');
+    expect(canonicalDep).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ maxBytes: 1_048_576 }));
+    const again = await svc.recheck('prop-1', allow);
+    expect(again.ok && again.value.planCanonicalText).toBe('## Execution Plan\n');
+    canonicalDep = () => { throw new Error('boom'); };
+    const failed = await build().service.review(7, 'prop-1', allow);
+    expect(failed.ok && failed.value.planCanonicalText).toBeUndefined();
+    canonicalDep = () => undefined;
+    const none = await build().service.review(7, 'prop-1', allow);
+    expect(none.ok && 'planCanonicalText' in none.value).toBe(false);
+  });
+  it('omits the hidden counts when nothing is over the cap', async () => {
+    planFindingsDep = async () => ({ findings: [], bindings: [{ stepId: 'u1', slotId: 'w1', personaId: 'p' }] });
+    const r = await build().service.review(7, 'prop-1', allow);
+    if (!r.ok) throw new Error(JSON.stringify(r));
+    expect(r.value).not.toHaveProperty('planFindingsHidden');
+    expect(r.value).not.toHaveProperty('planBindingsHidden');
+    expect(r.value.planSummary).toBe('No problems found');
   });
   it('fails the launch cleanly when the registry returns a different number of capabilities', async () => {
     issueSources.mockResolvedValue([]);
@@ -1133,6 +1283,138 @@ describe('review', () => {
     vi.spyOn(svc.store, 'get').mockRejectedValueOnce(new Error('ledger at /Users/me/.zcc locked'));
     expect(await svc.service.review(1, 'prop-1', allow)).toEqual({ ok: false, code: 'INVALID', message: 'Opening this Squad launch failed unexpectedly. Try again.' });
     expect(logError).toHaveBeenCalledWith('squad proposal prop-1 review', expect.any(Error));
+  });
+});
+
+describe('recheck and messageProposer', () => {
+  const allow = () => true;
+  const blockingFinding = { stepId: 's1', requirement: 'skill' as const, severity: 'blocking' as const, candidateSlots: [], suggestion: '', detail: 'x' };
+  const problemSentence = 'Step s1 needs a skill that no member of this Squad is allowed to use.';
+  // Findings follow the plan file's current content, so editing the file clears the Must fix.
+  const readPlanFindings = async () => ({
+    findings: (await fsp.readFile(join(root, 'proj', 'plan.md'), 'utf8')).includes('BAD') ? [blockingFinding] : [],
+    bindings: []
+  });
+  async function proposeWith(findings: SquadProposalServiceDeps['planFindings'] | undefined) {
+    planFindingsDep = findings;
+    svc = build();
+    await svc.service.propose(route, input);
+  }
+  beforeEach(() => {
+    sendToProposer.mockReset().mockResolvedValue({ ok: true });
+  });
+
+  describe('recheck', () => {
+    beforeEach(async () => { await proposeWith(readPlanFindings); });
+
+    it('refuses while Squad launches are turned off', async () => {
+      enabledFlag = false;
+      expect(code(await svc.service.recheck('prop-1', allow))).toBe('DISABLED');
+    });
+    it('hides other projects and unknown ids', async () => {
+      expect(code(await svc.service.recheck('prop-1', () => false))).toBe('NOT_FOUND');
+      expect(code(await svc.service.recheck('ghost', allow))).toBe('NOT_FOUND');
+    });
+    it('refuses while the launch is starting', async () => {
+      expect(code(await svc.service.beginLaunch('prop-1', 'p1'))).toBe('ok');
+      expect(code(await svc.service.recheck('prop-1', allow))).toBe('NOT_PENDING');
+    });
+    it('passes source and plan failures through', async () => {
+      resolveSquadPlan.mockReturnValue({ planError: 'now broken' });
+      expect(await svc.service.recheck('prop-1', allow)).toMatchObject({ ok: false, code: 'INVALID_PLAN' });
+      resolveSquadPlan.mockReturnValue({ workUnits: [{ id: 'u1', title: 'One', dependencies: [] }] });
+      rmSync(join(root, 'proj', 'plan.md'));
+      expect(code(await svc.service.recheck('prop-1', allow))).toBe('SOURCE_NOT_FILE');
+    });
+    it('returns a stable message when the check fails unexpectedly', async () => {
+      vi.spyOn(svc.store, 'get').mockRejectedValueOnce(new Error('ledger at /Users/me/.zcc locked'));
+      expect(await svc.service.recheck('prop-1', allow)).toEqual({ ok: false, code: 'INVALID', message: 'Checking the plan failed unexpectedly. Try again.' });
+      expect(logError).toHaveBeenCalledWith('squad proposal prop-1 recheck', expect.any(Error));
+    });
+    it('returns fresh findings and picks up an edited plan file', async () => {
+      writeFileSync(join(root, 'proj', 'plan.md'), 'BAD');
+      const before = await svc.service.recheck('prop-1', allow);
+      if (!before.ok) throw new Error(JSON.stringify(before));
+      expect(before.value.planFindings).toHaveLength(1);
+      expect(before.value.planSummary).toBe('1 Must fix before this can launch');
+      expect(before.value.planStepCount).toBe(2);
+      writeFileSync(join(root, 'proj', 'plan.md'), 'fixed');
+      const after = await svc.service.recheck('prop-1', allow);
+      if (!after.ok) throw new Error(JSON.stringify(after));
+      expect(after.value.planFindings ?? []).toHaveLength(0);
+      expect(after.value.planSummary).toBe('No problems found');
+      expect(after.value.planStepCount).toBe(2);
+    });
+  });
+
+  describe('messageProposer', () => {
+    beforeEach(async () => {
+      await proposeWith(readPlanFindings);
+      writeFileSync(join(root, 'proj', 'plan.md'), 'BAD');
+    });
+
+    it('refuses while Squad launches are turned off', async () => {
+      enabledFlag = false;
+      expect(code(await svc.service.messageProposer('prop-1', allow))).toBe('DISABLED');
+      expect(sendToProposer).not.toHaveBeenCalled();
+    });
+    it('is INVALID when the app cannot message the conversation', async () => {
+      svc = build({ noSender: true });
+      expect(await svc.service.messageProposer('prop-1', allow)).toMatchObject({ ok: false, code: 'INVALID', message: expect.stringContaining('cannot message') });
+    });
+    it('hides other projects and unknown ids', async () => {
+      expect(code(await svc.service.messageProposer('prop-1', () => false))).toBe('NOT_FOUND');
+      expect(code(await svc.service.messageProposer('ghost', allow))).toBe('NOT_FOUND');
+      expect(sendToProposer).not.toHaveBeenCalled();
+    });
+    it('refuses while the launch is starting', async () => {
+      expect(code(await svc.service.beginLaunch('prop-1', 'p1'))).toBe('ok');
+      expect(code(await svc.service.messageProposer('prop-1', allow))).toBe('NOT_PENDING');
+    });
+    it('is INVALID when nothing is left to fix', async () => {
+      writeFileSync(join(root, 'proj', 'plan.md'), 'fixed');
+      expect(await svc.service.messageProposer('prop-1', allow)).toEqual({ ok: false, code: 'INVALID', message: 'The plan has nothing left to fix.' });
+      expect(sendToProposer).not.toHaveBeenCalled();
+    });
+    it('passes source failures through', async () => {
+      rmSync(join(root, 'proj', 'plan.md'));
+      expect(code(await svc.service.messageProposer('prop-1', allow))).toBe('SOURCE_NOT_FILE');
+    });
+    it('sends text built in main to the proposer', async () => {
+      expect(await svc.service.messageProposer('prop-1', allow)).toEqual({ ok: true, value: { delivered: true } });
+      expect(sendToProposer).toHaveBeenCalledTimes(1);
+      const [proposer, projectId, text] = sendToProposer.mock.calls[0]!;
+      expect(proposer).toMatchObject({ kind: 'pty', id: 's1' });
+      expect(projectId).toBe('p1');
+      expect(text).toContain(problemSentence);
+      expect(text).toContain('plan.md');
+      expect(text).toContain('One problem');
+      expect(text).not.toContain('Ask the agent to revise');
+    });
+    it('caps the listed problems and counts the rest', async () => {
+      let broken = false;
+      planFindingsDep = async () => ({
+        findings: broken ? Array.from({ length: 12 }, (_, i) => ({ ...blockingFinding, stepId: `s${i}` })) : [],
+        bindings: []
+      });
+      svc = build();
+      await svc.service.propose(route, input);
+      broken = true;
+      expect(code(await svc.service.messageProposer('prop-2', allow))).toBe('ok');
+      const text = sendToProposer.mock.calls[0]![2];
+      expect(text).toContain('12 problems');
+      expect(text).toContain('- and 2 more');
+      expect(text.split('\n').filter((line) => line.startsWith('- Step s'))).toHaveLength(10);
+    });
+    it('says the conversation is gone when it cannot be reached', async () => {
+      sendToProposer.mockResolvedValue({ ok: false });
+      expect(await svc.service.messageProposer('prop-1', allow)).toMatchObject({ ok: false, code: 'NOT_FOUND', message: expect.stringContaining('no longer open') });
+    });
+    it('reports an unexpected failure when sending throws', async () => {
+      sendToProposer.mockRejectedValue(new Error('pty exploded at /Users/me'));
+      expect(await svc.service.messageProposer('prop-1', allow)).toEqual({ ok: false, code: 'INVALID', message: 'Sending the request failed unexpectedly. Try again.' });
+      expect(logError).toHaveBeenCalledWith('squad proposal prop-1 messageProposer', expect.any(Error));
+    });
   });
 });
 

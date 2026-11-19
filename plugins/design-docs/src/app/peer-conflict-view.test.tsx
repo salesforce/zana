@@ -172,6 +172,33 @@ describe('peer conflict review', () => {
     await waitFor(() => expect(opened).toBe(true));
   });
 
+  it('checks Merge changes on the first render that shows the review', async () => {
+    const { doc, harness } = fixture();
+    harness.render(<PeerConflictView docId={doc.id} onClose={() => {}} />);
+    const merge = await screen.findByRole('radio', { name: 'Merge changes' });
+    expect((merge as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByRole('button', { name: 'Resolve reviewed fork' })).toHaveProperty('disabled', false);
+  });
+
+  it('drops the default Merge choice when a re-review reports that merging is no longer available', async () => {
+    const { doc, harness } = fixture();
+    const api = (globalThis as any).__ZCC_PLUGIN_RUNTIME__.useRpc();
+    const call = api.call.bind(api);
+    const original = await harness.call('peerConflictReview', { doc: doc.id, remoteHead: 'remote-head' }) as object;
+    harness.fail('resolvePeerConflict', 'resolution projection does not match candidate');
+    harness.render(<PeerConflictView docId={doc.id} onClose={() => {}} />);
+    expect((await screen.findByRole('radio', { name: 'Merge changes' }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Resolve reviewed fork' }));
+    await screen.findByText(/Resolution failed/);
+    api.call = (method: string, args: unknown) => method === 'peerConflictReview'
+      ? Promise.resolve({ ...original, questions: [], settled: [], mergeAvailable: false, conflicts: ['common ancestor unavailable'] }) : call(method, args);
+    fireEvent.click(screen.getByRole('button', { name: 'Review again' }));
+    await waitFor(() => expect(screen.queryByRole('radio', { name: 'Merge changes' })).toBeNull());
+    expect(screen.getByRole('button', { name: 'Resolve reviewed fork' })).toHaveProperty('disabled', true);
+    fireEvent.click(screen.getByRole('radio', { name: 'Keep mine' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Resolve reviewed fork' })).toHaveProperty('disabled', false));
+  });
+
   it('offers only Keep mine and Use theirs when no merge is available and requires an explicit pick', async () => {
     const { doc, harness } = fixture();
     const api = (globalThis as any).__ZCC_PLUGIN_RUNTIME__.useRpc();
