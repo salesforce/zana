@@ -2,6 +2,7 @@ import { expect, it, vi } from 'vitest';
 import { resolve, join, dirname } from 'node:path';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { boundarySpecs, changedLines, codeLines, coverageFailures, runVerification, mergeCoverage } from './ci-verification.mjs';
 
 it('checks desktop enrollment recovery when identity, persistence or the startup transport changes', () => {
@@ -314,15 +315,15 @@ it('leaves only the generated Agent City snapshot to its parity-checked sources'
 it('runs the private production app suite only for affected paths and fails missing coverage', () => {
   const io = { execute: vi.fn().mockReturnValue('+++ b/apps/app/src/App.tsx\n@@ -1 +1 @@'), read: vi.fn().mockReturnValue('{}'), log: vi.fn(), error: vi.fn() };
   expect(runVerification([], {}, io)).toBe(0);
-  expect(io.execute.mock.calls[0][1]).toContain('HEAD^');
+  expect(io.execute.mock.calls[0][1]).toContain('HEAD^...HEAD');
   expect(io.execute.mock.calls[0][2]).toMatchObject({ maxBuffer: 32 * 1024 * 1024 });
   expect(io.execute.mock.calls[1][1]).toEqual(expect.arrayContaining(['test:e2e', '--', 'e2e/smoke.spec.ts']));
   io.execute.mockClear();
   expect(runVerification(['--coverage', 'coverage.json'], { CI_BASE_SHA: 'base' }, io)).toBe(1);
-  expect(io.execute.mock.calls[0][1]).toEqual(expect.arrayContaining(['base', 'HEAD']));
+  expect(io.execute.mock.calls[0][1]).toEqual(expect.arrayContaining(['base...HEAD']));
   io.execute.mockClear();
   expect(runVerification(['--coverage', 'coverage.json'], { CI_BASE_SHA: 'base', CI_HEAD_SHA: 'pr-head' }, io)).toBe(1);
-  expect(io.execute.mock.calls[0][1]).toEqual(expect.arrayContaining(['base', 'pr-head']));
+  expect(io.execute.mock.calls[0][1]).toEqual(expect.arrayContaining(['base...pr-head']));
   expect(io.read).toHaveBeenCalledWith('coverage.json', 'utf8');
   expect(io.error).toHaveBeenCalledWith(expect.stringContaining('missing coverage'));
   io.execute.mockReturnValue('+++ b/docs/readme.md\n@@ -1 +1 @@'); io.execute.mockClear();
@@ -449,4 +450,29 @@ it('checks reviewed peer delivery through the built app when its authorization o
     'packages/db/src/data/deferred-thread-messages.ts'
   ]) expect(boundarySpecs([path])).toContain('e2e/thread-peer-communication.spec.ts');
   expect(boundarySpecs(['docs/readme.md'])).not.toContain('e2e/thread-peer-communication.spec.ts');
+});
+
+it('charges only the PR to the diff after main moved past the PR fork point', () => {
+  const root = mkdtempSync(join(tmpdir(), 'ci-merge-base-'));
+  const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.test', ...args], { cwd: root, encoding: 'utf8' }).trim();
+  const commit = (path: string, text: string) => {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), text);
+    git('add', '-A');
+    git('commit', '-q', '-m', path);
+  };
+  try {
+    git('init', '-q', '-b', 'main');
+    commit('apps/app/src/App.tsx', 'export const a = 1;\n');
+    git('checkout', '-q', '-b', 'pr');
+    commit('docs/readme.md', 'pr change\n');
+    git('checkout', '-q', 'main');
+    commit('apps/app/src/App.tsx', 'export const a = 2;\n');
+    const mainTip = git('rev-parse', 'HEAD');
+    git('checkout', '-q', 'pr'); // CI checks out the PR head.
+    const io = { execute: vi.fn((command: string, args: string[]) => command === 'git' ? git(...args) : ''), read: vi.fn(), log: vi.fn(), error: vi.fn() };
+    expect(runVerification([], { CI_BASE_SHA: mainTip }, io)).toBe(0);
+    expect(io.execute).toHaveBeenCalledOnce();
+    expect(io.log).toHaveBeenCalledWith('No Electron production boundary changed.');
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

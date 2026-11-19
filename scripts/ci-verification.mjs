@@ -120,7 +120,9 @@ export function runVerification(args, env, io = { execute: execFileSync, read: r
   const head = args.includes('--coverage') && env.CI_HEAD_SHA ? env.CI_HEAD_SHA : 'HEAD';
   // Bundled plugin artifacts can make even a zero-context patch exceed Node's
   // default 1 MiB capture limit. Keep a deliberate cap and fail on overflow.
-  const diff = io.execute('git', ['diff', '--no-renames', '--unified=0', base, head], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+  // Three dots diff from the merge base. CI_BASE_SHA is main's tip when the event
+  // fires, so a two-dot diff would also charge main's newer commits to the PR.
+  const diff = io.execute('git', ['diff', '--no-renames', '--unified=0', `${base}...${head}`], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
   const changes = changedLines(diff);
   if (args.includes('--coverage')) {
     const reports = [];
