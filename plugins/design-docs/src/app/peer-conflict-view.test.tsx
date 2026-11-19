@@ -172,6 +172,14 @@ describe('peer conflict review', () => {
     await waitFor(() => expect(opened).toBe(true));
   });
 
+  it('checks Merge changes on the first render that shows the review', async () => {
+    const { doc, harness } = fixture();
+    harness.render(<PeerConflictView docId={doc.id} onClose={() => {}} />);
+    const merge = await screen.findByRole('radio', { name: 'Merge changes' });
+    expect((merge as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByRole('button', { name: 'Resolve reviewed fork' })).toHaveProperty('disabled', false);
+  });
+
   it('offers only Keep mine and Use theirs when no merge is available and requires an explicit pick', async () => {
     const { doc, harness } = fixture();
     const api = (globalThis as any).__ZCC_PLUGIN_RUNTIME__.useRpc();

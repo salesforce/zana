@@ -58,7 +58,7 @@ function ForkReview({ docId, remoteHead, onResolved }: { docId: string; remoteHe
   const review = useResource(`${docId}\0${remoteHead}`, () => api.peerConflictReview(docId, remoteHead));
   const [step, setStep] = useState(0);
   const [choices, setChoices] = useState<PeerConflictChoices>({});
-  const [docChoice, setDocChoice] = useState<PeerResolutionChoice | null>(null);
+  const [pickedDocChoice, setDocChoice] = useState<PeerResolutionChoice | null>(null);
   const [fileStale, setFileStale] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,12 +66,13 @@ function ForkReview({ docId, remoteHead, onResolved }: { docId: string; remoteHe
   const data = review.data;
   const questions = data?.questions ?? [];
   const question = questions[Math.min(step, Math.max(questions.length - 1, 0))];
+  // Derived during render so the default is checked on the first render that shows the review, not one commit later.
+  const docChoice = pickedDocChoice ?? (data && questions.length === 0 && data.mergeAvailable ? 'merge' : null);
   // After a re-review against a new head, keep the draft for questions that still exist and are still valid.
   useEffect(() => {
     if (!data) return;
     setChoices((current) => Object.fromEntries(Object.entries(current).filter(([key, value]) => data.questions.some((q) => q.key === key && q.choices.includes(value)))));
     setStep((value) => Math.min(value, Math.max(data.questions.length - 1, 0)));
-    setDocChoice((current) => current ?? (data.questions.length === 0 && data.mergeAvailable ? 'merge' : null));
   }, [data]);
   const move = (next: number) => { setStep(next); queueMicrotask(() => heading.current?.focus()); };
   const stale = fileStale;
