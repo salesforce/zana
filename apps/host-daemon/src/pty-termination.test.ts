@@ -61,11 +61,17 @@ describe('terminatePtyProcessTree on Windows', () => {
 
   it('uses the shared Windows tree kill by default and still releases the pty', () => {
     setPlatform('win32');
-    // Under the test runner the shared helper refuses a PID this process did
-    // not spawn, so no real taskkill runs.
-    const handle = windowsPtyHandle();
-    expect(() => terminatePtyProcessTree(handle)).not.toThrow();
-    expect(handle.kill).toHaveBeenCalledWith();
+    // The fixture PID is listed as protected, so the shared helper refuses it
+    // and no real taskkill can run against an unrelated process on this host.
+    const previous = process.env.ZANA_PROTECTED_PIDS;
+    process.env.ZANA_PROTECTED_PIDS = '4242';
+    try {
+      const handle = windowsPtyHandle();
+      expect(() => terminatePtyProcessTree(handle)).not.toThrow();
+      expect(handle.kill).toHaveBeenCalledWith();
+    } finally {
+      if (previous === undefined) delete process.env.ZANA_PROTECTED_PIDS; else process.env.ZANA_PROTECTED_PIDS = previous;
+    }
   });
 
   it.each([undefined, 0])('never runs taskkill for pid %s', (pid) => {

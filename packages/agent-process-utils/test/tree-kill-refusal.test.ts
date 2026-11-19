@@ -1,7 +1,6 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import {
-  registerProtectedProcessPid,
   stopWindowsProcessTree,
   treeKillRefusal,
 } from "../src/index.js";
@@ -16,10 +15,8 @@ describe("Windows tree kill refusal", () => {
     expect(treeKillRefusal(process.ppid)).toMatch(/parent/);
   });
 
-  it("refuses a registered Zana PID until released", () => {
-    const release = registerProtectedProcessPid(987_654);
-    expect(treeKillRefusal(987_654)).toMatch(/registered Zana/);
-    release();
+  it("refuses a PID on an injected protected list", () => {
+    expect(treeKillRefusal(987_654, [987_654])).toMatch(/protected Zana/);
     expect(treeKillRefusal(987_654)).toBeUndefined();
   });
 
@@ -75,6 +72,49 @@ describe("environment-propagated protection", () => {
     } finally {
       delete process.env[PROTECTED_PIDS_ENV];
       delete process.env[TREE_KILL_AUDIT_ENV];
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("tree-kill audit file", () => {
+  it("creates a missing logs directory", async () => {
+    const { mkdtempSync, readFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "tree-audit-"));
+    const file = join(dir, "logs", "tree-kill.log");
+    process.env.ZANA_TREE_KILL_AUDIT = file;
+    try {
+      stopWindowsProcessTree(process.pid, () => {}, { spawnTaskkill: vi.fn(), log: () => {} });
+      expect(readFileSync(file, "utf8")).toMatch(/refusing taskkill/);
+    } finally {
+      delete process.env.ZANA_TREE_KILL_AUDIT;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("warns once with the path when the audit file cannot be written, and still decides", async () => {
+    const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "tree-audit-"));
+    const blocker = join(dir, "blocker");
+    writeFileSync(blocker, "a file, not a directory");
+    const file = join(blocker, "tree-kill.log");
+    process.env.ZANA_TREE_KILL_AUDIT = file;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const onDone = vi.fn();
+      stopWindowsProcessTree(process.pid, onDone, { spawnTaskkill: vi.fn(), log: () => {} });
+      stopWindowsProcessTree(process.pid, onDone, { spawnTaskkill: vi.fn(), log: () => {} });
+      expect(onDone).toHaveBeenCalledTimes(2);
+      const auditWarnings = warn.mock.calls.filter(([m]) => String(m).includes("audit file"));
+      expect(auditWarnings.length).toBeLessThanOrEqual(1);
+      expect(String(auditWarnings[0]?.[0] ?? file)).toContain(file);
+    } finally {
+      warn.mockRestore();
+      delete process.env.ZANA_TREE_KILL_AUDIT;
       rmSync(dir, { recursive: true, force: true });
     }
   });

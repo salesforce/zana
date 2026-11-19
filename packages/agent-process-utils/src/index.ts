@@ -5,10 +5,9 @@ export {
   removeUnlessRealDirectory,
 } from "./remove-tree.js";
 export * from "./temp-dir-sweep.js";
-import { appendFileSync } from "node:fs";
 import { spawn as nodeSpawn, type ChildProcess, type StdioOptions } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { lstat, readFile, readdir, readlink, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
 import type { Readable, Writable } from "node:stream";
@@ -192,20 +191,6 @@ const defaultProcessTreeKillHost: ProcessTreeKillHost = {
   warn: console.warn.bind(console),
 };
 
-/**
- * PIDs of Zana's own processes (desktop, server, host-daemon). `taskkill /T /F`
- * ends a whole tree, so a stale or reused PID that resolves to one of these, or
- * to a parent of this process, would take Zana down with no log line.
- */
-const protectedProcessPids = new Set<number>();
-
-/** Mark `pid` as one a Windows tree kill must never target. Returns the release. */
-export function registerProtectedProcessPid(pid: number): () => void {
-  protectedProcessPids.add(pid);
-  return () => { protectedProcessPids.delete(pid); };
-}
-
-/** Why a tree kill of `pid` is refused, or undefined when it may run. */
 /** Comma-separated PIDs of Zana's sibling processes; the desktop appends each child it forks. */
 export const PROTECTED_PIDS_ENV = "ZANA_PROTECTED_PIDS";
 /** File that receives one synchronous line per tree-kill decision, so it survives a crash. */
@@ -222,23 +207,35 @@ function envProtectedPids(env: NodeJS.ProcessEnv = process.env): number[] {
   return (env[PROTECTED_PIDS_ENV] ?? "").split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0);
 }
 
+let auditFailureReported = false;
+
 function auditTreeKill(line: string, env: NodeJS.ProcessEnv = process.env): void {
   const file = env[TREE_KILL_AUDIT_ENV];
   if (!file) return;
   // Synchronous on purpose: the next thing a bad kill does is end this process.
-  try { appendFileSync(file, `${new Date().toISOString()} ${process.pid} ${line}
-`); } catch { /* Logging must not stop a kill. */ }
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    appendFileSync(file, `${new Date().toISOString()} ${process.pid} ${line}
+`);
+  } catch (error) {
+    // Never stop a kill over its log, but say once that the trail is broken.
+    if (!auditFailureReported) {
+      auditFailureReported = true;
+      console.warn(`[agent-process-utils] tree-kill audit file ${file} is not writable: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 }
 
+/** Why a tree kill of `pid` is refused, or undefined when it may run. */
 export function treeKillRefusal(
   pid: number,
-  protectedPids: Iterable<number> = protectedProcessPids,
+  protectedPids: Iterable<number> = [],
 ): string | undefined {
   if (!Number.isInteger(pid) || pid <= 0) return "not a valid process id";
   if (pid === process.pid) return "it is this process";
   if (pid === process.ppid) return "it is the parent of this process";
   for (const guarded of protectedPids) {
-    if (guarded === pid) return "it is a registered Zana process";
+    if (guarded === pid) return "it is a protected Zana process";
   }
   if (envProtectedPids().includes(pid)) return "it is a Zana process listed in the environment";
   return undefined;
@@ -269,7 +266,7 @@ export function stopWindowsProcessTree(
   host: Pick<ProcessTreeKillHost, "spawnTaskkill"> & {
     /** Receives each tree-kill decision; defaults to console.warn so the runtime log file keeps it. */
     log?: (message: string) => void;
-    /** Extra PIDs that must never be tree-killed. Defaults to the registered Zana PIDs. */
+    /** Extra PIDs that must never be tree-killed, on top of the environment list. */
     protectedPids?: () => Iterable<number>;
   } = defaultProcessTreeKillHost,
 ): void {
@@ -277,7 +274,7 @@ export function stopWindowsProcessTree(
   // Every decision leaves a line, so a silent exit of Zana names the PID that
   // was targeted and what this process's own identity was at the time.
   const identity = `self=${process.pid} parent=${process.ppid}`;
-  const refusal = treeKillRefusal(pid, host.protectedPids?.() ?? protectedProcessPids);
+  const refusal = treeKillRefusal(pid, host.protectedPids?.());
   if (refusal) {
     const line = `[agent-process-utils] refusing taskkill /T /F for PID ${pid} (${identity}): ${refusal}`;
     auditTreeKill(line);

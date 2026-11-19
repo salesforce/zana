@@ -40,8 +40,11 @@ function signalProcessGroup(pid: number, signal: NodeJS.Signals): boolean {
  * any signal, and its signal-less `kill()` ends only what is attached to the
  * pseudoconsole, so children an agent starts detached (codex's app-server
  * processes) outlive it. taskkill /T /F (absolute System32 path, no shell)
- * ends the pty's own tree by parentage and starts first, while the root still
- * holds its PID, so a reused PID is never targeted. The signal-less `kill()`
+ * ends the pty's own tree by parentage and is started first, so the root is
+ * normally still alive when taskkill resolves it. taskkill runs asynchronously,
+ * so this narrows the PID-reuse and already-exited window rather than closing
+ * it; waiting for taskkill before releasing the pseudoconsole is not done
+ * because that would hold the conhost open on a hung taskkill. The signal-less `kill()`
  * follows at once: it closes the pseudoconsole, without which its conhost.exe
  * stays behind. Exit 128 from taskkill means the root had already exited.
  */
@@ -58,10 +61,9 @@ export function terminatePtyProcessTree(
   const pid = handle.pid;
   if (process.platform === 'win32') {
     // node-pty reports 0 until the pseudoconsole has connected. taskkill walks
-    // descendants by parentage, so it starts while the root still holds its
-    // PID: once the plain kill ends the root, that PID can be reused by an
-    // unrelated process, and `/T /F` on it would end that process's tree. The
-    // plain kill follows at once and closes the pseudoconsole.
+    // descendants by parentage, so it is started before the plain kill to
+    // narrow (not remove) the window in which the root has exited and its PID
+    // could be reused. The plain kill follows at once and closes the pseudoconsole.
     if (pid !== undefined && pid > 0) {
       (options.stopWindowsTree ?? ((root) => stopWindowsProcessTree(root)))(pid);
     }
