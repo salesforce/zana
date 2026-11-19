@@ -326,6 +326,40 @@ describe('composer host cache subscriptions', () => {
     });
   });
 
+  describe('opening an existing thread before its provider is known', () => {
+    const row = (model: string) => ({ model, displayName: model, supportedReasoningEfforts: [], defaultReasoningEffort: 'medium' });
+    const roster = ['claude-code', 'pi'].map(id => ({ id, displayName: id, capabilities: { permissionModes: ['auto'] } }));
+    // The default provider's catalog is loaded and lacks the thread's Pi model.
+    function freshThread(piModels: string[]) {
+      resetThreadModelCatalog(((query: { providerId?: string }) => Promise.resolve({
+        providers: roster,
+        models: (query?.providerId === 'pi' ? piModels : ['claude-model']).map(row),
+        selectedOnlyModels: [], modelLoadError: null
+      })) as never);
+      const session = new ComposerSession();
+      session.setSetting('modern.model', 'gateway/claude-opus-5-5');
+      return renderHook((props: { lockedProviderId?: string }) => useThreadComposerOptions({
+        session, threadId: 't', hostId: 'host', projectId: 'project-a', ...props
+      }), { initialProps: {} as { lockedProviderId?: string } });
+    }
+    it('does not validate against the default provider while the thread detail is loading', async () => {
+      const view = freshThread(['gateway/claude-opus-5-5']);
+      await waitFor(() => expect(view.result.current.modelOptions.map(r => r.value)).toEqual(['claude-model']));
+      expect(view.result.current.selectionError).toBeNull();
+      expect(view.result.current.catalogSettled).toBe(false);
+      view.rerender({ lockedProviderId: 'pi' });
+      await waitFor(() => expect(view.result.current.catalogSettled).toBe(true));
+      expect(view.result.current.selectionError).toBeNull();
+    });
+    it('still flags a saved model the known provider really lacks', async () => {
+      const view = freshThread(['other-model']);
+      await waitFor(() => expect(view.result.current.modelOptions.length).toBe(1));
+      expect(view.result.current.selectionError).toBeNull();
+      view.rerender({ lockedProviderId: 'pi' });
+      await waitFor(() => expect(view.result.current.selectionError).toMatch(/saved model/));
+    });
+  });
+
   it('does not flash an unavailable-model warning while discovery is still settling', async () => {
     let resolveDiscovery!: (value: unknown) => void;
     const discovery = new Promise((resolve) => { resolveDiscovery = resolve; });
