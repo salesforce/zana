@@ -796,6 +796,7 @@ const api: CcApi = {
       ipcRenderer.invoke(IPC.fs.resolveDoc, root, reportedPath, originCwd),
     writeFile: (path, content) => ipcRenderer.invoke(IPC.fs.writeFile, path, content),
     walkFiles: (path) => ipcRenderer.invoke(IPC.fs.walkFiles, path),
+    walkFilesWithStatus: (path) => ipcRenderer.invoke(IPC.fs.walkFilesWithStatus, path),
     searchFiles: (path, query, opts) =>
       ipcRenderer.invoke(IPC.fs.searchFiles, path, query, opts),
     readDataUrl: (path) => ipcRenderer.invoke(IPC.fs.readDataUrl, path),
