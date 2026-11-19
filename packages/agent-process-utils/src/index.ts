@@ -191,6 +191,33 @@ const defaultProcessTreeKillHost: ProcessTreeKillHost = {
   warn: console.warn.bind(console),
 };
 
+/**
+ * PIDs of Zana's own processes (desktop, server, host-daemon). `taskkill /T /F`
+ * ends a whole tree, so a stale or reused PID that resolves to one of these, or
+ * to a parent of this process, would take Zana down with no log line.
+ */
+const protectedProcessPids = new Set<number>();
+
+/** Mark `pid` as one a Windows tree kill must never target. Returns the release. */
+export function registerProtectedProcessPid(pid: number): () => void {
+  protectedProcessPids.add(pid);
+  return () => { protectedProcessPids.delete(pid); };
+}
+
+/** Why a tree kill of `pid` is refused, or undefined when it may run. */
+export function treeKillRefusal(
+  pid: number,
+  protectedPids: Iterable<number> = protectedProcessPids,
+): string | undefined {
+  if (!Number.isInteger(pid) || pid <= 0) return "not a valid process id";
+  if (pid === process.pid) return "it is this process";
+  if (pid === process.ppid) return "it is the parent of this process";
+  for (const guarded of protectedPids) {
+    if (guarded === pid) return "it is a registered Zana process";
+  }
+  return undefined;
+}
+
 const WINDOWS_TASKKILL_TIMEOUT_MS = 10_000;
 /** taskkill's exit code when the root PID is not running. */
 export const TASKKILL_NOT_FOUND = 128;
@@ -213,8 +240,17 @@ export function windowsTaskkillPath(env: NodeJS.ProcessEnv = process.env): strin
 export function stopWindowsProcessTree(
   pid: number,
   onDone: (code: number | null) => void = () => {},
-  host: Pick<ProcessTreeKillHost, "spawnTaskkill"> = defaultProcessTreeKillHost,
+  host: Pick<ProcessTreeKillHost, "spawnTaskkill"> & Partial<Pick<ProcessTreeKillHost, "warn">> & {
+    /** Extra PIDs that must never be tree-killed. Defaults to the registered Zana PIDs. */
+    protectedPids?: () => Iterable<number>;
+  } = defaultProcessTreeKillHost,
 ): void {
+  const refusal = treeKillRefusal(pid, host.protectedPids?.() ?? protectedProcessPids);
+  if (refusal) {
+    (host.warn ?? console.warn)(`[agent-process-utils] refusing taskkill /T /F for PID ${pid}: ${refusal}`);
+    onDone(null);
+    return;
+  }
   let settled = false;
   const finish = (code: number | null): void => {
     if (settled) return;
