@@ -72,6 +72,23 @@ const FULL_POLICY = {
 } satisfies RuntimePermissionPolicy;
 
 describe("buildClaudeSessionParams", () => {
+  it.each([undefined, true, false])("resolves sandboxEnabled=%s without changing the workspace permission policy", sandboxEnabled => {
+    const params = buildClaudeSessionParams({
+      threadId: "thread-1",
+      cwd: "/tmp/worktree",
+      instructionMode: "append",
+      options: {
+        ...WORKSPACE_ACCEPT_EDITS_POLICY,
+        providerOptions: { sandboxEnabled },
+      },
+    });
+
+    expect(params.sandboxEnabled).toBe(sandboxEnabled ?? true);
+    expect(params.permissionMode).toBe("acceptEdits");
+    expect(params.permissionScope).toBe("workspace");
+    expect(params.permissionEscalation).toBe("deny");
+  });
+
   it("maps every claude-flavored knob out of the providerOptions bag", () => {
     const params = buildClaudeSessionParams({
       threadId: "thread-1",

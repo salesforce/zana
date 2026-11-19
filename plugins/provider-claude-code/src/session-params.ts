@@ -168,7 +168,7 @@ function buildInternalSessionParams(
     workflowsEnabled: args.options.workflowsEnabled,
     idleQueryReleaseEnabled: args.options.idleQueryReleaseEnabled,
     chromeEnabled: args.options.chromeEnabled,
-    sandboxEnabled: args.options.sandboxEnabled ?? true,
+    sandboxEnabled: args.options.sandboxEnabled,
     memoryEnabled: args.options.memoryEnabled,
     providerSubagentsEnabled: args.options.providerSubagentsEnabled,
     ...(dynamicTools && dynamicTools.length > 0 ? { dynamicTools } : {}),
