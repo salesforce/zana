@@ -569,6 +569,10 @@ function httpProduct(): Pick<
       clearAgentBlocked: async () => false,
       summarizeIdle: async () => ({ summarized: 0 }),
       summarizeSession: async () => ({ ok: false as const, reason: 'ineligible' as const }),
+      restartSquadWorker: async () => {
+        // Throws (not a verdict): main is the authority; a Squad worker must never fall back to a plain terminal.
+        throw new Error('restartSquadWorker requires the desktop app');
+      },
       sessionStats: async () => null,
       closeFollowup: async () => ({ summarized: 0, followedUp: 0 }),
       resize: async (sessionId, cols, rows) => {

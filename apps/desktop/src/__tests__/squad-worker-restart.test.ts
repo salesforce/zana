@@ -446,3 +446,51 @@ describe('relaunchSquadWorker', () => {
     expect(deps.launchAuthorizedTerminal.mock.calls[0][2]).toMatchObject({ coordinationMode: 'interactive-team', autonomous: false, suppressPersonaInitialPrompt: false });
   });
 });
+
+describe('launch fence (Stop racing Restart)', () => {
+  it('does not relaunch when the run is closing before the relaunch and runs the held-back exit', async () => {
+    vi.useFakeTimers();
+    const deps = makeDeps();
+    const restarter = createSquadWorkerRestarter(deps);
+    const result = restarter.restart('w1', { maySpawn: async () => false });
+    const finalize = vi.fn(async () => {});
+    restarter.onSessionExit('w1', finalize);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await result).toMatchObject({ ok: false, reason: 'run-closing' });
+    expect(deps.launchAuthorizedTerminal).not.toHaveBeenCalled();
+    expect(finalize).toHaveBeenCalledTimes(1);
+    expect(deps.onRelaunched).not.toHaveBeenCalled();
+  });
+  it('closes the new session when the run closed while the relaunch was in flight', async () => {
+    vi.useFakeTimers();
+    const deps = makeDeps();
+    const fence = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const restarter = createSquadWorkerRestarter(deps);
+    const result = restarter.restart('w1', { maySpawn: fence });
+    restarter.onSessionExit('w1', vi.fn(async () => {}));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await result).toMatchObject({ ok: false, reason: 'run-closing' });
+    expect(deps.launchAuthorizedTerminal).toHaveBeenCalledTimes(1);
+    expect(deps.closeSession).toHaveBeenCalledTimes(2); // the old session, then the unbound new one
+    expect(deps.onRelaunched).not.toHaveBeenCalled();
+  });
+  it('treats a fence that throws as closed', async () => {
+    vi.useFakeTimers();
+    const deps = makeDeps();
+    const restarter = createSquadWorkerRestarter(deps);
+    const result = restarter.restart('w1', { maySpawn: async () => { throw new Error('x'); } });
+    restarter.onSessionExit('w1', vi.fn(async () => {}));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await result).toMatchObject({ ok: false, reason: 'run-closing' });
+    expect(deps.launchAuthorizedTerminal).not.toHaveBeenCalled();
+  });
+  it('relaunches normally while the fence stays open', async () => {
+    vi.useFakeTimers();
+    const deps = makeDeps();
+    const restarter = createSquadWorkerRestarter(deps);
+    const result = restarter.restart('w1', { maySpawn: async () => true });
+    restarter.onSessionExit('w1', vi.fn(async () => {}));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await result).toEqual({ ok: true });
+  });
+});

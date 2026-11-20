@@ -96,6 +96,8 @@ export const IPC = {
     /** Summarize ONE live agent's work into an inbox entry on demand (the
      *  terminal modal's "Summarize to inbox" button). */
     summarizeSession: 'terminals:summarizeSession',
+    /** Restart a Squad worker card in place so it keeps its slot and run binding. Main authorizes. */
+    restartSquadWorker: 'terminals:restartSquadWorker',
     /** Summarize agents' work into ONE folded inbox digest AND file a per-agent
      *  follow-up for any that left unfinished work, before the renderer closes
      *  them (the Agents view's "Close" button with "summarise first" + modal item). */

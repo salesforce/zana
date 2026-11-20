@@ -1111,6 +1111,16 @@ export interface CcApi {
       | { ok: false; reason: 'ineligible' | 'empty' | 'summary-failed' | 'write-failed' }
     >;
     /**
+     * Restart a Squad worker so the new process keeps its slot and run binding. The renderer sends
+     * only the session id; main resolves the slot and run from its own records and refuses sessions
+     * that are not a live Squad worker, finished runs and closing runs. `not-squad-worker` means the
+     * caller should use the ordinary restart path. Never throws.
+     */
+    restartSquadWorker(sessionId: string): Promise<
+      | { ok: true }
+      | { ok: false; reason: string; message?: string }
+    >;
+    /**
      * Read-only, display-only stats distilled from a claude session's transcript
      * (model, context tokens, rough cost, files touched, todo queue) for the
      * Agent Monitor status pane. Main authorizes from its own session record and

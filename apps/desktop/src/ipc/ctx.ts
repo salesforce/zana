@@ -147,6 +147,7 @@ export interface IpcCtx {
   syncCompanionMenu: any;
   teams: any;
   teamLifecycle: any;
+  squadWorkerRestarter: any;
   templates: any;
   terminateSession: any;
   tray: any;

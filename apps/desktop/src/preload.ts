@@ -674,6 +674,8 @@ const api: CcApi = {
       ipcRenderer.invoke(IPC.terminals.summarizeIdle, projectId, sessionIds),
     summarizeSession: (projectId, sessionId) =>
       ipcRenderer.invoke(IPC.terminals.summarizeSession, projectId, sessionId),
+    restartSquadWorker: (sessionId) =>
+      ipcRenderer.invoke(IPC.terminals.restartSquadWorker, sessionId),
     closeFollowup: (projectId, sessionIds) =>
       ipcRenderer.invoke(IPC.terminals.closeFollowup, projectId, sessionIds),
     sessionStats: (projectId, sessionId) =>

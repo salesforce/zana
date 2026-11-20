@@ -110,4 +110,14 @@ describe('terminals restore / reconnect handlers', () => {
     expect(launch).not.toHaveBeenCalled();
     expect(squadWorktreeHasActiveFollowUp('exec-h')).toBe(false);
   });
+
+  it('refuses to restore a Squad worker capability outside its run', async () => {
+    const launch = vi.fn();
+    const restoreCapabilities = bind(launch);
+    (restoreCapabilities as any).get = vi.fn(() => ({ request: { cohort: { role: 'worker', executionId: 'e1' } } }));
+    const out = await handlers.get(IPC.terminals.restore)!({ capabilityId: 'cap-1' });
+    expect(out).toMatchObject({ ok: false, code: 'DENIED' });
+    expect(restoreCapabilities.reserve).not.toHaveBeenCalled();
+    expect(launch).not.toHaveBeenCalled();
+  });
 });
