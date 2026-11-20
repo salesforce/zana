@@ -4,7 +4,7 @@
  * Only paths that refuse or preview before any model runs are covered, so this suite is fast and free:
  *   - Test 2: a bad persona file shows up as a load warning (API and `zcc personas ls`).
  *   - Test 3: a launch with unresolved worker personas is refused and opens nothing.
- *   - Test 7: a roster larger than the Squad's Max sessions is refused and opens nothing.
+ *   (Max sessions is enforced after launch, as a BLOCKED run; a live check would start agents. Covered by e2e/job-team-run-limits.spec.ts and manual test 7.)
  *   - Test 9: `zcc team launch --plan-file ... --dry-run` previews and creates no run.
  * Stop, restart, respawn and the UI surfaces need real agents or a human; see the manual test plan.
  *
@@ -48,15 +48,26 @@ describe.skipIf(!enabled)('live squad worker issues (refusals and previews only)
     // The team store watches the directory; wait until the launch path can see the Squad.
     for (let i = 0; i < 40; i += 1) {
       const listed = await zcc.http.request<{ teams?: Array<{ id: string }> }>('GET', '/api/v1/teams');
-      if (listed.teams?.some((t) => t.id === id)) return;
+      if (listed.teams?.some((t) => t.id === id)) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    // /api/v1/teams lists raw files; the launch path uses the debounced TeamStore. Wait for that too.
+    const project = await zcc.projects.ensureLiveSandbox();
+    for (let i = 0; i < 40; i += 1) {
+      const probe = await launchRaw(zcc, '/api/v1/teams/preview', { teamId: id, projectId: project.id, goal: 'probe', mode: 'freeform' });
+      if (probe.ok === true) return;
       await new Promise((r) => setTimeout(r, 250));
     }
     throw new Error(`team ${id} never appeared in /api/v1/teams`);
   }
 
   async function launch(zcc: Zcc, body: Record<string, unknown>): Promise<LaunchResult> {
+    return launchRaw(zcc, '/api/v1/teams/launch', body);
+  }
+
+  async function launchRaw(zcc: Zcc, path: string, body: Record<string, unknown>): Promise<LaunchResult> {
     try {
-      return await zcc.http.request<LaunchResult>('POST', '/api/v1/teams/launch', { body });
+      return await zcc.http.request<LaunchResult>('POST', path, { body });
     } catch (error) {
       const e = error as { message?: string; code?: string };
       return { ok: false, code: e.code, message: e.message };
@@ -107,23 +118,8 @@ describe.skipIf(!enabled)('live squad worker issues (refusals and previews only)
       const result = await launch(zcc, { teamId, projectId: project.id, goal: 'live refusal check', mode, ...(mode === 'structured' ? { planText: PLAN } : {}) });
       expect(result.ok, `${teamId} ${mode}: ${JSON.stringify(result)}`).toBe(false);
       expect(JSON.stringify(result)).not.toMatch(/executionId/);
+      expect(JSON.stringify(result)).not.toMatch(/NOT_FOUND/);
     }
-  });
-
-  it('test 7: a roster larger than the Squad Max sessions is refused and opens nothing', async () => {
-    const { zcc, project, teamsDir } = await setup();
-    // Coordinator + 3 workers = 4 sessions against a cap of 3.
-    await writeTeam(zcc, teamsDir, `live-limit-${zcc.runId}`, {
-      orchestratorPersonaId: 'builtin:orchestrator',
-      limits: { maxConcurrent: 3 },
-      slots: [{ personaId: 'builtin:orchestrator', quantity: 1 }, { personaId: 'builtin:software-engineer', quantity: 3 }]
-    });
-    const result = await launch(zcc, {
-      teamId: `live-limit-${zcc.runId}`, projectId: project.id, goal: 'live limit check', mode: 'structured', planText: PLAN
-    });
-    expect(result.ok, JSON.stringify(result)).toBe(false);
-    expect(JSON.stringify(result)).not.toMatch(/executionId/);
-    expect(JSON.stringify(result)).toMatch(/limit|session|concurrent/i);
   });
 
   it('test 9: zcc team launch --plan-file --dry-run previews and creates no run; a missing file fails cleanly', async () => {
@@ -132,7 +128,7 @@ describe.skipIf(!enabled)('live squad worker issues (refusals and previews only)
     writeFileSync(planFile, PLAN);
     cleanups.push(() => rmSync(planFile, { force: true }));
     const env = { ...process.env, ZCC_DATA_DIR: zcc.dataDir, ZCC_SERVER_URL: process.env.ZCC_SERVER_URL ?? '' };
-    const base = ['team', 'launch', '--team', 'builtin:delivery-squad', '--project', project.id, '--mode', 'structured'];
+    const base = ['team', 'launch', '--team', 'builtin:delivery-squad', '--project', project.id, '--mode', 'structured', '--goal', 'live dry run'];
 
     const dry = await run('node', [CLI, ...base, '--plan-file', planFile, '--dry-run'], { env }).catch((e) => e as { stdout: string; stderr: string; code?: number });
     expect(dry.stdout + dry.stderr).not.toMatch(/at .*\.(ts|js):\d+/);
