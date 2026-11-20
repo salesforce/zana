@@ -260,12 +260,23 @@ non-empty `files` scope before a durable plan registers.
 
 #### Run limits
 
-<!-- PLACEHOLDER (run-limits-exposure): document per-Squad run limits here once that
-     step lands: maxConcurrent, claim wall-clock and stall limits, their bounds, the
-     defaults (20 min wall-clock, 10 min stall, cap 32 sessions) and where the run
-     detail shows the effective values. -->
+A Squad can set three optional limits in the Squad editor. Leave a field blank to keep
+the default.
 
-> **TODO (to be written):** per-Squad run limits.
+| Limit | Allowed range | Default |
+| --- | --- | --- |
+| Concurrent workers (`maxConcurrent`) | 1 to 32 | 32 sessions |
+| Claim wall-clock (minutes) | 1 minute to 24 hours | 20 minutes |
+| Claim stall (minutes) | 1 minute to 24 hours | 10 minutes |
+
+Main validates the limits on every save: invalid values are dropped and out-of-range
+values are clamped. The limits apply to runs started with **Launch** for that Squad. The
+run detail shows the effective values in a **Run limits** line. The claim stall limit also
+sets how long a claimed worker can show no turn before the no-turn warning fires.
+
+`maxConcurrent` caps the sessions the run may launch at once. Setting it below the number
+of worker slots can make some slots fail to launch, which follows the failed-slot rules
+above.
 
 #### Launching from Settings
 
