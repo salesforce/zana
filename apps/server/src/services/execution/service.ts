@@ -113,6 +113,9 @@ export const DEFAULT_DURABLE_CLAIM_STALL_MS = 10 * 60_000;
  * (interactive / autonomous chat) modes or when BOTH ceilings are already present, so a
  * caller-set ceiling always wins.
  */
+/** Bounded re-read loop for the post-cancel STOPPED write; each miss means another actor advanced the record. */
+const MAX_STOP_TRANSITION_ATTEMPTS = 8;
+
 export function withDurableClaimWallClockBackstop(
   mode: TeamCoordinationMode | undefined,
   policy: ExecutionPolicyV1 | undefined
@@ -3994,8 +3997,24 @@ export class ExecutionService {
     for (const check of this.checkCompletions.values()) if (check.executionId === record.id) check.controller.abort();
     const canceled = await this.cancelLaunchVerified(fenced.value);
     if (!canceled.ok && canceled.code !== 'NOT_FOUND') return { ok: false as const, code: canceled.code ?? 'CANCEL_FAILED', message: canceled.message ?? 'Team cancellation failed' };
-    const stopped = await this.transitionOrCurrent(fenced.value, 'STOPPED', 'info', 'Execution stopped');
+    const stopped = await this.settleStopped(fenced.value);
     return { ok: true as const, value: stopped, canceled: canceled.value };
+  }
+
+  /**
+   * Land STOPPED after the launch was cancelled. Cancelling closes sessions, and their exit events (worker
+   * exit, blocker/board writes) advance stateVersion while the cancel is in flight, so a single transition
+   * at the fenced version loses the race and silently leaves the run BLOCKED/RUNNING. Re-read and retry
+   * until the run is final; a terminal state written by another actor is accepted as-is.
+   */
+  private async settleStopped(fenced: ExecutionRecord): Promise<ExecutionRecord> {
+    let current = fenced;
+    for (let attempt = 0; attempt < MAX_STOP_TRANSITION_ATTEMPTS; attempt += 1) {
+      const outcome = await this.transitionWithOutcome(current, 'STOPPED', 'info', 'Execution stopped');
+      current = outcome.record;
+      if (outcome.wrote || current.state === 'COMPLETED' || current.state === 'FAILED' || current.state === 'STOPPED') return current;
+    }
+    return current;
   }
 
   private async fenceCommand(record: ExecutionRecord, expectedStateVersion: number, summary: string, slotId?: string) {

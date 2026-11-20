@@ -246,3 +246,49 @@ describe('cancel verifies the stop', () => {
     service.dispose();
   }));
 });
+
+describe('single Stop on a BLOCKED run', () => {
+  it('lands STOPPED in one call even when cancelling closes sessions that advance stateVersion', async () => fixture(async (filePath) => {
+    let store: ReturnType<typeof createExecutionStore>;
+    let bumps = 0;
+    const cancel = vi.fn(async () => {
+      // A closing session's exit event writes to the run while the cancel is in flight, twice.
+      for (let i = 0; i < 2; i += 1) {
+        const live = (await store.get('execution-1'))!;
+        await store.command(live.id, live.stateVersion, 'worker exit recorded');
+        bumps += 1;
+      }
+      return done;
+    });
+    const d = deps(filePath, { cancelTeamLaunch: cancel as Cancel });
+    store = d.store;
+    const service = new ExecutionService(d);
+    await service.start('session-1', 'project-1', request);
+    const running = (await store.get('execution-1'))!;
+    const blocked = await store.transition(running.id, running.stateVersion, 'BLOCKED', 'warning', 'lost its only worker');
+    const stopped = await service.stop('session-1', 'project-1', 'execution-1', blocked.stateVersion);
+    expect(stopped).toMatchObject({ ok: true, value: { state: 'STOPPED' } });
+    expect((await store.get('execution-1'))?.state).toBe('STOPPED');
+    expect(bumps).toBe(2);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    service.dispose();
+  }));
+
+  it('accepts a terminal state another actor wrote during the cancel without rewriting it', async () => fixture(async (filePath) => {
+    let store: ReturnType<typeof createExecutionStore>;
+    const cancel = vi.fn(async () => {
+      const live = (await store.get('execution-1'))!;
+      await store.transition(live.id, live.stateVersion, 'FAILED', 'error', 'failed elsewhere');
+      return done;
+    });
+    const d = deps(filePath, { cancelTeamLaunch: cancel as Cancel });
+    store = d.store;
+    const service = new ExecutionService(d);
+    await service.start('session-1', 'project-1', request);
+    const running = (await store.get('execution-1'))!;
+    const blocked = await store.transition(running.id, running.stateVersion, 'BLOCKED', 'warning', 'lost its only worker');
+    const stopped = await service.stop('session-1', 'project-1', 'execution-1', blocked.stateVersion);
+    expect(stopped).toMatchObject({ ok: true, value: { state: 'FAILED' } });
+    service.dispose();
+  }));
+});

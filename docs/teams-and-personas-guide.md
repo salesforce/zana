@@ -240,6 +240,7 @@ removed, absolute paths reduced to file names, at most 2048 characters). It appe
   (same slot, run and cohort) through the same respawn path, without the two-per-slot
   cap, because a person asked. It is refused when the run has finished or is stopping.
   A card for a non-Squad session keeps the ordinary restart.
+- **No live worker.** A run left with no live worker is BLOCKED and cannot be respawned: Stop it (one Stop is enough) and relaunch.
 
 #### Stop, Dismiss and Cancel
 

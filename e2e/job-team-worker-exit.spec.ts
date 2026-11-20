@@ -48,11 +48,7 @@ test('a worker that exits 1 raises a warning and Inbox row, and its card stays u
     const stopped = await window.evaluate(({ projectId, executionId, version }) =>
       window.cc.executionBoard.stop(projectId, executionId, version), { projectId, executionId, version });
     expect(stopped.ok, JSON.stringify(stopped)).toBe(true);
-    // Observed: the first Stop on this BLOCKED run answers ok but leaves it BLOCKED (state version
-    // unchanged in the result); a second Stop with the fresh version stops it. Flagged to the caller.
-    const v2 = await window.evaluate(async ({ projectId, executionId }) => (await window.cc.executionBoard.snapshot(projectId, executionId, 0))?.execution.stateVersion ?? 0, { projectId, executionId });
-    const again = await window.evaluate(({ projectId, executionId, v2 }) => window.cc.executionBoard.stop(projectId, executionId, v2), { projectId, executionId, v2 });
-    expect(again.ok, JSON.stringify(again)).toBe(true);
+    // One Stop on the BLOCKED run (it lost its only worker) lands STOPPED; no second Stop is needed.
     await expect.poll(() => window.evaluate(async ({ projectId, executionId }) =>
       (await window.cc.executionBoard.snapshot(projectId, executionId, 0))?.execution.state, { projectId, executionId }),
     { timeout: 30_000 }).toBe('STOPPED');

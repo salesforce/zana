@@ -44,10 +44,16 @@ test('a launch whose completion write throws closes every started session and su
     await expect.poll(() => ctx.window.evaluate(async (id) =>
       (await window.cc.terminals.list(id)).filter((s) => s.cohort && s.cohort.role !== 'owner').map((s) => `${s.cohort?.role}:${s.id}`), projectId),
     { timeout: 30_000, intervals: [250] }).toEqual([]);
-    // The run record is not left RUNNING. Observed: a failed completion leaves it BLOCKED (kickoff
-    // reassignment finds no worker), which the user can Stop; it must never claim live progress.
+    // The run record is not left RUNNING. A failed completion may leave it BLOCKED (kickoff
+    // reassignment finds no worker); a single Stop must then land it STOPPED.
     const page = await ctx.window.evaluate((id) => window.cc.executionBoard.listProject(id), projectId);
     for (const execution of page.executions) expect(['FAILED', 'STOPPED', 'CANCELED', 'BLOCKED']).toContain(execution.state);
+    for (const execution of page.executions.filter((e) => e.state === 'BLOCKED')) {
+      const stop = await ctx.window.evaluate(({ id, v, projectId }) => window.cc.executionBoard.stop(projectId, id, v), { id: execution.executionId, v: execution.stateVersion ?? 0, projectId });
+      expect(stop.ok, JSON.stringify(stop)).toBe(true);
+      await expect.poll(() => ctx.window.evaluate(async ({ id, projectId }) =>
+        (await window.cc.executionBoard.snapshot(projectId, id, 0))?.execution.state, { id: execution.executionId, projectId }), { timeout: 30_000 }).toBe('STOPPED');
+    }
   } catch (error) { throw jobTeamFailure(ctx, error); }
   finally { await teardownJobTeam(ctx); }
 });
