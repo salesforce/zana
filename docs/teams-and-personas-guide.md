@@ -65,11 +65,26 @@ A user file with the same id as a builtin shadows it. Project personas win over 
 
 ### Validation
 
-All persona files pass through `sanitizePersona()` (in `persona-store.ts`). A file is silently skipped if:
-- `id` or `name` is missing/empty
-- `baseProfile` is not one of the 4 valid values
-- `model` is not `opus`/`sonnet`/`haiku`/`default`
-- `permissionMode` is not one of the 4 valid values
+All persona files pass through one shared rule set (`personaDropReason` in
+`packages/domain/src/persona-validation.ts`), used by the server loader, the form
+write path and `zcc personas ls`. A file is ignored when:
+- it cannot be read, is not valid JSON, or its top level is not a JSON object
+- `id` or `name` is missing or empty
+- `baseProfile` is not one of the valid profiles
+- `model` is present but not a string
+- `permissionMode`, `codexSandbox`, `codexApproval`, `modelLevel` or `executionState` has an unknown value
+- `harnessRouting` or `skills` is malformed
+
+An unrecognised `reasoningLevel` does not drop a file on load (forward
+compatibility); the persona form rejects it on save.
+
+#### Persona files that fail to load
+
+An ignored file is not silent. The server keeps a list of load warnings (file
+basename, whether it came from the user or the Project, and a fixed reason; never
+file contents; capped at 100) and **Settings > Personas** lists them. `zcc personas ls`
+prints the same skipped files on stderr. A persona that is ignored is simply absent,
+so any Squad slot that names it is unresolved (see below).
 
 ### Flag Precedence at Launch
 
@@ -159,6 +174,105 @@ support inferred and provided plans, including inline provided plans and locally
 attached source capabilities, without local I/O against a remote-checkout
 placeholder. Remote launches reject explicit targets, generated worktree
 isolation, named checks, and push; they do not fall back to a local checkout.
+
+#### Launch failures and warnings
+
+**A slot that fails to start.** Each worker slot launches on its own: a spawn error
+in one slot is recorded as a failed slot with a bounded, sanitized reason, and the
+other slots still launch. What happens next depends on the planning mode.
+- **Structured** (a complete portable plan): the run cannot finish with a missing
+  worker, so it is FAILED at launch, the coordinator is not started, started workers are
+  closed, and the slot reasons become the run's failure reason.
+- **Freeform** (the coordinator infers the plan): the run continues. It records a run
+  warning, and the coordinator's kickoff lists the failed slots (quoted, bounded data,
+  not instructions) with a note not to assign work to them. A freeform run with no
+  worker started, or with no orchestrator, still fails.
+
+If a launch throws after workers started, those workers are closed by session id so no
+live session is left behind.
+
+**Unresolved personas.** A slot whose persona id does not resolve (missing file, or a
+file ignored for the reasons above) is reported as `unknown persona: <id>`. The Squad
+editor warns about it at save time and the Squad list shows a badge. At launch the slot
+is skipped and reported as a failed slot as above. A structured launch on the default
+(CLI) transport whose every worker slot is unresolved is refused before anything opens.
+Modern Squads do not apply that refusal.
+
+**Unknown model.** A persona whose legacy `model` string is not in the harness's static
+model catalog gets an advisory notice at save (Squad editor) and at launch (an Inbox
+notice, "Persona model not recognised"). It never blocks a launch. When the harness
+accepts unlisted models or discovers them live, no notice is raised.
+
+**Previewing a plan from the CLI.** `zcc team launch --plan-file <path> --dry-run`
+validates the plan and prints the resolved launch without starting anything. An
+unparseable plan returns its error (for example "no portable plan steps found") and a
+non-zero exit. See [`team launch`](cli.md#team-launchstatuswaitanswerstop).
+
+#### Failure reasons
+
+Every run that ends FAILED keeps a persisted failure reason (control characters
+removed, absolute paths reduced to file names, at most 2048 characters). It appears in
+`zcc team status` and `zcc team wait`, the Inbox terminal report and the run detail.
+
+#### Worker exits, retained cards and respawn
+
+- **Exit warning.** A worker that exits non-zero (or by signal) raises a run warning
+  with the exit code or signal and reason, and one Inbox row (deduped per run, slot and
+  kind). A clean exit and idle on-demand seats never warn.
+- **No-turn warning.** A worker that was assigned work but reports no turn and produces
+  no output within the window (the run's claim stall limit, 10 minutes by default) raises
+  one warning per claim.
+- **Retained cards.** A Squad worker card that exited non-zero stays on the Agents board
+  until you press **Dismiss** on it (a clean exit follows the normal fade). Dismissal is
+  remembered.
+- **Coordinator respawn.** When a worker's session is over and its unit still needs it,
+  the coordinator can call `execution.worker.respawn` with the worker's `slotId`. Only
+  the run's orchestrator can call it; the run and slot come from the host's binding, not
+  from arguments. The slot restarts from its launch-time snapshot (role, persona and
+  permissions as launched, not as the persona file reads now) as a new conversation.
+  Each slot may be respawned twice per run; the count survives app restarts. It is
+  refused while the worker is still running, for the coordinator slot, for a run that is
+  not RUNNING or is stopping, and for remote Projects. A refusal, a cap
+  hit or a spawn failure returns a reason and raises a run warning. Respawn is never
+  automatic, so a crash loop stays visible. A `QUEUED` answer means the worker is waiting
+  for machine capacity: do not call again.
+- **Card Restart.** **Restart** on a Squad worker card puts the worker back in its Squad
+  (same slot, run and cohort) through the same respawn path, without the two-per-slot
+  cap, because a person asked. It is refused when the run has finished or is stopping.
+  A card for a non-Squad session keeps the ordinary restart.
+
+#### Stop, Dismiss and Cancel
+
+Stop and Dismiss verify the teardown instead of assuming it. After asking the run's
+sessions to close, Zana waits a short, bounded time for sessions that are still closing.
+If any survive, the call fails with `CANCEL_INCOMPLETE` and lists the sessions: the run
+is not marked stopped or hidden, so you can retry once they are gone. A FAILED run is
+cancelled once by whoever recorded the failure, so no worker is left running behind a
+failed run. Plan-correction **Cancel** saves the card as cancelled only after a verified
+stop.
+
+#### Parallelism
+
+The coordinator prompt tells coordinators to give independent units disjoint, narrow
+`files` scopes (specific files or small directories). Units with overlapping scopes run
+one at a time, so broad or missing scopes serialise a run. Mutating units need a
+non-empty `files` scope before a durable plan registers.
+
+#### Run limits
+
+<!-- PLACEHOLDER (run-limits-exposure): document per-Squad run limits here once that
+     step lands: maxConcurrent, claim wall-clock and stall limits, their bounds, the
+     defaults (20 min wall-clock, 10 min stall, cap 32 sessions) and where the run
+     detail shows the effective values. -->
+
+> **TODO (to be written):** per-Squad run limits.
+
+#### Launching from Settings
+
+**Settings > Squads > Launch** opens the New Agent dialog on the Squad composer with that
+Squad (and the Project, when one is chosen) pre-selected, so the launch has a goal, the
+usual preflight and a tracked run. It no longer opens bare member tabs. Squad export and
+import are unchanged.
 
 ---
 
@@ -430,7 +544,7 @@ goal" is refused; the agent proposes a plan it has written and checked instead
 
 ## Gotchas
 
-- A persona id referenced in a team slot that doesn't resolve at launch time is **silently skipped** (not an error).
+- A persona id referenced in a team slot that doesn't resolve at launch time is skipped and reported as a failed slot (`unknown persona: <id>`). In a structured run that fails the launch; in a freeform run the coordinator is told. The Squad editor and list warn about it beforehand. See [Launch failures and warnings](#launch-failures-and-warnings).
 - The orchestrator's `initialPrompt` is delivered as a positional argv element to Claude — it runs as the first user turn.
 - Autonomous runs are **in-memory only**: restarting ZCC kills all active runs.
 - The 32-tab cap per team launch means a team with many high-quantity slots will be truncated.

@@ -259,6 +259,12 @@ extension's title for an extension-contributed persona (`source.extensionId`).
 > on disk, so they do **not** appear here. When no file-backed personas exist
 > the command prints a note saying so and still exits `0`.
 
+A persona file the loader cannot use is skipped, not listed. The command writes one
+line per skipped file to stderr, naming the file (never its contents) and a fixed
+reason, for example `Not valid JSON, skipped` or `Unknown "permissionMode", skipped`.
+The CLI applies the same rules as the app. See
+[Persona files that fail to load](teams-and-personas-guide.md#persona-files-that-fail-to-load).
+
 ```bash
 zcc personas ls --json
 ```
@@ -296,6 +302,15 @@ launching; it cannot be combined with `--wait`. Exit codes: 0 preview or launch
 succeeded; 2 usage error (missing, unreadable, empty or over-cap plan file, bad flag
 combination) or a preview the app refuses as invalid (for example an unparseable plan:
 the plan error is on stderr and nothing launches); 1 when the app is not running.
+
+`team status` and `team wait` show why a run failed. A FAILED run carries a
+sanitized failure reason (control characters removed, absolute paths reduced to
+file names, at most 2048 characters). `team status` prints it as `failed: <reason>`,
+and `team wait` exits with an error `execution <id> failed: <reason>` when the run has
+no result payload (when it has one, the payload is printed and `Failed: <reason>` goes
+to stderr). `--json` status output carries it as `failure`. A structured launch where any worker slot fails to
+start is FAILED at launch with the slot reasons; see
+[Launch failures and warnings](teams-and-personas-guide.md#launch-failures-and-warnings).
 
 `--project` accepts an id or a confined filesystem path. A path is realpath
 checked under HOME or cloneRoot before idempotent project registration; arbitrary
