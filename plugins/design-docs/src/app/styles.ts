@@ -805,6 +805,8 @@ textarea.dd-doc-summary { display: block; }
 
 /* Preview */
 .dd-preview { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; }
+.dd-preview { outline: none; }
+.dd-preview > .dom-find-bar { position: sticky; top: 8px; float: right; margin-right: 20px; }
 .dd-md-toolbar { position: sticky; top: 0; z-index: 2; }
 .dd-prose { max-width: 860px; margin: 0 auto; padding: 28px 40px 96px; }
 .dd-doc-compact .dd-prose { padding: 16px 16px 64px; }
