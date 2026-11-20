@@ -441,6 +441,8 @@ interface UiState {
    * local-only default. Null for generic opens; cleared on close.
    */
   launcherProjectId: string | null;
+  /** Squad the launcher was opened for (Settings > Squads Launch). Null for generic opens; cleared on close. */
+  launcherTeamId: string | null;
   searchOpen: boolean;
   findOpen: boolean;
   /**
@@ -538,6 +540,10 @@ interface UiState {
   // preference shared by the cross-project and per-project boards (persisted to
   // AppConfig.agentsBoardView). Default 'board'.
   agentsBoardView: AgentsBoardView;
+  // Session ids of exited non-zero Squad worker cards the user dismissed (persisted to
+  // AppConfig.dismissedWorkerExits). Until dismissed, such a card stays on the board.
+  dismissedWorkerExits: string[];
+  dismissWorkerExit: (sessionId: string) => void;
   // Session-local phone choice; desktop Flow never opts a phone into Canvas.
   mobileAgentsBoardView: AgentsBoardView | null;
   setMobileAgentsBoardView: (view: AgentsBoardView) => void;
@@ -653,6 +659,8 @@ interface UiState {
   setShortcutsOpen: (open: boolean) => void;
   setResumeOpen: (open: boolean) => void;
   setLauncherOpen: (open: boolean, projectId?: string) => void;
+  /** Open the New Agent dialog on the Squad composer with this project and Squad pre-selected. */
+  openSquadLauncher: (projectId: string, teamId: string) => void;
   /** Open / close the first-run walkthrough overlay. */
   setWalkthroughOpen: (open: boolean) => void;
   setWalkthroughHomeMode: (mode: 'thread' | 'agent' | null) => void;
@@ -1083,6 +1091,15 @@ function persistAgentsBoardView(view: AgentsBoardView) {
   product.config.set({ agentsBoardView: view }).catch(() => {});
 }
 
+// Matches the config store's retention cap for AppConfig.dismissedWorkerExits.
+const DISMISSED_WORKER_EXITS_CAP = 200;
+
+// Fire-and-forget write of the dismissed exited-worker list. The config store is the serialized
+// writer; the renderer always sends the whole (already capped) list, so the last write wins.
+function persistDismissedWorkerExits(ids: string[]) {
+  product.config.set({ dismissedWorkerExits: ids }).catch(() => {});
+}
+
 // Per-project debounced git refresh. Terminal output is high-frequency, so
 // we coalesce bursts (build logs, scrolling output) into one git call after
 // activity quiets down for a moment.
@@ -1182,6 +1199,7 @@ export const useUi = create<UiState>((set, get) => ({
   resumeOpen: false,
   launcherOpen: false,
   launcherProjectId: null,
+  launcherTeamId: null,
   walkthroughOpen: false,
   walkthroughHomeMode: null,
   setupOpen: false,
@@ -1202,6 +1220,14 @@ export const useUi = create<UiState>((set, get) => ({
   unread: {},
   projectView: {},
   agentsBoardView: 'board',
+  dismissedWorkerExits: [],
+  dismissWorkerExit: (sessionId) => {
+    const current = get().dismissedWorkerExits;
+    if (current.includes(sessionId)) return;
+    const next = [...current, sessionId].slice(-DISMISSED_WORKER_EXITS_CAP);
+    set({ dismissedWorkerExits: next });
+    persistDismissedWorkerExits(next);
+  },
   mobileAgentsBoardView: null,
   explorerFile: {},
   explorerGoto: {},
@@ -1412,7 +1438,9 @@ export const useUi = create<UiState>((set, get) => ({
   setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
   setResumeOpen: (resumeOpen) => set({ resumeOpen }),
   setLauncherOpen: (launcherOpen, projectId) =>
-    set({ launcherOpen, launcherProjectId: launcherOpen ? projectId ?? null : null }),
+    set({ launcherOpen, launcherProjectId: launcherOpen ? projectId ?? null : null, launcherTeamId: null }),
+  openSquadLauncher: (projectId, teamId) =>
+    set({ launcherOpen: true, launcherProjectId: projectId, launcherTeamId: teamId }),
   setWalkthroughOpen: (walkthroughOpen) =>
     set(walkthroughOpen ? { walkthroughOpen } : { walkthroughOpen, walkthroughHomeMode: null }),
   setWalkthroughHomeMode: (walkthroughHomeMode) => set({ walkthroughHomeMode }),
@@ -2843,6 +2871,9 @@ export const useData = create<DataState>((set, get) => ({
         isAgentsViewId(config.agentsBoardView)
       ) {
         useUi.setState({ agentsBoardView: config.agentsBoardView });
+      }
+      if (Array.isArray(config.dismissedWorkerExits)) {
+        useUi.setState({ dismissedWorkerExits: config.dismissedWorkerExits.filter((id) => typeof id === 'string') });
       }
       if (config.inboxGrouping === 'project' || config.inboxGrouping === 'time') {
         useUi.setState({ inboxGrouping: config.inboxGrouping });

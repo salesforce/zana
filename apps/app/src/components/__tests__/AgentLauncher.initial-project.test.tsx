@@ -70,4 +70,12 @@ describe('AgentLauncher initialProjectId', () => {
     render(<AgentLauncher project={project} onClose={vi.fn()} initialProjectId="remote-1" />);
     expect(state.teamProps.at(-1)).toMatchObject({ composerProjectId: 'pinned' });
   });
+
+  it('preselects the Squad Settings opened it for and keeps it out of the generic draft', () => {
+    render(<AgentLauncher onClose={vi.fn()} initialMode="team" initialTeamId="t1" initialProjectId="p1" />);
+    expect(state.teamProps.at(-1)).toMatchObject({ initialTeamId: 't1', composerProjectId: 'p1' });
+    cleanup();
+    render(<AgentLauncher onClose={vi.fn()} />);
+    expect(state.teamProps.at(-1)!.initialTeamId).toBeUndefined();
+  });
 });

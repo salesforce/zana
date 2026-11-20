@@ -2,7 +2,7 @@ import { product } from '../../lib/product-client.js';
 import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { Users, Search, FolderOpen, Play, ChevronDown, ChevronRight, Plus, Download, Upload, Copy, Pencil, Trash2, Crown, Star } from 'lucide-react';
-import type { CancelTeamLaunchResult, LaunchTeamResult, Project, Result, Team, Persona } from '@zana-ai/zcc-domain/product';
+import type { Project, Team, Persona } from '@zana-ai/zcc-domain/product';
 import { useTeams, useData, useUi, usePersonas } from '@/store';
 import { resolveIcon } from '@/lib/resolveIcon';
 import { getScopedProjectId } from '@/lib/windowScope';
@@ -16,8 +16,8 @@ import { sortCatalogueByName } from '@/lib/catalogue-sort';
 /**
  * Teams management panel — a catalogue of launchable Teams (builtin ⊕
  * ~/.zcc/teams ⊕ <project>/.zcc/teams ⊕ extension registrations), merged and
- * pushed by the main process. A Team bundles personas; launching it opens one
- * terminal tab per slot (orchestrator first, carrying the team prompt).
+ * pushed by the main process. A Team bundles personas; Launch opens the New Agent
+ * dialog on the Squad composer with this Squad and project pre-selected.
  *
  * Clicking a row opens the team editor modal: builtins and project teams open
  * read-only with "Edit override" / "Duplicate to user"; user teams are fully
@@ -90,36 +90,6 @@ export async function runTeamLaunchExclusive<T>(
     inFlight.current = false;
   }
 }
-export async function runTeamLaunch(
-  launch: () => Promise<Result<LaunchTeamResult> | null>
-): Promise<{ result: Result<LaunchTeamResult> | null; error: string | null }> {
-  try {
-    return { result: await launch(), error: null };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { result: null, error: `Launch failed: ${message}` };
-  }
-}
-type CancelState = { kind: 'pending' | 'success' | 'error' | 'retry'; message: string } | null;
-export function cancelStateForResult(result: CancelTeamLaunchResult): NonNullable<CancelState> {
-  const { canceledSessionIds: ids, pendingSessionIds, lifecycleState } = result;
-  if (pendingSessionIds.length > 0) {
-    return {
-      kind: 'retry',
-      message: `Cancellation pending; retry. Sessions: ${pendingSessionIds.join(', ')}.`
-    };
-  }
-  return {
-    kind: 'success',
-    message: ids.length > 0
-      ? lifecycleState === 'cancel-pending'
-        ? `Cancellation requested for ${ids.length} session${ids.length === 1 ? '' : 's'}: ${ids.join(', ')}.`
-        : `Canceled ${ids.length} session${ids.length === 1 ? '' : 's'}: ${ids.join(', ')}.`
-      : lifecycleState === 'canceled'
-        ? 'Launch already canceled or complete.'
-        : 'Cancellation in progress.'
-  };
-}
 function tabCount(team: Team): number {
   return team.slots.reduce((sum, s) => sum + Math.max(1, Math.min(TEAM_SLOT_MAX, s.quantity ?? 1)), 0);
 }
@@ -129,6 +99,7 @@ export function SquadsView() {
   const loading = useTeams((s) => s.loading);
   const projects = useData((s) => s.projects);
   const pushToast = useUi((s) => s.pushToast);
+  const openSquadLauncher = useUi((s) => s.openSquadLauncher);
   const [filter, setFilter] = useState<SourceKind>('all');
   const [query, setQuery] = useState('');
   const [expandedTeamId, setExpandedTeamId] = useState<string | null>(null);
@@ -168,28 +139,16 @@ export function SquadsView() {
   }, [teams]);
 
   // Launch a team into an EXPLICIT project. The project is chosen at the point
-  // of action (the row's Launch button opens a project menu), not a global
-  // header dropdown — so the choice is contextual to the team you're launching.
-  // main re-validates the id (Rule 1), so a stale id fails cleanly with a toast.
-  const launch = async (team: Team, projectId: string): Promise<Result<LaunchTeamResult> | null> => {
+  // of action (the row's Launch button opens a project menu). Instead of opening
+  // bare member tabs, this opens the New Agent dialog on the Squad composer with
+  // the Squad and project pre-selected, so the launch carries a goal and a
+  // tracked run. main re-validates everything at launch time (Rule 1).
+  const launch = async (team: Team, projectId: string): Promise<void> => {
     if (!projectId) {
       pushToast('Add a project before launching a squad.', 'error');
-      return null;
+      return;
     }
-    const res = await product.teams.launch(team.id, projectId);
-    if (res.ok) {
-      const n = res.value.launched;
-      const where = projects.find((p) => p.id === projectId)?.name ?? 'project';
-      pushToast(
-        n > 0
-          ? `Launched ${team.name} in ${where}: opened ${n} tab${n === 1 ? '' : 's'}.`
-          : `${team.name}: no tabs opened (no resolvable personas).`,
-        n > 0 ? 'info' : 'error'
-      );
-    } else {
-      pushToast(`Launch failed: ${res.message}`, 'error');
-    }
-    return res;
+    openSquadLauncher(projectId, team.id);
   };
 
   const reveal = async () => {
@@ -404,7 +363,7 @@ function TeamRow({
   projects: Project[];
   /** Set in a per-project window — launch is locked to that project (no picker). */
   scopedProjectId: string | null;
-  onLaunch: (projectId: string) => Promise<Result<LaunchTeamResult> | null>;
+  onLaunch: (projectId: string) => Promise<void>;
   onOpen: () => void;
   isExpanded: boolean;
   onToggleExpand: () => void;
@@ -424,10 +383,7 @@ function TeamRow({
     return [...new Set(ids)];
   }, [allPersonas, team.slots, team.orchestratorPersonaId]);
   const [picking, setPicking] = useState(false);
-  const [launchResult, setLaunchResult] = useState<LaunchTeamResult | null>(null);
-  const [launchError, setLaunchError] = useState<string | null>(null);
   const [launching, setLaunching] = useState(false);
-  const [cancelState, setCancelState] = useState<CancelState>(null);
   const [activeMenuIndex, setActiveMenuIndex] = useState(0);
   const launchInFlightRef = useRef(false);
   const pickerRef = useRef<HTMLDivElement>(null);
@@ -504,40 +460,12 @@ function TeamRow({
   const runLaunch = async (projectId: string) => {
     await runTeamLaunchExclusive(launchInFlightRef, async () => {
       setLaunching(true);
-      setLaunchResult(null);
-      setLaunchError(null);
-      setCancelState(null);
       try {
-        const outcome = await runTeamLaunch(() => onLaunch(projectId));
-        if (outcome.error) {
-          setLaunchError(outcome.error);
-          return;
-        }
-        const result = outcome.result;
-        if (!result) return;
-        if (result.ok) setLaunchResult(result.value);
-        else {
-          setLaunchResult(null);
-          setLaunchError(`Launch failed: ${result.message}`);
-        }
+        await onLaunch(projectId);
       } finally {
         setLaunching(false);
       }
     });
-  };
-
-  const cancelLaunch = async (launchRequestId: string) => {
-    setCancelState({ kind: 'pending', message: 'Canceling launch…' });
-    try {
-      const result = await product.teams.cancel(launchRequestId);
-      if (!result.ok) {
-        setCancelState({ kind: 'error', message: `Cancel failed: ${result.message}` });
-        return;
-      }
-      setCancelState(cancelStateForResult(result.value));
-    } catch (error) {
-      setCancelState({ kind: 'error', message: `Cancel failed: ${String(error)}` });
-    }
   };
 
   const onLaunchClick = () => {
@@ -628,7 +556,7 @@ function TeamRow({
             aria-expanded={launchTargets.length > 1 ? picking : undefined}
             aria-label={`Launch ${team.name}`}
           >
-            <Play size={12} /> {launching ? 'Launching…' : 'Launch'}
+            <Play size={12} /> {'Launch'}
           </button>
           {picking && (
           <div
@@ -675,11 +603,6 @@ function TeamRow({
         )}
         </div>
       </div>
-
-      {launchResult && (
-        <TeamLaunchStatus result={launchResult} cancelState={cancelState} onCancel={cancelLaunch} />
-      )}
-      {launchError && <div role="alert">{launchError}</div>}
 
       {isExpanded && (
         <div className="teams-agents-list" role="region" aria-label={`Agents in ${team.name}`}>
@@ -850,45 +773,6 @@ function TeamRowMenu({
             <Trash2 size={13} /> Delete
           </button>
         </>
-      )}
-    </div>
-  );
-}
-
-export function TeamLaunchStatus({
-  result,
-  cancelState,
-  onCancel
-}: {
-  result: LaunchTeamResult;
-  cancelState: CancelState;
-  onCancel: (launchRequestId: string) => void;
-}) {
-  const sessionIds = result.workers.length > 0
-    ? result.workers.map((worker) => worker.sessionId)
-    : [result.orchestratorSessionId, ...result.workerSessionIds].filter((id): id is string => !!id);
-
-  return (
-    <div role="status" aria-live="polite">
-      <div>Launched sessions: {sessionIds.length > 0 ? sessionIds.join(', ') : 'none'}</div>
-      {result.failedSlots.length > 0 && (
-        <div>
-          Failed slots:{' '}
-          {result.failedSlots.map((slot) => `${slot.slotId} (${slot.personaId}): ${slot.reason}`).join('; ')}
-        </div>
-      )}
-      <button
-        type="button"
-        className="settings-btn"
-        disabled={cancelState?.kind === 'pending'}
-        onClick={() => onCancel(result.launchRequestId)}
-      >
-        {cancelState?.kind === 'retry' ? 'Retry cancellation' : 'Cancel launch'}
-      </button>
-      {cancelState && (
-        <div role={cancelState.kind === 'error' || cancelState.kind === 'retry' ? 'alert' : 'status'}>
-          {cancelState.message}
-        </div>
       )}
     </div>
   );
