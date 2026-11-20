@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import type { AppModule } from '@zana-ai/zcc-extension-sdk/renderer';
 
@@ -79,6 +79,8 @@ vi.mock('../../plugins/plugin-slots', () => ({
 }));
 
 import { Sidebar } from '../Sidebar.js';
+import { setCommandShortcutOverride } from '../../lib/keyboard-shortcut-settings.js';
+import { anchorTag, stubKeybindingStorage } from '../../__tests__/helpers/keybinding-storage.js';
 import { MobileNavDrawer } from '../MobileShellChrome.js';
 
 function renderSidebar() {
@@ -420,5 +422,37 @@ describe('Sidebar structure and compact accessibility', () => {
     expect(source).toContain('consumeClick: () => boolean');
     expect(source).toContain('suppressClickRef.current = true');
     expect(source).toContain('onEnd: () => {');
+  });
+});
+
+
+describe('Sidebar shortcut tooltips', () => {
+  beforeEach(() => {
+    h.state.sidebarCollapsed = false;
+    stubKeybindingStorage();
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('shows the bound shortcut on New Chat and Settings, and keeps accessible names', () => {
+    const markup = renderSidebar();
+    expect(anchorTag(markup, 'nav-home')).toContain('title="New Chat (Ctrl + N)"');
+    expect(markup).toContain('title="Settings (Ctrl + ,)"');
+    expect(markup).toContain('aria-label="Settings"');
+    // Rows without a command keep their plain tooltip.
+    // Fixed (non-remappable) shortcuts wired in shortcuts.ts.
+    expect(anchorTag(markup, 'nav-inbox')).toContain('title="Inbox (Ctrl + I)"');
+    expect(anchorTag(markup, 'nav-agents')).toContain('title="Agents (Ctrl + O)"');
+    expect(anchorTag(markup, 'nav-scheduler')).toContain('title="Scheduler (Ctrl + J)"');
+    // Rows with no shortcut keep their plain tooltip.
+    expect(anchorTag(markup, 'nav-extensions')).toContain('title="Plugins"');
+  });
+
+  it('follows a rebinding and drops the suffix when unbound', () => {
+    setCommandShortcutOverride('thread.new', { key: 'j', mod: true, meta: false, control: false, alt: false, shift: true });
+    setCommandShortcutOverride('settings.open', null);
+    const markup = renderSidebar();
+    expect(anchorTag(markup, 'nav-home')).toContain('title="New Chat (Ctrl + Shift + J)"');
+    expect(markup).toContain('title="Settings"');
+    expect(markup).not.toContain('Settings (');
   });
 });
