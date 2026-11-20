@@ -147,6 +147,17 @@ describe('ShortcutsHelp find', () => {
     expect(screen.queryByText('New Chat')).toBeNull();
   });
 
+  it("hints at a key combo and a section name in the platform's own keys", () => {
+    renderOnLinux();
+    expect(filter().placeholder).toBe('Filter shortcuts, e.g. Ctrl+Shift+D or Explorer');
+    cleanup();
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
+    render(<ShortcutsHelp onClose={() => undefined} />);
+    expect(filter().placeholder).toBe('Filter shortcuts, e.g. Cmd+Shift+D or Explorer');
+    fireEvent.change(filter(), { target: { value: 'Cmd+Shift+D' } });
+    expect(screen.getByText('Duplicate active tab (same profile)')).toBeTruthy();
+  });
+
   it('reports the count and an empty state', () => {
     renderOnLinux();
     fireEvent.change(filter(), { target: { value: 'next tab' } });

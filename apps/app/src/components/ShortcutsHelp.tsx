@@ -4,7 +4,7 @@ import { textMatchesFind } from '../lib/dom-find.js';
 import { shortcutForCommand } from '../lib/keyboard-shortcut-settings.js';
 import { OWN_FIND_ATTRIBUTE } from '../lib/thread-find.js';
 import { useDialogFocusTrap } from '../hooks/useDialogFocusTrap.js';
-import { platformKey, platformShortcut } from '../lib/platformShortcut.js';
+import { isMacShortcutPlatform, platformKey, platformShortcut } from '../lib/platformShortcut.js';
 import { ctrlVPastesByDefault, terminalPasteHelpRow } from '../lib/terminalPaste.js';
 
 interface Props {
@@ -199,6 +199,12 @@ function useShortcutsFilter(onClose: () => void) {
   return { query, setQuery, hostRef, inputRef, onHostKeyDown };
 }
 
+/** Example combo and section for the placeholder, spelled the way this platform's keys read and the filter matches. */
+function filterPlaceholder(): string {
+  const combo = isMacShortcutPlatform() ? 'Cmd+Shift+D' : 'Ctrl+Shift+D';
+  return `Filter shortcuts, e.g. ${combo} or Explorer`;
+}
+
 function countText(shown: number): string {
   return `${shown} ${shown === 1 ? 'shortcut' : 'shortcuts'}`;
 }
@@ -233,7 +239,7 @@ export function ShortcutsHelp({ onClose, ctrlVPasteEnabled = ctrlVPastesByDefaul
             ref={inputRef}
             type="search"
             value={query}
-            placeholder="Filter shortcuts"
+            placeholder={filterPlaceholder()}
             aria-label="Filter shortcuts"
             onChange={(event) => setQuery(event.target.value)}
           />
