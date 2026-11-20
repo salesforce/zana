@@ -263,6 +263,17 @@ describe('squadProposalMcpDeps', () => {
     expect(admission.slotRoutes[0]).toMatchObject({ slotId: '0:w:0', label: 'Exact QA' });
   });
 
+  it('admission takes slot roles from the configured slot and persona, not caller-supplied snapshots', async () => {
+    h.projects = [{ id: 'p1', path: h.root, name: 'Repo' }];
+    h.personas = [{ id: 'orch', name: 'Orch', baseProfile: 'shell' }, { id: 'w', name: 'Worker', baseProfile: 'shell', roles: ['engineer'] }];
+    h.teams = [{ id: 'team1', name: 'T', orchestratorPersonaId: 'orch', slots: [{ personaId: 'w', quantity: 1 }] }];
+    const models = await h.executionDeps.resolveTeamModelSnapshots('p1', { teamId: 'team1', slots: [{ initialTask: '' }, { initialTask: '' }] });
+    const forged = await h.executionDeps.admissionInput('p1', { teamId: 'team1', slots: [{ initialTask: '' }, { initialTask: '' }], resolvedModels: models.map((model: any) => ({ ...model, roles: ['reviewer'] })) });
+    expect(forged.slotRoutes.find((slot: any) => slot.slotId === '0:w:0')).toMatchObject({ roles: ['engineer'] });
+    const stripped = await h.executionDeps.admissionInput('p1', { teamId: 'team1', slots: [{ initialTask: '' }, { initialTask: '' }], resolvedModels: models.map(({ roles: _r, ...model }: any) => model) });
+    expect(stripped.slotRoutes.find((slot: any) => slot.slotId === '0:w:0')).toMatchObject({ roles: ['engineer'] });
+  });
+
   it('expires preview tokens, denies settings drift and replay', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'token-retention-'));
     try {

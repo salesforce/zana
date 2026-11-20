@@ -370,16 +370,19 @@ export function unknownPersonaMessage(personaId: string): string {
  * missing persona ids (control characters stripped, bounded) so the launch dialog can show them.
  */
 /**
- * Launch admission's route facts for one resolved slot. Carries the slot's effective roles so a
- * `Required role` step routes at launch exactly as it did in preview; the team slot label is the
- * fallback when the snapshot has none.
+ * Launch admission's route facts for one resolved slot. `resolvedModels` arrives from the caller,
+ * so the label and roles that decide `Required role` routing come only from the host's configured
+ * slot (its label, and `slot.roles ?? persona.roles`), never from the snapshot. With the roles
+ * carried, a step routes at launch exactly as it did in preview.
  */
-export function admissionSlotRouteFacts(model: ResolvedModelSnapshotV1, teamSlotLabel: string | undefined) {
-  const label = model.label ?? teamSlotLabel;
+export function admissionSlotRouteFacts(
+  model: ResolvedModelSnapshotV1,
+  configured: { label?: string; roles?: readonly string[] } | undefined
+) {
   return {
     slotId: model.slotId, personaId: model.personaId ?? '', provider: model.provider, model: model.model,
-    ...(label !== undefined ? { label } : {}),
-    ...(model.roles !== undefined ? { roles: model.roles } : {}),
+    ...(configured?.label !== undefined ? { label: configured.label } : {}),
+    ...(configured?.roles !== undefined ? { roles: [...configured.roles] } : {}),
     level: model.level, roleOwnedModel: model.roleOwnedModel, capabilities: model.capabilities,
     modalities: model.modalities, maxContextBytes: model.maxContextBytes, health: model.health,
     observedAt: model.observedAt, maxAgeMs: model.maxAgeMs

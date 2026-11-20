@@ -7918,8 +7918,14 @@ const squadExecutionService = new SquadExecutionService({
       },
       onError: (source, error) => logMainError(`Team admission ${source} inventory failed`, error)
     });
+    const configuredSlots = team ? expandTeamSlots(team) : [];
     const slotRoutes = (request.resolvedModels ?? []).map((model) => ({
-      ...admissionSlotRouteFacts(model, team ? expandTeamSlots(team).find(slot => slot.slotId === model.slotId)?.label : undefined),
+      ...admissionSlotRouteFacts(model, (() => {
+        const slot = configuredSlots.find((candidate) => candidate.slotId === model.slotId);
+        if (!slot) return undefined;
+        const roles = effectiveRoles(slot, personaSnapshot.find((candidate) => candidate.id === slot.personaId));
+        return { ...(slot.label !== undefined ? { label: slot.label } : {}), ...(roles !== undefined ? { roles } : {}) };
+      })()),
       ...slotSkillAllowlistFact(team, personaSnapshot, model.personaId, model.slotId),
       ...slotMcpAllowlistFact(team, personaSnapshot, model.personaId, model.slotId,
         { provider: model.provider, remoteCli: team?.transport !== 'MODERN' && !!project?.remote })

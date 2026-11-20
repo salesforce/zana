@@ -370,10 +370,10 @@ describe('UnknownPersonaError', () => {
 describe('admissionSlotRouteFacts', () => {
   const base = { slotId: 'worker-1', personaId: 'builtin:software-engineer', provider: 'opencode', level: 'medium' as const };
 
-  it('keeps the slot roles so a Required role step routes at launch, not only in preview', async () => {
+  it('carries the configured roles so a Required role step routes at launch, not only in preview', async () => {
     const { evaluateSlotEligibility } = await import('@zana-ai/zcc-server/services/execution/routing-policy');
     const routing = { requiredRole: 'engineer', minimumLevel: 'medium' as const };
-    const facts = admissionSlotRouteFacts({ ...base, roles: ['engineer'] }, undefined);
+    const facts = admissionSlotRouteFacts(base, { roles: ['engineer'] });
     expect(facts.roles).toEqual(['engineer']);
     expect(evaluateSlotEligibility(routing, facts).status).toBe('PASS');
     // Without the roles, an unlabeled slot offers only its persona id and the role is a hard miss.
@@ -381,12 +381,12 @@ describe('admissionSlotRouteFacts', () => {
     expect(evaluateSlotEligibility(routing, withoutRoles).hardFailures).toContain('required role missing: engineer');
   });
 
-  it('prefers the snapshot label, falls back to the team slot label, and omits absent fields', () => {
-    expect(admissionSlotRouteFacts({ ...base, label: 'Snap' }, 'Team').label).toBe('Snap');
-    expect(admissionSlotRouteFacts(base, 'Team').label).toBe('Team');
-    const bare = admissionSlotRouteFacts({ slotId: 's', provider: 'p' }, undefined);
-    expect(bare).not.toHaveProperty('label');
-    expect(bare).not.toHaveProperty('roles');
-    expect(bare.personaId).toBe('');
+  it('ignores a caller-supplied label and roles on the snapshot; only the configured slot counts', () => {
+    const forged = { ...base, label: 'caller-forged', roles: ['reviewer'] };
+    expect(admissionSlotRouteFacts(forged, { label: 'Exact QA', roles: ['engineer'] })).toMatchObject({ label: 'Exact QA', roles: ['engineer'] });
+    const unconfigured = admissionSlotRouteFacts(forged, undefined);
+    expect(unconfigured).not.toHaveProperty('label');
+    expect(unconfigured).not.toHaveProperty('roles');
+    expect(admissionSlotRouteFacts({ slotId: 's', provider: 'p' }, {}).personaId).toBe('');
   });
 });
