@@ -397,6 +397,22 @@ describe('team lifecycle store', () => {
     });
   }));
 
+  it('refuses to reopen a Modern worker seat for a coordinator respawn, running or ended', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+    const input = claimInput('principal-modern');
+    input.workers[0] = {
+      ...input.workers[0], transport: 'MODERN', threadId, generation: 2, bindingState: 'BOUND', process: 'running',
+      modernContext
+    };
+    input.capacity!.launched = 1;
+    const claimed = await store.claim(input);
+    expect(await store.reopenExitedWorker(claimed.record.id, 'slot-1')).toEqual({ ok: false, reason: 'unsupported' });
+    await store.fenceCancel(claimed.record.id);
+    await store.reconcileModernWorkers([{ recordId: claimed.record.id, slotId: 'slot-1', generation: 2, threadId, state: 'terminal' }]);
+    expect(await store.reopenExitedWorker(claimed.record.id, 'slot-1')).toMatchObject({ ok: false });
+    expect((await store.get(claimed.record.id))!.workers[0]).toMatchObject({ transport: 'MODERN', bindingState: 'TERMINAL' });
+  }));
+
   it('resolves only acknowledged running Modern bindings in their project', async () => fixture(async (filePath) => {
     const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
     const input = claimInput('principal-modern');

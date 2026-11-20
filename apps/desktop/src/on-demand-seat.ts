@@ -604,6 +604,16 @@ export type WorkerRespawnResult = { ok: true; sessionId: string } | { ok: false;
 
 interface RespawnSeat { slotId: string; process: TeamWorkerProcessState; sessionId?: string; projectId?: string }
 
+/** Why a seat cannot be respawned on this host (its project is gone, or remote), or undefined when it can. */
+export function workerRespawnUnsupported(
+  seat: { projectId?: string },
+  projects: ReadonlyArray<{ id: string; remote?: unknown }>
+): string | undefined {
+  const project = seat.projectId ? projects.find((candidate) => candidate.id === seat.projectId) : undefined;
+  if (!project) return 'the worker\'s project is no longer registered';
+  return project.remote ? 'remote projects do not support worker respawn' : undefined;
+}
+
 export interface WorkerRespawnDeps<R extends { workers: readonly RespawnSeat[] }> {
   lifecycle: {
     get(recordId: string): Promise<R | undefined>;

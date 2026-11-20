@@ -691,6 +691,21 @@ async function orchestrator() {
   // Stalled repro: the sole unit's worker never completes, so there is nothing to
   // finalize. Hand off to the engine's reclaim sweep and hold — the E2E asserts
   // the wall-clock backstop reclaims + re-dispatches (claimGeneration climbs).
+  // respawn-after-kill: the spec drops .e2e-respawn.json ({slotId}) in the run folder after killing the
+  // first worker; the coordinator calls execution.worker.respawn and logs respawn[<slotId>] with the result.
+  if (RESPAWN_AFTER_KILL) {
+    log('respawn: dispatched, waiting for respawn requests');
+    const reqFile = path.join(CWD, '.e2e-respawn.json');
+    for (;;) {
+      if (fs.existsSync(reqFile)) {
+        const req = JSON.parse(fs.readFileSync(reqFile, 'utf8'));
+        fs.unlinkSync(reqFile);
+        const out = await tryMcp('execution.worker.respawn', { executionId: EXECUTION_ID, slotId: req.slotId });
+        log('respawn[' + req.slotId + ']', JSON.stringify(out));
+      }
+      await sleep(250);
+    }
+  }
   if (STALLED || CHURN) { log((CHURN ? 'churn' : 'stalled') + ': dispatched, holding for reclaim/escalation'); await hold(); }
   if (STREAMING) { log('streaming: dispatched, holding while worker streams'); await hold(); }
   if (NO_ROUTE) {

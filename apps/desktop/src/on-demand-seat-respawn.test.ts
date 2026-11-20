@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createWorkerRespawner, type WorkerRespawnDeps } from './on-demand-seat.js';
+import { createWorkerRespawner, workerRespawnUnsupported, type WorkerRespawnDeps } from './on-demand-seat.js';
 
 type Seat = { slotId: string; process: 'exited' | 'running' | 'spawn-failed'; sessionId?: string };
 type Rec = { workers: Seat[] };
@@ -114,5 +114,25 @@ describe('createWorkerRespawner', () => {
     const { deps, respawner } = make({ closeSession: async () => { throw new Error('gone'); }, lifecycle: { get: async () => ({ workers: [{ slotId: 's', process: 'spawn-failed' }] }), launchIsClosing: closing, reopenExitedWorker: async () => ({ ok: true, record: { workers: [] } }) } } as never);
     expect(await respawner.respawn('r', 's')).toMatchObject({ reason: 'closing' });
     expect(deps.log).toHaveBeenCalled();
+  });
+});
+
+describe('workerRespawnUnsupported', () => {
+  const projects = [{ id: 'local' }, { id: 'far', remote: { host: 'h' } }];
+  it('refuses a seat whose project is no longer registered', () => {
+    expect(workerRespawnUnsupported({ projectId: 'deleted' }, projects)).toMatch(/no longer registered/);
+    expect(workerRespawnUnsupported({}, projects)).toMatch(/no longer registered/);
+  });
+  it('refuses a remote project and allows a local one', () => {
+    expect(workerRespawnUnsupported({ projectId: 'far' }, projects)).toMatch(/remote projects/);
+    expect(workerRespawnUnsupported({ projectId: 'local' }, projects)).toBeUndefined();
+  });
+  it('the respawner reports unsupported without touching the session when the project was deleted', async () => {
+    const { deps, respawner } = make({
+      unsupported: (seat) => workerRespawnUnsupported(seat, [])
+    }, { slotId: 's', process: 'exited', sessionId: 'old', projectId: 'deleted' } as never);
+    expect(await respawner.respawn('r', 's')).toMatchObject({ ok: false, reason: 'unsupported', message: expect.stringMatching(/no longer registered/) });
+    expect(deps.closeSession).not.toHaveBeenCalled();
+    expect(deps.spawn).not.toHaveBeenCalled();
   });
 });

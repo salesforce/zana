@@ -163,7 +163,7 @@ import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPre
 import { planNormalizationNote, resolveSquadPlan } from './team-trigger-semantics.js';
 import { renderCanonicalPlan } from '@zana-ai/zcc-server/services/execution/portable-plan-render';
 import type { PortablePlanWorkUnitInput } from '@zana-ai/zcc-server/services/execution/portable-plan';
-import { coldStartCanceled, createDeferredSeatHooks, createDeferredSeatRegistry, createSeatApprovals, createSeatRecycler, createSeatStarter, createWorkerRespawner, deferredSeatsOf, freshContextSeatsOf, lateSeatApprovalProblem, lifecycleRecycleOps, preissuedDeadlineMatches, respawnApproval, respawnLaunchShape, seatApprovalId, seatApprovalWindow, seatBindExtras, seatLaunchMode, seatLaunchProblem, seatRecovery, seatRosterEntry } from './on-demand-seat.js';
+import { coldStartCanceled, createDeferredSeatHooks, createDeferredSeatRegistry, createSeatApprovals, createSeatRecycler, createSeatStarter, createWorkerRespawner, workerRespawnUnsupported, deferredSeatsOf, freshContextSeatsOf, lateSeatApprovalProblem, lifecycleRecycleOps, preissuedDeadlineMatches, respawnApproval, respawnLaunchShape, seatApprovalId, seatApprovalWindow, seatBindExtras, seatLaunchMode, seatLaunchProblem, seatRecovery, seatRosterEntry } from './on-demand-seat.js';
 import { createSquadSourceSnapshotter, launchSquad, type SquadLaunchDeps, type SquadSourceProvider } from './squad-launch-core.js';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
@@ -1358,11 +1358,7 @@ const seatRecycler = createSeatRecycler({
 const workerRespawner = createWorkerRespawner({
   lifecycle: teamLifecycle,
   hasSpawner: (recordId) => deferredSeats.has(recordId),
-  unsupported: (seat) => {
-    const project = seat.projectId ? store.listProjects().find((candidate) => candidate.id === seat.projectId) : undefined;
-    if (!project) return 'the worker\'s project is no longer registered';
-    return project.remote ? 'remote projects do not support worker respawn' : undefined;
-  },
+  unsupported: (seat) => workerRespawnUnsupported(seat, store.listProjects()),
   closeSession: (sessionId) => terminateSession(sessionId),
   sessionGone: async (sessionId) => !(await listLocalTmuxSessionIds()).includes(sessionId),
   spawn: (recordId, slotId) => deferredSeats.spawn(recordId, slotId),
@@ -6871,7 +6867,10 @@ export async function launchTeam(
     }
     // A spawn that throws is one failed seat, not a failed launch: the rejection becomes a result so
     // sibling seats keep launching and the seat's lifecycle row is marked spawn-failed below.
-    const result: Result<{ id: string }> = await launchAuthorizedTerminal(
+    // Test-only (compiled out of production): the second seat of each row fails to spawn.
+    const result: Result<{ id: string }> = await (testFaultActive('worker-spawn-throw') && slotId.endsWith(':1')
+      ? Promise.reject(new Error('injected worker spawn fault'))
+      : launchAuthorizedTerminal(
       request,
        teamPrincipalRef,
        { autonomous, coordinationMode, suppressPersonaInitialPrompt: durableCoordination, tabNamerPrompt, ...SQUAD_SEAT_MARKER, ...spawnExtras },
@@ -6905,7 +6904,7 @@ export async function launchTeam(
           maySpawn: () => teamLifecycle.workerMaySpawn(claim.record.id, slotId),
           claimRunning: () => teamLifecycle.claimWorkerRunning(claim.record.id, slotId)
         }
-    ).catch((error: unknown): Result<{ id: string }> => ({
+    )).catch((error: unknown): Result<{ id: string }> => ({
       ok: false, code: 'SPAWN_FAILED', message: boundReason(error instanceof Error ? error.message : String(error), SLOT_REASON_MAX)
     })).finally(releaseColdStart);
     if (durableIdentity) {

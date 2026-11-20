@@ -99,6 +99,38 @@ build can force that write to throw. The seam is compiled out of every other bui
   request started must then be closed by id, run seats released and the launch request
   cancelled; the original error is returned to the caller.
 
+Run the fault specs with `pnpm test:e2e -- <spec>` (or `test:e2e:jobteam`), never
+`:only` against a production build: `:only` snapshots an existing build whose fault seam
+is compiled out, so the specs would fail for the wrong reason.
+
+`ZCC_TEST_FAULT=worker-spawn-throw` (same gating) makes the second seat of each
+persona row (slot id ending `:1`) throw instead of spawning, so a failed worker slot is
+reachable without a broken binary. Observed `launch-complete-throw` outcome: the caller
+gets `TEAM_LAUNCH_STATE_CONFLICT`, no sessions remain, and the run ends BLOCKED.
+
+### Worker-lifecycle specs
+
+All registered in `JOBTEAM_SPECS` in `scripts/run-jobteam-e2e.mjs`:
+
+| Spec | Covers |
+| --- | --- |
+| `e2e/job-team-cli-plan-input.spec.ts` | `zcc team launch --dry-run --plan-file` with a plan over 8192 bytes, plus bad/missing/oversize/freeform errors and exit codes. Runs the built CLI from a main-owned shell PTY, so run `pnpm build:cli` first; the session env vars are unset in the script. |
+| `e2e/job-team-failed-slots.spec.ts` | Structured run fails with the slot reason; freeform run warns; an all-unresolved roster is refused at admission (`worker-spawn-throw`). |
+| `e2e/job-team-launch-complete-fault.spec.ts` | `launch-complete-throw` leaves no live session. |
+| `e2e/job-team-worker-exit.spec.ts` | An exited worker stays on its nested run card, raises a board event and Inbox row, then Stop and run Dismiss clear it. The standalone retained card applies only to non-run workers. |
+| `e2e/job-team-worker-respawn.spec.ts` | Coordinator `execution.worker.respawn`: two respawns succeed, the third is refused (cap 2 per slot). |
+| `e2e/job-team-worker-restart.spec.ts` | Card Restart rejoins the Squad; orchestrator and unknown ids are refused. |
+| `e2e/job-team-run-limits.spec.ts` | Per-Squad run limits reach run detail; `maxConcurrent` counts coordinator plus workers and refuses a roster over the cap. |
+| `e2e/squad-settings-surfaces.spec.ts` | Persona load warnings, Settings Launch opens a pre-filled New Agent dialog without creating tabs, foreign ids refused. |
+
+Harness notes (`e2e/sdk/harness.ts`): the `respawn-after-kill` scenario polls
+`.e2e-respawn.json` in the coordinator's cwd and calls `execution.worker.respawn` for
+each slot id listed; results are logged as `respawn[<slotId>] <json>` in
+`.fake-coordinator.log`. Respawn needs a RUNNING run, so use at least two workers: a
+sole worker that dies leaves the run BLOCKED. Drop malformed persona files after
+launch and reload; creating one before launch coincided with `personas:save` not being
+registered.
+
 ## Live coverage
 
 These deterministic specs prove the full plumbing with no model spend. A real

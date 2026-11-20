@@ -17,7 +17,15 @@ const JOBTEAM_SPECS = [
   'e2e/job-team-wedge-recovery.spec.ts',
   'e2e/job-team-streaming-worker-no-reclaim.spec.ts',
   'e2e/job-team-flow-activity-indicator.spec.ts',
-  'e2e/squad-routing-control.spec.ts'
+  'e2e/squad-routing-control.spec.ts',
+  'e2e/job-team-cli-plan-input.spec.ts',
+  'e2e/job-team-failed-slots.spec.ts',
+  'e2e/job-team-launch-complete-fault.spec.ts',
+  'e2e/job-team-worker-exit.spec.ts',
+  'e2e/job-team-worker-respawn.spec.ts',
+  'e2e/job-team-worker-restart.spec.ts',
+  'e2e/job-team-run-limits.spec.ts',
+  'e2e/squad-settings-surfaces.spec.ts'
 ];
 
 // `--only` snapshots an already-built app instead of building (the `:only` package script).
