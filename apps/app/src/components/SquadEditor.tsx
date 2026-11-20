@@ -11,7 +11,7 @@ import { personaIcon } from '../lib/profileIcon.js';
 import { PERSONA_ICON_NAMES, personaIconByName } from '../lib/profileIcon.js';
 import { useInstalledSkillNames } from '../lib/use-uninstalled-skills.js';
 import { catalogueName } from '../lib/use-mcp-catalogue.js';
-import { ALWAYS_ALLOWED_MCP_SERVERS, effectiveMcpServers, mcpAllowlistCovers, uninstalledAllowlistSkills, type McpServerRef } from '@zana-ai/zcc-domain/product';
+import { TEAM_LIMIT_BOUNDS, ALWAYS_ALLOWED_MCP_SERVERS, effectiveMcpServers, mcpAllowlistCovers, uninstalledAllowlistSkills, type McpServerRef } from '@zana-ai/zcc-domain/product';
 import { getScopedProjectId } from '../lib/windowScope.js';
 import { getThreadModelCatalog, subscribeThreadModelCatalog } from './thread/pickers/thread-model-catalog.js';
 import { unknownPersonaModels } from '../lib/persona-model-warning.js';
@@ -307,10 +307,48 @@ interface TeamDraft {
   routingEnforced: boolean | undefined;
   retainOrchestrator: boolean;
   leanWorkers: boolean;
+  /** Run limits as typed: blank keeps the default; claim limits are in minutes. */
+  maxConcurrent: string;
+  claimWallClockMin: string;
+  claimStallMin: string;
   transport: SquadTransport;
   defaultPlanning: '' | 'infer' | 'provided';
   launchApproval: '' | LaunchApproval;
   slots: SlotDraft[];
+}
+
+interface LimitsDraft { maxConcurrent: string; claimWallClockMin: string; claimStallMin: string }
+
+const LIMIT_MINUTES = {
+  wall: { min: TEAM_LIMIT_BOUNDS.claimWallClockMs.min / 60_000, max: TEAM_LIMIT_BOUNDS.claimWallClockMs.max / 60_000 },
+  stall: { min: TEAM_LIMIT_BOUNDS.claimStallMs.min / 60_000, max: TEAM_LIMIT_BOUNDS.claimStallMs.max / 60_000 }
+};
+
+function parseLimit(text: string, min: number, max: number): number | undefined | 'invalid' {
+  if (!text.trim()) return undefined;
+  const value = Number(text);
+  return Number.isInteger(value) && value >= min && value <= max ? value : 'invalid';
+}
+
+/** Why the limits can't be saved, or undefined when each field is blank (default) or an in-range whole number. */
+function limitsDraftProblem(draft: LimitsDraft): string | undefined {
+  const c = TEAM_LIMIT_BOUNDS.maxConcurrent;
+  if (parseLimit(draft.maxConcurrent, c.min, c.max) === 'invalid') return `Concurrent workers must be a whole number from ${c.min} to ${c.max}.`;
+  if (parseLimit(draft.claimWallClockMin, LIMIT_MINUTES.wall.min, LIMIT_MINUTES.wall.max) === 'invalid') return `Claim wall-clock must be whole minutes from ${LIMIT_MINUTES.wall.min} to ${LIMIT_MINUTES.wall.max}.`;
+  if (parseLimit(draft.claimStallMin, LIMIT_MINUTES.stall.min, LIMIT_MINUTES.stall.max) === 'invalid') return `Claim stall must be whole minutes from ${LIMIT_MINUTES.stall.min} to ${LIMIT_MINUTES.stall.max}.`;
+  return undefined;
+}
+
+function limitsInput(draft: LimitsDraft): { limits?: NonNullable<TeamInput['limits']> } {
+  const maxConcurrent = parseLimit(draft.maxConcurrent, TEAM_LIMIT_BOUNDS.maxConcurrent.min, TEAM_LIMIT_BOUNDS.maxConcurrent.max);
+  const wall = parseLimit(draft.claimWallClockMin, LIMIT_MINUTES.wall.min, LIMIT_MINUTES.wall.max);
+  const stall = parseLimit(draft.claimStallMin, LIMIT_MINUTES.stall.min, LIMIT_MINUTES.stall.max);
+  const limits = {
+    ...(typeof maxConcurrent === 'number' ? { maxConcurrent } : {}),
+    ...(typeof wall === 'number' ? { claimWallClockMs: wall * 60_000 } : {}),
+    ...(typeof stall === 'number' ? { claimStallMs: stall * 60_000 } : {})
+  };
+  return Object.keys(limits).length ? { limits } : {};
 }
 
 function draftForTeam(team: Team | null): TeamDraft {
@@ -339,6 +377,9 @@ function draftForTeam(team: Team | null): TeamDraft {
     routingEnforced: team?.routingEnforced,
     retainOrchestrator: team?.retainOrchestrator === true,
     leanWorkers: team?.leanWorkers === true,
+    maxConcurrent: team?.limits?.maxConcurrent === undefined ? '' : String(team.limits.maxConcurrent),
+    claimWallClockMin: team?.limits?.claimWallClockMs === undefined ? '' : String(team.limits.claimWallClockMs / 60_000),
+    claimStallMin: team?.limits?.claimStallMs === undefined ? '' : String(team.limits.claimStallMs / 60_000),
     transport: team?.transport ?? 'CLI',
     defaultPlanning: team?.defaultPlanning ?? '',
     launchApproval: team?.launchApproval ?? '',
@@ -396,6 +437,9 @@ function TeamForm({
   const [routingEnforced, setRoutingEnforced] = useState<boolean | undefined>(initialDraft.current.routingEnforced);
   const [retainOrchestrator, setRetainOrchestrator] = useState(initialDraft.current.retainOrchestrator);
   const [leanWorkers, setLeanWorkers] = useState(initialDraft.current.leanWorkers);
+  const [maxConcurrent, setMaxConcurrent] = useState(initialDraft.current.maxConcurrent);
+  const [claimWallClockMin, setClaimWallClockMin] = useState(initialDraft.current.claimWallClockMin);
+  const [claimStallMin, setClaimStallMin] = useState(initialDraft.current.claimStallMin);
   const [transport, setTransport] = useState<SquadTransport>(initialDraft.current.transport);
   const [defaultPlanning, setDefaultPlanning] = useState<'' | 'infer' | 'provided'>(initialDraft.current.defaultPlanning);
   const [launchApproval, setLaunchApproval] = useState<'' | LaunchApproval>(initialDraft.current.launchApproval);
@@ -405,7 +449,7 @@ function TeamForm({
   const draft = {
     name, icon, description, initialPrompt, orchestratorPersonaId, defaultProjectId,
     worktreeIsolation, worktreeOnComplete, routingEnforced, retainOrchestrator,
-    leanWorkers, transport, defaultPlanning, launchApproval, slots
+    leanWorkers, maxConcurrent, claimWallClockMin, claimStallMin, transport, defaultPlanning, launchApproval, slots
   } satisfies TeamDraft;
   const isDirty = stableDraftJson(draft) !== stableDraftJson(initialDraft.current);
 
@@ -415,7 +459,8 @@ function TeamForm({
 
   const tabs = totalTabs(slots.map((s) => ({ personaId: s.personaId, quantity: s.quantity })));
   const hasValidSlot = slots.some((s) => s.personaId.trim().length > 0);
-  const canSave = name.trim().length > 0 && hasValidSlot && !saving;
+  const limitsProblem = limitsDraftProblem({ maxConcurrent, claimWallClockMin, claimStallMin });
+  const canSave = name.trim().length > 0 && hasValidSlot && !saving && !limitsProblem;
   const isBuiltinTeam = team?.id.startsWith('builtin:') ?? false;
 
   const addSlot = () => {
@@ -554,6 +599,7 @@ function TeamForm({
       routingEnforced,
       retainOrchestrator,
       ...(leanWorkers ? { leanWorkers: true as const } : {}),
+      ...limitsInput({ maxConcurrent, claimWallClockMin, claimStallMin }),
       transport,
       ...(defaultPlanning ? { defaultPlanning } : {}),
       ...(launchApproval ? { launchApproval } : {}),
@@ -938,6 +984,42 @@ function TeamForm({
               This persona's skills apply even when lean is on: {workerPersonasWithSkills.map((s) => personaById.get(s.personaId)?.name ?? s.personaId).join(', ')}.
             </p>
           )}
+        </div>
+
+        <div className="scheduler-form-field" data-testid="team-run-limits">
+          <label htmlFor="team-max-concurrent">Run limits</label>
+          <div className="team-run-limits-row">
+            <input
+              id="team-max-concurrent"
+              type="number"
+              min={TEAM_LIMIT_BOUNDS.maxConcurrent.min}
+              max={TEAM_LIMIT_BOUNDS.maxConcurrent.max}
+              placeholder="32"
+              aria-label="Concurrent workers"
+              value={maxConcurrent}
+              onChange={(event) => setMaxConcurrent(event.target.value)}
+            />
+            <input
+              type="number"
+              min={LIMIT_MINUTES.wall.min}
+              placeholder="20"
+              aria-label="Claim wall-clock (minutes)"
+              value={claimWallClockMin}
+              onChange={(event) => setClaimWallClockMin(event.target.value)}
+            />
+            <input
+              type="number"
+              min={LIMIT_MINUTES.stall.min}
+              placeholder="10"
+              aria-label="Claim stall (minutes)"
+              value={claimStallMin}
+              onChange={(event) => setClaimStallMin(event.target.value)}
+            />
+          </div>
+          <p className="settings-help">
+            Concurrent workers (default and maximum 32), then the minutes one claimed unit may run (default 20) and may stay silent (default 10) before it is reclaimed. Leave a field blank to keep its default. Applies to runs started after saving.
+          </p>
+          {limitsProblem && <p className="settings-help" role="alert" data-testid="team-run-limits-error">{limitsProblem}</p>}
         </div>
 
         {unresolvedPersonaIds.length > 0 && (

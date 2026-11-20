@@ -1,6 +1,6 @@
 import { basename } from 'node:path';
 import { launchOptionsSchema, type LaunchOptions } from '@zana-ai/zcc-domain/launch-options';
-import { validateSquadExecutionTarget, type Project, type SquadExecutionTargetSelector, type TeamJobLaunchResponse } from '@zana-ai/zcc-domain/product';
+import { sanitizeTeamLimits, validateSquadExecutionTarget, type Project, type SquadExecutionTargetSelector, type TeamJobLaunchResponse } from '@zana-ai/zcc-domain/product';
 import { AUTONOMOUS_DEFAULTS } from '@zana-ai/zcc-server/services/agents/autonomous-run-supervisor';
 import type { ExpandedTeamSlot } from '@zana-ai/zcc-server/services/agents/team-slot-expansion';
 import type { ExecutionRequestV1, SquadExecutionService } from '@zana-ai/zcc-server/services/execution/service';
@@ -71,6 +71,8 @@ export interface SquadLaunchDeps {
   squadExecutionService: Pick<SquadExecutionService, 'start'>;
   /** Whether the Squad's orchestrator can write and register a plan (infer-plan fallback for attended prose). */
   canInferPlanForTeam?(teamId: string): boolean;
+  /** The Squad's saved run limits; re-sanitized here, so a stale or hand-edited value never widens a run. */
+  teamLimits?(teamId: string): unknown;
   /** The shared roster check (host `judgePlanFindings`); an unattended launch with a blocking finding is refused. */
   planFindings?(projectId: string, teamId: string, workUnits: readonly unknown[]): Promise<{ findings: readonly SquadPlanFinding[]; squadName: string }>;
   /** Reports a cleanup failure that was swallowed so the launch outcome stands. */
@@ -301,6 +303,16 @@ export function unattendedRosterBlock(judged: { findings: readonly SquadPlanFind
   return `Squad "${judged.squadName}" cannot run this plan unattended. ${blocking.slice(0, 5).map(formatSquadPlanFinding).join(' ')}${blocking.length > 5 ? ` (${blocking.length - 5} more)` : ''}`;
 }
 
+/** Execution policy fields for a Squad's saved limits; absent limits leave the run defaults untouched. */
+export function squadLimitsPolicy(raw: unknown): { maxConcurrent?: number; maxClaimWallClockMs?: number; maxClaimStallMs?: number } {
+  const limits = sanitizeTeamLimits(raw);
+  return {
+    ...(limits?.maxConcurrent === undefined ? {} : { maxConcurrent: limits.maxConcurrent }),
+    ...(limits?.claimWallClockMs === undefined ? {} : { maxClaimWallClockMs: limits.claimWallClockMs }),
+    ...(limits?.claimStallMs === undefined ? {} : { maxClaimStallMs: limits.claimStallMs })
+  };
+}
+
 /**
  * Redact captured source paths, resolve the plan and build the Squad start request. An
  * invalid provided plan parks for correction (attended) or is refused (unattended).
@@ -405,6 +417,7 @@ async function buildSquadStartRequest(deps: SquadLaunchDeps, args: {
       ...(args.target ? { target: args.target } : {}),
       ...(sourceBundle && sourceMetadata ? { sourceBundle: { contentRef: sourceBundle.contentRef, sources: sourceMetadata } } : {}),
       policy: {
+        ...squadLimitsPolicy(deps.teamLimits?.(args.teamId)),
         ...(autonomousTimeoutMs === 0 ? {} : { deadlineMs: autonomousTimeoutMs ?? AUTONOMOUS_DEFAULTS.timeoutMs, blockedWaitMs: autonomousBlockedWaitMs })
       }
     }

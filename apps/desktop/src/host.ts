@@ -8199,6 +8199,7 @@ const squadLaunchDeps: SquadLaunchDeps = {
   inboxStore,
   planCorrectionLaunchBinding,
   canInferPlanForTeam: (teamId) => { const team = teams.list().find((candidate) => candidate.id === teamId); return !!team && canInferPlanForTeam(team); },
+  teamLimits: (teamId) => teams.list().find((candidate) => candidate.id === teamId)?.limits,
   planFindings: async (projectId, teamId, workUnits) => ({
     findings: (await judgePlanFindings(projectId, teamId, { workUnits })).findings,
     squadName: teams.list().find((candidate) => candidate.id === teamId)?.name ?? teamId

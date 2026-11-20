@@ -15,6 +15,17 @@ function firstErrorLine(raw: string): string {
   return line.replace(/\s+/g, ' ').slice(0, 1_024);
 }
 
+/** Effective run limits from the persisted policy; ceilings the run was never given stay absent. */
+function limitsProjection(record: ExecutionRecord): ExecutionBoardProjection['limits'] {
+  const policy = record.request.policy;
+  const maxLaunches = Math.min(policy?.maxLaunches ?? 32, 32);
+  return {
+    maxConcurrent: Math.min(policy?.maxConcurrent ?? maxLaunches, maxLaunches),
+    ...(policy?.maxClaimWallClockMs === undefined ? {} : { claimWallClockMs: policy.maxClaimWallClockMs }),
+    ...(policy?.maxClaimStallMs === undefined ? {} : { claimStallMs: policy.maxClaimStallMs })
+  };
+}
+
 /**
  * Per-unit completed `result` surfaced on the board + read by a dependent unit's
  * worker via `execution.snapshot` (so a downstream unit can inherit an upstream
@@ -338,6 +349,7 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
     ...blockerProjection(record),
     ...(deliveries ? { deliveries } : {}),
     ...(coordinatorWakes ? { coordinatorWakes } : {}),
+    limits: limitsProjection(record),
     ...(record.finalSummary ? { finalSummary: record.finalSummary } : {}),
     ...(record.state === 'FAILED' && record.failureReason ? { failureReason: record.failureReason } : {}),
     ...(assembledResult ? { assembledResult } : {}),
