@@ -810,7 +810,7 @@ export const IPC = {
   },
   personas: {
     list: 'personas:list',
-    loadWarnings: 'personas:load-warnings',
+    loadWarnings: 'personas:loadWarnings',
     onChanged: 'personas:onChanged',
     revealDir: 'personas:revealDir',
     save: 'personas:save',

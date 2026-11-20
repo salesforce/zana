@@ -74,3 +74,35 @@ test('a roster larger than maxConcurrent is refused at launch and starts no work
   } catch (error) { throw jobTeamFailure(ctx, error); }
   finally { await teardownJobTeam(ctx); }
 });
+
+test('a scheduled run of a saved Squad carries the Squad run limits', async ({ app }) => {
+  const ctx = createJobTeamContext(app, { tmpPrefix: 'run-limits-sched-', scenario: 'stalled-worker' });
+  try {
+    const projectId = await launchSquadFixture(ctx, [], {
+      plan: PLAN, workerQuantity: 2, teamExtra: { limits: { maxConcurrent: 3, claimStallMs: 300_000 } }
+    });
+    const { window } = ctx;
+    const created = await window.evaluate((input) => window.cc.scheduler.create({
+      projectId: input.projectId, scope: { projectId: input.projectId }, name: 'Scheduled limits squad',
+      every: '1d', profile: 'claude', kind: 'team', teamId: 'e2e-job-team', planSource: 'provided',
+      prompt: input.prompt, enabled: false, inboxLevel: 'silent'
+    }), { projectId, prompt: PLAN });
+    expect(created).toMatchObject({ ok: true });
+    const scheduleId = (created as { value: { id: string } }).value.id;
+    const preview = await window.evaluate((id) => window.cc.scheduler.previewTeamLaunch(id), scheduleId);
+    expect(preview.ok, JSON.stringify(preview)).toBe(true);
+    const token = (preview as { value: { previewToken: string } }).value.previewToken;
+    const ran = await window.evaluate(({ id, token }) => window.cc.scheduler.runReviewedTeamNow(id, token), { id: scheduleId, token });
+    expect(ran.ok, JSON.stringify(ran)).toBe(true);
+
+    let executionId = '';
+    await expect.poll(async () => {
+      executionId = await window.evaluate(async (pid) => (await window.cc.executionBoard.listProject(pid)).executions[0]?.executionId ?? '', projectId);
+      return executionId;
+    }, { timeout: 60_000, intervals: [500] }).not.toBe('');
+    const limits = await window.evaluate(async ({ projectId, executionId }) =>
+      (await window.cc.executionBoard.snapshot(projectId, executionId, 0))?.execution.limits, { projectId, executionId });
+    expect(limits).toMatchObject({ maxConcurrent: 3, claimStallMs: 300_000 });
+  } catch (error) { throw jobTeamFailure(ctx, error); }
+  finally { await teardownJobTeam(ctx); }
+});

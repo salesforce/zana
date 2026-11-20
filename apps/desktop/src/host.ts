@@ -175,6 +175,7 @@ import { createRemoteReapLedger, remoteReapOrphans, type RemoteReapEntry } from 
 import { boundReason, createExecutionStore, isUserOwnedSquadWorktree, recordedLevelPolicy, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
+import { squadConcurrentCap, withSquadLimits } from '@zana-ai/zcc-server/services/execution/squad-limits-policy';
 import { KeyedColdStartSemaphore, SquadExecutionService, type ExecutionRequestV1 } from '@zana-ai/zcc-server/services/execution/service';
 import type { ExecutionWorkUnitInput, ResolvedModelSnapshotV1 } from '@zana-ai/zcc-server/services/execution/store';
 import { verifyHarnesses } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
@@ -195,7 +196,7 @@ import { expandTeamSlots } from '@zana-ai/zcc-server/services/agents/team-slot-e
 import { bindLaunchPrincipal, type LaunchAuthorizationBinding, type LaunchPrincipal, type LaunchPrincipalRef } from '@zana-ai/zcc-server/services/launch/types';
 import type { TerminalLaunchOptions } from '@zana-ai/zcc-server/services/launch/terminal-launcher';
 import * as testTap from './test-tap.js';
-import { testFaultActive } from './test-faults.js';
+import { testFaultActive, testNoTurnWarnWindowMs, workerSpawnFaultFor } from './test-faults.js';
 import { AgentStatusTracker } from '@zana-ai/zcc-server/services/agents/agent-status';
 import { OutputActivityMonitor } from '@zana-ai/zcc-host-daemon/output-activity';
 import { ScreenScanBlockedDetector } from '@zana-ai/zcc-server/services/agents/screen-scan-blocked-detector';
@@ -6011,7 +6012,7 @@ export function authorizeTeamLaunch(
   }
   const principalRef = { kind: 'team' as const, id: `team:${team.id}:${callerPrincipalId}:${launchRequestId}` };
   const maxLaunches = Math.min(policy.maxLaunches ?? 32, 32);
-  const maxConcurrent = Math.min(policy.maxConcurrent ?? maxLaunches, maxLaunches);
+  const maxConcurrent = squadConcurrentCap(Math.min(policy.maxConcurrent ?? maxLaunches, maxLaunches), team.limits);
   if (expectedSlots.length > maxLaunches) {
     return { ok: false, code: 'RESOURCE_LIMIT', message: `team launch requests ${expectedSlots.length} slots but limit is ${maxLaunches}` };
   }
@@ -6545,7 +6546,7 @@ export async function launchTeam(
     return { ok: false, code: 'UNSUPPORTED', message: onDemandProblem };
   }
   const runLimit = Math.min(structured?.policy?.maxLaunches ?? 32, 32);
-  const concurrentLimit = Math.min(structured?.policy?.maxConcurrent ?? runLimit, runLimit);
+  const concurrentLimit = squadConcurrentCap(Math.min(structured?.policy?.maxConcurrent ?? runLimit, runLimit), team.limits);
   if (expectedSlots.length > runLimit) {
     return { ok: false, code: 'RESOURCE_LIMIT', message: `team launch requests ${expectedSlots.length} slots but limit is ${runLimit}` };
   }
@@ -6868,7 +6869,7 @@ export async function launchTeam(
     // A spawn that throws is one failed seat, not a failed launch: the rejection becomes a result so
     // sibling seats keep launching and the seat's lifecycle row is marked spawn-failed below.
     // Test-only (compiled out of production): the second seat of each row fails to spawn.
-    const result: Result<{ id: string }> = await (testFaultActive('worker-spawn-throw') && slotId.endsWith(':1')
+    const result: Result<{ id: string }> = await (workerSpawnFaultFor(slotId)
       ? Promise.reject(new Error('injected worker spawn fault'))
       : launchAuthorizedTerminal(
       request,
@@ -7651,6 +7652,7 @@ const teamRoutingFor = (teamId: string) => teams.list().find((candidate) => cand
 const globalRoutingEnforcement = () => store.getConfig().teamRoutingEnforcementEnabled === true;
 
 const squadExecutionService = new SquadExecutionService({
+  noTurnWarnWindowMs: testNoTurnWarnWindowMs,
   resolveLaunchOptions: resolveSquadLaunchOptions,
   resolveNamedChecks: resolveSquadNamedChecks,
   runNamedCheck: runSquadNamedCheck,
@@ -8046,6 +8048,11 @@ export async function reportTeamTask(
 function teamExecutionEnabled(): boolean {
   const config = store.getConfig();
   return config.teamJobLaunchEnabled !== false || config.composerShowAutonomousTeam !== false;
+}
+
+/** Agent-driven `execution.start` names a saved Squad; its saved run limits cap whatever policy the agent asked for. */
+function limitedExecutionService() {
+  return withSquadLimits(squadExecutionService, (teamId) => teams.list().find((candidate) => candidate.id === teamId)?.limits);
 }
 
 const startTriggeredSquad = createTriggeredSquadLauncher({
@@ -10673,7 +10680,7 @@ async function bootstrapNormal() {
     cancelTeamLaunch: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? cancelTeamLaunch : undefined,
     getTeamLaunch: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? getTeamLaunch : undefined,
     reportTeamTask: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? reportTeamTask : undefined,
-    executionService: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? squadExecutionService : undefined,
+    executionService: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? limitedExecutionService() : undefined,
     executionHandoffs: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? executionHandoffs : undefined,
     resolveExecutionLaunchApproval: resolveTeamLaunchApproval,
     resolveExecutionCohortBinding: async (sessionId, projectId, fence) => {

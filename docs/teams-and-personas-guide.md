@@ -186,7 +186,9 @@ other slots still launch. What happens next depends on the planning mode.
 - **Freeform** (the coordinator infers the plan): the run continues. It records a run
   warning, and the coordinator's kickoff lists the failed slots (quoted, bounded data,
   not instructions) with a note not to assign work to them. A freeform run with no
-  worker started, or with no orchestrator, still fails.
+  worker started, or with no orchestrator, still fails. The failed slots also stay on the
+  Agents board: the run's card lists each one with its reason (up to 5, then a "+N more
+  failed" chip) so they remain visible after the warning scrolls away.
 
 If a launch throws after workers started, those workers are closed by session id so no
 live session is left behind.
@@ -221,7 +223,8 @@ removed, absolute paths reduced to file names, at most 2048 characters). It appe
   kind). A clean exit and idle on-demand seats never warn.
 - **No-turn warning.** A worker that was assigned work but reports no turn and produces
   no output within the window (the run's claim stall limit, 10 minutes by default) raises
-  one warning per claim.
+  one warning per claim. (End-to-end tests shorten the window with the build-gated
+  `ZCC_TEST_NO_TURN_WARN_MS`, which does nothing in a production build.)
 - **Retained cards.** A Squad worker card that exited non-zero stays on the Agents board
   until you press **Dismiss** on it (a clean exit follows the normal fade). Dismissal is
   remembered.
@@ -271,8 +274,12 @@ the default.
 | Claim stall (minutes) | 1 minute to 24 hours | 10 minutes |
 
 Main validates the limits on every save: invalid values are dropped and out-of-range
-values are clamped. The limits apply to runs started with **Launch** for that Squad. The
-run detail shows the effective values in a **Run limits** line. The claim stall limit also
+values are clamped. The limits apply to every run of that saved Squad: runs started with
+**Launch**, scheduled and goal runs, and runs an agent starts with `squad_launch`,
+`launch_team` or `execution.start`. Main re-reads and re-sanitizes the Squad's saved
+limits on each launch, so an agent or schedule can ask for a tighter run but never a wider
+one: its own `maxConcurrent` or claim limit is capped by the Squad's. A schedule's
+`maxDurationMinutes` still sets the run deadline. The run detail shows the effective values in a **Run limits** line. The claim stall limit also
 sets how long a claimed worker can show no turn before the no-turn warning fires.
 
 **Max sessions** is a launch cap, not a throttle. It counts the coordinator plus every

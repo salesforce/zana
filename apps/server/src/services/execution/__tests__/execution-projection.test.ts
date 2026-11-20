@@ -27,6 +27,13 @@ function record(): ExecutionRecord {
 }
 
 describe('projectExecutionProjection', () => {
+  it('projects failedWorkers only when slots failed to spawn, retaining the sanitized reason', () => {
+    expect(projectExecutionProjection([record()], [])[0]).not.toHaveProperty('failedWorkers');
+    const withFailed = { ...record(), failedWorkerSlots: [{ slotId: 'w:2', reason: 'injected worker spawn fault' }] } as ExecutionRecord;
+    expect(projectExecutionProjection([withFailed], [])[0]?.failedWorkers).toEqual([{ slotId: 'w:2', reason: 'injected worker spawn fault' }]);
+    expect(projectExecutionProjection([{ ...record(), failedWorkerSlots: [] } as ExecutionRecord], [])[0]).not.toHaveProperty('failedWorkers');
+  });
+
   it('projects effective run limits from the persisted policy', () => {
     const withPolicy = (policy?: Record<string, number>) => ({ ...record(), request: { ...record().request, ...(policy ? { policy } : {}) } }) as ExecutionRecord;
     expect(projectExecutionProjection([withPolicy({ maxConcurrent: 2, maxClaimWallClockMs: 600_000, maxClaimStallMs: 120_000 })], [])[0]?.limits)

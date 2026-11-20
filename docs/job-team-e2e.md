@@ -107,6 +107,12 @@ is compiled out, so the specs would fail for the wrong reason.
 persona row (slot id ending `:1`) throw instead of spawning, so a failed worker slot is
 reachable without a broken binary. Observed `launch-complete-throw` outcome: the caller
 gets `TEAM_LAUNCH_STATE_CONFLICT`, no sessions remain, and the run ends BLOCKED.
+The seat predicate lives in `apps/desktop/src/test-faults.ts` (`workerSpawnFaultFor`) and is
+unit-tested there.
+
+`ZCC_TEST_NO_TURN_WARN_MS=<ms>` (same gating, 1 ms to 10 minutes) overrides the no-turn
+warning window (`testNoTurnWarnWindowMs`, wired to the execution service's
+`noTurnWarnWindowMs` in `host.ts`), so a spec need not wait the production stall window.
 
 ### Worker-lifecycle specs
 
@@ -115,12 +121,13 @@ All registered in `JOBTEAM_SPECS` in `scripts/run-jobteam-e2e.mjs`:
 | Spec | Covers |
 | --- | --- |
 | `e2e/job-team-cli-plan-input.spec.ts` | `zcc team launch --dry-run --plan-file` with a plan over 8192 bytes, plus bad/missing/oversize/freeform errors and exit codes. Runs the built CLI from a main-owned shell PTY, so run `pnpm build:cli` first; the session env vars are unset in the script. |
-| `e2e/job-team-failed-slots.spec.ts` | Structured run fails with the slot reason; freeform run warns; an all-unresolved roster is refused at admission (`worker-spawn-throw`). |
+| `e2e/job-team-failed-slots.spec.ts` | Structured run fails with the slot reason; freeform run warns and the board card keeps a failed-slot row with the reason; an all-unresolved roster is refused at admission (`worker-spawn-throw`). |
 | `e2e/job-team-launch-complete-fault.spec.ts` | `launch-complete-throw` leaves no live session. |
 | `e2e/job-team-worker-exit.spec.ts` | An exited worker stays on its nested run card, raises a board event and Inbox row, then Stop and run Dismiss clear it. The standalone retained card applies only to non-run workers. |
 | `e2e/job-team-worker-respawn.spec.ts` | Coordinator `execution.worker.respawn`: two respawns succeed, the third is refused (cap 2 per slot). |
 | `e2e/job-team-worker-restart.spec.ts` | Card Restart rejoins the Squad; orchestrator and unknown ids are refused. |
-| `e2e/job-team-run-limits.spec.ts` | Per-Squad run limits reach run detail; `maxConcurrent` counts coordinator plus workers and refuses a roster over the cap. |
+| `e2e/job-team-run-limits.spec.ts` | Per-Squad run limits reach run detail (including a scheduled run of the saved Squad); `maxConcurrent` counts coordinator plus workers and refuses a roster over the cap. |
+| `e2e/job-team-no-turn-warning.spec.ts` | A claimed worker with no turn raises exactly one `worker-no-turn` run warning and one Inbox row (`ZCC_TEST_NO_TURN_WARN_MS`). |
 | `e2e/squad-settings-surfaces.spec.ts` | Persona load warnings, Settings Launch opens a pre-filled New Agent dialog without creating tabs, foreign ids refused. |
 
 Harness notes (`e2e/sdk/harness.ts`): the `respawn-after-kill` scenario polls

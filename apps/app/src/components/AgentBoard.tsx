@@ -656,6 +656,27 @@ function TunnelChip({ status }: { status?: TerminalSession['remoteTunnel'] }) {
 const MAX_VISIBLE_WORKERS = 5;
 
 /**
+ * Worker slots that failed to spawn. They have no session, so they cannot appear as worker rows;
+ * main projects them (sanitized, capped) and they stay on the Squad card with their reason.
+ */
+function SquadFailedWorkers({ failed, executionId }: { failed: ReadonlyArray<{ slotId: string; reason: string }>; executionId: string }) {
+  const visible = failed.slice(0, MAX_VISIBLE_WORKERS);
+  const hidden = failed.length - visible.length;
+  return (
+    <div className="agent-squad-workers agent-squad-failed-workers" data-testid={`squad-failed-workers-${executionId}`}>
+      {visible.map((slot) => (
+        <div key={slot.slotId} className="agent-squad-worker exited failed" data-testid={`squad-failed-worker-${slot.slotId}`} title={`${slot.slotId}: ${slot.reason}`}>
+          <span className="tab-agent-dot agent-blocked" aria-hidden="true" />
+          <span className="agent-squad-worker-label">{slot.slotId}</span>
+          <span className="agent-squad-worker-dur" data-testid={`squad-failed-worker-reason-${slot.slotId}`}>failed to start: {slot.reason}</span>
+        </div>
+      ))}
+      {hidden > 0 && <span className="agent-squad-worker-more">+{hidden} more failed</span>}
+    </div>
+  );
+}
+
+/**
  * The compact worker rows nested under a squad's orchestrator card (see
  * {@link partitionSquads}). Each row is a status dot + label + duration and is
  * itself clickable (peeks that worker), so the squad collapses to one board
@@ -1186,7 +1207,8 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
 
     // Lifecycle controls belong in Squad details or the card context menu. The
     // Kanban card is a compact status surface, never a button stack.
-    if (nestedWorkers.length === 0) {
+    const failedWorkers = isOrchestrator ? execution?.failedWorkers ?? [] : [];
+    if (nestedWorkers.length === 0 && failedWorkers.length === 0) {
       if (!isRetainedWorkerExit(t, dismissedWorkerExits)) return cardButton;
       // A failed Squad worker stays until acknowledged; the dismiss control is a sibling, never nested in the card button.
       return (
@@ -1207,7 +1229,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
     return (
       <div key={t.id} className="agent-squad">
         {cardButton}
-        <SquadWorkers workers={nestedWorkers} now={now} onInspect={(card) => onInspect(agentFleetItem(card))} onContextMenu={(e, card) => {
+        {nestedWorkers.length > 0 && <SquadWorkers workers={nestedWorkers} now={now} onInspect={(card) => onInspect(agentFleetItem(card))} onContextMenu={(e, card) => {
           setLaneMenu(null);
           if (card.modernThread) {
             setMenu(null);
@@ -1218,7 +1240,8 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
           e.stopPropagation();
           setThreadMenu(null);
           setMenu({ card, ...clampMenuAnchor(e) });
-        }} personas={personas} execution={execution} />
+        }} personas={personas} execution={execution} />}
+        {failedWorkers.length > 0 && execution && <SquadFailedWorkers failed={failedWorkers} executionId={execution.executionId} />}
       </div>
     );
   };

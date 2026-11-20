@@ -70,7 +70,7 @@ describe('registerPersonasIpc load warnings', () => {
       safeSend: vi.fn()
     } as any);
     registerPersonasIpc();
-    expect(IPC.personas.loadWarnings).toBe('personas:load-warnings');
+    expect(IPC.personas.loadWarnings).toBe('personas:loadWarnings');
 
     // Foreign renderer-supplied arguments never reach the store.
     const call = (...args: unknown[]) => {
@@ -83,6 +83,26 @@ describe('registerPersonasIpc load warnings', () => {
 
     loadWarnings.mockImplementationOnce(() => { throw new Error('boom'); });
     await expect(call()).resolves.toEqual([]);
+  });
+
+  it('is reachable by a remote host through the shared-product registry with no renderer args', async () => {
+    const { bindIpcCtx } = await import('./ctx.js');
+    const { registerPersonasIpc } = await import('./personas.js');
+    const { invokeSharedProduct } = await import('./shared-product-registry.js');
+    const warnings = [{ file: 'bad.json', source: 'user', reason: 'malformed_json' }];
+    const loadWarnings = vi.fn(() => warnings);
+    bindIpcCtx({
+      personas: { on: vi.fn(), list: vi.fn(() => []), loadWarnings },
+      teams: { on: vi.fn(), list: vi.fn(() => []) },
+      quickPrompts: { on: vi.fn(), list: vi.fn(() => []) },
+      promptRegistry: { on: vi.fn(), list: vi.fn(() => []) },
+      safeSend: vi.fn()
+    } as any);
+    registerPersonasIpc();
+    await expect(invokeSharedProduct({ method: 'personas.loadWarnings', args: ['../../etc'] })).resolves.toEqual(warnings);
+    expect(loadWarnings).toHaveBeenCalledWith();
+    loadWarnings.mockImplementationOnce(() => { throw new Error('boom'); });
+    await expect(invokeSharedProduct({ method: 'personas.loadWarnings', args: [] })).resolves.toEqual([]);
   });
 });
 

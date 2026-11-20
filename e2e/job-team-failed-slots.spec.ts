@@ -80,6 +80,19 @@ test('freeform Squad with a worker that fails to spawn keeps running with a laun
       (await window.cc.executionBoard.snapshot(projectId, executionId, 0))?.execution.state, { projectId, executionId });
     expect(state).not.toBe('FAILED');
     expect(await workerSessions(ctx)).toHaveLength(1);
+    // The failed slot is retained on the projection and rendered on the Squad board card with its reason.
+    const failedWorkers = await ctx.window.evaluate(async ({ projectId, executionId }) =>
+      (await window.cc.executionBoard.snapshot(projectId, executionId, 0))?.execution.failedWorkers, { projectId, executionId });
+    expect(failedWorkers).toEqual([expect.objectContaining({ slotId: expect.stringContaining('e2e-worker'), reason: expect.stringContaining('injected worker spawn fault') })]);
+    const owner = ctx.window.getByRole('dialog', { name: /^Agent / }).first();
+    if (await owner.count()) await owner.getByRole('button', { name: 'Close' }).click();
+    const projectRow = ctx.window.locator('.project-item').filter({ hasText: ctx.projectName }).first();
+    if (await projectRow.count()) await projectRow.click();
+    await ctx.window.getByTestId('nav-agents').or(ctx.window.getByTestId('project-nav-agents')).click();
+    await expect(ctx.window.locator('.agent-card').filter({ hasText: 'Freeform failed slot' }).first()).toBeVisible({ timeout: 30_000 });
+    const failedRow = ctx.window.getByTestId('squad-failed-worker-0:e2e-worker:1');
+    await expect(failedRow).toBeVisible({ timeout: 30_000 });
+    await expect(ctx.window.getByTestId(`squad-failed-workers-${executionId}`)).toContainText('injected worker spawn fault');
   } catch (error) { throw jobTeamFailure(ctx, error); }
   finally { await teardownJobTeam(ctx); }
 });

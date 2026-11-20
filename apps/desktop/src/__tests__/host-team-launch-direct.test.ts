@@ -317,6 +317,21 @@ describe('authorizeTeamLaunch', () => {
     expect(result).toMatchObject({ ok: false, code: 'DENIED', message: 'principal concurrent launch limit reached' });
   });
 
+  it('caps an agent-driven launch at the saved Squad maxConcurrent even when the caller asks for more or nothing', () => {
+    h.teams[0].limits = { maxConcurrent: 2 };
+    expect(authorizeTeamLaunch('c', 'team1', 'p1', reqId(), {}, tasks()))
+      .toMatchObject({ ok: false, code: 'DENIED', message: 'principal concurrent launch limit reached' });
+    expect(authorizeTeamLaunch('c', 'team1', 'p1', reqId(), { maxConcurrent: 32 }, tasks()))
+      .toMatchObject({ ok: false, code: 'DENIED', message: 'principal concurrent launch limit reached' });
+  });
+
+  it('re-sanitizes the saved Squad limits: a hand-edited out-of-range value never widens or breaks a launch', () => {
+    h.teams[0].limits = { maxConcurrent: 9_999 };
+    expect(authorizeTeamLaunch('c', 'team1', 'p1', reqId(), {}, tasks())).toMatchObject({ ok: true });
+    h.teams[0].limits = 'junk';
+    expect(authorizeTeamLaunch('c', 'team1', 'p1', reqId(), {}, tasks())).toMatchObject({ ok: true });
+  });
+
   it('autonomous-team and freeform+teamLaunchEnabled mark bindings autonomous; same request id is idempotent', () => {
     h.config.teamLaunchEnabled = true;
     const id = reqId();
@@ -531,6 +546,13 @@ describe('launchTeam throw hardening', () => {
       expect(result.ok).toBe(true);
       expect(h.closed).toHaveLength(0);
     });
+  });
+
+  it('launchTeam stays consistent with authorizeTeamLaunch under a saved Squad maxConcurrent that fits the roster', async () => {
+    h.teams[0].limits = { maxConcurrent: 4 };
+    const result = await launchTeam('team1', 'p1', { goal: 'g' });
+    expect(result.ok).toBe(true);
+    expect(h.creates).toHaveLength(4);
   });
 
   it('keeps a completed launch alive when the post-completion read fails', async () => {

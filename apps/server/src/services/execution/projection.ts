@@ -353,6 +353,7 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
     ...(record.finalSummary ? { finalSummary: record.finalSummary } : {}),
     ...(record.state === 'FAILED' && record.failureReason ? { failureReason: record.failureReason } : {}),
     ...(assembledResult ? { assembledResult } : {}),
+    ...(record.failedWorkerSlots?.length ? { failedWorkers: record.failedWorkerSlots.map((slot) => ({ slotId: slot.slotId, reason: slot.reason })) } : {}),
     ...(record.resourceBlock ? { resourceBlock: record.resourceBlock } : {}),
     ...(record.routeFitProposal ? { routeFitProposal: record.routeFitProposal } : {}),
     eventCursor: record.lastEventSequence ?? 0,

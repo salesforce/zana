@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { executionBoardProjection } from '../projection.js';
 import { ExecutionService, type ExecutionServiceDeps } from '../service.js';
 import { createExecutionStore, formatFailedSlots, MAX_REPORTED_FAILED_SLOTS } from '../store.js';
 import { createExecutionArtifactStore } from '../artifact-store.js';
@@ -102,6 +103,23 @@ describe('eager failed-slot evaluation', () => {
     expect(cancel).not.toHaveBeenCalled();
     const { events } = await service.events('session-1', 'project-1', 'execution-1');
     expect(events).toContainEqual(expect.objectContaining({ severity: 'warning', summary: '1 Team slot(s) failed to launch: slot-2: spawn refused' }));
+    service.dispose();
+  }));
+
+  it('retains bounded, sanitized failed worker slots on the record for the board projection', async () => fixture(async (filePath) => {
+    const failedSlots = [
+      { slotId: 'slot-2', reason: 'spawn\u0000 refused at /Users/me/secret/bin/tool' },
+      { slotId: 5, reason: 7 },
+      ...Array.from({ length: MAX_REPORTED_FAILED_SLOTS + 5 }, (_, i) => ({ slotId: `s${i}`, reason: 'r'.repeat(900) }))
+    ];
+    const service = new ExecutionService(deps(filePath, { launchTeam: async () => ({ ok: true, value: { failedSlots } }) }));
+    await service.start('session-1', 'project-1', freeformRequest);
+    const record = await service.status('session-1', 'project-1', 'execution-1');
+    expect(record?.failedWorkerSlots).toHaveLength(MAX_REPORTED_FAILED_SLOTS);
+    expect(record?.failedWorkerSlots?.[0]).toEqual({ slotId: 'slot-2', reason: 'spawn  refused at tool' });
+    expect(record?.failedWorkerSlots?.[1]).toEqual({ slotId: 'unknown slot', reason: 'unknown reason' });
+    expect(record?.failedWorkerSlots?.[2]?.reason.length).toBeLessThanOrEqual(500);
+    expect(executionBoardProjection(record!).failedWorkers).toEqual(record?.failedWorkerSlots);
     service.dispose();
   }));
 

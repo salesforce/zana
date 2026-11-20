@@ -7048,6 +7048,8 @@ export interface ExecutionBoardProjection {
   modernMembers?: Array<{ threadId: string; slotId: string; personaId: string; role: 'orchestrator' | 'worker'; live: boolean }>;
   /** Terminal shared checkout retained for recovery or a follow-up agent. */
   retainedWorktree?: { path: string; branch: string; baseBranch?: string; disposition?: 'left' };
+  /** Worker slots that failed to spawn at launch (sanitized reasons, capped at 20); present only when any failed. */
+  failedWorkers?: Array<{ slotId: string; reason: string }>;
   sources?: Array<{
     id: string;
     name: string;

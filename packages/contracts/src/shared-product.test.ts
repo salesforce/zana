@@ -8,3 +8,9 @@ it('allows exact teams.preview route through shared owner surface, not arbitrary
   expect(validSharedProductCall({ method: 'executionSources.inspect', args: [] })).toBe(false);
   expect(validSharedProductCall({ method: 'teams.preview', args: [], caller: 'owner' })).toBe(false);
 });
+
+it('routes personas.loadWarnings through the shared owner surface as a parameterless read', () => {
+  expect(SHARED_PRODUCT_METHODS.get('personas.loadWarnings')).toBe('personas:loadWarnings');
+  expect(validSharedProductCall({ method: 'personas.loadWarnings', args: [] })).toBe(true);
+  expect(validSharedProductCall({ method: 'personas.loadWarnings', args: [], caller: 'owner' })).toBe(false);
+});

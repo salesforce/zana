@@ -65,6 +65,24 @@ describe('createTriggeredSquadLauncher', () => {
     expect(((b.start.mock.calls[0] as unknown[])[2] as object)).not.toHaveProperty('policy');
   });
 
+  it('applies the saved Squad run limits to scheduled and goal runs, re-sanitized', async () => {
+    const limits = { maxConcurrent: 2, claimWallClockMs: 600_000, claimStallMs: 120_000 };
+    for (const origin of ['scheduled', 'goal'] as const) {
+      const { launch, start } = setup({ teams: { list: () => [{ id: 't1', orchestratorPersonaId: 'o1', limits }] } });
+      await launch(input({ origin, maxDurationMinutes: 2 }));
+      expect(((start.mock.calls[0] as unknown[])[2] as { policy: unknown }).policy)
+        .toEqual({ maxConcurrent: 2, maxClaimWallClockMs: 600_000, maxClaimStallMs: 120_000, deadlineMs: 120000 });
+    }
+    // A hand-edited out-of-range value is clamped by the same sanitizer a UI launch uses, never widened.
+    const bad = setup({ teams: { list: () => [{ id: 't1', orchestratorPersonaId: 'o1', limits: { maxConcurrent: 999, claimStallMs: 1 } }] } });
+    await bad.launch(input());
+    expect(((bad.start.mock.calls[0] as unknown[])[2] as { policy: unknown }).policy).toEqual({ maxConcurrent: 32, maxClaimStallMs: 60_000 });
+    // Garbage limits leave defaults untouched and add no policy.
+    const junk = setup({ teams: { list: () => [{ id: 't1', orchestratorPersonaId: 'o1', limits: 'x' }] } });
+    await junk.launch(input());
+    expect((junk.start.mock.calls[0] as unknown[])[2]).not.toHaveProperty('policy');
+  });
+
   it('seeds structured work units from a valid provided plan', async () => {
     const { launch, start, binding } = setup();
     await launch(input({ planSource: 'provided', objective: PLAN }));

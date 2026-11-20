@@ -25,6 +25,7 @@ const JOBTEAM_SPECS = [
   'e2e/job-team-worker-respawn.spec.ts',
   'e2e/job-team-worker-restart.spec.ts',
   'e2e/job-team-run-limits.spec.ts',
+  'e2e/job-team-no-turn-warning.spec.ts',
   'e2e/squad-settings-surfaces.spec.ts'
 ];
 

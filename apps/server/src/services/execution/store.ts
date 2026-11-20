@@ -457,6 +457,8 @@ export interface ExecutionRecord {
   workerRespawns?: Record<string, number>;
   /** Slots whose exhausted respawn cap has been recorded as an event (once each; value is always 1). */
   workerRespawnCapNoted?: Record<string, number>;
+  /** Worker slots that failed to spawn at launch (sanitized, bounded); shown on the Squad board card. */
+  failedWorkerSlots?: ExecutionFailedWorkerSlot[];
   assembledResult?: ExecutionAssembledResultV1;
   usageObservations?: ExecutionUsageObservationV1[];
   usageBaseline?: ExecutionUsageBaselineV1;
@@ -803,6 +805,23 @@ export function boundReason(text: string, max = MAX_FAILURE_REASON): string {
 }
 export const SLOT_REASON_MAX = 500;
 export const MAX_REPORTED_FAILED_SLOTS = 20;
+export interface ExecutionFailedWorkerSlot { slotId: string; reason: string }
+
+/** Sanitizes launch-reported failed slots into the bounded retained shape. */
+export function boundFailedWorkerSlots(slots: readonly unknown[]): ExecutionFailedWorkerSlot[] {
+  return slots.slice(0, MAX_REPORTED_FAILED_SLOTS).map((slot) => {
+    const value = slot && typeof slot === 'object' ? slot as { slotId?: unknown; reason?: unknown } : {};
+    return {
+      slotId: typeof value.slotId === 'string' && value.slotId ? boundReason(value.slotId, 120) : 'unknown slot',
+      reason: typeof value.reason === 'string' && value.reason ? boundReason(value.reason, SLOT_REASON_MAX) : 'unknown reason'
+    };
+  });
+}
+function validFailedWorkerSlots(value: unknown): boolean {
+  return Array.isArray(value) && value.length <= MAX_REPORTED_FAILED_SLOTS && value.every((slot) =>
+    !!slot && typeof slot === 'object' && typeof slot.slotId === 'string' && slot.slotId.length > 0 && slot.slotId.length <= 120
+    && typeof slot.reason === 'string' && slot.reason.length > 0 && slot.reason.length <= SLOT_REASON_MAX);
+}
 
 /** Bounded, sanitized one-line list of failed launch slots (`slot: reason; ...`), at most 2048 characters. */
 export function formatFailedSlots(slots: readonly unknown[], fallback = 'One or more Team slots failed to launch'): string {
@@ -949,6 +968,7 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.failureReason === undefined || typeof record.failureReason === 'string' && record.failureReason.length > 0 && record.failureReason.length <= MAX_FAILURE_REASON)
     && (record.workerRespawns === undefined || validWorkerRespawns(record.workerRespawns))
     && (record.workerRespawnCapNoted === undefined || validWorkerRespawns(record.workerRespawnCapNoted))
+    && (record.failedWorkerSlots === undefined || validFailedWorkerSlots(record.failedWorkerSlots))
     && (record.assembledResult === undefined || validAssembledResult(record.assembledResult))
     && (record.usageObservations === undefined || Array.isArray(record.usageObservations) && record.usageObservations.length <= MAX_USAGE_OBSERVATIONS_PER_EXECUTION && record.usageObservations.every(validUsageObservation))
     && (record.usageBaseline === undefined || validUsageRollup(record.usageBaseline))
@@ -2410,6 +2430,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         append(snapshot.state, record, record.state, 'warning', boundReason(workerSlot.summary), timestamp, { kind: 'event', eventType: 'failure', slotId: boundReason(workerSlot.slotId, 120) });
       } else {
         const slots = (input as { slots: readonly unknown[] }).slots;
+        record.failedWorkerSlots = boundFailedWorkerSlots(slots);
         append(snapshot.state, record, record.state, 'warning', boundReason(`${slots.length} Team slot(s) failed to launch: ${formatFailedSlots(slots)}`), timestamp, { kind: 'event', eventType: 'failure' });
       }
       record.updatedAt = timestamp;
