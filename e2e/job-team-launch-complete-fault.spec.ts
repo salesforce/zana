@@ -20,6 +20,8 @@ test.use({
   launchEnv: { ZCC_TEST_FAULT: 'launch-complete-throw' }
 });
 test.setTimeout(180_000);
+// CI's affected-boundary shards reuse a production artifact; the dedicated test-fault job covers this spec.
+test.skip(process.env.ZCC_E2E_BUILD !== '1', 'needs a `pnpm test:e2e` build with test faults compiled in');
 
 test('a launch whose completion write throws closes every started session and surfaces the error', async ({ app }) => {
   const ctx = createJobTeamContext(app, { tmpPrefix: 'launch-complete-fault-', scenario: 'stalled-worker' });

@@ -26,6 +26,8 @@ test.use({
   }
 });
 test.setTimeout(180_000);
+// CI's affected-boundary shards reuse a production artifact; the dedicated test-fault job covers this spec.
+test.skip(process.env.ZCC_E2E_BUILD !== '1', 'needs a `pnpm test:e2e` build with test faults compiled in');
 
 const GHOST = { personaId: 'ghost-persona-not-on-disk', quantity: 1 };
 

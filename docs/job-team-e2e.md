@@ -95,6 +95,10 @@ build can force that write to throw. The seam is compiled out of every other bui
   builds get `false`, so the branch is removed and the variable is never read.
 - Even in an E2E build nothing happens unless the app is launched with
   `ZCC_TEST_FAULT=launch-complete-throw`. It is off by default.
+- Specs that set `ZCC_TEST_FAULT` skip unless `ZCC_E2E_BUILD=1`, so `pnpm test:e2e:only` and
+  CI's affected-boundary shards (which reuse a production artifact) skip them. CI runs them in
+  the separate **Squad test-fault boundaries** job, which builds with `pnpm test:e2e`. Add any
+  new fault spec to that job.
 - Effect: `launchTeam` throws just before `teamLifecycle.complete`. Every session the
   request started must then be closed by id, run seats released and the launch request
   cancelled; the original error is returned to the caller.
