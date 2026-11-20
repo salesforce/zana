@@ -26,6 +26,8 @@ export interface PreviewFile {
 export interface PreviewHandle {
   /** Scroll to and flash a quoted passage; false when it is not on screen. */
   focusQuote(quote: string): boolean;
+  /** Open the find bar over the rendered doc (Ctrl+F from elsewhere in the panel). */
+  openFind(): void;
 }
 
 /** The nav panel's route segment; mirrors NAV_PATH in slots.tsx (which imports this module's tree). */
@@ -138,6 +140,7 @@ export function FilePreview({
   const find = useDomFind(contentRef, scrollRef, `${file.path}
 ${file.content}`);
   const ownFind = file.kind !== 'html';
+  const openFindBar = find.openBar;
   const openInBrowser = useOpenInBrowser(docId, file.path);
   // The standalone view serves saved docs only: not a draft or old revision, not a template.
   const canOpenInBrowser = file.kind === 'markdown' && isRenderableMarkdownPath(file.path) && !draft && kind !== 'template';
@@ -211,6 +214,7 @@ ${file.content}`);
   useEffect(() => {
     if (!handleRef || !ownsHandle) return;
     handleRef.current = {
+      openFind: openFindBar,
       focusQuote(quote) {
         const root = contentRef.current;
         const range = root ? findQuoteRanges(root, [quote]).get(quote) : undefined;
@@ -225,7 +229,7 @@ ${file.content}`);
     return () => {
       handleRef.current = null;
     };
-  }, [handleRef, ownsHandle]);
+  }, [handleRef, ownsHandle, openFindBar]);
 
   const onClickCapture = (event: ReactMouseEvent) => {
     const anchor = (event.target as Element | null)?.closest?.('a');

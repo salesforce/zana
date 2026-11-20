@@ -946,6 +946,7 @@ textarea.dd-doc-summary { display: block; }
 }
 .dd-rail-tab:hover { color: var(--text-primary); }
 .dd-rail-tab.on { background: var(--bg-elevated); color: var(--text-primary); box-shadow: 0 0 0 1px var(--border); }
+.dd-comments { position: relative; }
 .dd-rail-pane { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .dd-rail-toolbar { display: flex; align-items: center; padding: 8px 10px 4px; }
 .dd-rail-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 6px 10px 12px; }
