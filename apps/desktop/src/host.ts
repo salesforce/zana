@@ -6613,8 +6613,8 @@ export async function launchTeam(
       return { ok: false, code: 'UNSUPPORTED', message: error instanceof Error ? error.message : String(error) };
     }
   }
-  if (structured && team.transport !== 'MODERN') {
-    const unresolvedReasons = allWorkersUnresolvedReasons(expectedSlots, known);
+  if (team.transport !== 'MODERN') {
+    const unresolvedReasons = allWorkersUnresolvedReasons(expectedSlots, known, structured ? 'all' : 'any');
     if (unresolvedReasons) {
       revokeRequestAuthorizations();
       return { ok: false, code: 'TEAM_LAUNCH_FAILED', message: boundReason(unresolvedReasons) };

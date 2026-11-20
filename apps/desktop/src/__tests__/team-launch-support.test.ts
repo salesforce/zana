@@ -340,4 +340,10 @@ describe('allWorkersUnresolvedReasons', () => {
     expect(allWorkersUnresolvedReasons([w('0:a:0', 'a'), w('1:b:0', 'b')], new Set(['b']))).toBeUndefined();
     expect(allWorkersUnresolvedReasons([o('x')], new Set())).toBeUndefined();
   });
+  it('in any-miss mode (freeform, Modern parity) refuses on a partial miss and still ignores orchestrators', () => {
+    expect(allWorkersUnresolvedReasons([w('0:a:0', 'a'), w('1:b:0', 'b')], new Set(['b']), 'any'))
+      .toBe(`0:a:0: ${unknownPersonaMessage('a')}`);
+    expect(allWorkersUnresolvedReasons([o('x'), w('1:b:0', 'b')], new Set(['b']), 'any')).toBeUndefined();
+    expect(allWorkersUnresolvedReasons([o('x')], new Set(), 'any')).toBeUndefined();
+  });
 });

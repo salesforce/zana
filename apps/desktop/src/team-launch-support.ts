@@ -366,18 +366,21 @@ export function unknownPersonaMessage(personaId: string): string {
 }
 
 /**
- * Structured-launch guard: a launch whose every worker slot names an unresolved
- * persona fails before anything opens. A partial miss launches the resolved slots
- * and reports the others as failed. Returns the joined per-slot reasons, or
+ * CLI launch guard. Structured: a launch whose every worker slot names an unresolved
+ * persona fails before anything opens; a partial miss launches the resolved slots
+ * and reports the others as failed. Freeform: any unresolved persona fails the launch,
+ * as Modern does. Returns the joined per-slot reasons, or
  * undefined when the launch may proceed.
  */
 export function allWorkersUnresolvedReasons(
   expectedSlots: ReadonlyArray<{ slotId: string; personaId: string; role: 'worker' | 'orchestrator' }>,
-  knownPersonaIds: ReadonlySet<string>
+  knownPersonaIds: ReadonlySet<string>,
+  /** `all` (structured): refuse only when no worker resolves. `any` (freeform, Modern parity): refuse on the first miss. */
+  refuseWhen: 'all' | 'any' = 'all'
 ): string | undefined {
   const workers = expectedSlots.filter((slot) => slot.role === 'worker');
   if (workers.length === 0) return undefined;
   const unresolved = workers.filter((slot) => !knownPersonaIds.has(slot.personaId));
-  if (unresolved.length !== workers.length) return undefined;
+  if (unresolved.length === 0 || (refuseWhen === 'all' && unresolved.length !== workers.length)) return undefined;
   return unresolved.map((slot) => `${slot.slotId}: ${unknownPersonaMessage(slot.personaId)}`).join('; ');
 }

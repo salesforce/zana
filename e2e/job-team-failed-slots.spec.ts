@@ -108,3 +108,15 @@ test('a Squad whose every worker slot is unresolved is refused at admission and 
   } catch (error) { throw jobTeamFailure(ctx, error); }
   finally { await teardownJobTeam(ctx); }
 });
+
+test('a freeform Squad with any unresolved worker persona is refused at admission, as Modern does, and nothing launches', async ({ app }) => {
+  const ctx = createJobTeamContext(app, { tmpPrefix: 'failed-slots-freeform-ghost-', scenario: 'stalled-worker' });
+  try {
+    const { projectId, result } = await runLaunch(ctx, 'Freeform ghost slot', 'infer', [{ personaId: 'e2e-worker', quantity: 1 }, GHOST]);
+    expect(result.ok).toBe(false);
+    expect(result.error ?? '').toMatch(/ADMISSION_FAILED/);
+    expect((await ctx.window.evaluate((id) => window.cc.executionBoard.listProject(id), projectId)).executions).toHaveLength(0);
+    expect(await workerSessions(ctx)).toEqual([]);
+  } catch (error) { throw jobTeamFailure(ctx, error); }
+  finally { await teardownJobTeam(ctx); }
+});
