@@ -7,6 +7,7 @@ vi.mock('../../../plugins/plugin-slots.js', () => ({ listSettingsSections: () =>
 vi.mock('../../product-client.js', () => ({ product: { pluginApps: {} } }));
 
 import { searchSettings } from '../index';
+import { SETTLE_MAX_MS } from '../reveal-settle';
 import { getSettingsSearchProviders, getSettingsSearchSourcesVersion } from '../registry';
 import { findSecretValueViolations } from '../secrets';
 import {
@@ -210,7 +211,11 @@ describe('ExtensionsHub revealPluginSetting', () => {
     document.querySelector('#plugin-configure')!.innerHTML = rowsHtml;
     await Promise.resolve(); // MutationObserver callbacks are microtasks
     expect(rows()[0].classList.contains('settings-search-flash')).toBe(true);
-    expect(vi.getTimerCount()).toBe(1); // only the flash-removal timer is left
+    // The wait is over: only the flash-removal timer and the settle watch's
+    // next frame are left, and the settle watch ends on its own.
+    expect(vi.getTimerCount()).toBe(2);
+    vi.advanceTimersByTime(SETTLE_MAX_MS);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('gives up at the cap and on cancel, leaving no timers or observers behind', async () => {
