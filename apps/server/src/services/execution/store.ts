@@ -783,6 +783,20 @@ export function boundReason(text: string, max = MAX_FAILURE_REASON): string {
   if (cleaned.length <= max) return cleaned;
   return `${cleaned.slice(0, Math.max(0, max - 1))}…`;
 }
+export const SLOT_REASON_MAX = 500;
+export const MAX_REPORTED_FAILED_SLOTS = 20;
+
+/** Bounded, sanitized one-line list of failed launch slots (`slot: reason; ...`), at most 2048 characters. */
+export function formatFailedSlots(slots: readonly unknown[], fallback = 'One or more Team slots failed to launch'): string {
+  const listed = slots.slice(0, MAX_REPORTED_FAILED_SLOTS).map((slot) => {
+    const value = slot && typeof slot === 'object' ? slot as { slotId?: unknown; reason?: unknown } : {};
+    const slotId = typeof value.slotId === 'string' && value.slotId ? boundReason(value.slotId, 120) : 'unknown slot';
+    const reason = typeof value.reason === 'string' && value.reason ? boundReason(value.reason, SLOT_REASON_MAX) : 'unknown reason';
+    return `${slotId}: ${reason}`;
+  });
+  if (slots.length > listed.length) listed.push(`and ${slots.length - listed.length} more`);
+  return boundReason(listed.join('; ') || fallback);
+}
 const MAX_WORK_UNITS = 100;
 export const MAX_REPORTED_BLOCKER_IDS = 100;
 const MAX_UNIT_LIST = 100;
@@ -2352,6 +2366,25 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       append(snapshot.state, record, record.state, severity, string(summary, 'event summary'), timestamp, { kind: 'event' });
       persist(snapshot.state, snapshot.hash);
       return clone(record);
+    });
+  }
+
+  /**
+   * Appends one persistent, bounded run-warning event. Unlike `event` it needs no state version: a launch
+   * warning is advisory and must not race members that bump the version while the launch settles.
+   */
+  async function warning(executionId: string, input: { slots: readonly unknown[] }): Promise<void> {
+    if (!input.slots.length) return;
+    await storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      assertActive(record);
+      const summary = boundReason(`${input.slots.length} Team slot(s) failed to launch: ${formatFailedSlots(input.slots)}`);
+      const timestamp = now();
+      append(snapshot.state, record, record.state, 'warning', summary, timestamp, { kind: 'event', eventType: 'failure' });
+      record.updatedAt = timestamp;
+      persist(snapshot.state, snapshot.hash);
     });
   }
 
@@ -4234,7 +4267,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, markReported, markBlockerReported, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, clearNativeRecoverySnapshot, recordAutomatedMcpCatalogueProvenance, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, recordWorkerRecovery, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, resolveNoRouteBlocker, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, countActiveOwned, listInProject, listActive, listUndisposedSquadWorktrees, listUnreportedExecutions, listUnreportedBlockers, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, markReported, markBlockerReported, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, warning, command, producerEvent, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, clearNativeRecoverySnapshot, recordAutomatedMcpCatalogueProvenance, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, recordWorkerRecovery, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, resolveNoRouteBlocker, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, countActiveOwned, listInProject, listActive, listUndisposedSquadWorktrees, listUnreportedExecutions, listUnreportedBlockers, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 /**

@@ -3,7 +3,7 @@ import { squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
 import { fitRecoveryObjective } from './recovery-objective.js';
 import { createHash } from 'node:crypto';
 import { launchDigest } from '../launch/digest.js';
-import { EXECUTION_RETENTION_MS, boundReason, unitSlotEligibility, levelCheckSkipped, type ExecutionRoutingPolicyV1, assignmentRequirementFailures, LOOP_LIMIT_BLOCKER_PREFIX, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
+import { EXECUTION_RETENTION_MS, boundReason, formatFailedSlots, unitSlotEligibility, levelCheckSkipped, type ExecutionRoutingPolicyV1, assignmentRequirementFailures, LOOP_LIMIT_BLOCKER_PREFIX, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
 import { timeoutRecoveryBlockReason } from './timeout-recovery-policy.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
@@ -249,7 +249,7 @@ export interface ExecutionServiceDeps {
     admissionDigest?: string,
     nativeRecovery?: NonNullable<ExecutionRecord['nativeRecoverySnapshots']>
   ) => Promise<{ ok: true; value: TeamLaunchAuthorizationResult } | { ok: false; code: string; message: string }> | { ok: true; value: TeamLaunchAuthorizationResult } | { ok: false; code: string; message: string };
-  launchTeam: (teamId: string, projectId: string, request: TeamLaunchRequestInput) => Promise<{ ok: boolean; code?: string; message?: string }>;
+  launchTeam: (teamId: string, projectId: string, request: TeamLaunchRequestInput) => Promise<{ ok: boolean; code?: string; message?: string; value?: { failedSlots?: unknown[] } }>;
   getTeamLaunch: (callerPrincipalId: string, launchRequestId: string) => Promise<unknown>;
   cancelTeamLaunch: (callerPrincipalId: string, launchRequestId: string, opts?: { retainOrchestrator?: boolean }) => Promise<{
     ok: boolean;
@@ -687,6 +687,11 @@ export function availabilityUnknownFromAdmission(admission: TeamAdmissionResultV
 
 const MAX_PLAN_CORRECTION_STOP_ATTEMPTS = 5;
 
+/** Freeform and legacy `job-team` runs continue past a failed worker slot with a warning; other modes fail. */
+function warnOnlyOnFailedSlots(mode: TeamCoordinationMode | undefined): boolean {
+  return mode === 'freeform' || mode === 'job-team';
+}
+
 export class ExecutionService {
   private runCheckCompletions = new Map<string, { controller: AbortController; pending: Promise<readonly string[]> }>();
   private checkCompletions = new Map<string, { executionId: string; workUnitId: string; claimId?: string; claimGeneration?: number; controller: AbortController; running?: Promise<ExecutionCheckResultV1>; pending: ReturnType<ExecutionService['completeWorkChecked']> }>();
@@ -980,6 +985,12 @@ export class ExecutionService {
           return { ok: false, code: 'TEAM_LAUNCH_FAILED', message: current.finalSummary ?? 'execution failed during Team launch' };
         }
         return { ok: false, code: 'DEADLINE_EXCEEDED', message: 'execution deadline elapsed during Team launch' };
+      }
+      const failedStart = await this.settleFailedSlots(record, launched.value?.failedSlots ?? [], issuedAuthorizationIds);
+      if (failedStart) {
+        return failedStart.state === 'FAILED'
+          ? { ok: false, code: 'TEAM_LAUNCH_FAILED', message: failedStart.failureReason ?? 'One or more Team slots failed to launch' }
+          : { ok: false, code: 'TEAM_LAUNCH_STATE_CONFLICT', message: `Team launch failed while execution is ${failedStart.state.toLowerCase()}` };
       }
       record = await this.promoteStartingToRunning(record, 'Team launch started');
       return { ok: true, value: { ...record, ...(resumeGrant ? { resumeToken: resumeGrant.token, resumeTokenExpiresAt: resumeGrant.expiresAt } : {}) } };
@@ -2889,6 +2900,10 @@ export class ExecutionService {
           this.deps.logError?.(`Prior native recovery snapshot clear failed for ${current.id}`, error);
         }
       }
+      const failedRetry = await this.settleFailedSlots(current, launched.value?.failedSlots ?? [], issuedAuthorizationIds);
+      if (failedRetry) {
+        return { ok: false as const, code: 'TEAM_LAUNCH_FAILED', message: failedRetry.failureReason ?? 'One or more Team slots failed to launch', value: failedRetry };
+      }
       if (!await this.launchMayProceed(current)) {
         return { ok: false as const, code: 'DEADLINE_EXCEEDED', message: 'execution deadline elapsed during Team retry launch', value: await this.deps.store.get(current.id) };
       }
@@ -3878,18 +3893,8 @@ export class ExecutionService {
       }
       return record;
     }
-    if (lifecycle.launchResult?.failedSlots?.length) {
-      const details = lifecycle.launchResult.failedSlots
-        .map((slot) => {
-          if (!slot || typeof slot !== 'object') return '';
-          const value = slot as { slotId?: unknown; reason?: unknown };
-          const slotId = typeof value.slotId === 'string' ? value.slotId : 'unknown slot';
-          const reason = typeof value.reason === 'string' ? value.reason : 'unknown reason';
-          return `${slotId}: ${reason}`;
-        })
-        .filter(Boolean)
-        .join('; ');
-      return this.transitionOrCurrent(record, 'FAILED', 'error', details || 'One or more Team slots failed to launch');
+    if (lifecycle.launchResult?.failedSlots?.length && !warnOnlyOnFailedSlots(record.coordinationMode)) {
+      return this.failLaunch(record, formatFailedSlots(lifecycle.launchResult.failedSlots));
     }
     if (lifecycle.outcome?.status === 'completed' && lifecycle.outcome.result?.ok === false) {
       return this.transitionOrCurrent(record, 'FAILED', 'error', lifecycle.outcome.result.message ?? 'Team launch failed');
@@ -4089,7 +4094,27 @@ export class ExecutionService {
         current = refreshed;
       }
     }
+    // Retries exhausted without a FAILED write: still close the seats this launch started.
+    await this.cancelBestEffort(current, `execution ${current.id} failed-launch cleanup after retries`);
     return current;
+  }
+
+  /**
+   * Evaluates worker slots that failed while the launch itself succeeded. Freeform and legacy `job-team` runs
+   * keep going with a persistent warning (the coordinator is told at kickoff); every other mode cannot finish
+   * with a missing worker and fails now. Returns the settled record only when the run was failed.
+   */
+  private async settleFailedSlots(record: ExecutionRecord, failedSlots: unknown[], issuedAuthorizationIds: string[]): Promise<ExecutionRecord | undefined> {
+    if (failedSlots.length === 0) return undefined;
+    if (warnOnlyOnFailedSlots(record.coordinationMode)) {
+      await this.deps.store.warning(record.id, { slots: failedSlots }).catch((error) => {
+        this.deps.logError?.(`Team launch warning failed for ${record.id}`, error);
+      });
+      return undefined;
+    }
+    await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
+    // failLaunch writes FAILED and cancels the launch once.
+    return this.failLaunch(record, formatFailedSlots(failedSlots));
   }
 
   /** Retained recovery must stay terminal so its recovery mode and snapshots remain actionable. */

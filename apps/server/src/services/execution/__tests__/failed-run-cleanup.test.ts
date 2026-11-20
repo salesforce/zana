@@ -122,7 +122,7 @@ describe('failed run cleanup', () => {
     }));
     await service.start('session-1', 'project-1', request);
     expect((await service.status('session-1', 'project-1', 'execution-1'))?.state).toBe('FAILED');
-    expect(logError).toHaveBeenCalledWith(expect.stringContaining('failed-run cleanup'), expect.any(Error));
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('failed-launch cleanup'), expect.any(Error));
     service.dispose();
   }));
 });

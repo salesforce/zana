@@ -7030,6 +7030,9 @@ export async function launchTeam(
   // a declared slot or a standalone persona id, it opens exactly once here.
   if (orchestratorId && !hasOrchestrator) {
     failedSlots.push({ slotId: `orchestrator:${orchestratorId}`, personaId: orchestratorId, reason: boundReason(unknownPersonaMessage(orchestratorId), SLOT_REASON_MAX) });
+  } else if (coordinationMode === 'structured' && failedSlots.length > 0) {
+    // A structured run cannot finish with a missing worker: do not start the coordinator or dispatch the
+    // seeded plan. With no orchestrator the launch fails below and every started worker is closed.
   } else if (hasOrchestrator && launched < MAX_TABS_PER_LAUNCH) {
     const orchestratorSlotId = `orchestrator:${orchestratorId}`;
     const orchestratorRecovery = recoveryFor(orchestratorSlotId, 'orchestrator', orchestratorId!);
@@ -7089,6 +7092,7 @@ export async function launchTeam(
             recoveryResume: orchestratorRecovery.recoveryResume,
           workUnits: seededWorkUnits,
           transport: planTransport,
+          ...(failedSlots.length ? { failedSlots: [...failedSlots] } : {}),
           ...(planFilePath ? { planFilePath } : {}),
           ...(sourceFilePath ? { sourceFilePath } : {}),
           ...(planCorrectionPending ? { planCorrectionPending } : {})
