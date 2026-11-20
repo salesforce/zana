@@ -76,6 +76,7 @@ export function createTeamProductOps(deps: TeamProductOpDeps): ProductTeamOps {
         teamId: input.teamId,
         projectId: input.projectId,
         goal: input.goal,
+        ...(input.planText ? { planText: input.planText } : {}),
         ...(input.previewToken === undefined ? {} : { previewToken: input.previewToken }),
         ...(input.worktree === undefined ? {} : { worktree: input.worktree }),
         ...(input.onComplete === undefined ? {} : { onComplete: input.onComplete }),

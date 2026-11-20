@@ -199,6 +199,104 @@ describe('team project and terminal result contracts', () => {
   });
 });
 
+describe('team launch plan file and dry run', () => {
+  const base = ['node', 'zcc', 'team', 'launch', '--team', 't1', '--project', 'p1', '--goal', 'ship'];
+  function planFile(content: string | Buffer) {
+    const dir = mkdtempSync(join(tmpdir(), 'team-plan-'));
+    dirs.push(dir);
+    const file = join(dir, 'plan.md');
+    writeFileSync(file, content);
+    return file;
+  }
+
+  it('sends a plan file over 8192 bytes as planText on preview and launch and defaults to structured', async () => {
+    const plan = `${'- [ ] step\n'.repeat(2000)}`;
+    expect(plan.length).toBeGreaterThan(8192);
+    const seen: Record<string, any> = {};
+    const result = await runCli([...base, '--plan-file', planFile(plan)], { fetchImpl: router({
+      'POST /api/v1/teams/preview': body => { seen.preview = body; return trustedPreview; },
+      'POST /api/v1/teams/launch': body => { seen.launch = body; return launched; }
+    }) });
+    expect(result.exitCode).toBe(0);
+    expect(seen.preview).toMatchObject({ goal: 'ship', planText: plan.trim(), coordinationMode: 'structured' });
+    expect(seen.launch).toMatchObject({ goal: 'ship', planText: plan.trim(), mode: 'structured', previewToken: 'opaque-token' });
+  });
+
+  it('omits planText when no plan file is given', async () => {
+    const seen: Record<string, any> = {};
+    await runCli([...base], { fetchImpl: router({
+      'POST /api/v1/teams/preview': body => { seen.preview = body; return trustedPreview; },
+      'POST /api/v1/teams/launch': launched
+    }) });
+    expect(seen.preview).not.toHaveProperty('planText');
+  });
+
+  it('rejects an explicit freeform mode with a plan file before any network call', async () => {
+    const result = await runCli([...base, '--plan-file', planFile('x'), '--mode', 'freeform'], { fetchImpl: router({}) });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('--plan-file requires --mode structured');
+  });
+
+  it.each([
+    ['missing file', () => '/nonexistent/dir/plan.md', 'cannot read plan file'],
+    ['empty file', () => planFile('  \n'), 'is empty'],
+    ['over-cap file', () => planFile('x'.repeat(64_001)), 'exceeds 64000 bytes']
+  ])('fails with exit 2 and no network call for %s', async (_name, file, message) => {
+    const result = await runCli([...base, '--plan-file', file()], { fetchImpl: router({}) });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain(message);
+    expect(result.stderr).not.toContain('unmocked');
+  });
+
+  it('accepts a plan file exactly at the cap', async () => {
+    const result = await runCli([...base, '--plan-file', planFile('x'.repeat(64_000))], { fetchImpl: router({ 'POST /api/v1/teams/preview': trustedPreview, 'POST /api/v1/teams/launch': launched }) });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('rejects a bare --plan-file with no path', async () => {
+    const result = await runCli([...base, '--plan-file'], { fetchImpl: router({}) });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('--plan-file requires a path');
+  });
+
+  it('dry-run prints the preview on stdout, exits 0 and never launches or leaks the token', async () => {
+    let launches = 0;
+    const result = await runCli([...base, '--dry-run'], { fetchImpl: router({
+      'POST /api/v1/teams/preview': trustedPreview,
+      'POST /api/v1/teams/launch': () => { launches++; return launched; }
+    }) });
+    expect(result.exitCode).toBe(0);
+    expect(launches).toBe(0);
+    expect(result.stdout).toContain('Dry run: nothing was launched.');
+    expect(result.stdout).toContain('main — /repo');
+    expect(result.stdout).not.toContain('opaque-token');
+  });
+
+  it('dry-run --json prints the preview without the token', async () => {
+    const result = await runCli([...base, '--dry-run', '--json'], { fetchImpl: router({ 'POST /api/v1/teams/preview': trustedPreview }) });
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.fingerprint).toBe('host-fingerprint');
+    expect(parsed).not.toHaveProperty('previewToken');
+  });
+
+  it('dry-run with a refused plan exits 2 with the plan error and does not launch', async () => {
+    let launches = 0;
+    const result = await runCli([...base, '--dry-run', '--plan-file', planFile('prose only')], { fetchImpl: router({
+      'POST /api/v1/teams/preview': response({ ok: false, code: 'INVALID', message: 'no executable steps found' }, 400),
+      'POST /api/v1/teams/launch': () => { launches++; return launched; }
+    }) });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('no executable steps found');
+    expect(launches).toBe(0);
+  });
+
+  it('dry-run cannot be combined with --wait', async () => {
+    const result = await runCli([...base, '--dry-run', '--wait'], { fetchImpl: router({}) });
+    expect(result.exitCode).toBe(2);
+  });
+});
+
 describe('team failure reason', () => {
   it('wait prints the failure reason when a terminal run has no result payload', async () => {
     const result = await runTeamCommand('wait', ['ex-1'], false, { fetchImpl: router({

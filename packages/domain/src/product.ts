@@ -7198,6 +7198,8 @@ export interface TeamJobLaunchInput {
   teamId: string;
   projectId: string;
   goal: string;
+  /** Plan document supplied apart from the goal (size-capped by main). Never scanned for source paths. */
+  planText?: string;
   title?: string;
   summary?: string;
   sourceCapabilityIds?: string[];
@@ -7278,6 +7280,8 @@ export type TeamJobLaunchResponse = { ok: true; value: TeamJobLaunchResult } | {
 
 export const TEAM_ID_MAX_CHARS = 256;
 export const TEAM_GOAL_MAX_CHARS = 4_000;
+/** Cap for a separately supplied plan document (`planText`); the goal keeps its own, smaller cap. */
+export const TEAM_PLAN_TEXT_MAX_CHARS = 64_000;
 export const TEAM_TITLE_MAX_CHARS = 256;
 export const TEAM_REPLY_MAX_CHARS = 16_000;
 
@@ -7288,6 +7292,8 @@ export interface ProductTeamLaunchInput extends LaunchOptions {
   teamId: string;
   projectId: string;
   goal: string;
+  /** Plan document supplied apart from the goal. Never scanned for source paths. */
+  planText?: string;
   mode: TeamLaunchMode;
   title?: string;
   summary?: string;

@@ -102,7 +102,8 @@ import { jobCoordinatorPrompt, rosterWithTiers, type RosterEntry } from './team-
 import {
   createDesktopNativeRecovery, gateInvalidProvidedPlan, recoverSquadStateAtBoot, runSpawnLifecycle, slotRecoveryLaunch,
   sweepUnretainedSquadWorktrees, teamAdmissionRequirements, teamJobFailureResponse, withProposalLaunch, findProposalExecution, type ProposalLaunchDeps,
-  withRenewedSources, scopedSourceRenewal, splitProposedGoalSources
+  withRenewedSources, scopedSourceRenewal, splitProposedGoalSources,
+  allWorkersUnresolvedReasons, unknownPersonaMessage
 } from './team-launch-support.js';
 import { modernRecoverySnapshot } from './team-native-recovery.js';
 import { openExecutionStorage } from './execution-storage.js';
@@ -149,7 +150,7 @@ import { resolveModernMcpAllowlist } from '@zana-ai/zcc-server/services/threads/
 import { narrowAutomatedSkillIds, providerSkillAllowlist, resolvePersonaSkillSelection } from '@zana-ai/zcc-server/services/threads/persona-skill-selection';
 import { resolveSkillSettings } from '@zana-ai/zcc-host-daemon/skill-allowlist-settings';
 import type { SkillSettings } from '@zana-ai/zcc-host-daemon/harness/registration';
-import { effectiveRoles, effectiveSkills, isOrchestratorSlotId } from '@zana-ai/zcc-domain/product';
+import { effectiveRoles, effectiveSkills, isOrchestratorSlotId, TEAM_PLAN_TEXT_MAX_CHARS } from '@zana-ai/zcc-domain/product';
 import { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
 import { AgentLivenessCache } from '@zana-ai/zcc-host-daemon/harness/agent-liveness';
 import { resolveMaxLiveSessions } from '@zana-ai/zcc-host-daemon/capacity';
@@ -3759,7 +3760,7 @@ const composerPreviewTokens = new Map<string, { key: string; preview: SquadLaunc
 const COMPOSER_PREVIEW_TTL_MS = 5 * 60_000;
 const COMPOSER_PREVIEW_MAX = 200;
 function composerPreviewKey(input: Parameters<import('@zana-ai/zcc-desktop-contract').CcApi['teams']['preview']>[0], caller: { kind: 'window'; windowId: number } | { kind: 'shared-owner' }): string {
-  return JSON.stringify([caller, input.projectId, input.teamId, input.goal.trim(), input.coordinationMode ?? 'structured', input.sourceCapabilityIds ?? [],
+  return JSON.stringify([caller, input.projectId, input.teamId, input.goal.trim(), input.planText ?? '', input.coordinationMode ?? 'structured', input.sourceCapabilityIds ?? [],
     launchOptionsSchema.parse({ worktree: input.worktree, onComplete: input.onComplete, push: input.push, checks: input.checks, failurePolicyDefault: input.failurePolicyDefault, target: input.target })]);
 }
 function pruneComposerPreviewTokens(): void {
@@ -3824,6 +3825,7 @@ export async function resolveSquadComposerPreview(input: Parameters<import('@zan
   if (!project) throw new Error('TARGET_UNAVAILABLE');
   if (teamHostProblem(project, localHostId())) throw new SquadPreviewAdmissionError('Project host is unavailable for this launch.');
   const launchOptions = launchOptionsSchema.parse({ worktree: input.worktree, onComplete: input.onComplete, push: input.push, checks: input.checks, failurePolicyDefault: input.failurePolicyDefault, target: input.target });
+  if (input.planText !== undefined && (typeof input.planText !== 'string' || input.planText.length > TEAM_PLAN_TEXT_MAX_CHARS)) throw new SquadPreviewAdmissionError(`planText must be a string of at most ${TEAM_PLAN_TEXT_MAX_CHARS} characters.`);
   const sourceIds = input.sourceCapabilityIds ?? [];
   if (sourceIds.length && caller.kind !== 'window') throw new Error('Execution source capabilities require a trusted window');
   const sourceBases = squadSourceBases();
@@ -3837,7 +3839,8 @@ export async function resolveSquadComposerPreview(input: Parameters<import('@zan
   const capabilityIds = [...new Set([...sourceIds, ...goalCapabilities.map(source => source.id)])];
   const inspected = capabilityIds.length && caller.kind === 'window'
     ? await executionSources.inspect({ windowId: caller.windowId, projectId: project.id, capabilityIds }) : undefined;
-  const texts = [...(inspected?.sources ?? []).map(source => source.extractedText), input.goal];
+  // planText is plan content only: it is never scanned for source paths above.
+  const texts = [...(inspected?.sources ?? []).map(source => source.extractedText), ...(input.planText ? [input.planText] : []), input.goal];
   const plan = resolveSquadPlan(input.coordinationMode === 'freeform' ? 'infer' : 'provided', texts);
   // Attended malformed DAGs retain the existing correction flow, but bad launch declarations never become defaults.
   if (plan.planError) {
@@ -6597,6 +6600,13 @@ export async function launchTeam(
       return { ok: false, code: 'UNSUPPORTED', message: error instanceof Error ? error.message : String(error) };
     }
   }
+  if (structured && team.transport !== 'MODERN') {
+    const unresolvedReasons = allWorkersUnresolvedReasons(expectedSlots, known);
+    if (unresolvedReasons) {
+      revokeRequestAuthorizations();
+      return { ok: false, code: 'TEAM_LAUNCH_FAILED', message: boundReason(unresolvedReasons) };
+    }
+  }
   const refused = squadSeatRefusal({
     transport: team.transport, expectedSlots, personas: personaSnapshot, profileFor, personaName, coordinationMode, project,
     platform: process.platform, revoke: revokeRequestAuthorizations
@@ -6943,7 +6953,7 @@ export async function launchTeam(
      if (!known.has(personaId)) {
        const authorizationId = structured?.slots.find((slot) => slot.slotId === slotId)?.authorizationId;
        if (authorizationId) launchAuthorization.revoke(authorizationId);
-       failedSlots.push({ slotId, personaId, reason: 'unknown persona' });
+       failedSlots.push({ slotId, personaId, reason: boundReason(unknownPersonaMessage(personaId), SLOT_REASON_MAX) });
        continue;
      }
      const bindingFailure = taskBindingFailure(personaId);
@@ -7011,7 +7021,7 @@ export async function launchTeam(
   // Orchestrator LAST, carrying the team prompt + the worker roster. Whether it's
   // a declared slot or a standalone persona id, it opens exactly once here.
   if (orchestratorId && !hasOrchestrator) {
-    failedSlots.push({ slotId: `orchestrator:${orchestratorId}`, personaId: orchestratorId, reason: 'unknown persona' });
+    failedSlots.push({ slotId: `orchestrator:${orchestratorId}`, personaId: orchestratorId, reason: boundReason(unknownPersonaMessage(orchestratorId), SLOT_REASON_MAX) });
   } else if (hasOrchestrator && launched < MAX_TABS_PER_LAUNCH) {
     const orchestratorSlotId = `orchestrator:${orchestratorId}`;
     const orchestratorRecovery = recoveryFor(orchestratorSlotId, 'orchestrator', orchestratorId!);
@@ -8029,6 +8039,10 @@ export async function startTeamJobFromUi(
   const teamId = typeof input.teamId === 'string' ? input.teamId.trim() : '';
   const projectId = typeof input.projectId === 'string' ? input.projectId.trim() : '';
   const originalGoal = typeof input.goal === 'string' ? input.goal.trim() : '';
+  if (input.planText !== undefined && (typeof input.planText !== 'string' || input.planText.length > TEAM_PLAN_TEXT_MAX_CHARS)) {
+    return { ok: false, code: 'INVALID', message: `planText must be a string of at most ${TEAM_PLAN_TEXT_MAX_CHARS} characters` };
+  }
+  const planText = input.planText?.trim() || undefined;
   const coordinationMode = input.coordinationMode ?? 'structured';
   if (coordinationMode !== 'structured' && coordinationMode !== 'freeform') {
     return { ok: false, code: 'INVALID', message: 'invalid Team coordination mode' };
@@ -8095,7 +8109,7 @@ export async function startTeamJobFromUi(
   if (input.previewToken !== undefined) {
     try {
       const caller = sourceContext ? { kind: 'window' as const, windowId: sourceContext.windowId } : { kind: 'shared-owner' as const };
-      const previewInput = { teamId, projectId, goal: originalGoal, coordinationMode, sourceCapabilityIds, ...parsedOptions.data };
+      const previewInput = { teamId, projectId, goal: originalGoal, ...(planText ? { planText } : {}), coordinationMode, sourceCapabilityIds, ...parsedOptions.data };
       composerPreview = await claimSquadComposerPreview(previewInput, input.previewToken, caller);
     } catch (error) {
       if (error instanceof SquadPreviewAdmissionError) return { ok: false, code: 'LAUNCH_CHANGED', message: error.message };
@@ -8112,7 +8126,7 @@ export async function startTeamJobFromUi(
   const renewal = scopedSourceRenewal(executionSources, sourceContext?.windowId, projectId);
   const sources: SquadSourceProvider | undefined = sourceContext ? { kind: 'window', windowId: sourceContext.windowId } : undefined;
   return withRenewedSources(() => withProposalLaunch(proposalLaunchDeps, proposalId, projectId, (proposal, reviewedSourcePaths) => launchSquad(squadLaunchDeps, {
-    teamId, project, slots, goal: originalGoal, coordinationMode, title: originalJobTitle, summary: originalSummary,
+    teamId, project, slots, goal: originalGoal, ...(planText ? { planText } : {}), coordinationMode, title: originalJobTitle, summary: originalSummary,
     completionInboxNotice: true,
     sourceCapabilityIds, goalSources: discoveredGoalSources, reviewedSourcePaths,
     launchOptions: proposal?.launchOptions ?? parsedOptions.data,

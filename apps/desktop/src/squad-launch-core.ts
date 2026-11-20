@@ -85,6 +85,8 @@ export interface SquadLaunchInput {
   project: Pick<Project, 'id' | 'name' | 'path'> & { remote?: unknown };
   slots: readonly Pick<ExpandedTeamSlot, 'role'>[];
   goal: string;
+  /** Plan document supplied apart from the goal; parsed as plan content, never scanned for source paths. */
+  planText?: string;
   coordinationMode: 'structured' | 'freeform';
   title?: string;
   summary?: string;
@@ -244,7 +246,7 @@ export async function launchSquad(
     const built = await buildSquadStartRequest(deps, {
       teamId: input.teamId, projectId: project.id, projectName: project.name, launchRequestId,
       coordinationMode: input.coordinationMode, slots: input.slots, attended: ctx.sources?.kind === 'window',
-      goal: input.goal, title: input.title, summary: input.summary, completionInboxNotice: input.completionInboxNotice,
+      goal: input.goal, ...(input.planText ? { planText: input.planText } : {}), title: input.title, summary: input.summary, completionInboxNotice: input.completionInboxNotice,
       sourceBundle, goalSourceDescriptors: redactedGoalSources,
       launchOptions: options.data,
       ...(targetCheck.target ? { target: targetCheck.target } : {})
@@ -312,6 +314,7 @@ async function buildSquadStartRequest(deps: SquadLaunchDeps, args: {
   slots: readonly Pick<ExpandedTeamSlot, 'role'>[];
   attended: boolean;
   goal: string;
+  planText?: string;
   title?: string;
   summary?: string;
   completionInboxNotice: boolean;
@@ -338,7 +341,7 @@ async function buildSquadStartRequest(deps: SquadLaunchDeps, args: {
   // One resolver for interactive and triggered launches: "Plan provided in goal"
   // (structured) must yield a complete durable DAG or park for plan correction;
   // "Infer plan from goal" (freeform) leaves planning to the coordinator.
-  const planTexts = [...(sourceBundle?.sources ?? []).map((source) => source.extractedText), args.goal];
+  const planTexts = [...(sourceBundle?.sources ?? []).map((source) => source.extractedText), ...(args.planText ? [args.planText] : []), args.goal];
   let coordinationMode = args.coordinationMode;
   let resolvedPlan = resolveSquadPlan(coordinationMode === 'structured' ? 'provided' : 'infer', planTexts);
   // Attended prose with no steps on a Squad that can plan infers a plan from the goal; schedules and triggers never do.

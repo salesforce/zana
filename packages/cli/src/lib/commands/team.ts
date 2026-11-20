@@ -1,7 +1,7 @@
 import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, resolve } from 'node:path';
-import { TEAM_GOAL_MAX_CHARS, type ProductTeamStatus } from '@zana-ai/zcc-domain/product';
+import { TEAM_GOAL_MAX_CHARS, TEAM_PLAN_TEXT_MAX_CHARS, type ProductTeamStatus } from '@zana-ai/zcc-domain/product';
 import { errResult, textResult, type CliResult } from '../cli-result.js';
 import { flagValue, hasFlag, stripFlags } from '../flag-parse.js';
 import { launchOptionsFromFlags } from './launch-forward.js';
@@ -63,6 +63,34 @@ function parseDuration(raw: string): number | undefined {
   const multiplier = unit === 'ms' ? 1 : unit === 's' ? 1_000 : unit === 'm' ? 60_000 : 3_600_000;
   const milliseconds = n * multiplier;
   return Number.isSafeInteger(milliseconds) && milliseconds <= MAX_WAIT_MS ? milliseconds : undefined;
+}
+
+/**
+ * Read a plan file locally (the CLI sends the text over HTTP; nothing is piped through a child
+ * process). The read is bounded: one byte past the cap is enough to reject without loading more.
+ */
+async function resolvePlanFile(file: string): Promise<{ ok: true; planText: string } | { ok: false; result: CliResult }> {
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(resolve(file), 'r');
+    const buffer = Buffer.alloc(TEAM_PLAN_TEXT_MAX_CHARS + 1);
+    let total = 0;
+    while (total < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+    }
+    if (total > TEAM_PLAN_TEXT_MAX_CHARS) {
+      return { ok: false, result: errResult(`plan file '${file}' exceeds ${TEAM_PLAN_TEXT_MAX_CHARS} bytes`, 2) };
+    }
+    const planText = buffer.subarray(0, total).toString('utf8').trim();
+    if (!planText) return { ok: false, result: errResult(`plan file '${file}' is empty`, 2) };
+    return { ok: true, planText };
+  } catch (error) {
+    return { ok: false, result: errResult(`cannot read plan file '${file}': ${error instanceof Error ? error.message : String(error)}`, 2) };
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
 }
 
 async function resolveGoal(raw: string | undefined): Promise<{ ok: true; goal: string } | { ok: false; result: CliResult }> {
@@ -159,10 +187,17 @@ export async function runTeamCommand(
     const goalRaw = flagValue(rest, '--goal');
     // Default is freeform (coordinator infers the plan): a prose goal such as
     // "ship it" is not a plan, and `structured` rejects it as INVALID_PLAN.
-    const modeRaw = flagValue(rest, '--mode') ?? 'freeform';
+    const planFile = flagValue(rest, '--plan-file');
+    const explicitMode = flagValue(rest, '--mode');
+    // A supplied plan is parsed only in structured mode, so it defaults there; freeform would ignore it.
+    const modeRaw = explicitMode ?? (hasFlag(rest, '--plan-file') ? 'structured' : 'freeform');
+    const dryRun = hasFlag(rest, '--dry-run');
     const title = flagValue(rest, '--title');
     const summary = flagValue(rest, '--summary');
     const wait = hasFlag(rest, '--wait');
+    if (hasFlag(rest, '--plan-file') && !planFile) return errResult('--plan-file requires a path', 2);
+    if (planFile && modeRaw === 'freeform') return errResult("--plan-file requires --mode structured (freeform ignores a supplied plan)", 2);
+    if (dryRun && wait) return errResult('--dry-run does not launch, so it cannot be combined with --wait', 2);
     if (!teamId) return errResult('team launch requires --team <id>', 2);
     if (!projectArg) return errResult('team launch requires --project <id|path>', 2);
     if (modeRaw !== 'structured' && modeRaw !== 'freeform') {
@@ -170,6 +205,12 @@ export async function runTeamCommand(
     }
     const resolved = await resolveGoal(goalRaw);
     if (!resolved.ok) return resolved.result;
+    let planText: string | undefined;
+    if (planFile) {
+      const plan = await resolvePlanFile(planFile);
+      if (!plan.ok) return plan.result;
+      planText = plan.planText;
+    }
     const timeoutRaw = flagValue(rest, '--timeout') ?? '5m';
     const timeoutMs = parseDuration(timeoutRaw);
     if (timeoutMs === undefined) return errResult(`invalid --timeout '${timeoutRaw}'`, 2);
@@ -177,7 +218,7 @@ export async function runTeamCommand(
     if (!project.ok) return project.result;
     const previewed = await productRequest<{ ok?: boolean; value?: unknown; message?: string }>('POST', '/api/v1/teams/preview', {
       deps,
-      body: { teamId, projectId: project.projectId, goal: resolved.goal, coordinationMode: modeRaw, ...launchOptions }
+      body: { teamId, projectId: project.projectId, goal: resolved.goal, ...(planText ? { planText } : {}), coordinationMode: modeRaw, ...launchOptions }
     });
     if (!previewed.ok) return previewed.result;
     if (!previewed.data?.ok) return errResult(previewed.data?.message ?? 'launch preview unavailable');
@@ -192,6 +233,10 @@ export async function runTeamCommand(
       ? `New worktree from ${preview.location.baseBranch} (path assigned at launch)`
       : `${preview.branch ?? 'HEAD'} — ${preview.path}`;
     const diagnostic = `Launch preview: ${policies}\nLocation: ${previewLocation}\n`;
+    if (dryRun) {
+      // Nothing launches: the preview is the command's output and the token is never exposed.
+      return renderOrJson(json, preview, `Dry run: nothing was launched.\n${diagnostic}`);
+    }
     deps?.onStderr?.(diagnostic);
     const withPreview = (result: CliResult): CliResult => ({ ...result, stderr: `${deps?.onStderr ? '' : diagnostic}${result.stderr ?? ''}` });
     const launched = await productRequest<{ ok?: boolean; value?: TeamLaunchValue }>(
@@ -203,6 +248,7 @@ export async function runTeamCommand(
           teamId,
           projectId: project.projectId,
           goal: resolved.goal,
+          ...(planText ? { planText } : {}),
           mode: modeRaw,
           ...launchOptions,
           previewToken,

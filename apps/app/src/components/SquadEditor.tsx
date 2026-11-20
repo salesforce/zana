@@ -460,6 +460,14 @@ function TeamForm({
     return [...unique.values()];
   }, [slots, orchestratorPersonaId, personaById]);
 
+  // Advisory only (never gates save): slot personas missing from the live persona list. Skipped until the list has loaded.
+  const unresolvedPersonaIds = useMemo(() => {
+    if (allPersonas.length === 0) return [];
+    const ids = slots.map((s) => s.personaId.trim()).filter((id) => id.length > 0 && !personaById.has(id));
+    if (orchestratorPersonaId && !personaById.has(orchestratorPersonaId)) ids.push(orchestratorPersonaId);
+    return [...new Set(ids)];
+  }, [allPersonas, slots, orchestratorPersonaId, personaById]);
+
   // Advisory only (never gates save): member personas whose skill allowlist names uninstalled skills.
   const restrictedMembers = useMemo(
     () => slots.map((s) => personaById.get(s.personaId)).filter((p): p is Persona => !!p?.skills?.length),
@@ -921,6 +929,12 @@ function TeamForm({
             </p>
           )}
         </div>
+
+        {unresolvedPersonaIds.length > 0 && (
+          <p className="settings-help" role="status" data-testid="team-unresolved-persona-warning">
+            Unknown persona: {unresolvedPersonaIds.join(', ')}. You can still save; a launch skips these slots, and refuses to start when no worker slot resolves.
+          </p>
+        )}
 
         {membersWithMissingSkills.length > 0 && (
           <p className="settings-help" role="status" data-testid="team-uninstalled-skills-warning">

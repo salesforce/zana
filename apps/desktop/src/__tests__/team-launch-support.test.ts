@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createDesktopNativeRecovery, findProposalExecution, gateInvalidProvidedPlan, recoverSquadStateAtBoot, runSpawnLifecycle, slotRecoveryLaunch,
-  sweepUnretainedSquadWorktrees, teamAdmissionRequirements, splitProposedGoalSources, teamJobFailureResponse, withProposalLaunch
+  sweepUnretainedSquadWorktrees, teamAdmissionRequirements, splitProposedGoalSources, teamJobFailureResponse, withProposalLaunch,
+  allWorkersUnresolvedReasons, unknownPersonaMessage
 } from '../team-launch-support.js';
 
 describe('withProposalLaunch', () => {
@@ -325,5 +326,18 @@ describe('runSpawnLifecycle', () => {
   it('wraps in lock when provided', async () => {
     const withSpawnLock = vi.fn(async (fn: () => Promise<number>) => (await fn()) + 10) as never;
     await expect(runSpawnLifecycle({ withSpawnLock }, async () => 1)).resolves.toBe(11);
+  });
+});
+
+describe('allWorkersUnresolvedReasons', () => {
+  const w = (slotId: string, personaId: string) => ({ slotId, personaId, role: 'worker' as const });
+  const o = (personaId: string) => ({ slotId: `orchestrator:${personaId}`, personaId, role: 'orchestrator' as const });
+  it('joins one reason per slot when every worker is unresolved', () => {
+    expect(allWorkersUnresolvedReasons([o('orch'), w('0:a:0', 'a'), w('1:b:0', 'b')], new Set(['orch'])))
+      .toBe(`0:a:0: ${unknownPersonaMessage('a')}; 1:b:0: ${unknownPersonaMessage('b')}`);
+  });
+  it('proceeds when at least one worker resolves, or there are no workers', () => {
+    expect(allWorkersUnresolvedReasons([w('0:a:0', 'a'), w('1:b:0', 'b')], new Set(['b']))).toBeUndefined();
+    expect(allWorkersUnresolvedReasons([o('x')], new Set())).toBeUndefined();
   });
 });

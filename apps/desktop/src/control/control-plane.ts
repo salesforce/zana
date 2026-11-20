@@ -57,6 +57,7 @@ import {
   ProductTeamOps,
   TeamSummary,
   TEAM_GOAL_MAX_CHARS,
+  TEAM_PLAN_TEXT_MAX_CHARS,
   TEAM_ID_MAX_CHARS,
   TEAM_REPLY_MAX_CHARS,
   TEAM_TITLE_MAX_CHARS
@@ -799,17 +800,18 @@ export async function dispatchOp(
       const mode = args.mode === 'structured' || args.mode === 'freeform' ? args.mode : undefined;
       const title = str(args.title);
       const summary = str(args.summary);
+      const planText = str(args.planText);
       if (!teamId || teamId.length > TEAM_ID_MAX_CHARS || !projectId || projectId.length > TEAM_ID_MAX_CHARS || !goal || !mode) {
         return { ok: false, code: 'BAD_ARGS', message: 'teamId, projectId, goal, and mode are required' };
       }
-      if (goal.length > TEAM_GOAL_MAX_CHARS || (title?.length ?? 0) > TEAM_TITLE_MAX_CHARS || (summary?.length ?? 0) > TEAM_GOAL_MAX_CHARS) {
+      if (goal.length > TEAM_GOAL_MAX_CHARS || (title?.length ?? 0) > TEAM_TITLE_MAX_CHARS || (summary?.length ?? 0) > TEAM_GOAL_MAX_CHARS || (planText?.length ?? 0) > TEAM_PLAN_TEXT_MAX_CHARS) {
         return { ok: false, code: 'BAD_ARGS', message: 'Team launch input exceeds size limits' };
       }
       if (!deps.teamOps) return { ok: false, code: 'host_disconnected', message: 'Host is not connected' };
       const { launchOptionsSchema } = await import('@zana-ai/zcc-domain/launch-options');
       const options = launchOptionsSchema.safeParse(Object.fromEntries(['worktree', 'onComplete', 'push', 'checks', 'failurePolicyDefault', 'target'].filter(key => key in args).map(key => [key, args[key]])));
       if (!options.success || args.previewToken !== undefined && (typeof args.previewToken !== 'string' || args.previewToken.length > 256)) return { ok: false, code: 'BAD_ARGS', message: 'Invalid launch options or preview token' };
-      const input: import('@zana-ai/zcc-domain/product').ProductTeamLaunchInput = { teamId, projectId, goal, mode, ...options.data, ...(typeof args.previewToken === 'string' ? { previewToken: args.previewToken } : {}), ...(title ? { title } : {}), ...(summary ? { summary } : {}) };
+      const input: import('@zana-ai/zcc-domain/product').ProductTeamLaunchInput = { teamId, projectId, goal, ...(planText ? { planText } : {}), mode, ...options.data, ...(typeof args.previewToken === 'string' ? { previewToken: args.previewToken } : {}), ...(title ? { title } : {}), ...(summary ? { summary } : {}) };
       if (op === 'team.preview') return deps.teamOps.preview ? deps.teamOps.preview(input) : { ok: false, code: 'UNAVAILABLE', message: 'Trusted launch preview unavailable' };
       return deps.teamOps.launch(input);
     }

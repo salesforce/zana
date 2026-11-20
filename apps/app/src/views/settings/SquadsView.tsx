@@ -415,6 +415,14 @@ function TeamRow({
   const Icon = resolveIcon(team.icon ?? 'Users');
   const tabs = tabCount(team);
   const allPersonas = usePersonas((s) => s.personas);
+  // Unresolved persona ids across the slots and orchestrator; skipped until the persona list has loaded.
+  const unresolvedPersonaIds = useMemo(() => {
+    if (allPersonas.length === 0) return [];
+    const known = new Set(allPersonas.map((p) => p.id));
+    const ids = team.slots.map((s) => s.personaId).filter((id) => id && !known.has(id));
+    if (team.orchestratorPersonaId && !known.has(team.orchestratorPersonaId)) ids.push(team.orchestratorPersonaId);
+    return [...new Set(ids)];
+  }, [allPersonas, team.slots, team.orchestratorPersonaId]);
   const [picking, setPicking] = useState(false);
   const [launchResult, setLaunchResult] = useState<LaunchTeamResult | null>(null);
   const [launchError, setLaunchError] = useState<string | null>(null);
@@ -587,6 +595,15 @@ function TeamRow({
               <span className="scheduler-pill">
                 {tabs} tab{tabs === 1 ? '' : 's'}
               </span>
+              {unresolvedPersonaIds.length > 0 && (
+                <span
+                  className="scheduler-pill scheduler-pill--partial"
+                  data-testid="team-unresolved-persona-badge"
+                  title={`Unknown persona: ${unresolvedPersonaIds.join(', ')}`}
+                >
+                  Unknown persona
+                </span>
+              )}
             </div>
             {team.description && <p className="skills-row-desc">{team.description}</p>}
           </div>

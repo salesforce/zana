@@ -23,6 +23,25 @@ describe('team launch policy forwarding', () => {
       expect(preview.mock.calls[0]![0]).toMatchObject(options);
       expect((await post({ ...base, push: 'yes' })).status).toBe(400);
       expect(launch).toHaveBeenCalledTimes(1);
+
+      // planText: forwarded trimmed on both routes, capped, and blank means absent.
+      const postTo = (route: string, body: unknown) => fetch(`${server.url}api/v1/teams/${route}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      expect((await postTo('launch', { ...base, planText: '  the plan \n' })).status).toBe(201);
+      expect(launch.mock.calls[1]![0]).toMatchObject({ goal: 'ship', planText: 'the plan' });
+      expect((await postTo('preview', { ...base, planText: 'the plan', coordinationMode: 'structured' })).status).toBe(200);
+      expect(preview.mock.calls[1]![0]).toMatchObject({ planText: 'the plan' });
+      expect((await postTo('launch', { ...base, planText: '   ' })).status).toBe(201);
+      expect(launch.mock.calls[2]![0]).not.toHaveProperty('planText');
+      expect((await postTo('launch', { ...base, planText: 'x'.repeat(64_000) })).status).toBe(201);
+      for (const route of ['launch', 'preview']) {
+        for (const planText of ['x'.repeat(64_001), 42, { a: 1 }]) {
+          const rejected = await postTo(route, { ...base, planText });
+          expect(rejected.status).toBe(400);
+          expect(await rejected.json()).toMatchObject({ code: 'INVALID' });
+        }
+      }
+      expect(launch).toHaveBeenCalledTimes(4);
+      expect(preview).toHaveBeenCalledTimes(2);
     } finally {
       await server.close();
       rmSync(dataDir, { recursive: true, force: true });

@@ -46,6 +46,14 @@ describe('createTeamProductOps', () => {
     expect(await ops.launch({ teamId: 't', projectId: 'p', goal: 'go', mode: 'freeform', previewToken: 'opaque' })).toMatchObject({ ok: true, value: { id: 'e', state: 'RUNNING', location, path: '/actual', branch: 'main' } });
     expect(start).toHaveBeenCalledWith(expect.objectContaining({ previewToken: 'opaque' }));
   });
+  it('forwards planText to the launch start request only when present', async () => {
+    const start = vi.fn(async () => ({ ok: true as const, value: { executionId: 'e', state: 'RUNNING' } }));
+    const ops = createTeamProductOps({ startTeamJobFromUi: start, getExecution: vi.fn(), status: vi.fn(), stopJob: vi.fn(), respondToBlocker: vi.fn() });
+    await ops.launch({ teamId: 't', projectId: 'p', goal: 'go', planText: 'the plan', mode: 'structured' });
+    expect(start).toHaveBeenLastCalledWith(expect.objectContaining({ planText: 'the plan', goal: 'go' }));
+    await ops.launch({ teamId: 't', projectId: 'p', goal: 'go', mode: 'structured' });
+    expect(start.mock.calls.at(-1)![0]).not.toHaveProperty('planText');
+  });
   it('returns successful start when location lookup fails, preventing a retry from duplicating the job', async () => {
     const start = vi.fn(async () => ({ ok: true as const, value: { executionId: 'e', state: 'RUNNING' } }));
     const logError = vi.fn();

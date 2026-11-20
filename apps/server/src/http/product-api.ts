@@ -61,6 +61,7 @@ import { listJsonFiles, readJsonFile, writeJsonFile } from './disk-json.js';
 import { applyTrustedOriginCors, readJsonBody, sendBytes, sendJson, beginNdjson } from './json.js';
 import {
   TEAM_GOAL_MAX_CHARS,
+  TEAM_PLAN_TEXT_MAX_CHARS,
   TEAM_ID_MAX_CHARS,
   TEAM_REPLY_MAX_CHARS,
   TEAM_TITLE_MAX_CHARS,
@@ -916,6 +917,8 @@ export async function handleProductHttp(
       const goal = typeof body?.goal === 'string' ? body.goal.trim() : '';
       const previewMode = path.endsWith('/preview') ? (body as Partial<ProductTeamLaunchInput> & { coordinationMode?: unknown })?.coordinationMode : undefined;
       const mode = body?.mode === 'freeform' || body?.mode === 'structured' ? body.mode : previewMode === 'freeform' || previewMode === 'structured' ? previewMode : '';
+      const planRaw = body?.planText;
+      const planText = typeof planRaw === 'string' ? planRaw.trim() : undefined;
       const title = typeof body?.title === 'string' ? body.title.trim() : undefined;
       const summary = typeof body?.summary === 'string' ? body.summary.trim() : undefined;
       const { launchOptionsSchema } = await import('@zana-ai/zcc-domain/launch-options');
@@ -923,6 +926,10 @@ export async function handleProductHttp(
         ['worktree', 'onComplete', 'push', 'checks', 'failurePolicyDefault', 'target']
           .filter((key) => body && key in body).map((key) => [key, (body as Record<string, unknown>)[key]])
       ));
+      if (planRaw !== undefined && (typeof planRaw !== 'string' || planRaw.length > TEAM_PLAN_TEXT_MAX_CHARS)) {
+        sendJson(response, 400, { ok: false, code: 'INVALID', message: `planText must be a string of at most ${TEAM_PLAN_TEXT_MAX_CHARS} characters` });
+        return true;
+      }
       if (!options.success || body?.previewToken !== undefined && (typeof body.previewToken !== 'string' || body.previewToken.length > 256)) {
         sendJson(response, 400, { ok: false, code: 'INVALID', message: 'Invalid launch options' });
         return true;
@@ -952,6 +959,7 @@ export async function handleProductHttp(
           teamId,
           projectId,
           goal,
+          ...(planText ? { planText } : {}),
           mode,
           ...options.data,
           ...(body?.previewToken ? { previewToken: body.previewToken } : {}),

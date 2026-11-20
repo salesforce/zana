@@ -2108,7 +2108,7 @@ export interface CcApi {
     cancel(launchRequestId: string): Promise<Result<CancelTeamLaunchResult>>;
     /** Start a durable Team job. Main re-authorizes Team/project and maps slots. */
     startJob(input: TeamJobLaunchInput & { /** Opaque main-held preview binding; never a caller fingerprint. */ previewToken?: string }): Promise<TeamJobLaunchResponse>;
-    preview(input: Pick<TeamJobLaunchInput, 'teamId' | 'projectId' | 'goal' | 'coordinationMode' | 'sourceCapabilityIds'> & import('@zana-ai/zcc-domain/launch-options').LaunchOptions): Promise<Result<import('@zana-ai/zcc-domain/squad-proposal').SquadLaunchPreview & { previewToken: string }>>;
+    preview(input: Pick<TeamJobLaunchInput, 'teamId' | 'projectId' | 'goal' | 'planText' | 'coordinationMode' | 'sourceCapabilityIds'> & import('@zana-ai/zcc-domain/launch-options').LaunchOptions): Promise<Result<import('@zana-ai/zcc-domain/squad-proposal').SquadLaunchPreview & { previewToken: string }>>;
     /** Resolve a pending Squad proposal into a composer pre-fill. Desktop window only. */
     reviewProposal(
       proposalId: string
