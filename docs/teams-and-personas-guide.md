@@ -195,9 +195,11 @@ live session is left behind.
 
 **Unresolved personas.** A slot whose persona id does not resolve (missing file, or a
 file ignored for the reasons above) is reported as `unknown persona: <id>`. The Squad
-editor warns about it at save time and the Squad list shows a badge. At launch the slot
-is skipped and reported as a failed slot as above. A structured launch on the default
-(CLI) transport whose every worker slot is unresolved is refused before anything opens.
+editor warns about it at save time and the Squad list shows a badge. At launch, a
+freeform launch (CLI or Modern) with any unresolved worker slot is refused before
+anything opens. A structured launch on the CLI transport is refused only when every
+worker slot is unresolved; with a partial miss the resolved slots start and the others
+are reported as failed slots as above.
 Modern Squads do not apply that refusal.
 
 **Unknown model.** A persona whose legacy `model` string is not in the harness's static
@@ -564,7 +566,7 @@ goal" is refused; the agent proposes a plan it has written and checked instead
 
 ## Gotchas
 
-- A persona id referenced in a team slot that doesn't resolve at launch time is skipped and reported as a failed slot (`unknown persona: <id>`). In a structured run that fails the launch; in a freeform run the coordinator is told. The Squad editor and list warn about it beforehand. See [Launch failures and warnings](#launch-failures-and-warnings).
+- A persona id referenced in a team slot that doesn't resolve at launch time is reported as `unknown persona: <id>`. A freeform launch with any such worker slot is refused. A structured CLI launch is refused only when every worker slot is unresolved; otherwise the unresolved slots are reported as failed slots and the coordinator is told. The Squad editor and list warn about it beforehand. See [Launch failures and warnings](#launch-failures-and-warnings).
 - The orchestrator's `initialPrompt` is delivered as a positional argv element to Claude — it runs as the first user turn.
 - Autonomous runs are **in-memory only**: restarting ZCC kills all active runs.
 - The 32-tab cap per team launch means a team with many high-quantity slots will be truncated.
