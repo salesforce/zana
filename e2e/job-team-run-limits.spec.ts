@@ -45,7 +45,7 @@ test('a run carries its Squad run limits into run detail and launches the roster
     if (await ownerModal.count()) await ownerModal.getByRole('button', { name: 'Close' }).click();
     await ctx.window.getByTestId('nav-agents').or(ctx.window.getByTestId('project-nav-agents')).click();
     await ctx.window.locator('.agent-card').filter({ hasText: 'Limits run' }).first().click();
-    await expect(ctx.window.getByTestId('execution-limits')).toContainText('up to 3 workers at once');
+    await expect(ctx.window.getByTestId('execution-limits')).toContainText('up to 3 sessions');
     await expect(ctx.window.getByTestId('execution-limits')).toContainText('claim stall 5');
   } catch (error) {
     if (ctx.projectId) ctx.diagnostics.push(`limits diag: ${JSON.stringify(await ctx.window.evaluate(async (projectId) => {

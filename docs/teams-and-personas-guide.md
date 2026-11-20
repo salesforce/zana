@@ -266,7 +266,7 @@ the default.
 
 | Limit | Allowed range | Default |
 | --- | --- | --- |
-| Concurrent workers (`maxConcurrent`) | 1 to 32 | 32 sessions |
+| Max sessions (`maxConcurrent`) | 1 to 32 | 32 sessions |
 | Claim wall-clock (minutes) | 1 minute to 24 hours | 20 minutes |
 | Claim stall (minutes) | 1 minute to 24 hours | 10 minutes |
 
@@ -275,9 +275,10 @@ values are clamped. The limits apply to runs started with **Launch** for that Sq
 run detail shows the effective values in a **Run limits** line. The claim stall limit also
 sets how long a claimed worker can show no turn before the no-turn warning fires.
 
-`maxConcurrent` caps the sessions the run may launch at once. Setting it below the number
-of worker slots can make some slots fail to launch, which follows the failed-slot rules
-above.
+**Max sessions** is a launch cap, not a throttle. It counts the coordinator plus every
+worker. A roster larger than the cap is refused at launch, and the limit does not queue
+workers or reduce how many are busy at once. To run fewer workers, define a Squad with
+fewer worker slots. Claim limits (wall-clock and stall) apply to every claimed unit.
 
 #### Launching from Settings
 

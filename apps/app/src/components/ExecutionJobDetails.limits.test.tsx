@@ -25,12 +25,12 @@ afterEach(cleanup);
 describe('ExecutionJobDetails run limits', () => {
   it('shows concurrency and both claim ceilings', async () => {
     mount({ maxConcurrent: 2, claimWallClockMs: 1_200_000, claimStallMs: 90_000 });
-    expect((await screen.findByTestId('execution-limits')).textContent).toBe('Run limits: up to 2 workers at once · claim wall-clock 20 min · claim stall 90 s');
+    expect((await screen.findByTestId('execution-limits')).textContent).toBe('Run limits: up to 2 sessions · claim wall-clock 20 min · claim stall 90 s');
   });
 
   it('omits ceilings the run was not given and hides the line without limits', async () => {
     const view = mount({ maxConcurrent: 32 });
-    expect((await screen.findByTestId('execution-limits')).textContent).toBe('Run limits: up to 32 workers at once');
+    expect((await screen.findByTestId('execution-limits')).textContent).toBe('Run limits: up to 32 sessions');
     view.unmount();
     mount();
     await screen.findByText('Stop Squad run');

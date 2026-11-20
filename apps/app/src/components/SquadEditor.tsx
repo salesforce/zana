@@ -333,7 +333,7 @@ function parseLimit(text: string, min: number, max: number): number | undefined 
 /** Why the limits can't be saved, or undefined when each field is blank (default) or an in-range whole number. */
 function limitsDraftProblem(draft: LimitsDraft): string | undefined {
   const c = TEAM_LIMIT_BOUNDS.maxConcurrent;
-  if (parseLimit(draft.maxConcurrent, c.min, c.max) === 'invalid') return `Concurrent workers must be a whole number from ${c.min} to ${c.max}.`;
+  if (parseLimit(draft.maxConcurrent, c.min, c.max) === 'invalid') return `Max sessions must be a whole number from ${c.min} to ${c.max}.`;
   if (parseLimit(draft.claimWallClockMin, LIMIT_MINUTES.wall.min, LIMIT_MINUTES.wall.max) === 'invalid') return `Claim wall-clock must be whole minutes from ${LIMIT_MINUTES.wall.min} to ${LIMIT_MINUTES.wall.max}.`;
   if (parseLimit(draft.claimStallMin, LIMIT_MINUTES.stall.min, LIMIT_MINUTES.stall.max) === 'invalid') return `Claim stall must be whole minutes from ${LIMIT_MINUTES.stall.min} to ${LIMIT_MINUTES.stall.max}.`;
   return undefined;
@@ -999,7 +999,7 @@ function TeamForm({
               min={TEAM_LIMIT_BOUNDS.maxConcurrent.min}
               max={TEAM_LIMIT_BOUNDS.maxConcurrent.max}
               placeholder="32"
-              aria-label="Concurrent workers"
+              aria-label="Max sessions"
               value={maxConcurrent}
               onChange={(event) => setMaxConcurrent(event.target.value)}
             />
@@ -1021,7 +1021,7 @@ function TeamForm({
             />
           </div>
           <p className="settings-help">
-            Concurrent workers (default and maximum 32), then the minutes one claimed unit may run (default 20) and may stay silent (default 10) before it is reclaimed. Leave a field blank to keep its default. Applies to runs started after saving.
+            Max sessions the run may open, counting the coordinator and every worker (default and maximum 32; a roster larger than this is refused at launch), then the minutes one claimed unit may run (default 20) and may stay silent (default 10) before it is reclaimed. Leave a field blank to keep its default. Applies to runs started after saving.
           </p>
           {limitsProblem && <p className="settings-help" role="alert" data-testid="team-run-limits-error">{limitsProblem}</p>}
         </div>

@@ -38,13 +38,13 @@ async function saveTeam() {
 describe('Squad editor run limits', () => {
   it('shows blank fields and saves no limits key for a Squad without them', async () => {
     render(<SquadEditor team={base} mode="edit" onClose={vi.fn()} />);
-    expect(field(/Concurrent workers/).value).toBe('');
+    expect(field(/Max sessions/).value).toBe('');
     expect(await saveTeam()).not.toHaveProperty('limits');
   });
 
   it('shows stored limits (claim limits in minutes) and round-trips them', async () => {
     render(<SquadEditor team={{ ...base, limits: { maxConcurrent: 4, claimWallClockMs: 1_800_000, claimStallMs: 300_000 } }} mode="edit" onClose={vi.fn()} />);
-    expect(field(/Concurrent workers/).value).toBe('4');
+    expect(field(/Max sessions/).value).toBe('4');
     expect(field(/wall-clock/).value).toBe('30');
     expect(field(/stall/).value).toBe('5');
     expect((await saveTeam()).limits).toEqual({ maxConcurrent: 4, claimWallClockMs: 1_800_000, claimStallMs: 300_000 });
@@ -52,7 +52,7 @@ describe('Squad editor run limits', () => {
 
   it('saves a typed value converted to milliseconds', async () => {
     render(<SquadEditor team={base} mode="edit" onClose={vi.fn()} />);
-    fireEvent.change(field(/Concurrent workers/), { target: { value: '6' } });
+    fireEvent.change(field(/Max sessions/), { target: { value: '6' } });
     fireEvent.change(field(/wall-clock/), { target: { value: '45' } });
     expect((await saveTeam()).limits).toEqual({ maxConcurrent: 6, claimWallClockMs: 2_700_000 });
   });
@@ -61,8 +61,8 @@ describe('Squad editor run limits', () => {
     render(<SquadEditor team={base} mode="edit" onClose={vi.fn()} />);
     const saveButton = screen.getByRole('button', { name: /Save/ }) as HTMLButtonElement;
     for (const [label, value, message] of [
-      [/Concurrent workers/, '33', /Concurrent workers must be/],
-      [/Concurrent workers/, '0', /Concurrent workers must be/],
+      [/Max sessions/, '33', /Max sessions must be/],
+      [/Max sessions/, '0', /Max sessions must be/],
       [/wall-clock/, '0', /wall-clock must be/],
       [/stall/, '1.5', /stall must be/]
     ] as const) {

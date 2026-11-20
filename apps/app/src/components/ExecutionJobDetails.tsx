@@ -35,7 +35,7 @@ function minutesLabel(ms: number): string {
 /** One-line effective run limits: concurrent workers plus any claim ceilings the run carries. */
 function limitsSummary(limits: NonNullable<ExecutionProjection['limits']>): string {
   return [
-    `up to ${limits.maxConcurrent} workers at once`,
+    `up to ${limits.maxConcurrent} sessions`,
     limits.claimWallClockMs === undefined ? undefined : `claim wall-clock ${minutesLabel(limits.claimWallClockMs)}`,
     limits.claimStallMs === undefined ? undefined : `claim stall ${minutesLabel(limits.claimStallMs)}`
   ].filter(Boolean).join(' · ');
