@@ -20,7 +20,7 @@
  * they must be the byte-exact sequence `extractLastOscTitle` parses. This is the
  * load-bearing detail; a wrong byte yields a title the classifier ignores.
  */
-import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -267,7 +267,8 @@ function presetBody(opts: FakeAgentOptions): string {
  * no re-asking the human. The test answers the question out-of-band via
  * `executionBoard.respond`.
  */
-export type JobTeamScenario = 'success' | 'unattended' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'kickoff-churn' | 'peer-handoff' | 'plan-correction' | 'plan-correction-silent' | 'api-error-nudge' | 'api-error-restart' | 'api-error-permanent' | 'no-route';
+export type JobTeamScenario = 'success' | 'unattended' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'kickoff-churn' | 'peer-handoff' | 'plan-correction' | 'plan-correction-silent' | 'api-error-nudge' | 'api-error-restart' | 'api-error-permanent' | 'no-route'
+  | 'worker-exit-1' | 'respawn-after-kill' | `spawn-throw-slot-${number}`;
 
 /** The behavior gates the generated coordinator script keys its behavior off. */
 interface JobTeamScenarioFlags {
@@ -283,6 +284,12 @@ interface JobTeamScenarioFlags {
   apiErrorRestart: boolean;
   apiErrorPermanent: boolean;
   noRoute: boolean;
+  /** Worker exits 1 on its first assignment. */
+  workerExit1: boolean;
+  /** First worker process holds its claim forever (so a spec can kill it); a respawned process completes normally. */
+  respawnAfterKill: boolean;
+  /** 1-based worker launch ordinal that dies at boot with 127 (exec-failure analogue); 0 = off. */
+  spawnThrowSlot: number;
 }
 
 /** Map a scenario name to the script's behavior flags (exactly one true, or none for 'success'). */
@@ -299,7 +306,10 @@ function resolveScenarioFlags(scenario?: JobTeamScenario): JobTeamScenarioFlags 
     apiErrorNudge: scenario === 'api-error-nudge',
     apiErrorRestart: scenario === 'api-error-restart',
     apiErrorPermanent: scenario === 'api-error-permanent',
-    noRoute: scenario === 'no-route'
+    noRoute: scenario === 'no-route',
+    workerExit1: scenario === 'worker-exit-1',
+    respawnAfterKill: scenario === 'respawn-after-kill',
+    spawnThrowSlot: Number(/^spawn-throw-slot-(\d+)$/.exec(scenario ?? '')?.[1] ?? 0)
   };
 }
 
@@ -421,6 +431,14 @@ const API_ERROR_PERMANENT = ${JSON.stringify(flags.apiErrorPermanent)};
 // coordinator blocker and wakes this coordinator, which logs the wake and EXITS without answering, so the
 // stale-blocker sweep escalates to the human (Inbox). A worker never receives the step.
 const NO_ROUTE = ${JSON.stringify(flags.noRoute)};
+// worker-exit-1: the worker takes its first assignment then exits 1 (crash mid-unit).
+const WORKER_EXIT_1 = ${JSON.stringify(flags.workerExit1)};
+// respawn-after-kill: the FIRST worker process holds its claim forever (a spec kills it and calls
+// respawn); any later process (marker file present) behaves as a normal completing worker.
+const RESPAWN_AFTER_KILL = ${JSON.stringify(flags.respawnAfterKill)};
+// spawn-throw-slot-N: the Nth worker process launched (counted via exclusive marker files beside this
+// script) dies at boot with 127, the observable shape of a failed exec. 0 = off.
+const SPAWN_THROW_SLOT = ${JSON.stringify(flags.spawnThrowSlot)};
 // Optional execution.start idle deadline (ms); null = engine default. Used by the blocked-wait E2E.
 const DEADLINE_MS = ${JSON.stringify(deadlineMs ?? null)};
 const APIERR = API_ERROR_NUDGE || API_ERROR_RESTART || API_ERROR_PERMANENT;
@@ -552,7 +570,7 @@ async function owner() {
     // CHURN and HANDOFF deliberately fall to the else branch below (1 coordinator
     // + 2 WORKER slots): the second worker slot is the untried peer that WS1
     // reassigns onto (CHURN) or that completes the re-dispatched unit (HANDOFF).
-    slots: STALLED || STREAMING || APIERR
+    slots: STALLED || STREAMING || APIERR || WORKER_EXIT_1 || RESPAWN_AFTER_KILL
       ? [
           { initialTask: 'Coordinate the durable execution.' },
           { initialTask: 'Run assigned work from the durable execution.' }
@@ -1122,7 +1140,37 @@ async function apiErrorWorker() {
   await new Promise(function () {});
 }
 
+// Claim an ordinal among worker launches; exclusive-create makes concurrent boots race-safe.
+function workerLaunchOrdinal() {
+  for (let n = 1; n < 1000; n++) {
+    try { fs.closeSync(fs.openSync(path.join(__dirname, 'worker-launch-' + n), 'wx')); return n; } catch (e) { if (e.code !== 'EEXIST') throw e; }
+  }
+  return 1000;
+}
+
 async function worker() {
+  if (SPAWN_THROW_SLOT) {
+    const ordinal = workerLaunchOrdinal();
+    log('worker launch ordinal', ordinal);
+    if (ordinal === SPAWN_THROW_SLOT) { log('spawn-throw: dying at boot'); process.exit(127); }
+  }
+  if (RESPAWN_AFTER_KILL) {
+    const marker = path.join(__dirname, 'respawn-first-worker');
+    let first = false;
+    try { fs.closeSync(fs.openSync(marker, 'wx')); first = true; } catch (e) { if (e.code !== 'EEXIST') throw e; }
+    log('respawn-after-kill: first=' + first);
+    if (first) return stalledWorker();
+  }
+  if (WORKER_EXIT_1) {
+    const ASSIGN = new RegExp('assigned work unit ' + BT + '([^' + BT + ']+)' + BT);
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', function (chunk) {
+      if (ASSIGN.test(String(chunk))) { log('worker-exit-1: exiting 1'); process.exit(1); }
+    });
+    process.stdin.resume();
+    setIdle();
+    await new Promise(function () {});
+  }
   if (HANDOFF) return handoffWorker();
   if (APIERR) return apiErrorWorker();
   if (STALLED || CHURN) return stalledWorker();
@@ -1252,6 +1300,37 @@ async function worker() {
   } catch (e) { log('fatal', String((e && e.stack) || e)); await hold(); }
 })();
 `;
+}
+
+/**
+ * Drop a persona JSON file into the isolated HOME's global persona store
+ * (`<home>/.zcc/personas/<id>.json`). Call before app launch, or follow with a reload,
+ * so the store picks it up. Pass `raw` to write a deliberately malformed file.
+ */
+export function dropPersonaFile(home: string, persona: { id: string } & Record<string, unknown>, raw?: string): string {
+  const dir = join(home, '.zcc', 'personas');
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${persona.id}.json`);
+  writeFileSync(file, raw ?? JSON.stringify({ name: persona.id, description: '', baseProfile: 'claude', permissionMode: 'default', systemPrompt: '', ...persona }, null, 2));
+  return file;
+}
+
+/**
+ * A fixture binary that cannot be exec'd (bad shebang interpreter, mode 0755), so a PTY spawn
+ * of it fails the way a missing/broken harness binary does. Caller owns cleanup.
+ */
+export function makeUnexecutableBinary(): FakeAgentBinary {
+  const dir = mkdtempSync(join(tmpdir(), 'zcc-unexec-'));
+  const path = join(dir, 'claude-unexec');
+  writeFileSync(path, '#!/nonexistent/zcc-interpreter\n');
+  chmodSync(path, 0o755);
+  return {
+    path,
+    dir,
+    cleanup() {
+      try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
+  };
 }
 
 export function makeJobTeamCoordinatorBinary(options: { scenario?: JobTeamScenario; deadlineMs?: number } = {}): FakeAgentBinary {
