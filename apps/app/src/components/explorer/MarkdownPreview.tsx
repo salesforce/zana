@@ -22,7 +22,7 @@ function previewUrlTransform(url: string, key: string): string {
 
 function documentImageComponent(documentPath: string): Components['img'] {
   return ({ src, alt, title }) => {
-    const raw = typeof src === 'string' ? src : '';
+    const raw = String(src); // react-markdown always passes a string src for an img (empty for `![]()`)
     const label = alt || 'Image';
     // Inline and remote images load as-is (CSP allows them); anything else is a
     // path next to the open file, read through the confined file API.

@@ -68,6 +68,12 @@ describe('MarkdownPreview images', () => {
     expect(screen.getByText('Missing diagram')).toBeTruthy();
   });
 
+  it('falls back to a generic label when an image has no alt text or source', () => {
+    renderDoc('![](https://example.com/b.png "Caption")\n\n![]()');
+    expect(screen.getByRole('img', { name: 'Image' }).getAttribute('title')).toBe('Caption');
+    expect(screen.getAllByText('Image').length).toBeGreaterThan(0);
+  });
+
   it('still finds text around a loaded image and keeps the image in the copied selection', async () => {
     const { container } = renderDoc('Before the figure\n\n![Logo](logo.png)\n\nAfter the figure');
     await screen.findByRole('img', { name: 'Logo' });
