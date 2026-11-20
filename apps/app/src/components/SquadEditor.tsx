@@ -516,7 +516,11 @@ function TeamForm({
   }, [allPersonas, slots, orchestratorPersonaId, personaById]);
 
   // Advisory only (never gates save): member personas whose legacy model the loaded provider catalog does not list.
-  const modelCatalog = useSyncExternalStore(subscribeThreadModelCatalog, getThreadModelCatalog);
+  const modelCatalog = useSyncExternalStore(
+    subscribeThreadModelCatalog,
+    getThreadModelCatalog,
+    getThreadModelCatalog,
+  );
   const unknownModels = useMemo(() => {
     const ids = new Set([...slots.map((s) => s.personaId), ...(orchestratorPersonaId ? [orchestratorPersonaId] : [])]);
     const members = [...ids].map((id) => personaById.get(id)).filter((p): p is Persona => !!p);
