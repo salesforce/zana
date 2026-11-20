@@ -3830,7 +3830,7 @@ export async function resolveSquadComposerPreview(input: Parameters<import('@zan
       const { declaredSquad: _declaredSquad, ...defaulting } = declarations.launch;
       if (Object.keys(defaulting).length) throw new Error('Correct the supplied plan before previewing its launch declarations');
     }
-    if (caller.kind !== 'window') throw new Error(plan.planError);
+    if (caller.kind !== 'window') throw new SquadPreviewAdmissionError(plan.planError);
   }
   const resolved = await resolveSquadLaunchOptions(project.id, { teamId: input.teamId, ...launchOptions, planLaunch: plan.launch });
   const preview = await resolveSquadLocationPreview(project, launchOptions, resolved);

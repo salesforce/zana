@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createTeamProductOps } from './team-product-ops.js';
+import { SquadPreviewAdmissionError } from './squad-proposals/service.js';
+import { NO_PLAN_STEPS_REASON, resolveSquadPlan } from './team-trigger-semantics.js';
 import type { ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
 
 function job(partial: Partial<ExecutionRecord> = {}): ExecutionRecord {
@@ -66,6 +68,53 @@ describe('createTeamProductOps', () => {
     expect(logError).toHaveBeenCalledWith('team preview project=p team=t', expect.any(Error));
     expect(logError.mock.calls[0]![0]).not.toContain('secret');
     expect(logError.mock.calls[0]![0]).not.toContain('token');
+  });
+  it('passes admission-error text through the preview response without logging it as a failure', async () => {
+    const logError = vi.fn();
+    const ops = createTeamProductOps({ resolvePreview: async () => { throw new SquadPreviewAdmissionError('no portable plan steps found'); }, startTeamJobFromUi: vi.fn(),
+      getExecution: vi.fn(), status: vi.fn(), stopJob: vi.fn(), respondToBlocker: vi.fn(), logError });
+    await expect(ops.preview!({ teamId: 't', projectId: 'p', goal: 'prose', mode: 'structured' })).resolves.toEqual({
+      ok: false, code: 'INVALID', message: 'no portable plan steps found'
+    });
+    expect(logError).not.toHaveBeenCalled();
+  });
+  it('keeps the generic message for a plain Error that mimics an admission message', async () => {
+    const ops = createTeamProductOps({ resolvePreview: async () => { throw Object.assign(new Error('ENOENT /private/internal'), { name: 'SquadPreviewAdmissionError' }); }, startTeamJobFromUi: vi.fn(),
+      getExecution: vi.fn(), status: vi.fn(), stopJob: vi.fn(), respondToBlocker: vi.fn() });
+    await expect(ops.preview!({ teamId: 't', projectId: 'p', goal: 'g', mode: 'structured' })).resolves.toMatchObject({
+      message: 'Launch preview could not validate the plan or target.'
+    });
+  });
+  it('parser planError text is path-free for every branch reachable without path-bearing input', () => {
+    const absolutePath = /(^|[\s"'(=:])(\/[\w.-]+\/|[A-Za-z]:[\\/]|~\/)/;
+    const step = (body: string) => `## Step a: Title\n${body}`;
+    const goals = [
+      'plain prose with no steps', '', '   ', '```squad-plan\n## Step a: T\n',
+      '## Step a: T\n- **Files:** x\n',
+      '## Step bad id!: T\n- **Work:** w\n',
+      '## Step a\n- **Work:** w\n',
+      '## Step a: \n- **Work:** w\n',
+      step('- **Bogus label:** x\n- **Work:** w\n'),
+      step('- **Work:** w\n- **On failure:** nonsense\n'),
+      step('- **Work:** w\n- **On failure:** retry zzz up to 2 with feedback\n'),
+      step('- **Work:** w\n- **Not same worker as:** nope\n'),
+      step('- **Work:** w\n- **Requires:** garbage\n'),
+      step('- **Work:** w\n- **Loop:** x\n'),
+      `${step('- **Work:** w\n')}\n## Launch\nUnknown: 1\n`,
+      `${step('- **Work:** w\n')}\n## Launch\nChecks: free text\n`
+    ];
+    let withError = 0;
+    for (const goal of goals) {
+      const plan = resolveSquadPlan('provided', [goal]);
+      if (!plan.planError) continue;
+      withError += 1;
+      expect(plan.planError).not.toMatch(absolutePath);
+      expect(plan.planError.length).toBeGreaterThan(0);
+    }
+    expect(withError).toBeGreaterThan(8);
+    expect(resolveSquadPlan('provided', ['no steps here']).planError).toBe('no executable steps found');
+    expect(resolveSquadPlan('provided', ['   ']).planError).toBe(NO_PLAN_STEPS_REASON);
+    expect(new SquadPreviewAdmissionError('a\u0000b\n'.padEnd(500, 'x')).message).toHaveLength(400);
   });
   it('forwards every explicit launch option without dropping false or empty values', async () => {
     const start = vi.fn(async () => ({ ok: true as const, value: { executionId: 'e', state: 'RUNNING' } }));
@@ -189,5 +238,19 @@ describe('createTeamProductOps', () => {
       ok: false,
       message: 'no open blocker to answer'
     });
+  });
+});
+
+describe('team status failure reason', () => {
+  it('returns failure for FAILED runs with a reason and omits it otherwise', async () => {
+    let record = job({ state: 'FAILED', failureReason: 'no portable plan steps found' });
+    const ops = createTeamProductOps({ startTeamJobFromUi: vi.fn(), getExecution: async () => record,
+      status: async () => record, stopJob: vi.fn(), respondToBlocker: vi.fn() });
+    expect(await ops.status('ex-1')).toMatchObject({ ok: true, value: { state: 'FAILED', failure: 'no portable plan steps found' } });
+    for (const next of [job({ state: 'FAILED' }), job({ state: 'RUNNING', failureReason: 'stale' })]) {
+      record = next;
+      const result = await ops.status('ex-1');
+      expect(result.ok && result.value).not.toHaveProperty('failure');
+    }
   });
 });
