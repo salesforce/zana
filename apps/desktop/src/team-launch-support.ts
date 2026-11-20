@@ -1,7 +1,7 @@
 import { deferredSeatsOf } from './on-demand-seat.js';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import type { LaunchProfileId, Persona, Project, Team, TeamJobLaunchResponse, TeamJobRenewedSources } from '@zana-ai/zcc-domain/product';
-import type { ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
+import type { ExecutionRecord, ResolvedModelSnapshotV1 } from '@zana-ai/zcc-server/services/execution/store';
 import type { InboxInput } from '@zana-ai/zcc-server/services/inbox/inbox-store';
 import { compatibleNativeRecoverySnapshots, nativeRecoveryLaunchSlot, type ModernSlotExpectation } from './team-native-recovery.js';
 
@@ -369,6 +369,23 @@ export function unknownPersonaMessage(personaId: string): string {
  * Admission refusal for a Squad whose worker personas are not in the live store. `safeMessage` names the
  * missing persona ids (control characters stripped, bounded) so the launch dialog can show them.
  */
+/**
+ * Launch admission's route facts for one resolved slot. Carries the slot's effective roles so a
+ * `Required role` step routes at launch exactly as it did in preview; the team slot label is the
+ * fallback when the snapshot has none.
+ */
+export function admissionSlotRouteFacts(model: ResolvedModelSnapshotV1, teamSlotLabel: string | undefined) {
+  const label = model.label ?? teamSlotLabel;
+  return {
+    slotId: model.slotId, personaId: model.personaId ?? '', provider: model.provider, model: model.model,
+    ...(label !== undefined ? { label } : {}),
+    ...(model.roles !== undefined ? { roles: model.roles } : {}),
+    level: model.level, roleOwnedModel: model.roleOwnedModel, capabilities: model.capabilities,
+    modalities: model.modalities, maxContextBytes: model.maxContextBytes, health: model.health,
+    observedAt: model.observedAt, maxAgeMs: model.maxAgeMs
+  };
+}
+
 export class UnknownPersonaError extends Error {
   readonly safeMessage: string;
   constructor(personaIds: readonly string[]) {

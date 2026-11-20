@@ -34,8 +34,9 @@ async function workerSessions(ctx: JobTeamContext): Promise<string[]> {
     (await window.cc.terminals.list(projectId)).filter((s) => s.cohort?.role === 'worker').map((s) => s.id), ctx.projectId!);
 }
 
-async function runLaunch(ctx: JobTeamContext, title: string, planning: 'provided' | 'infer', slots: unknown[]) {
-  writeFileSync(join(ctx.projectDir, '.e2e-plan.md'), SQUAD_WRITE_PLAN);
+async function runLaunch(ctx: JobTeamContext, title: string, planning: 'provided' | 'infer', slots: unknown[],
+  extra: { plan?: string; workerExtra?: Record<string, unknown> } = {}) {
+  writeFileSync(join(ctx.projectDir, '.e2e-plan.md'), extra.plan ?? SQUAD_WRITE_PLAN);
   writeFileSync(join(ctx.projectDir, '.e2e-proposal.json'), JSON.stringify({
     planPath: '.e2e-plan.md', observeExecutions: true,
     proposals: [{ tool: 'squad_launch', label: 'slots', input: {
@@ -44,7 +45,8 @@ async function runLaunch(ctx: JobTeamContext, title: string, planning: 'provided
     } }]
   }));
   const projectId = await launchJobTeamCliOwner(ctx, {
-    workerQuantity: 1, prompt: 'E2E launch Squad', teamExtra: { slots, defaultPlanning: planning }
+    workerQuantity: 1, prompt: 'E2E launch Squad', teamExtra: { slots, defaultPlanning: planning },
+    ...(extra.workerExtra ? { workerExtra: extra.workerExtra } : {})
   });
   await expect.poll(() => coordinatorResult(ctx, 'propose[slots]'), { timeout: 60_000, intervals: [500] }).not.toBeNull();
   return { projectId, result: coordinatorResult<{ executionId?: string }>(ctx, 'propose[slots]')! };
@@ -106,6 +108,20 @@ test('a Squad whose every worker slot is unresolved is refused at admission and 
     expect(result.error ?? '').toContain('ghost-persona-not-on-disk');
     expect((await ctx.window.evaluate((id) => window.cc.executionBoard.listProject(id), projectId)).executions).toHaveLength(0);
     expect(await workerSessions(ctx)).toEqual([]);
+  } catch (error) { throw jobTeamFailure(ctx, error); }
+  finally { await teardownJobTeam(ctx); }
+});
+
+test('a provided plan step with Required role routes at launch to an unlabeled slot whose persona offers that role', async ({ app }) => {
+  const ctx = createJobTeamContext(app, { tmpPrefix: 'failed-slots-persona-role-', scenario: 'stalled-worker' });
+  try {
+    // One seat only: the build-gated fault throws on the second seat of a row.
+    const plan = SQUAD_WRITE_PLAN.replace('- Work: Create output.txt.', '- Required role: engineer\n- Work: Create output.txt.');
+    const { projectId, result } = await runLaunch(ctx, 'Persona role route', 'provided', [{ personaId: 'e2e-worker', quantity: 1 }],
+      { plan, workerExtra: { roles: ['engineer'] } });
+    expect(result.ok, JSON.stringify(result)).not.toBe(false);
+    expect(JSON.stringify(result)).not.toContain('no qualified route');
+    await findJobExecutionId(ctx.window, projectId, 'Persona role route');
   } catch (error) { throw jobTeamFailure(ctx, error); }
   finally { await teardownJobTeam(ctx); }
 });

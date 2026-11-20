@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createDesktopNativeRecovery, findProposalExecution, gateInvalidProvidedPlan, recoverSquadStateAtBoot, runSpawnLifecycle, slotRecoveryLaunch,
   sweepUnretainedSquadWorktrees, teamAdmissionRequirements, splitProposedGoalSources, teamJobFailureResponse, withProposalLaunch,
-  allWorkersUnresolvedReasons, unknownPersonaMessage, UnknownPersonaError
+  allWorkersUnresolvedReasons, unknownPersonaMessage, UnknownPersonaError, admissionSlotRouteFacts
 } from '../team-launch-support.js';
 
 describe('withProposalLaunch', () => {
@@ -364,5 +364,29 @@ describe('UnknownPersonaError', () => {
     const odd = new UnknownPersonaError([`x\u0000\n${'y'.repeat(200)}`]);
     expect(odd.safeMessage).not.toMatch(/[\u0000-\u001f]/);
     expect(odd.safeMessage.length).toBeLessThan(260);
+  });
+});
+
+describe('admissionSlotRouteFacts', () => {
+  const base = { slotId: 'worker-1', personaId: 'builtin:software-engineer', provider: 'opencode', level: 'medium' as const };
+
+  it('keeps the slot roles so a Required role step routes at launch, not only in preview', async () => {
+    const { evaluateSlotEligibility } = await import('@zana-ai/zcc-server/services/execution/routing-policy');
+    const routing = { requiredRole: 'engineer', minimumLevel: 'medium' as const };
+    const facts = admissionSlotRouteFacts({ ...base, roles: ['engineer'] }, undefined);
+    expect(facts.roles).toEqual(['engineer']);
+    expect(evaluateSlotEligibility(routing, facts).status).toBe('PASS');
+    // Without the roles, an unlabeled slot offers only its persona id and the role is a hard miss.
+    const { roles: _dropped, ...withoutRoles } = facts;
+    expect(evaluateSlotEligibility(routing, withoutRoles).hardFailures).toContain('required role missing: engineer');
+  });
+
+  it('prefers the snapshot label, falls back to the team slot label, and omits absent fields', () => {
+    expect(admissionSlotRouteFacts({ ...base, label: 'Snap' }, 'Team').label).toBe('Snap');
+    expect(admissionSlotRouteFacts(base, 'Team').label).toBe('Team');
+    const bare = admissionSlotRouteFacts({ slotId: 's', provider: 'p' }, undefined);
+    expect(bare).not.toHaveProperty('label');
+    expect(bare).not.toHaveProperty('roles');
+    expect(bare.personaId).toBe('');
   });
 });

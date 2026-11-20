@@ -103,7 +103,7 @@ import {
   createDesktopNativeRecovery, gateInvalidProvidedPlan, recoverSquadStateAtBoot, runSpawnLifecycle, slotRecoveryLaunch,
   sweepUnretainedSquadWorktrees, teamAdmissionRequirements, teamJobFailureResponse, withProposalLaunch, findProposalExecution, type ProposalLaunchDeps,
   withRenewedSources, scopedSourceRenewal, splitProposedGoalSources,
-  allWorkersUnresolvedReasons, unknownPersonaMessage, UnknownPersonaError
+  allWorkersUnresolvedReasons, unknownPersonaMessage, UnknownPersonaError, admissionSlotRouteFacts
 } from './team-launch-support.js';
 import { warnUnknownPersonaModels } from './persona-model-check.js';
 import { modernRecoverySnapshot } from './team-native-recovery.js';
@@ -5907,7 +5907,7 @@ async function resolveTeamModelSnapshots(
   const personaSnapshot = personas.list();
   const missingPersonas = slots.filter((slot) => !personaSnapshot.some((candidate) => candidate.id === slot.personaId)).map((slot) => slot.personaId);
   if (missingPersonas.length > 0) throw new UnknownPersonaError(missingPersonas);
-   const verified = await verifyHarnesses(config);
+  const verified = await verifyHarnesses(config);
   const observedAt = Date.now();
   return Promise.all(slots.map(async (slot, index) => {
     const persona = personaSnapshot.find((candidate) => candidate.id === slot.personaId);
@@ -7919,11 +7919,7 @@ const squadExecutionService = new SquadExecutionService({
       onError: (source, error) => logMainError(`Team admission ${source} inventory failed`, error)
     });
     const slotRoutes = (request.resolvedModels ?? []).map((model) => ({
-      slotId: model.slotId, personaId: model.personaId ?? '', provider: model.provider, model: model.model,
-      label: team ? expandTeamSlots(team).find(slot => slot.slotId === model.slotId)?.label : undefined,
-      level: model.level, roleOwnedModel: model.roleOwnedModel, capabilities: model.capabilities,
-      modalities: model.modalities, maxContextBytes: model.maxContextBytes, health: model.health,
-      observedAt: model.observedAt, maxAgeMs: model.maxAgeMs,
+      ...admissionSlotRouteFacts(model, team ? expandTeamSlots(team).find(slot => slot.slotId === model.slotId)?.label : undefined),
       ...slotSkillAllowlistFact(team, personaSnapshot, model.personaId, model.slotId),
       ...slotMcpAllowlistFact(team, personaSnapshot, model.personaId, model.slotId,
         { provider: model.provider, remoteCli: team?.transport !== 'MODERN' && !!project?.remote })
