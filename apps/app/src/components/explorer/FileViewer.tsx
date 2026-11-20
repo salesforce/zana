@@ -245,7 +245,7 @@ export function FileViewer({
       <div className="explorer-viewer-monaco" ref={handleMonacoRef}>
         <ViewerBoundary key={showPreview ? 'preview' : showDiff ? 'diff' : 'editor'} resetKey={explorerFile}>
           {showPreview ? (
-            <MarkdownPreview content={editedContent ?? fileResult.content ?? ''} documentPath={explorerFile} fragment={fragment} onOpenDocument={onOpenDocument} />
+            <MarkdownPreview content={editedContent ?? fileResult.content ?? ''} documentPath={explorerFile} remote={isRemote} fragment={fragment} onOpenDocument={onOpenDocument} />
           ) : showDiff ? (
             headLoading || !headResult ? (
               <div className="explorer-viewer-empty">
