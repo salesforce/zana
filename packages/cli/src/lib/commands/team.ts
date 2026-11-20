@@ -73,17 +73,18 @@ async function resolvePlanFile(file: string): Promise<{ ok: true; planText: stri
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   try {
     handle = await open(resolve(file), 'r');
-    const buffer = Buffer.alloc(TEAM_PLAN_TEXT_MAX_CHARS + 1);
+    const maxBytes = TEAM_PLAN_TEXT_MAX_CHARS * 4;
+    const buffer = Buffer.alloc(maxBytes + 1);
     let total = 0;
     while (total < buffer.length) {
       const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total);
       if (bytesRead === 0) break;
       total += bytesRead;
     }
-    if (total > TEAM_PLAN_TEXT_MAX_CHARS) {
-      return { ok: false, result: errResult(`plan file '${file}' exceeds ${TEAM_PLAN_TEXT_MAX_CHARS} bytes`, 2) };
-    }
+    const tooLong = errResult(`plan file '${file}' exceeds ${TEAM_PLAN_TEXT_MAX_CHARS} characters`, 2);
+    if (total > maxBytes) return { ok: false, result: tooLong };
     const planText = buffer.subarray(0, total).toString('utf8').trim();
+    if (planText.length > TEAM_PLAN_TEXT_MAX_CHARS) return { ok: false, result: tooLong };
     if (!planText) return { ok: false, result: errResult(`plan file '${file}' is empty`, 2) };
     return { ok: true, planText };
   } catch (error) {

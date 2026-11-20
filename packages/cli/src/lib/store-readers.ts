@@ -6,7 +6,7 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { personaFileDropReason, PERSONA_DROP_REASON_TEXT } from '@zana-ai/zcc-domain/persona-validation';
+import { parsePersonaFileContent, PERSONA_DROP_REASON_TEXT } from '@zana-ai/zcc-domain/persona-validation';
 import type {
   Project,
   Persona,
@@ -86,9 +86,10 @@ export function readPersonas(
       const path = join(globalDir, file);
       try {
         const content = readFileSync(path, 'utf-8');
-        const reason = personaFileDropReason(content);
+        const parsed = parsePersonaFileContent(content);
+        const reason = parsed.reason;
         if (!reason) {
-          personas.push({ ...JSON.parse(content), source: 'user' });
+          personas.push({ ...parsed.value, source: 'user' } as unknown as Persona);
         } else {
           warnings.push(`personas/${file}: ${PERSONA_DROP_REASON_TEXT[reason]}, skipped`);
         }
@@ -108,12 +109,13 @@ export function readPersonas(
       const path = join(projDir, file);
       try {
         const content = readFileSync(path, 'utf-8');
-        const reason = personaFileDropReason(content);
+        const parsed = parsePersonaFileContent(content);
+        const reason = parsed.reason;
         if (!reason) {
           personas.push({
-            ...JSON.parse(content),
+            ...parsed.value,
             source: { projectId: project.id, projectName: project.name }
-          });
+          } as unknown as Persona);
         } else {
           warnings.push(`${project.name}/personas/${file}: ${PERSONA_DROP_REASON_TEXT[reason]}, skipped`);
         }

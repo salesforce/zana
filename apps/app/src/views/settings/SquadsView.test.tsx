@@ -9,7 +9,7 @@ vi.mock('@/store', () => ({
 vi.mock('@/lib/windowScope', () => ({ getScopedProjectId: () => null }));
 vi.mock('@/components/SquadEditor', () => ({ SquadEditor: () => null }));
 
-import { runTeamLaunchExclusive, menuIndexForKey, menuTabIndex } from '@/views/settings/SquadsView';
+import { menuIndexForKey, menuTabIndex } from '@/views/settings/SquadsView';
 
 describe('SquadsPanel project menu keyboard navigation', () => {
   it('supports arrows plus Home and End with wrapping', () => {
@@ -25,25 +25,3 @@ describe('SquadsPanel project menu keyboard navigation', () => {
   });
 });
 
-describe('SquadsPanel launch guard', () => {
-  it('suppresses a concurrent launch and permits another after completion', async () => {
-    const inFlight = { current: false };
-    let releaseFirst!: () => void;
-    const firstPending = new Promise<void>((resolve) => { releaseFirst = resolve; });
-    const launch = vi.fn().mockReturnValueOnce(firstPending).mockResolvedValueOnce(undefined);
-
-    const first = runTeamLaunchExclusive(inFlight, launch);
-    const duplicate = runTeamLaunchExclusive(inFlight, launch);
-
-    await expect(duplicate).resolves.toBeUndefined();
-    expect(launch).toHaveBeenCalledTimes(1);
-    expect(inFlight.current).toBe(true);
-
-    releaseFirst();
-    await first;
-    expect(inFlight.current).toBe(false);
-
-    await runTeamLaunchExclusive(inFlight, launch);
-    expect(launch).toHaveBeenCalledTimes(2);
-  });
-});

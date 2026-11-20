@@ -28,6 +28,8 @@ describe('SquadEditor unresolved persona warning', () => {
     render(<SquadEditor team={mk(['a', 'ghost', 'ghost'], 'lost')} mode="edit" onClose={vi.fn()} />);
     const warn = screen.getByTestId('team-unresolved-persona-warning');
     expect(warn.textContent).toContain('Unknown persona: lost, ghost.');
+    expect(warn.textContent).toMatch(/refused before anything starts.*names the missing personas/);
+    expect(warn.textContent).not.toMatch(/skips these slots/);
     expect((screen.getByRole('button', { name: /Save/ }) as HTMLButtonElement).disabled).toBe(false);
     save.mockResolvedValue({ ok: true, value: { name: 'S' } });
     fireEvent.click(screen.getByRole('button', { name: /Save/ }));

@@ -71,6 +71,7 @@ export function sanitizeTeam(raw: unknown): Team | null {
   if (typeof r.name !== 'string' || !r.name.trim()) return null;
   if (!Array.isArray(r.slots)) return null;
 
+  const limits = sanitizeTeamLimits(r.limits);
   const slots: TeamSlot[] = [];
   for (const s of r.slots.slice(0, TEAM_SLOTS_PER_TEAM_MAX)) {
     if (!s || typeof s !== 'object') continue;
@@ -116,7 +117,7 @@ export function sanitizeTeam(raw: unknown): Team | null {
     ...(r.leanWorkers === true ? { leanWorkers: true } : {}),
     defaultPlanning: r.defaultPlanning === 'infer' || r.defaultPlanning === 'provided' ? r.defaultPlanning : undefined,
     launchApproval: isLaunchApproval(r.launchApproval) ? r.launchApproval : undefined,
-    ...(sanitizeTeamLimits(r.limits) ? { limits: sanitizeTeamLimits(r.limits) } : {}),
+    ...(limits ? { limits } : {}),
     isDefault: r.isDefault === true ? true : undefined
   };
 }

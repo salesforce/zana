@@ -103,4 +103,81 @@ describe('reopenExitedWorker', () => {
     await expect(store.bindDeferredWorker(id, '1:v:0', { sessionId: 's2', authorizationId: 'a2', delivery: 'bound-at-spawn' })).rejects.toThrow(/not waiting/);
     expect(await store.claimWorkerRunning(id, '1:v:0')).toBe(false);
   });
+
+  const bindArgs = (n: string) => ({ sessionId: `s-${n}`, authorizationId: `a-${n}`, delivery: 'bound-at-spawn' as const });
+  const seatOf = async (store: Awaited<ReturnType<typeof open>>['store'], id: string, slot: string) =>
+    (await store.get(id))!.workers.find((w) => w.slotId === slot)!;
+  const reload = async (id: string, dir: string) => createTeamLifecycleStore({ filePath: join(dir, 'lifecycle.json') }).get(id);
+
+  it('persists the reopened, rebound and running seat across a store reload (normal seat)', async () => {
+    const { store, id } = await open();
+    const dir = dirs[dirs.length - 1]!;
+    await store.updateWorker(id, '1:v:0', { process: 'running' } as never);
+    await store.updateWorker(id, '1:v:0', { process: 'exited', exitCode: 3, exitReason: 'boom' } as never);
+    expect(await seatOf(store, id, '1:v:0')).toMatchObject({ capacityReleased: true });
+    await store.reopenExitedWorker(id, '1:v:0');
+    const waiting = (await reload(id, dir))!.workers.find((w) => w.slotId === '1:v:0')!;
+    expect(waiting).toMatchObject({ process: 'authorized', onDemand: true, respawned: 'normal', capacityReleased: false });
+    expect(waiting.sessionId).toBeUndefined();
+    expect(waiting.exitReason).toBeUndefined();
+    await store.claimDeferredSpawn(id, '1:v:0');
+    await store.bindDeferredWorker(id, '1:v:0', bindArgs('2'));
+    await store.claimWorkerRunning(id, '1:v:0');
+    const persisted = (await reload(id, dir))!;
+    const seat = persisted.workers.find((w) => w.slotId === '1:v:0')!;
+    expect(seat).toMatchObject({ sessionId: 's-2', authorizationId: 'a-2', process: 'running', capacityReleased: false });
+    expect(seat.onDemand).toBeUndefined();
+    expect(seat.respawned).toBeUndefined();
+    expect(persisted.launchResult.workers.find((w) => w.slotId === '1:v:0')).toMatchObject({ sessionId: 's-2', authorizationId: 'a-2' });
+    expect(persisted.capacity?.launched).toBe(1);
+  });
+
+  it('persists the reopened, rebound and running seat across a store reload (on-demand seat)', async () => {
+    const { store, id } = await open();
+    const dir = dirs[dirs.length - 1]!;
+    await store.claimDeferredSpawn(id, '0:w:0');
+    await store.bindDeferredWorker(id, '0:w:0', bindArgs('late'));
+    await store.claimWorkerRunning(id, '0:w:0');
+    await store.updateWorker(id, '0:w:0', { process: 'exited' } as never);
+    await store.reopenExitedWorker(id, '0:w:0');
+    expect(await seatOf(store, id, '0:w:0')).toMatchObject({ onDemand: true, respawned: 'on-demand', capacityReleased: false });
+    await store.claimDeferredSpawn(id, '0:w:0');
+    await store.bindDeferredWorker(id, '0:w:0', bindArgs('again'));
+    await store.claimWorkerRunning(id, '0:w:0');
+    const seat = (await reload(id, dir))!.workers.find((w) => w.slotId === '0:w:0')!;
+    expect(seat).toMatchObject({ sessionId: 's-again', authorizationId: 'a-again', process: 'running', onDemand: true, capacityReleased: false });
+    expect(seat.respawned).toBeUndefined();
+  });
+
+  it('reopens a spawn-failed respawn again and again without taking extra capacity', async () => {
+    const { store, id } = await open();
+    await store.updateWorker(id, '1:v:0', { process: 'running' } as never);
+    await store.updateWorker(id, '1:v:0', { process: 'exited' } as never);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      expect(await store.reopenExitedWorker(id, '1:v:0')).toMatchObject({ ok: true });
+      expect(await store.claimDeferredSpawn(id, '1:v:0')).toBeTruthy();
+      await store.failDeferredSeat(id, '1:v:0', `attempt ${attempt} failed`);
+      expect(await seatOf(store, id, '1:v:0')).toMatchObject({ process: 'spawn-failed', capacityReleased: true, exitReason: `attempt ${attempt} failed`, respawned: 'normal' });
+    }
+    const record = (await store.get(id))!;
+    expect(record.capacity?.launched).toBe(1);
+    expect(record.launchResult.workers.filter((w) => w.slotId === '1:v:0')).toHaveLength(1);
+    await store.reopenExitedWorker(id, '1:v:0');
+    await store.claimDeferredSpawn(id, '1:v:0');
+    await store.bindDeferredWorker(id, '1:v:0', bindArgs('ok'));
+    expect(await store.claimWorkerRunning(id, '1:v:0')).toBe(true);
+    expect((await store.get(id))!.capacity?.launched).toBe(1);
+  });
+
+  it('cancel between reopen and claim leaves the waiting seat canceled and unbindable', async () => {
+    const { store, id } = await open();
+    await store.updateWorker(id, '1:v:0', { process: 'running' } as never);
+    await store.updateWorker(id, '1:v:0', { process: 'exited' } as never);
+    await store.reopenExitedWorker(id, '1:v:0');
+    await store.cancel(id);
+    expect(await seatOf(store, id, '1:v:0')).toMatchObject({ process: 'canceled', capacityReleased: true });
+    expect(await store.claimDeferredSpawn(id, '1:v:0')).toBeFalsy();
+    await expect(store.bindDeferredWorker(id, '1:v:0', bindArgs('x'))).rejects.toThrow(/not waiting/);
+    expect(await store.reopenExitedWorker(id, '1:v:0')).toEqual({ ok: false, reason: 'closing' });
+  });
 });

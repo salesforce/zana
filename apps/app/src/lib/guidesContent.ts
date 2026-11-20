@@ -121,7 +121,8 @@ its questions in the Inbox.
 If a Persona file has a mistake (for example an unknown permission mode), Zana
 ignores the file and lists it, with the reason, under **Settings > Personas**. A
 Squad slot that names an ignored or missing Persona is flagged in the Squad editor
-and list, and at launch that slot is skipped and reported.
+and list. A launch with any such slot is refused before anything starts, and the
+error names the missing Personas; fix or remove the slot in **Settings > Squads**.
 
 If a worker exits with an error, its card stays on the Agents board until you
 dismiss it, the run shows a warning with the exit code, and you can press

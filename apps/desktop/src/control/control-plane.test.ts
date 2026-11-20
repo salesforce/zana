@@ -635,6 +635,14 @@ describe('dispatchOp', () => {
     expect(preview).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects a non-string planText instead of dropping it', async () => {
+    const deps = makeDeps();
+    for (const op of ['team.preview', 'team.launch'] as const) {
+      expect(await dispatchOp(op, { teamId: 't1', projectId: 'p1', goal: 'ship', mode: 'structured', planText: 5 }, deps))
+        .toMatchObject({ ok: false, code: 'BAD_ARGS' });
+    }
+  });
+
   it('forwards planText to preview and launch and rejects an over-cap one', async () => {
     const deps = makeDeps();
     const preview = vi.fn(async () => ({ ok: true as const, value: { previewToken: 'opaque' } } as never));

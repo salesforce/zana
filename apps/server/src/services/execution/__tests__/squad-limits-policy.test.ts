@@ -61,6 +61,14 @@ describe('withSquadLimits', () => {
     await limited.start('o', 'p', undefined);
     expect(calls[2][2]).toBeUndefined();
   });
+  it('rejects (not throws synchronously) when the limits lookup throws, and does not start', async () => {
+    const { service } = make();
+    const limited = withSquadLimits(service, () => { throw new Error('teams unreadable'); });
+    let pending: Promise<unknown> | undefined;
+    expect(() => { pending = limited.start('o', 'p', { teamId: 't1' }); }).not.toThrow();
+    await expect(pending).rejects.toThrow('teams unreadable');
+    expect(service.start).not.toHaveBeenCalled();
+  });
   it('binds other members to the real service', () => {
     const { service } = make();
     const limited = withSquadLimits(service, () => undefined);

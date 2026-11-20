@@ -813,8 +813,10 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       if (!record) throw new Error(`unknown team lifecycle record "${safeRecordId}"`);
       const releasedAuthorizationIds: string[] = [];
       if (record.state !== 'cancel-pending') return { record: clone(record), releasedAuthorizationIds };
+      let changed = false;
       for (const worker of record.workers) {
         if (terminalProcesses.has(worker.process) || worker.sessionId !== undefined) continue;
+        changed = true;
         worker.process = 'canceled';
         if (worker.transport === 'MODERN') worker.bindingState = 'TERMINAL';
         if (!worker.capacityReleased) {
@@ -822,7 +824,8 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
           releasedAuthorizationIds.push(worker.authorizationId);
         }
       }
-      if (record.workers.every((worker) => terminalProcesses.has(worker.process))) record.state = 'canceled';
+      if (record.workers.every((worker) => terminalProcesses.has(worker.process))) { record.state = 'canceled'; changed = true; }
+      if (!changed) return { record: clone(record), releasedAuthorizationIds };
       record.revision += 1;
       record.updatedAt = now();
       persist(snapshot.state, snapshot.hash);
@@ -1347,7 +1350,12 @@ export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOpt
           const isLive = opts.isLiveSession(worker.sessionId);
           let closed = false;
           if (isLive === true) {
-            try { closed = await opts.closeSession(worker.sessionId); } catch { closed = false; }
+            try { closed = await opts.closeSession(worker.sessionId); } catch (error) {
+              closed = false;
+              console.warn('[team-lifecycle] closeSession failed; worker stays pending cancellation', {
+                recordId: record.id, slotId: worker.slotId, sessionId: worker.sessionId, error
+              });
+            }
           }
           if (isLive === true && closed && !alreadyClosing) {
             closeRequested.add(worker.sessionId);

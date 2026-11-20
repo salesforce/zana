@@ -52,6 +52,17 @@ describe('worker exit warnings', () => {
     expect(onRunWarning).toHaveBeenCalledWith(expect.objectContaining({ id: record.id }), { slotId: 'slot-1', summary: warn?.summary, kind: 'worker-exit' });
   }));
 
+  it('warns once per exited session across repeated claim-recovery calls', async () => fixture(async (filePath) => {
+    const { store, record } = await runningWithClaim(filePath, () => 1_000);
+    const onRunWarning = vi.fn();
+    const svc = service(filePath, store, [exited({ exitCode: 1 })], { onRunWarning });
+    await svc.recoverExitedWorker(record.id, 'slot-1');
+    await svc.recoverExitedWorker(record.id, 'slot-1');
+    expect(onRunWarning).toHaveBeenCalledTimes(1);
+    const events = (await store.eventsInProject('project-1', record.id)).events;
+    expect(events.filter((e) => e.severity === 'warning' && e.slotId === 'slot-1')).toHaveLength(1);
+  }));
+
   it('reports a signal-only exit', async () => fixture(async (filePath) => {
     const { store, record } = await runningWithClaim(filePath, () => 1_000);
     const onRunWarning = vi.fn();

@@ -520,11 +520,11 @@ export function parsePersona(content: string): { persona: Persona | null; reason
     const reason = personaDropReason(raw);
     if (reason) return { persona: null, reason };
     const sanitized = sanitizePersona(raw);
-    if (!sanitized) return { persona: null, reason: 'not_an_object' };
+    if (!sanitized) return { persona: null, reason: 'invalid_persona' };
     const migrated = migratePersonaIfNeeded(sanitized);
     return { persona: projectPersonaFields(migrated) };
   } catch {
-    return { persona: null, reason: 'not_an_object' };
+    return { persona: null, reason: 'invalid_persona' };
   }
 }
 
@@ -650,10 +650,11 @@ export class PersonaStore extends EventEmitter {
     for (const entry of orderedCatalogSources(this.projectsRef(), this.remoteSources(), this.projectOrder?.())) {
       if (entry.kind === 'remote') {
         const source = entry.source;
-        for (const record of source.records) {
-          const value = parsePersona(record).persona;
+        source.records.forEach((record, index) => {
+          const { persona: value, reason } = parsePersona(record);
           if (value) merged.set(value.id, { ...value, source: { projectId: source.projectId, projectName: source.projectName } });
-        }
+          else if (reason) pushPersonaWarning(warnings, { file: `${source.projectName}#${index + 1}`.slice(0, 80), source: 'project', reason });
+        });
         continue;
       }
       const project = entry.project;

@@ -316,6 +316,7 @@ export function jobCoordinatorPrompt(input: {
       'The engine starts a new session for each unit it assigns to these seats. Do not message them; assign work to their slots as normal.'
     ].join('\n')
   ].filter(Boolean).join('\n\n');
+  const failedSlots = failedSlotsBlock(input.failedSlots);
   const tierBlock = tierRosterBlock(input.roster);
   const hasSources = sources.length > 0;
   const authoringBlock = input.planReady ? '' : [rosterBlock(toTeamSummary(input.team, input.personaById)), routingGrammarBlock({ enforced: input.team.routingEnforced === true })].join('\n\n');
@@ -335,7 +336,7 @@ export function jobCoordinatorPrompt(input: {
     `You are coordinator of Team "${input.team.name}"${input.executionId ? ` for execution \`${input.executionId}\`` : ''}. Your coordinator identity, execution binding, and worker roster are already host-bound. Do not discover, register, recover, or replace them during normal kickoff.`,
     `Workers are already running:\n${rosterLines.join('\n') || (waiting.length ? '- No workers are running yet.' : '- No workers.')}`,
     ...(waitingBlock ? [waitingBlock] : []),
-    ...(failedSlotsBlock(input.failedSlots) ? [failedSlotsBlock(input.failedSlots)] : []),
+    ...(failedSlots ? [failedSlots] : []),
     ...(tierBlock ? [tierBlock] : []),
     ...(authoringBlock ? [authoringBlock] : []),
     ...(input.recoveryResume ? [

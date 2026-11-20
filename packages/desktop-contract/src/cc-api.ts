@@ -1148,6 +1148,8 @@ export interface CcApi {
   config: {
     get(): Promise<AppConfig>;
     set(patch: Partial<AppConfig>): Promise<AppConfig>;
+    /** Appends one exited-worker session id to `dismissedWorkerExits`. Main does the read-modify-write and applies the retention cap, so concurrent windows never overwrite each other. */
+    dismissWorkerExit(sessionId: string): Promise<AppConfig>;
     /** Opens the native folder chooser and trusts the picked folder for read-only preview. `config` is null when cancelled or refused; `error` explains a refusal (for example the 20-folder cap). */
     addTrustedPreviewFolder(): Promise<{ config: AppConfig | null; error?: string }>;
     /** Stops trusting one stored folder. Never deletes files. */

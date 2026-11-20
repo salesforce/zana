@@ -41,8 +41,9 @@ export function withSquadLimits<S extends object & { start: (callerPrincipalId: 
   return new Proxy(service, {
     get(target, prop) {
       if (prop === 'start') {
-        return (callerPrincipalId: string, projectId: string, request: { teamId?: string; policy?: ExecutionPolicyV1 }, opts?: unknown) => {
+        return async (callerPrincipalId: string, projectId: string, request: { teamId?: string; policy?: ExecutionPolicyV1 }, opts?: unknown) => {
           const teamId = typeof request?.teamId === 'string' ? request.teamId : undefined;
+          // async: a throwing lookup rejects the promise (fail closed: never launch wider than the Squad allows).
           const policy = teamId === undefined ? request?.policy : clampPolicyToSquadLimits(request?.policy, teamLimits(teamId));
           return target.start(callerPrincipalId, projectId, policy === request?.policy ? request : { ...request, policy }, opts);
         };

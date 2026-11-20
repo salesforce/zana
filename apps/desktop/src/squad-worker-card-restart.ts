@@ -106,7 +106,10 @@ export async function restartSquadWorkerCard(
   }
   if (session.status === 'exited') {
     // An exited seat has no live session to relaunch: it is given a new one through the respawn path.
-    const respawned = await deps.respawnExited(record.id, cohort.slotId).catch(() => ({ ok: false as const, message: 'the worker could not be restarted' }));
+    const respawned = await deps.respawnExited(record.id, cohort.slotId).catch((error: unknown) => {
+      console.error(`[main] squad worker card restart: respawn of exited slot ${cohort.slotId} (record ${record.id}) failed`, error);
+      return { ok: false as const, message: 'the worker could not be restarted' };
+    });
     return respawned.ok ? { ok: true } : { ok: false, reason: 'worker-exited', message: safeMessage(respawned.message) };
   }
   const result = await deps.restart(session.id, { maySpawn: async () => !await deps.launchIsClosing(record.id) });

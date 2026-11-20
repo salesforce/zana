@@ -291,4 +291,34 @@ describe('single Stop on a BLOCKED run', () => {
     expect(stopped).toMatchObject({ ok: true, value: { state: 'FAILED' } });
     service.dispose();
   }));
+
+  it('status reconcile to FAILED does not wait for the session-close settle loop', async () => fixture(async (filePath) => {
+    const pending = { ok: true, value: { canceledSessionIds: [], pendingSessionIds: ['w'], lifecycleState: 'cancel-pending' } };
+    const cancel = vi.fn(async () => pending);
+    let lifecycle: unknown = { workers: failedSlotsLifecycle.workers };
+    const sleep = vi.fn(() => new Promise<void>(() => undefined));
+    const service = new ExecutionService(deps(filePath, { getTeamLaunch: async () => lifecycle as never, cancelTeamLaunch: cancel as Cancel, cancelSettle: { attempts: 4, intervalMs: 300, sleep } }));
+    await service.start('session-1', 'project-1', request);
+    lifecycle = failedSlotsLifecycle;
+    // sleep never resolves: status only returns if it does not await the settle wait.
+    expect((await service.status('session-1', 'project-1', 'execution-1'))?.state).toBe('FAILED');
+    expect(cancel).toHaveBeenCalledTimes(1);
+    service.dispose();
+  }));
+
+  it('Stop reports STOP_INCOMPLETE, not ok, when STOPPED cannot be written after bounded retries', async () => fixture(async (filePath) => {
+    const d = deps(filePath);
+    const service = new ExecutionService(d);
+    await service.start('session-1', 'project-1', request);
+    const record = (await service.status('session-1', 'project-1', 'execution-1'))!;
+    const realTransition = d.store.transition.bind(d.store);
+    const spy = vi.spyOn(d.store, 'transition').mockImplementation(async (id, version, to, severity, summary) => {
+      if (to === 'STOPPED') throw new Error('stale execution state');
+      return realTransition(id, version, to, severity, summary);
+    });
+    const result = await service.stop('session-1', 'project-1', 'execution-1', record.stateVersion);
+    expect(result).toMatchObject({ ok: false, code: 'STOP_INCOMPLETE' });
+    expect(spy.mock.calls.filter((call) => call[2] === 'STOPPED')).toHaveLength(8);
+    service.dispose();
+  }));
 });

@@ -90,7 +90,9 @@ test('zcc team launch --dry-run --plan-file works for a >8192 byte plan and repo
       if (!session?.id) throw new Error(JSON.stringify(result));
       return session.id as string;
     }, projectId);
-    await win.waitForTimeout(4_000);
+    // Readiness signal: the shell must execute a command before the real script is sent.
+    await win.evaluate(({ id, line }) => window.cc.terminals.write(id, line), { id: sessionId, line: `echo ready > ${out}/shell-ready\r` });
+    await expect.poll(() => existsSync(join(out, 'shell-ready')), { timeout: 30_000, message: 'shell PTY never became ready' }).toBe(true);
     await win.evaluate(({ id, line }) => window.cc.terminals.write(id, line), { id: sessionId, line: `sh ${out}/run.sh\r` });
     await expect.poll(() => existsSync(join(out, 'done')), { timeout: 120_000, message: 'shell never finished the CLI script' }).toBe(true);
 

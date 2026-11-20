@@ -1065,6 +1065,37 @@ describe('team lifecycle integration', () => {
       expect(await integration.cancelTeamLaunch('principal-a', 'request-1')).toMatchObject({ canceledSessionIds: ['session-1'], pendingSessionIds: [] });
     }));
 
+    it('logs a thrown close with record, slot, session and error, and the worker stays pending', async () => fixture(async (filePath) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const failure = new Error('kill refused');
+        const { integration, store, recordId } = await runningLaunch(filePath, { live: true }, async () => { throw failure; });
+        expect(await integration.cancelTeamLaunch('principal-a', 'request-1'))
+          .toMatchObject({ canceledSessionIds: [], pendingSessionIds: ['session-1'], lifecycleState: 'cancel-pending' });
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('closeSession failed'), expect.objectContaining({
+          recordId, sessionId: 'session-1', slotId: expect.any(String), error: failure
+        }));
+        expect((await store.get(recordId))?.state).toBe('cancel-pending');
+      } finally { warn.mockRestore(); }
+    }));
+
+    it('repeated cancel with nothing to finish does not bump the revision or rewrite the state file', async () => fixture(async (filePath) => {
+      const { integration, store, recordId } = await runningLaunch(filePath, { live: true }, async () => true);
+      await integration.cancelTeamLaunch('principal-a', 'request-1');
+      const before = (await store.get(recordId))!;
+      const fileBefore = await readFile(filePath, 'utf8');
+      const result = await store.finishSessionlessWorkers(recordId);
+      expect(result.releasedAuthorizationIds).toEqual([]);
+      for (let i = 0; i < 3; i += 1) {
+        await integration.cancelTeamLaunch('principal-a', 'request-1');
+        await store.finishSessionlessWorkers(recordId);
+      }
+      const after = (await store.get(recordId))!;
+      expect(after.revision).toBe(before.revision);
+      expect(after.updatedAt).toBe(before.updatedAt);
+      expect(await readFile(filePath, 'utf8')).toBe(fileBefore);
+    }));
+
     it('a session that was closing and then vanished without an exit event is finished on the next cancel', async () => fixture(async (filePath) => {
       const liveness = { live: true };
       const { integration, store, recordId } = await runningLaunch(filePath, liveness);

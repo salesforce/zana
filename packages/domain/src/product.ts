@@ -5260,6 +5260,10 @@ export interface TeamLimits {
   claimStallMs?: number;
 }
 
+/** Defaults a Squad run uses when `claimWallClockMs` / `claimStallMs` are absent (mirrors the execution service). */
+export const DEFAULT_CLAIM_WALL_CLOCK_MS = 20 * 60_000;
+export const DEFAULT_CLAIM_STALL_MS = 10 * 60_000;
+
 /** Inclusive bounds {@link sanitizeTeamLimits} enforces; the editor shows the same ranges. */
 export const TEAM_LIMIT_BOUNDS = {
   maxConcurrent: { min: 1, max: 32 },

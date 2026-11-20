@@ -800,6 +800,9 @@ export async function dispatchOp(
       const mode = args.mode === 'structured' || args.mode === 'freeform' ? args.mode : undefined;
       const title = str(args.title);
       const summary = str(args.summary);
+      if (args.planText !== undefined && typeof args.planText !== 'string') {
+        return { ok: false, code: 'BAD_ARGS', message: 'planText must be a string' };
+      }
       const planText = str(args.planText);
       if (!teamId || teamId.length > TEAM_ID_MAX_CHARS || !projectId || projectId.length > TEAM_ID_MAX_CHARS || !goal || !mode) {
         return { ok: false, code: 'BAD_ARGS', message: 'teamId, projectId, goal, and mode are required' };

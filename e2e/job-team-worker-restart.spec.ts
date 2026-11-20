@@ -19,7 +19,7 @@ test('Restart on a Squad worker keeps its slot and execution; non-workers are re
     const projectId = await launchSquadFixture(ctx, [{ label: 'restart', input: { mode: 'now', title: 'Restart run' } }]);
     const executionId = await findJobExecutionId(ctx.window, projectId, 'Restart run');
     const list = () => ctx.window.evaluate(async (projectId) => (await window.cc.terminals.list(projectId)).map((s) => ({
-      id: s.id, role: s.cohort?.role, slotId: s.cohort?.slotId, executionId: s.cohort?.executionId
+      id: s.id, pid: s.pid, createdAt: s.createdAt, status: s.status, role: s.cohort?.role, slotId: s.cohort?.slotId, executionId: s.cohort?.executionId
     })), projectId);
     await expect.poll(async () => (await list()).filter((s) => s.role === 'worker').length, { timeout: 60_000 }).toBe(1);
     const before = (await list()).find((s) => s.role === 'worker')!;
@@ -28,10 +28,17 @@ test('Restart on a Squad worker keeps its slot and execution; non-workers are re
     const result = await ctx.window.evaluate((id) => window.cc.terminals.restartSquadWorker(id), before.id);
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
 
+    // Restart relaunches the worker process. Main may reuse the session id, so the proof of a real
+    // restart is that the old process/launch is gone: a different id, or (same id) a new pid and
+    // creation time on a running session. The old launch must no longer be listed as live.
+    const isOld = (s: Awaited<ReturnType<typeof list>>[number]) =>
+      s.id === before.id && s.pid === before.pid && s.createdAt === before.createdAt;
     await expect.poll(async () => {
       const workers = (await list()).filter((s) => s.role === 'worker');
-      return workers.length === 1 ? { slotId: workers[0].slotId, executionId: workers[0].executionId } : workers.length;
-    }, { timeout: 60_000 }).toEqual({ slotId: before.slotId, executionId });
+      return { count: workers.length, oldLaunchLive: workers.some(isOld), running: workers.every((s) => s.status === 'running') };
+    }, { timeout: 60_000 }).toEqual({ count: 1, oldLaunchLive: false, running: true });
+    const after = (await list()).filter((s) => s.role === 'worker');
+    expect({ slotId: after[0].slotId, executionId: after[0].executionId }).toEqual({ slotId: before.slotId, executionId });
 
     // The orchestrator is not a worker, and an unknown id is not a session at all.
     const orchestrator = (await list()).find((s) => s.role === 'orchestrator')!;

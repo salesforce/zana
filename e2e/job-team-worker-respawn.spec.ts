@@ -5,7 +5,7 @@
  * `execution.worker.respawn` MCP call) to respawn the slot. The new session keeps the slot, role
  * and execution; the third respawn of one slot is refused (cap 2).
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect } from './fixtures/app.js';
 import {
@@ -51,10 +51,13 @@ test('coordinator respawns an ended worker slot twice and refuses the third resp
       const [live] = (await workers(ctx, projectId, executionId)).filter((w) => w.slotId === victim);
       if (live) await ctx.window.evaluate((id) => window.cc.terminals.close(id), live.id);
       await expect.poll(async () => (await workers(ctx, projectId, executionId)).filter((w) => w.slotId === victim).length, { timeout: 30_000 }).toBe(0);
-      writeFileSync(join(runDir, '.e2e-respawn.json'), JSON.stringify({ slotId: victim }));
       const label = `respawn[${victim}]`;
-      const seen = (readFileSync(join(runDir, '.fake-coordinator.log'), 'utf8').match(new RegExp(`respawn\\[${victim}\\] \\{`, 'g')) ?? []).length;
-      await expect.poll(() => (readFileSync(join(runDir, '.fake-coordinator.log'), 'utf8').match(new RegExp(`respawn\\[${victim}\\] \\{`, 'g')) ?? []).length,
+      // Capture the response count BEFORE the request file exists, so a fast reply cannot be missed.
+      const logPath = join(runDir, '.fake-coordinator.log');
+      const seen = existsSync(logPath)
+        ? (readFileSync(logPath, 'utf8').match(new RegExp(`respawn\\[${victim}\\] \\{`, 'g')) ?? []).length : 0;
+      writeFileSync(join(runDir, '.e2e-respawn.json'), JSON.stringify({ slotId: victim }));
+      await expect.poll(() => ((existsSync(logPath) ? readFileSync(logPath, 'utf8') : '').match(new RegExp(`respawn\\[${victim}\\] \\{`, 'g')) ?? []).length,
         { timeout: 30_000, message: `respawn call ${n}` }).toBe(seen + 1);
       const lines = readFileSync(join(runDir, '.fake-coordinator.log'), 'utf8').split('\n').filter((l) => l.includes(`${label} {`));
       return JSON.parse(lines.at(-1)!.slice(lines.at(-1)!.indexOf(`${label} `) + label.length + 1)) as { ok: boolean; error?: string };

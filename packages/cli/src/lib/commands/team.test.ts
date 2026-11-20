@@ -240,12 +240,26 @@ describe('team launch plan file and dry run', () => {
   it.each([
     ['missing file', () => '/nonexistent/dir/plan.md', 'cannot read plan file'],
     ['empty file', () => planFile('  \n'), 'is empty'],
-    ['over-cap file', () => planFile('x'.repeat(64_001)), 'exceeds 64000 bytes']
+    ['over-cap file', () => planFile('x'.repeat(64_001)), 'exceeds 64000 characters'],
+    ['over-cap multibyte file', () => planFile('é'.repeat(64_001)), 'exceeds 64000 characters'],
+    ['over-read-bound file', () => planFile('x'.repeat(256_001)), 'exceeds 64000 characters']
   ])('fails with exit 2 and no network call for %s', async (_name, file, message) => {
     const result = await runCli([...base, '--plan-file', file()], { fetchImpl: router({}) });
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain(message);
     expect(result.stderr).not.toContain('unmocked');
+  });
+
+  it('accepts a non-ASCII plan under the character cap even when it is over the byte cap', async () => {
+    const plan = 'é'.repeat(64_000);
+    expect(Buffer.byteLength(plan)).toBeGreaterThan(64_000);
+    const seen: Record<string, any> = {};
+    const result = await runCli([...base, '--plan-file', planFile(plan)], { fetchImpl: router({
+      'POST /api/v1/teams/preview': body => { seen.preview = body; return trustedPreview; },
+      'POST /api/v1/teams/launch': launched
+    }) });
+    expect(result.exitCode).toBe(0);
+    expect(seen.preview.planText).toBe(plan);
   });
 
   it('accepts a plan file exactly at the cap', async () => {

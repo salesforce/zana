@@ -3,6 +3,18 @@ import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
+const dropHook = vi.hoisted(() => ({ forceSecond: false }));
+vi.mock('@zana-ai/zcc-domain/persona-validation', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@zana-ai/zcc-domain/persona-validation')>();
+  return {
+    ...actual,
+    personaDropReason: (raw: unknown, opts?: { strictReasoning?: boolean }) => {
+      if (dropHook.forceSecond && opts?.strictReasoning) return 'invalid_reasoning_level';
+      return actual.personaDropReason(raw, opts);
+    }
+  };
+});
+
 // Mock electron before importing the store
 const testHome = join(tmpdir(), `persona-store-test-${Date.now()}`);
 vi.mock('electron', () => ({
@@ -832,6 +844,33 @@ describe('PersonaStore load warnings', () => {
     store.start();
     expect(store.loadWarnings()).toEqual([{ file: 'bad.json', source: 'user', reason }]);
     expect(store.list().some((p) => p.id === 'a')).toBe(false);
+  });
+
+  it('reports invalid_persona (not not_an_object) when normalization fails after validation', () => {
+    dropHook.forceSecond = true;
+    try {
+      expect(parsePersona(JSON.stringify({ id: 'a', name: 'A' }))).toEqual({ persona: null, reason: 'invalid_persona' });
+    } finally {
+      dropHook.forceSecond = false;
+    }
+  });
+
+  it('warns about unparseable remote project persona records with a bounded identifier', () => {
+    const remote = new PersonaStore(
+      () => [],
+      undefined,
+      () => [{ projectId: 'r1', projectName: 'R'.repeat(200), records: [JSON.stringify({ id: 'ok', name: 'Ok' }), '{ nope', '[]'] }]
+    );
+    try {
+      remote.start();
+      const warnings = remote.loadWarnings();
+      expect(warnings).toHaveLength(2);
+      expect(warnings.map((w) => w.reason)).toEqual(['malformed_json', 'not_an_object']);
+      expect(warnings.every((w) => w.source === 'project' && w.file.length <= 80)).toBe(true);
+      expect(remote.list().some((p) => p.id === 'ok')).toBe(true);
+    } finally {
+      remote.stop();
+    }
   });
 
   it('accepts an unknown reasoningLevel by ignoring the field', () => {

@@ -812,8 +812,8 @@ export function boundFailedWorkerSlots(slots: readonly unknown[]): ExecutionFail
   return slots.slice(0, MAX_REPORTED_FAILED_SLOTS).map((slot) => {
     const value = slot && typeof slot === 'object' ? slot as { slotId?: unknown; reason?: unknown } : {};
     return {
-      slotId: typeof value.slotId === 'string' && value.slotId ? boundReason(value.slotId, 120) : 'unknown slot',
-      reason: typeof value.reason === 'string' && value.reason ? boundReason(value.reason, SLOT_REASON_MAX) : 'unknown reason'
+      slotId: (typeof value.slotId === 'string' ? boundReason(value.slotId, 120) : '') || 'unknown slot',
+      reason: (typeof value.reason === 'string' ? boundReason(value.reason, SLOT_REASON_MAX) : '') || 'unknown reason'
     };
   });
 }

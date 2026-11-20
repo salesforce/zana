@@ -18,6 +18,19 @@ function deps(over: Partial<SquadWorkerCardRestartDeps> = {}): SquadWorkerCardRe
   };
 }
 
+describe('restartSquadWorkerCard respawn failure', () => {
+  it('logs the respawn error with record and slot ids and returns the fixed message', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const boom = new Error('boom');
+    const d = deps({ getSession: () => ({ ...session, status: 'exited' }) as never, respawnExited: vi.fn(async () => { throw boom; }) });
+    const out = await restartSquadWorkerCard(d, 's1');
+    expect(out).toMatchObject({ ok: false, reason: 'worker-exited' });
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining('slot1'), boom);
+    expect(spy.mock.calls[0][0]).toContain('r1');
+    spy.mockRestore();
+  });
+});
+
 describe('restartSquadWorkerCard', () => {
   it('restarts a live worker bound to its slot', async () => {
     const d = deps();

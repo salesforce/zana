@@ -293,7 +293,7 @@ zcc team stop <id>
 ```
 
 `--plan-file <path>` supplies the plan as a separate document, read locally by the
-CLI and sent as `planText` (at most 64,000 bytes; the goal keeps its 4,000-character
+CLI and sent as `planText` (at most 64,000 characters; the goal keeps its 4,000-character
 cap). It defaults `--mode` to `structured`, and combining it with `--mode freeform`
 exits 2. `planText` is parsed only as plan content: paths inside it are never scanned
 as goal execution sources. `--dry-run` runs the trusted preview and prints the resolved

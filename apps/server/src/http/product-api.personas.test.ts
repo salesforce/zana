@@ -32,7 +32,7 @@ describe('GET /api/v1/personas', () => {
 });
 
 describe('readPersonaDiagnostics', () => {
-  it('covers project dirs, missing dirs, unreadable entries and the cap', () => {
+  it('covers project dirs, missing dirs, unreadable entries and the cap', async () => {
     const root = mkdtempSync(join(tmpdir(), 'persona-diag-'));
     try {
       const data = join(root, 'data');
@@ -41,15 +41,15 @@ describe('readPersonaDiagnostics', () => {
       mkdirSync(join(proj, '.zcc', 'personas', 'dir.json'));
       for (let i = 0; i < PERSONA_LOAD_WARNINGS_MAX + 10; i++) writeFileSync(join(proj, '.zcc', 'personas', `b${i}.json`), '[]');
       writeFileSync(join(proj, '.zcc', 'personas', 'note.txt'), 'ignored');
-      const none = readPersonaDiagnostics(data, [join(root, 'missing')]);
+      const none = await readPersonaDiagnostics(data, [join(root, 'missing')]);
       expect(none).toEqual({ personas: [], warnings: [] });
-      const result = readPersonaDiagnostics(data, [proj]);
+      const result = await readPersonaDiagnostics(data, [proj]);
       expect(result.personas).toEqual([]);
       expect(result.warnings).toHaveLength(PERSONA_LOAD_WARNINGS_MAX);
       expect(result.warnings.every((w) => w.source === 'project')).toBe(true);
       const small = mkdtempSync(join(root, 's-'));
       mkdirSync(join(small, '.zcc', 'personas', 'dir.json'), { recursive: true });
-      expect(readPersonaDiagnostics(data, [small]).warnings).toEqual([{ file: 'dir.json', source: 'project', reason: 'unreadable_file' }]);
+      expect((await readPersonaDiagnostics(data, [small])).warnings).toEqual([{ file: 'dir.json', source: 'project', reason: 'unreadable_file' }]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -763,6 +763,7 @@ const api: CcApi = {
   config: {
     get: () => ipcRenderer.invoke(IPC.config.get),
     set: (patch) => ipcRenderer.invoke(IPC.config.set, patch),
+    dismissWorkerExit: (sessionId) => ipcRenderer.invoke(IPC.config.dismissWorkerExit, sessionId),
     addTrustedPreviewFolder: () => ipcRenderer.invoke(IPC.config.addTrustedPreviewFolder),
     removeTrustedPreviewFolder: (path) => ipcRenderer.invoke(IPC.config.removeTrustedPreviewFolder, path),
     onChanged: (cb) => {

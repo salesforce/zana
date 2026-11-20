@@ -1094,10 +1094,10 @@ function persistAgentsBoardView(view: AgentsBoardView) {
 // Matches the config store's retention cap for AppConfig.dismissedWorkerExits.
 const DISMISSED_WORKER_EXITS_CAP = 200;
 
-// Fire-and-forget write of the dismissed exited-worker list. The config store is the serialized
-// writer; the renderer always sends the whole (already capped) list, so the last write wins.
-function persistDismissedWorkerExits(ids: string[]) {
-  product.config.set({ dismissedWorkerExits: ids }).catch(() => {});
+// Fire-and-forget: only the dismissed id crosses IPC. Main appends under its serialized config
+// writer and applies the retention cap, so a second window's dismissal is never overwritten.
+function persistDismissedWorkerExit(sessionId: string) {
+  product.config.dismissWorkerExit(sessionId).catch(() => {});
 }
 
 // Per-project debounced git refresh. Terminal output is high-frequency, so
@@ -1226,7 +1226,7 @@ export const useUi = create<UiState>((set, get) => ({
     if (current.includes(sessionId)) return;
     const next = [...current, sessionId].slice(-DISMISSED_WORKER_EXITS_CAP);
     set({ dismissedWorkerExits: next });
-    persistDismissedWorkerExits(next);
+    persistDismissedWorkerExit(sessionId);
   },
   mobileAgentsBoardView: null,
   explorerFile: {},

@@ -184,6 +184,7 @@ export const IPC = {
   config: {
     get: 'config:get',
     set: 'config:set',
+    dismissWorkerExit: 'config:dismissWorkerExit',
     addTrustedPreviewFolder: 'config:addTrustedPreviewFolder',
     removeTrustedPreviewFolder: 'config:removeTrustedPreviewFolder',
     /** Broadcast to EVERY window after a `config:set` so other windows

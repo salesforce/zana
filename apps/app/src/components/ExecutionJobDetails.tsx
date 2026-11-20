@@ -28,7 +28,7 @@ const JOB_DETAILS_EVENT_TAIL = 25;
 
 type ExecutionProjection = ExecutionBoardSnapshot['execution'];
 
-function minutesLabel(ms: number): string {
+function durationLabel(ms: number): string {
   return ms % 60_000 === 0 ? `${ms / 60_000} min` : `${Math.round(ms / 1_000)} s`;
 }
 
@@ -36,8 +36,8 @@ function minutesLabel(ms: number): string {
 function limitsSummary(limits: NonNullable<ExecutionProjection['limits']>): string {
   return [
     `up to ${limits.maxConcurrent} sessions`,
-    limits.claimWallClockMs === undefined ? undefined : `claim wall-clock ${minutesLabel(limits.claimWallClockMs)}`,
-    limits.claimStallMs === undefined ? undefined : `claim stall ${minutesLabel(limits.claimStallMs)}`
+    limits.claimWallClockMs === undefined ? undefined : `claim wall-clock ${durationLabel(limits.claimWallClockMs)}`,
+    limits.claimStallMs === undefined ? undefined : `claim stall ${durationLabel(limits.claimStallMs)}`
   ].filter(Boolean).join(' · ');
 }
 

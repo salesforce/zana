@@ -50,6 +50,29 @@ describe('Squad editor run limits', () => {
     expect((await saveTeam()).limits).toEqual({ maxConcurrent: 4, claimWallClockMs: 1_800_000, claimStallMs: 300_000 });
   });
 
+  it('rounds non-whole-minute stored limits so the Squad stays saveable, and clamps to bounds', async () => {
+    render(<SquadEditor team={{ ...base, limits: { claimWallClockMs: 90_000, claimStallMs: 100_000 } }} mode="edit" onClose={vi.fn()} />);
+    expect(field(/wall-clock/).value).toBe('2');
+    expect(field(/stall/).value).toBe('2');
+    expect((screen.getByRole('button', { name: /Save/ }) as HTMLButtonElement).disabled).toBe(false);
+    expect((await saveTeam()).limits).toEqual({ claimWallClockMs: 120_000, claimStallMs: 120_000 });
+  });
+
+  it('clamps an out-of-range stored limit into the bounds', () => {
+    render(<SquadEditor team={{ ...base, limits: { claimWallClockMs: 1_000, claimStallMs: 999_999_999_999 } }} mode="edit" onClose={vi.fn()} />);
+    expect(field(/wall-clock/).value).toBe('1');
+    expect(field(/stall/).value).toBe('1440');
+  });
+
+  it('sources placeholders and max from shared constants', () => {
+    render(<SquadEditor team={base} mode="edit" onClose={vi.fn()} />);
+    expect(field(/Max sessions/).placeholder).toBe('32');
+    expect(field(/wall-clock/).placeholder).toBe('20');
+    expect(field(/stall/).placeholder).toBe('10');
+    expect(field(/wall-clock/).max).toBe('1440');
+    expect(field(/stall/).max).toBe('1440');
+  });
+
   it('saves a typed value converted to milliseconds', async () => {
     render(<SquadEditor team={base} mode="edit" onClose={vi.fn()} />);
     fireEvent.change(field(/Max sessions/), { target: { value: '6' } });

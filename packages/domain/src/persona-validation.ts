@@ -22,7 +22,8 @@ export const PERSONA_DROP_REASONS = [
   'invalid_reasoning_level',
   'invalid_execution_state',
   'invalid_harness_routing',
-  'invalid_skills'
+  'invalid_skills',
+  'invalid_persona'
 ] as const;
 
 export type PersonaDropReason = (typeof PERSONA_DROP_REASONS)[number];
@@ -46,7 +47,8 @@ export const PERSONA_DROP_REASON_TEXT: Readonly<Record<PersonaDropReason, string
   invalid_reasoning_level: 'Unknown "reasoningLevel"',
   invalid_execution_state: 'Unknown "executionState"',
   invalid_harness_routing: 'Invalid "harnessRouting"',
-  invalid_skills: 'Invalid "skills"'
+  invalid_skills: 'Invalid "skills"',
+  invalid_persona: 'Persona could not be normalized'
 };
 
 /** A persona file the loader ignored. `file` is a basename only. */
@@ -115,11 +117,11 @@ export function personaDropReason(raw: unknown, opts: { strictReasoning?: boolea
   const r = raw as Partial<Persona>;
   if (typeof r.id !== 'string' || !r.id.trim()) return 'missing_id';
   if (typeof r.name !== 'string' || !r.name.trim()) return 'missing_name';
-  if (r.baseProfile && !(VALID_PROFILES as readonly string[]).includes(r.baseProfile)) return 'invalid_base_profile';
+  if (isSet(r.baseProfile) && !(VALID_PROFILES as readonly string[]).includes(r.baseProfile)) return 'invalid_base_profile';
   if (r.model !== undefined && typeof r.model !== 'string') return 'invalid_model';
-  if (r.permissionMode && !VALID_PERMISSION_MODES.includes(r.permissionMode)) return 'invalid_permission_mode';
-  if (r.codexSandbox && !['read-only', 'workspace-write', 'danger-full-access'].includes(r.codexSandbox)) return 'invalid_codex_sandbox';
-  if (r.codexApproval && !['untrusted', 'on-request', 'never'].includes(r.codexApproval)) return 'invalid_codex_approval';
+  if (isSet(r.permissionMode) && !VALID_PERMISSION_MODES.includes(r.permissionMode)) return 'invalid_permission_mode';
+  if (isSet(r.codexSandbox) && !['read-only', 'workspace-write', 'danger-full-access'].includes(r.codexSandbox)) return 'invalid_codex_sandbox';
+  if (isSet(r.codexApproval) && !['untrusted', 'on-request', 'never'].includes(r.codexApproval)) return 'invalid_codex_approval';
   if (r.modelLevel !== undefined && (typeof r.modelLevel !== 'string' || !VALID_MODEL_LEVELS.includes(r.modelLevel))) return 'invalid_model_level';
   if (opts.strictReasoning && r.reasoningLevel !== undefined
     && (typeof r.reasoningLevel !== 'string' || !(PERSONA_REASONING_LEVELS as readonly string[]).includes(r.reasoningLevel))) {
@@ -131,15 +133,34 @@ export function personaDropReason(raw: unknown, opts: { strictReasoning?: boolea
   return null;
 }
 
-/** Reason for a raw persona file's text, or null when it loads. Never throws. */
-export function personaFileDropReason(content: string): PersonaDropReason | null {
+/**
+ * Optional enum fields: `null` and `""` have always loaded as "unset", so existing files keep
+ * loading. Any other present value (including `false` or `0`) must be a valid option.
+ */
+function isSet<T>(value: T | null | undefined): value is T {
+  return value !== undefined && value !== null && value !== '';
+}
+
+/**
+ * Parse a raw persona file once: the parsed object when accepted, otherwise the
+ * fixed drop reason. Never throws.
+ */
+export function parsePersonaFileContent(content: string):
+  | { reason: null; value: Record<string, unknown> }
+  | { reason: PersonaDropReason; value: null } {
   let raw: unknown;
   try {
     raw = JSON.parse(content);
   } catch {
-    return 'malformed_json';
+    return { reason: 'malformed_json', value: null };
   }
-  return personaDropReason(raw);
+  const reason = personaDropReason(raw);
+  return reason ? { reason, value: null } : { reason: null, value: raw as Record<string, unknown> };
+}
+
+/** Reason for a raw persona file's text, or null when it loads. Never throws. */
+export function personaFileDropReason(content: string): PersonaDropReason | null {
+  return parsePersonaFileContent(content).reason;
 }
 
 /** Append a warning, enforcing the list cap. */

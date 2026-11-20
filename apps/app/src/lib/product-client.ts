@@ -286,6 +286,15 @@ function httpProduct(): Pick<
         });
         return body.config;
       },
+      // Remote clients have no append endpoint; read-modify-write is the best available.
+      dismissWorkerExit: async (sessionId: string) => {
+        const current = (await apiJson<{ config: AppConfig }>('/config')).config.dismissedWorkerExits ?? [];
+        const body = await apiJson<{ config: AppConfig }>('/config', {
+          method: 'PATCH',
+          body: JSON.stringify({ dismissedWorkerExits: current.includes(sessionId) ? current : [...current, sessionId] })
+        });
+        return body.config;
+      },
       // Folder trust is granted only through the desktop chooser.
       addTrustedPreviewFolder: async () => ({
         config: null,

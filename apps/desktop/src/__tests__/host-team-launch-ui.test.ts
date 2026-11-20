@@ -245,6 +245,13 @@ describe('startTeamJobFromUi launches', () => {
       .toMatchObject({ ok: false, code: 'LAUNCH_CHANGED' });
   });
 
+  it('accepts a preview token when planText has surrounding whitespace', async () => {
+    const previewInput = input({ coordinationMode: 'freeform', planText: '  1. do the thing\n' });
+    const preview = await resolveSquadComposerPreview(previewInput, { kind: 'window', windowId: 41 });
+    expect(await startTeamJobFromUi({ ...previewInput, planText: '1. do the thing', previewToken: preview.previewToken }, { windowId: 41 }))
+      .not.toMatchObject({ code: 'LAUNCH_CHANGED' });
+  });
+
   it('rejects remote preview options that cannot be reviewed on this host', async () => {
     h.projects = [{ id: 'p1', name: 'Remote', path: projectDir, hostId: 'other-host', remote: { host: 'ssh-box' } }];
     await expect(resolveSquadComposerPreview(input({ coordinationMode: 'freeform', worktree: true }), { kind: 'window', windowId: 7 }))

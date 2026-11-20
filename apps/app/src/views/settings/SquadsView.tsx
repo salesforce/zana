@@ -78,18 +78,6 @@ export function menuIndexForKey(key: string, current: number, count: number): nu
 export function menuTabIndex(index: number, activeIndex: number): 0 | -1 {
   return index === activeIndex ? 0 : -1;
 }
-export async function runTeamLaunchExclusive<T>(
-  inFlight: { current: boolean },
-  launch: () => Promise<T>
-): Promise<T | undefined> {
-  if (inFlight.current) return undefined;
-  inFlight.current = true;
-  try {
-    return await launch();
-  } finally {
-    inFlight.current = false;
-  }
-}
 function tabCount(team: Team): number {
   return team.slots.reduce((sum, s) => sum + Math.max(1, Math.min(TEAM_SLOT_MAX, s.quantity ?? 1)), 0);
 }
@@ -383,9 +371,7 @@ function TeamRow({
     return [...new Set(ids)];
   }, [allPersonas, team.slots, team.orchestratorPersonaId]);
   const [picking, setPicking] = useState(false);
-  const [launching, setLaunching] = useState(false);
   const [activeMenuIndex, setActiveMenuIndex] = useState(0);
-  const launchInFlightRef = useRef(false);
   const pickerRef = useRef<HTMLDivElement>(null);
   const launchButtonRef = useRef<HTMLButtonElement>(null);
   const menuItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -458,14 +444,7 @@ function TeamRow({
   // Click → launch straight away when there's no real choice (scoped window, or
   // a single project); otherwise open the picker so the user names the project.
   const runLaunch = async (projectId: string) => {
-    await runTeamLaunchExclusive(launchInFlightRef, async () => {
-      setLaunching(true);
-      try {
-        await onLaunch(projectId);
-      } finally {
-        setLaunching(false);
-      }
-    });
+    await onLaunch(projectId);
   };
 
   const onLaunchClick = () => {
@@ -551,12 +530,11 @@ function TeamRow({
             type="button"
             className="settings-btn primary team-row-launch"
             onClick={onLaunchClick}
-            disabled={launching}
             aria-haspopup={launchTargets.length > 1 ? 'menu' : undefined}
             aria-expanded={launchTargets.length > 1 ? picking : undefined}
             aria-label={`Launch ${team.name}`}
           >
-            <Play size={12} /> {'Launch'}
+            <Play size={12} /> Launch
           </button>
           {picking && (
           <div
@@ -581,7 +559,6 @@ function TeamRow({
                 role="menuitem"
                 tabIndex={menuTabIndex(index, activeMenuIndex)}
                 className="team-launch-menu-item"
-                disabled={launching}
                 onClick={() => {
                   setPicking(false);
                   launchButtonRef.current?.focus();

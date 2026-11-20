@@ -484,6 +484,36 @@ describe('launch fence (Stop racing Restart)', () => {
     expect(await result).toMatchObject({ ok: false, reason: 'run-closing' });
     expect(deps.launchAuthorizedTerminal).not.toHaveBeenCalled();
   });
+  it('retries closing the unbound new session once and succeeds quietly', async () => {
+    vi.useFakeTimers();
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const closeSession = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('tmux busy')).mockResolvedValue(undefined);
+    const deps = makeDeps({ closeSession });
+    const restarter = createSquadWorkerRestarter(deps);
+    const result = restarter.restart('w1', { maySpawn: vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false) });
+    restarter.onSessionExit('w1', vi.fn(async () => {}));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await result).toMatchObject({ ok: false, reason: 'run-closing' });
+    expect(closeSession).toHaveBeenCalledTimes(3);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+  it('logs run and session ids when the unbound new session cannot be closed after a retry', async () => {
+    vi.useFakeTimers();
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const closeSession = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValue(new Error('tmux gone'));
+    const deps = makeDeps({ closeSession });
+    const restarter = createSquadWorkerRestarter(deps);
+    const result = restarter.restart('w1', { maySpawn: vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false) });
+    restarter.onSessionExit('w1', vi.fn(async () => {}));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await result).toMatchObject({ ok: false, reason: 'run-closing' });
+    expect(closeSession).toHaveBeenCalledTimes(3);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(String(spy.mock.calls[0][0])).toContain('e1');
+    expect(String(spy.mock.calls[0][0])).toContain('w1');
+    spy.mockRestore();
+  });
   it('relaunches normally while the fence stays open', async () => {
     vi.useFakeTimers();
     const deps = makeDeps();

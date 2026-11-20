@@ -195,12 +195,10 @@ live session is left behind.
 
 **Unresolved personas.** A slot whose persona id does not resolve (missing file, or a
 file ignored for the reasons above) is reported as `unknown persona: <id>`. The Squad
-editor warns about it at save time and the Squad list shows a badge. At launch, a
-freeform launch (CLI or Modern) with any unresolved worker slot is refused before
-anything opens. A structured launch on the CLI transport is refused only when every
-worker slot is unresolved; with a partial miss the resolved slots start and the others
-are reported as failed slots as above.
-Modern Squads do not apply that refusal.
+editor warns about it at save time and the Squad list shows a badge. A launch with any
+unresolved worker slot is refused at admission before anything starts, in both structured
+and freeform modes; the error names the missing personas. Fix or remove the slot in
+**Settings > Squads**.
 
 **Unknown model.** A persona whose legacy `model` string is not in the harness's static
 model catalog gets an advisory notice at save (Squad editor) and at launch (an Inbox

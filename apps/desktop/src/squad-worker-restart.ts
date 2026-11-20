@@ -346,21 +346,35 @@ export class SquadWorkerRestarter {
     await this.abandon(sessionId, entry, { ok: false, reason: 'relaunch-failed', message });
   }
 
+  /** Closes a relaunched session that was never bound; one retry, then logged so the leak is visible. */
+  private async closeUnbound(entry: PendingRestart, newSessionId: string): Promise<void> {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        await this.deps.closeSession(newSessionId);
+        return;
+      } catch (error) {
+        if (attempt === 2) {
+          console.error(`[main] squad worker restart: could not close unbound session ${newSessionId} (replacing ${entry.session.id}, run ${entry.session.cohort?.executionId ?? 'unknown'})`, error);
+        }
+      }
+    }
+  }
+
   private async relaunched(sessionId: string, entry: PendingRestart, session: TerminalSession): Promise<void> {
     if (!this.current(sessionId, entry)) {
       // The attempt timed out and its exit already ran, so the worker counts as gone: close the late
       // session too. At quit it is left to the shutdown path like every other session.
-      if (!this.disposed) await this.deps.closeSession(session.id).catch(() => undefined);
+      if (!this.disposed) await this.closeUnbound(entry, session.id);
       return;
     }
     // Cancellation may have fenced the run while the relaunch was in flight: the new session is unbound, so close it.
     if (!await this.mayStillSpawn(entry)) {
-      await this.deps.closeSession(session.id).catch(() => undefined);
+      await this.closeUnbound(entry, session.id);
       await this.abandon(sessionId, entry, { ok: false, reason: 'run-closing', message: 'the Squad run is closing' });
       return;
     }
     if (!this.current(sessionId, entry)) {
-      if (!this.disposed) await this.deps.closeSession(session.id).catch(() => undefined);
+      if (!this.disposed) await this.closeUnbound(entry, session.id);
       return;
     }
     this.end(sessionId, entry);

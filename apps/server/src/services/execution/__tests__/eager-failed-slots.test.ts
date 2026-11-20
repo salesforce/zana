@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { executionBoardProjection } from '../projection.js';
 import { ExecutionService, type ExecutionServiceDeps } from '../service.js';
-import { createExecutionStore, formatFailedSlots, MAX_REPORTED_FAILED_SLOTS } from '../store.js';
+import { boundFailedWorkerSlots, createExecutionStore, formatFailedSlots, MAX_REPORTED_FAILED_SLOTS } from '../store.js';
 import { createExecutionArtifactStore } from '../artifact-store.js';
 
 async function fixture(run: (filePath: string) => Promise<void>): Promise<void> {
@@ -178,7 +178,12 @@ describe('eager failed-slot evaluation', () => {
     service.dispose();
   }));
 
-  it('does not warn or fail when no slot failed, and survives a warning write failure', async () => fixture(async (filePath) => {
+  it('falls back after sanitizing so control-only slot ids and reasons stay valid on reload', () => {
+    const [slot] = boundFailedWorkerSlots([{ slotId: ' \u0000\n ', reason: '\u0007 \t' }]);
+    expect(slot).toEqual({ slotId: 'unknown slot', reason: 'unknown reason' });
+  });
+
+  it('does not warn or fail when no slot failed', async () => fixture(async (filePath) => {
     const clean = new ExecutionService(deps(filePath, { launchTeam: async () => ({ ok: true, value: { failedSlots: [] } }) }));
     expect((await clean.start('session-1', 'project-1', base)).ok).toBe(true);
     const { events } = await clean.events('session-1', 'project-1', 'execution-1');

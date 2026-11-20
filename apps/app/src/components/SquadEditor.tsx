@@ -11,7 +11,7 @@ import { personaIcon } from '../lib/profileIcon.js';
 import { PERSONA_ICON_NAMES, personaIconByName } from '../lib/profileIcon.js';
 import { useInstalledSkillNames } from '../lib/use-uninstalled-skills.js';
 import { catalogueName } from '../lib/use-mcp-catalogue.js';
-import { TEAM_LIMIT_BOUNDS, ALWAYS_ALLOWED_MCP_SERVERS, effectiveMcpServers, mcpAllowlistCovers, uninstalledAllowlistSkills, type McpServerRef } from '@zana-ai/zcc-domain/product';
+import { TEAM_LIMIT_BOUNDS, DEFAULT_CLAIM_WALL_CLOCK_MS, DEFAULT_CLAIM_STALL_MS, ALWAYS_ALLOWED_MCP_SERVERS, effectiveMcpServers, mcpAllowlistCovers, uninstalledAllowlistSkills, type McpServerRef } from '@zana-ai/zcc-domain/product';
 import { getScopedProjectId } from '../lib/windowScope.js';
 import { getThreadModelCatalog, subscribeThreadModelCatalog } from './thread/pickers/thread-model-catalog.js';
 import { unknownPersonaModels } from '../lib/persona-model-warning.js';
@@ -324,6 +324,11 @@ const LIMIT_MINUTES = {
   stall: { min: TEAM_LIMIT_BOUNDS.claimStallMs.min / 60_000, max: TEAM_LIMIT_BOUNDS.claimStallMs.max / 60_000 }
 };
 
+/** Whole minutes for the editor, clamped to bounds: 90000 ms shows 2, not an unsaveable 1.5. */
+function wholeMinutes(ms: number, bounds: { min: number; max: number }): number {
+  return Math.min(bounds.max, Math.max(bounds.min, Math.round(ms / 60_000)));
+}
+
 function parseLimit(text: string, min: number, max: number): number | undefined | 'invalid' {
   if (!text.trim()) return undefined;
   const value = Number(text);
@@ -378,8 +383,8 @@ function draftForTeam(team: Team | null): TeamDraft {
     retainOrchestrator: team?.retainOrchestrator === true,
     leanWorkers: team?.leanWorkers === true,
     maxConcurrent: team?.limits?.maxConcurrent === undefined ? '' : String(team.limits.maxConcurrent),
-    claimWallClockMin: team?.limits?.claimWallClockMs === undefined ? '' : String(team.limits.claimWallClockMs / 60_000),
-    claimStallMin: team?.limits?.claimStallMs === undefined ? '' : String(team.limits.claimStallMs / 60_000),
+    claimWallClockMin: team?.limits?.claimWallClockMs === undefined ? '' : String(wholeMinutes(team.limits.claimWallClockMs, LIMIT_MINUTES.wall)),
+    claimStallMin: team?.limits?.claimStallMs === undefined ? '' : String(wholeMinutes(team.limits.claimStallMs, LIMIT_MINUTES.stall)),
     transport: team?.transport ?? 'CLI',
     defaultPlanning: team?.defaultPlanning ?? '',
     launchApproval: team?.launchApproval ?? '',
@@ -998,7 +1003,7 @@ function TeamForm({
               type="number"
               min={TEAM_LIMIT_BOUNDS.maxConcurrent.min}
               max={TEAM_LIMIT_BOUNDS.maxConcurrent.max}
-              placeholder="32"
+              placeholder={String(TEAM_LIMIT_BOUNDS.maxConcurrent.max)}
               aria-label="Max sessions"
               value={maxConcurrent}
               onChange={(event) => setMaxConcurrent(event.target.value)}
@@ -1006,7 +1011,8 @@ function TeamForm({
             <input
               type="number"
               min={LIMIT_MINUTES.wall.min}
-              placeholder="20"
+              max={LIMIT_MINUTES.wall.max}
+              placeholder={String(DEFAULT_CLAIM_WALL_CLOCK_MS / 60_000)}
               aria-label="Claim wall-clock (minutes)"
               value={claimWallClockMin}
               onChange={(event) => setClaimWallClockMin(event.target.value)}
@@ -1014,21 +1020,22 @@ function TeamForm({
             <input
               type="number"
               min={LIMIT_MINUTES.stall.min}
-              placeholder="10"
+              max={LIMIT_MINUTES.stall.max}
+              placeholder={String(DEFAULT_CLAIM_STALL_MS / 60_000)}
               aria-label="Claim stall (minutes)"
               value={claimStallMin}
               onChange={(event) => setClaimStallMin(event.target.value)}
             />
           </div>
           <p className="settings-help">
-            Max sessions the run may open, counting the coordinator and every worker (default and maximum 32; a roster larger than this is refused at launch), then the minutes one claimed unit may run (default 20) and may stay silent (default 10) before it is reclaimed. Leave a field blank to keep its default. Applies to runs started after saving.
+            Max sessions the run may open, counting the coordinator and every worker (default and maximum {TEAM_LIMIT_BOUNDS.maxConcurrent.max}; a roster larger than this is refused at launch), then the minutes one claimed unit may run (default {DEFAULT_CLAIM_WALL_CLOCK_MS / 60_000}) and may stay silent (default {DEFAULT_CLAIM_STALL_MS / 60_000}) before it is reclaimed. Leave a field blank to keep its default. Applies to runs started after saving.
           </p>
           {limitsProblem && <p className="settings-help" role="alert" data-testid="team-run-limits-error">{limitsProblem}</p>}
         </div>
 
         {unresolvedPersonaIds.length > 0 && (
           <p className="settings-help" role="status" data-testid="team-unresolved-persona-warning">
-            Unknown persona: {unresolvedPersonaIds.join(', ')}. You can still save; a launch skips these slots, and refuses to start when no worker slot resolves.
+            Unknown persona: {unresolvedPersonaIds.join(', ')}. You can still save, but a launch with an unknown worker persona is refused before anything starts, and the error names the missing personas. Fix or remove the slot to launch.
           </p>
         )}
 

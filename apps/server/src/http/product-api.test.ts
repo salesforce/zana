@@ -1004,6 +1004,15 @@ describe('product HTTP', () => {
     expect(stopped.status).toBe(200);
     expect(stop).toHaveBeenCalledWith('ex-1', undefined, undefined);
 
+    // A Stop whose STOPPED write never landed is a retryable state conflict, not a server error.
+    stop.mockResolvedValueOnce({ ok: false, code: 'STOP_INCOMPLETE', message: 'not stopped yet' });
+    const incomplete = await fetch(`${server.url}api/v1/executions/ex-1/stop`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    });
+    expect(incomplete.status).toBe(409);
+
     const oversized = await fetch(`${server.url}api/v1/teams/launch`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

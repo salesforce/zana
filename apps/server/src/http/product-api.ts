@@ -44,7 +44,8 @@ import { randomUUID } from 'node:crypto';
 import { isAbsolute, join, relative, sep, posix, win32 } from 'node:path';
 import { homedir } from 'node:os';
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { personaFileDropReason, pushPersonaWarning, type PersonaLoadWarning } from '@zana-ai/zcc-domain/persona-validation';
+import { readdir, readFile } from 'node:fs/promises';
+import { parsePersonaFileContent, pushPersonaWarning, type PersonaLoadWarning } from '@zana-ai/zcc-domain/persona-validation';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type {
   AppConfig,
@@ -901,7 +902,7 @@ export async function handleProductHttp(
     }
 
     if (path === '/api/v1/personas' && method === 'GET') {
-      sendJson(response, 200, readPersonaDiagnostics(ctx.dataDir, ctx.toProjects().map((project) => project.path)));
+      sendJson(response, 200, await readPersonaDiagnostics(ctx.dataDir, ctx.toProjects().map((project) => project.path)));
       return true;
     }
 
@@ -4062,7 +4063,7 @@ function sendTeamOpResult(
     return;
   }
   const status =
-    result.code === 'DISABLED' || result.code === 'CONFLICT' || result.code === 'TERMINAL' ? 409
+    result.code === 'DISABLED' || result.code === 'CONFLICT' || result.code === 'TERMINAL' || result.code === 'STOP_INCOMPLETE' ? 409
       : result.code === 'NOT_FOUND' || result.code === 'unknown-session' ? 404
         : result.code === 'INVALID' || result.code === 'NO_ORCHESTRATOR' || result.code === 'INVALID_CAPABILITY' ? 400
           : result.code === 'DENIED' ? 409
@@ -4136,31 +4137,36 @@ export function isProductApiPath(pathname: string): boolean {
  * server runs apart from Electron main, which owns the PersonaStore, so it
  * re-applies the shared validator to the same directories.
  */
-export function readPersonaDiagnostics(
+export async function readPersonaDiagnostics(
   dataDir: string,
   projectPaths: readonly string[]
-): { personas: unknown[]; warnings: PersonaLoadWarning[] } {
+): Promise<{ personas: unknown[]; warnings: PersonaLoadWarning[] }> {
   const personas: unknown[] = [];
   const warnings: PersonaLoadWarning[] = [];
-  const scan = (dir: string, source: PersonaLoadWarning['source']) => {
-    if (!existsSync(dir)) return;
+  const scan = async (dir: string, source: PersonaLoadWarning['source']) => {
     let names: string[];
-    try { names = readdirSync(dir); } catch { return; }
-    for (const file of names) {
-      if (!file.endsWith('.json')) continue;
-      let content: string;
-      try {
-        content = readFileSync(join(dir, file), 'utf8');
-      } catch {
-        pushPersonaWarning(warnings, { file, source, reason: 'unreadable_file' });
-        continue;
-      }
-      const reason = personaFileDropReason(content);
-      if (reason) pushPersonaWarning(warnings, { file, source, reason });
-      else if (source === 'user') personas.push(JSON.parse(content));
+    try { names = await readdir(dir); } catch { return; }
+    const files = names.filter((file) => file.endsWith('.json'));
+    // Bounded concurrency; results are consumed in directory order so the
+    // response (and the warnings cap) is identical to a sequential scan.
+    for (let i = 0; i < files.length; i += PERSONA_SCAN_CONCURRENCY) {
+      const batch = files.slice(i, i + PERSONA_SCAN_CONCURRENCY);
+      const contents = await Promise.all(batch.map((file) => readFile(join(dir, file), 'utf8').catch(() => null)));
+      batch.forEach((file, index) => {
+        const content = contents[index];
+        if (content === null) {
+          pushPersonaWarning(warnings, { file, source, reason: 'unreadable_file' });
+          return;
+        }
+        const parsed = parsePersonaFileContent(content);
+        if (parsed.reason) pushPersonaWarning(warnings, { file, source, reason: parsed.reason });
+        else if (source === 'user') personas.push(parsed.value);
+      });
     }
   };
-  scan(join(dataDir, 'personas'), 'user');
-  for (const path of projectPaths) scan(join(path, '.zcc', 'personas'), 'project');
+  await scan(join(dataDir, 'personas'), 'user');
+  for (const path of projectPaths) await scan(join(path, '.zcc', 'personas'), 'project');
   return { personas, warnings };
 }
+
+const PERSONA_SCAN_CONCURRENCY = 16;

@@ -366,10 +366,6 @@ export function unknownPersonaMessage(personaId: string): string {
 }
 
 /**
- * Admission refusal for a Squad whose worker personas are not in the live store. `safeMessage` names the
- * missing persona ids (control characters stripped, bounded) so the launch dialog can show them.
- */
-/**
  * Launch admission's route facts for one resolved slot. `resolvedModels` arrives from the caller,
  * so the label and roles that decide `Required role` routing come only from the host's configured
  * slot (its label, and `slot.roles ?? persona.roles`), never from the snapshot. With the roles
@@ -389,6 +385,10 @@ export function admissionSlotRouteFacts(
   };
 }
 
+/**
+ * Admission refusal for a Squad whose worker personas are not in the live store. `safeMessage` names the
+ * missing persona ids (control characters stripped, bounded) so the launch dialog can show them.
+ */
 export class UnknownPersonaError extends Error {
   readonly safeMessage: string;
   constructor(personaIds: readonly string[]) {

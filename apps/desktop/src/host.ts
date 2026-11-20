@@ -172,7 +172,7 @@ import { SQUAD_SEAT_MARKER, squadSeatRefusal } from './squad-seat-launch.js';
 import { createRestoreCapabilityStore, type RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
 import { createTeamLifecycleIntegration, createTeamLifecycleStore, type TeamLifecycleRecord, type TeamModernWorkerObservation } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
 import { createRemoteReapLedger, remoteReapOrphans, type RemoteReapEntry } from '@zana-ai/zcc-server/services/launch/remote-reap-ledger';
-import { boundReason, createExecutionStore, isUserOwnedSquadWorktree, recordedLevelPolicy, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
+import { boundReason, SLOT_REASON_MAX, createExecutionStore, isUserOwnedSquadWorktree, recordedLevelPolicy, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
 import { squadConcurrentCap, withSquadLimits } from '@zana-ai/zcc-server/services/execution/squad-limits-policy';
@@ -3773,7 +3773,7 @@ const composerPreviewTokens = new Map<string, { key: string; preview: SquadLaunc
 const COMPOSER_PREVIEW_TTL_MS = 5 * 60_000;
 const COMPOSER_PREVIEW_MAX = 200;
 function composerPreviewKey(input: Parameters<import('@zana-ai/zcc-desktop-contract').CcApi['teams']['preview']>[0], caller: { kind: 'window'; windowId: number } | { kind: 'shared-owner' }): string {
-  return JSON.stringify([caller, input.projectId, input.teamId, input.goal.trim(), input.planText ?? '', input.coordinationMode ?? 'structured', input.sourceCapabilityIds ?? [],
+  return JSON.stringify([caller, input.projectId, input.teamId, input.goal.trim(), (input.planText ?? '').trim(), input.coordinationMode ?? 'structured', input.sourceCapabilityIds ?? [],
     launchOptionsSchema.parse({ worktree: input.worktree, onComplete: input.onComplete, push: input.push, checks: input.checks, failurePolicyDefault: input.failurePolicyDefault, target: input.target })]);
 }
 function pruneComposerPreviewTokens(): void {
@@ -6367,7 +6367,6 @@ export async function launchTeam(
   const roster: RosterEntry[] = [];
   const workers: TeamLaunchedWorker[] = [];
   const failedSlots: TeamFailedWorkerSlot[] = [];
-  const SLOT_REASON_MAX = 500;
   const joinedSlotReasons = (fallback: string) => boundReason(failedSlots.map((slot) => `${slot.slotId}: ${slot.reason}`).join('; ') || fallback);
   const launchRequestId = structured?.launchRequestId ?? randomUUID();
   const callerPrincipalId = structured?.callerPrincipalId ?? opts?.callerPrincipalId ?? `legacy:${launchRequestId}`;
@@ -7201,7 +7200,8 @@ export async function launchTeam(
     } catch (releaseError) {
       logMainError('team launch seat release after failed completion', releaseError);
     }
-    await closeStartedSessionsById([...workerSessionIds, ...(orchestratorSessionId ? [orchestratorSessionId] : [])]);
+    const survivors = await closeStartedSessionsById([...workerSessionIds, ...(orchestratorSessionId ? [orchestratorSessionId] : [])]);
+    if (survivors.length > 0) logMainError('team launch sessions survived cleanup after failed completion', new Error(`launch ${launchRequestId}: could not confirm closed: ${survivors.join(', ')}`));
     await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId).catch((cancelError) => logMainError('team launch cleanup after failed completion', cancelError));
     throw error;
   }

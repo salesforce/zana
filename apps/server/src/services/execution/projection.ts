@@ -1,4 +1,4 @@
-import type { ExecutionBoardProjection, TerminalSession } from '@zana-ai/zcc-domain/product';
+import { TEAM_LIMIT_BOUNDS, type ExecutionBoardProjection, type TerminalSession } from '@zana-ai/zcc-domain/product';
 import { isWorkerRecoveryLive, MAX_DELIVERY_ATTEMPTS, type ExecutionRecord, type ExecutionWorkUnit } from './store.js';
 import { usageRollup } from './contracts.js';
 import { timeoutRecoveryBlockReason } from './timeout-recovery-policy.js';
@@ -18,7 +18,8 @@ function firstErrorLine(raw: string): string {
 /** Effective run limits from the persisted policy; ceilings the run was never given stay absent. */
 function limitsProjection(record: ExecutionRecord): ExecutionBoardProjection['limits'] {
   const policy = record.request.policy;
-  const maxLaunches = Math.min(policy?.maxLaunches ?? 32, 32);
+  const launchCeiling = TEAM_LIMIT_BOUNDS.maxConcurrent.max;
+  const maxLaunches = Math.min(policy?.maxLaunches ?? launchCeiling, launchCeiling);
   return {
     maxConcurrent: Math.min(policy?.maxConcurrent ?? maxLaunches, maxLaunches),
     ...(policy?.maxClaimWallClockMs === undefined ? {} : { claimWallClockMs: policy.maxClaimWallClockMs }),

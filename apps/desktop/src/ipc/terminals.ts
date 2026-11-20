@@ -143,7 +143,13 @@ export function registerTerminalsIpc(): void {
     async (input: { capabilityId?: string; legacyRequest?: CreateTerminalRequest }): Promise<Result<TerminalSession>> => {
       // A Squad worker seat is only ever relaunched by main's restarter (it rebinds slot and run);
       // a renderer-driven restore would make a cohort-carrying lookalike the run ignores.
-      const wanted = input.capabilityId ? ctx.restoreCapabilities.get?.(input.capabilityId)?.request?.cohort : undefined;
+      // Fails closed: a store without `get` cannot prove the capability is not a worker seat.
+      if (input.capabilityId && typeof ctx.restoreCapabilities.get !== 'function') {
+        return { ok: false, code: 'DENIED', message: 'restore capability unavailable or already reserved' };
+      }
+      const wanted = input.capabilityId
+        ? ctx.restoreCapabilities.get(input.capabilityId)?.request?.cohort
+        : input.legacyRequest?.cohort;
       if (wanted?.role === 'worker' && wanted.executionId) {
         return { ok: false, code: 'DENIED', message: 'a Squad worker cannot be restored outside its run' };
       }

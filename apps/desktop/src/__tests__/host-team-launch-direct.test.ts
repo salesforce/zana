@@ -73,7 +73,7 @@ vi.mock('@zana-ai/zcc-host-daemon/pty', () => ({
     setRestoreCapabilityId() {}
     async waitForReady(id: string) { return h.sessions.get(id); }
     on() { return this; }
-    closeExpected(id: string) { h.closed.push(id); return true; }
+    closeExpected(id: string) { h.closed.push(id); return !(h as { closeFails?: boolean }).closeFails; }
     close() { return true; }
   },
   isClaudeProfile: (p: string) => p === 'claude'
@@ -525,6 +525,20 @@ describe('launchTeam throw hardening', () => {
 
   describe('when the lifecycle write cannot complete', () => {
     afterEach(() => { vi.unstubAllGlobals(); delete process.env.ZCC_TEST_FAULT; });
+
+    it('logs the ids of sessions that could not be confirmed closed', async () => {
+      vi.stubGlobal('__ZCC_TEST_FAULTS__', true);
+      process.env.ZCC_TEST_FAULT = 'launch-complete-throw';
+      (h as { closeFails?: boolean }).closeFails = true;
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        await expect(launchTeam('team1', 'p1', { goal: 'g' })).rejects.toThrow('injected launch completion fault');
+        expect(errorSpy.mock.calls.some((call) => String(call[0]).includes('survived cleanup') && String(call[0]).includes('could not confirm closed'))).toBe(true);
+      } finally {
+        delete (h as { closeFails?: boolean }).closeFails;
+        errorSpy.mockRestore();
+      }
+    });
 
     it('closes every started session by id and surfaces the original error', async () => {
       vi.stubGlobal('__ZCC_TEST_FAULTS__', true);

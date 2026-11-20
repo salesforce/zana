@@ -116,3 +116,27 @@ describe('removeTrustedPreviewFolder', () => {
     expect(h.setConfig).not.toHaveBeenCalled();
   });
 });
+
+describe('dismissWorkerExit', () => {
+  const dismiss = (id: unknown) => h.product.get(IPC.config.dismissWorkerExit)!(id) as Record<string, unknown>;
+  it('appends one id from the current config and broadcasts', () => {
+    h.state.config = { dismissedWorkerExits: ['a'] };
+    expect(dismiss('b')).toEqual({ dismissedWorkerExits: ['a', 'b'] });
+    expect(h.setConfig).toHaveBeenCalledWith({ dismissedWorkerExits: ['a', 'b'] });
+    expect(h.safeSend).toHaveBeenCalledWith(IPC.config.onChanged, { dismissedWorkerExits: ['a', 'b'] });
+  });
+  it('starts from an empty list and is idempotent', () => {
+    dismiss('a');
+    expect(h.state.config).toEqual({ dismissedWorkerExits: ['a'] });
+    h.setConfig.mockClear(); h.safeSend.mockClear();
+    dismiss('a');
+    expect(h.setConfig).not.toHaveBeenCalled();
+    expect(h.safeSend).not.toHaveBeenCalled();
+  });
+  it('rejects malformed ids', () => {
+    expect(() => dismiss('')).toThrow(/Invalid/);
+    expect(() => dismiss(5)).toThrow(/Invalid/);
+    expect(() => dismiss('x'.repeat(129))).toThrow(/Invalid/);
+    expect(h.setConfig).not.toHaveBeenCalled();
+  });
+});
