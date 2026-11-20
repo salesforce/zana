@@ -281,6 +281,14 @@ export interface ExecutionServiceDeps {
    */
   spawnDeferredWorker?: (recordId: string, slotId: string) => Promise<DeferredWorkerSpawnResult>;
   /**
+   * Start a new session for a worker slot whose session is over, from the launch-time snapshot (coordinator
+   * respawn). The host owns every commit (closing check, once-only claim, bind) and must refuse a run that is
+   * closing. `reason` is a stable code; `message` is shown to the coordinator.
+   */
+  respawnWorker?: (recordId: string, slotId: string) => Promise<{ ok: true; sessionId: string } | { ok: false; reason: string; message: string; committed?: true }>;
+  /** Per-slot respawn cap; defaults to {@link DEFAULT_WORKER_RESPAWN_CAP}. */
+  workerRespawnCap?: number;
+  /**
    * Replace a seat's finished session with a fresh one and deliver the assignment to it (#579). Not awaited by
    * the engine: the worker's own completion call is still waiting on the dispatch that hands over the entry.
    * Failures are the host's to settle (a failed respawn releases the assignment undelivered).
@@ -305,7 +313,7 @@ export interface ExecutionServiceDeps {
    * Called after a worker warning (non-zero exit or no turn) is recorded on the run, so the host can post an
    * Inbox row. Failures are logged and never fail the engine.
    */
-  onRunWarning?: (record: ExecutionRecord, warning: { slotId: string; summary: string; kind: 'worker-exit' | 'worker-no-turn' }) => void | Promise<void>;
+  onRunWarning?: (record: ExecutionRecord, warning: { slotId: string; summary: string; kind: 'worker-exit' | 'worker-no-turn' | 'worker-respawn' }) => void | Promise<void>;
   /**
    * How long a claimed worker may take no turn and emit no output before the run is warned. Defaults to the run's
    * claim stall limit; E2E shortens it through host config.
@@ -450,6 +458,8 @@ interface ExtractedLifecycle {
     process?: string;
     /** Set on a seat that starts on demand (it may have no session). */
     onDemand?: true;
+    /** Set while the seat waits for the session of a coordinator-requested respawn. */
+    respawned?: 'on-demand' | 'normal';
     /** Units the current session accepted; present only for a seat that starts a fresh session per unit (#579). */
     deliveredUnitCount?: number;
     task?: string;
@@ -719,6 +729,8 @@ export class ExecutionService {
   private activeReconcileRunning = false;
   /** Claims already warned as taking no turn (`executionId:unitId:claimId`), bounded so it cannot grow without limit. */
   private readonly noTurnWarned = new Set<string>();
+  /** Worker slots with a respawn in flight (`executionId:slotId`); a second concurrent call refuses. */
+  private readonly respawning = new Set<string>();
   private readonly routeFactCircuits = new Map<string, { state: CircuitState; openedAt?: number }>();
   private readonly wakeConfirmations: CoordinatorWakeConfirmations;
 
@@ -1230,7 +1242,7 @@ export class ExecutionService {
   }
 
   /** Records the run warning and offers it to the host (Inbox). Never throws: a warning must not break recovery. */
-  private async raiseWorkerWarning(record: ExecutionRecord, slotId: string, summary: string, kind: 'worker-exit' | 'worker-no-turn'): Promise<void> {
+  private async raiseWorkerWarning(record: ExecutionRecord, slotId: string, summary: string, kind: 'worker-exit' | 'worker-no-turn' | 'worker-respawn'): Promise<void> {
     const bounded = boundReason(summary);
     try {
       await this.deps.store.warning(record.id, { slotId, summary: bounded });
@@ -2723,6 +2735,77 @@ export class ExecutionService {
       await this.cascadeDispatch(outcome.value.id, binding.slotId);
     }
     return outcome;
+  }
+
+  /**
+   * Orchestrator-only: replace a dead worker slot. Authority is the main-resolved binding. Order matters: cheap
+   * refusals first (no count spent), then one atomic persisted count under the store mutex, then the host spawn.
+   * A per-slot in-flight set makes a concurrent second call refuse instead of spending the cap twice.
+   */
+  async respawnWorker(binding: ExecutionCohortBinding, slotId: string): Promise<{ ok: true; value: { slotId: string; sessionId: string; respawn: number; cap: number } } | { ok: false; code: string; message: string }> {
+    if (binding.role !== 'orchestrator') return deniedBound('only the coordinator can respawn a worker');
+    if (typeof slotId !== 'string' || !slotId || slotId.length > 120) return invalidBound(new Error('invalid worker slot'));
+    if (isOrchestratorSlotId(slotId)) return deniedBound('the coordinator slot cannot be respawned');
+    const record = await this.getBound(binding);
+    if (!record) return deniedBound('execution not found for bound cohort');
+    if (isResumeGrantTerminal(record.state)) return terminalBound(record);
+    if (record.state !== 'RUNNING') return { ok: false, code: 'INVALID', message: `execution is ${record.state.toLowerCase()}; a worker can only be respawned while it is running` };
+    const known = (record.authorizationContext?.slots ?? []).some((slot) => !isOrchestratorSlotId(slot.slotId) && slot.slotId === slotId);
+    if (!known) return { ok: false, code: 'NOT_FOUND', message: `unknown worker slot "${boundReason(slotId, 120)}"` };
+    const respawn = this.deps.respawnWorker;
+    if (!respawn) return { ok: false, code: 'UNAVAILABLE', message: 'worker respawn is not available on this host' };
+    const key = `${record.id}:${slotId}`;
+    if (this.respawning.has(key)) return { ok: false, code: 'BUSY', message: `worker ${slotId} is already being respawned` };
+    this.respawning.add(key);
+    try {
+      let lifecycle: ExtractedLifecycle | undefined;
+      try { lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId)); } catch (error) {
+        this.deps.logError?.(`respawn lifecycle read failed for ${record.id}/${slotId}`, error);
+      }
+      const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === slotId && candidate.projectId === record.projectId);
+      if (!lifecycle?.recordId || !worker) return { ok: false, code: 'NOT_FOUND', message: `worker ${slotId} has no launched session to replace` };
+      if (worker.respawned !== undefined && !worker.sessionId && (worker.process === 'authorized' || worker.process === 'spawning')) {
+        return { ok: false, code: 'QUEUED', message: `worker ${slotId} is already queued to restart; it starts when the machine has room, so do not call this again` };
+      }
+      if (!DEAD_WORKER_PROCESSES.has(worker.process ?? '')) return { ok: false, code: 'INVALID', message: `worker ${slotId} is still running; only a worker whose session is over can be respawned` };
+      let reservation: Awaited<ReturnType<ExecutionServiceDeps['store']['reserveWorkerRespawn']>>;
+      try { reservation = await this.deps.store.reserveWorkerRespawn(record.id, slotId, this.deps.workerRespawnCap); } catch (error) { return invalidBound(error); }
+      if (!reservation.ok) {
+        if (reservation.reason === 'cap') {
+          await this.notifyRespawnWarning(record, slotId, `Worker ${slotId} could not be respawned: the limit of ${reservation.cap} respawn(s) is used up`);
+          return { ok: false, code: 'CAP_EXCEEDED', message: `worker ${slotId} has already been respawned ${reservation.count} time(s); the limit is ${reservation.cap}` };
+        }
+        return { ok: false, code: reservation.reason === 'unknown-slot' ? 'NOT_FOUND' : 'INVALID', message: `worker ${slotId} cannot be respawned: ${reservation.reason}` };
+      }
+      let outcome: Awaited<ReturnType<NonNullable<ExecutionServiceDeps['respawnWorker']>>>;
+      try { outcome = await respawn(lifecycle.recordId, slotId); } catch (error) {
+        outcome = { ok: false, reason: 'spawn-failed', message: error instanceof Error ? error.message : String(error), committed: true };
+      }
+      if (!outcome.ok && outcome.committed !== true) {
+        // Nothing was started, so the attempt does not count against the slot's budget.
+        await this.deps.store.settleWorkerRespawn(record.id, slotId, { refund: true })
+          .catch((error: unknown) => this.deps.logError?.(`Respawn refund failed for ${record.id}/${slotId}`, error));
+        return { ok: false, code: 'RESPAWN_FAILED', message: `${outcome.reason}: ${boundReason(outcome.message)}` };
+      }
+      if (!outcome.ok) {
+        const message = boundReason(outcome.message);
+        await this.deps.store.warning(record.id, { slotId, summary: `Worker ${slotId} could not be respawned (${outcome.reason}): ${message}` })
+          .catch((error: unknown) => this.deps.logError?.(`Respawn warning failed for ${record.id}`, error));
+        await this.notifyRespawnWarning(record, slotId, `Worker ${slotId} could not be respawned (${outcome.reason}): ${message}`);
+        return { ok: false, code: 'RESPAWN_FAILED', message: `${outcome.reason}: ${message}` };
+      }
+      await this.deps.store.settleWorkerRespawn(record.id, slotId, { started: { count: reservation.count, cap: reservation.cap } })
+        .catch((error: unknown) => this.deps.logError?.(`Respawn event failed for ${record.id}/${slotId}`, error));
+      return { ok: true, value: { slotId, sessionId: outcome.sessionId, respawn: reservation.count, cap: reservation.cap } };
+    } finally {
+      this.respawning.delete(key);
+    }
+  }
+
+  private async notifyRespawnWarning(record: ExecutionRecord, slotId: string, summary: string): Promise<void> {
+    const bounded = boundReason(summary);
+    try { await this.deps.onRunWarning?.(record, { slotId: boundReason(slotId, 120), summary: bounded, kind: 'worker-respawn' }); }
+    catch (error) { this.deps.logError?.(`Respawn warning delivery failed for ${record.id}`, error); }
   }
 
   async retryWork(binding: ExecutionCohortBinding, workUnitId: string, assignedSlotId?: string) {

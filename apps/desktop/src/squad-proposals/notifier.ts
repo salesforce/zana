@@ -28,7 +28,7 @@ export interface SquadProposalNotifierDeps extends PtyReportQueueDeps {
 export interface SquadRunWarning {
   slotId: string;
   summary: string;
-  kind: 'worker-exit' | 'worker-no-turn';
+  kind: 'worker-exit' | 'worker-no-turn' | 'worker-respawn';
 }
 
 /**

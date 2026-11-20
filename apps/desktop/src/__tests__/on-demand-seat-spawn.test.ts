@@ -101,11 +101,12 @@ describe('REQ-3 a team without startOnDemand spawns every seat as before', () =>
     expect(recordFor(req.launchRequestId).workers.every((w) => w.sessionId)).toBe(true);
   });
 
-  it('registers no deferred spawner, so asking to start a running seat creates nothing', async () => {
+  it('asking to start a running seat creates nothing and reports the seat\'s own session', async () => {
     const req = durableReq();
     expect((await launchTeam('team1', 'p1', req as never)).ok).toBe(true);
     const record = recordFor(req.launchRequestId);
-    expect(await spawn(record.id, '0:w1:0')).toMatchObject({ ok: false });
+    const seat = record.workers.find((w) => w.slotId === '0:w1:0')!;
+    expect(await spawn(record.id, '0:w1:0')).toEqual({ ok: true, sessionId: seat.sessionId });
     expect(h.creates).toHaveLength(4);
   });
 

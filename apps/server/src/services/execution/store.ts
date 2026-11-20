@@ -453,6 +453,10 @@ export interface ExecutionRecord {
   finalSummary?: string;
   /** Sanitized, bounded reason a run ended FAILED; absent on older records. */
   failureReason?: string;
+  /** Coordinator respawns spent per worker slot (persisted so a host restart does not reset the cap). */
+  workerRespawns?: Record<string, number>;
+  /** Slots whose exhausted respawn cap has been recorded as an event (once each; value is always 1). */
+  workerRespawnCapNoted?: Record<string, number>;
   assembledResult?: ExecutionAssembledResultV1;
   usageObservations?: ExecutionUsageObservationV1[];
   usageBaseline?: ExecutionUsageBaselineV1;
@@ -765,6 +769,20 @@ const MAX_STRING = 2_048;
 const MAX_WORK_UNIT_TASK = 16_384;
 const MAX_FINAL_SUMMARY = 64 * 1024;
 const MAX_FAILURE_REASON = 2048;
+/** Default and hard ceiling for coordinator respawns of one worker slot. */
+export const DEFAULT_WORKER_RESPAWN_CAP = 2;
+const MAX_WORKER_RESPAWN_SLOTS = 100;
+
+function validWorkerRespawns(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const entries = Object.entries(value as Record<string, unknown>);
+  return entries.length <= MAX_WORKER_RESPAWN_SLOTS
+    && entries.every(([slot, count]) => slot.length > 0 && slot.length <= 120 && Number.isInteger(count) && (count as number) >= 0 && (count as number) <= 100);
+}
+
+export type WorkerRespawnReservation =
+  | { ok: true; count: number; cap: number }
+  | { ok: false; reason: 'unknown-slot' | 'orchestrator-slot' | 'not-running' | 'cap'; count?: number; cap?: number };
 
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
 const WINDOWS_ABS_PATH = /(?<![\w])[A-Za-z]:[\\/](?:[^\s\\/'"`<>|]+[\\/])*([^\s\\/'"`<>|]+)/g;
@@ -929,6 +947,8 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.recoveryRequestId === undefined || validString(record.recoveryRequestId))
     && (record.finalSummary === undefined || typeof record.finalSummary === 'string' && record.finalSummary.length > 0 && record.finalSummary.length <= MAX_FINAL_SUMMARY)
     && (record.failureReason === undefined || typeof record.failureReason === 'string' && record.failureReason.length > 0 && record.failureReason.length <= MAX_FAILURE_REASON)
+    && (record.workerRespawns === undefined || validWorkerRespawns(record.workerRespawns))
+    && (record.workerRespawnCapNoted === undefined || validWorkerRespawns(record.workerRespawnCapNoted))
     && (record.assembledResult === undefined || validAssembledResult(record.assembledResult))
     && (record.usageObservations === undefined || Array.isArray(record.usageObservations) && record.usageObservations.length <= MAX_USAGE_OBSERVATIONS_PER_EXECUTION && record.usageObservations.every(validUsageObservation))
     && (record.usageBaseline === undefined || validUsageRollup(record.usageBaseline))
@@ -2392,6 +2412,74 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         const slots = (input as { slots: readonly unknown[] }).slots;
         append(snapshot.state, record, record.state, 'warning', boundReason(`${slots.length} Team slot(s) failed to launch: ${formatFailedSlots(slots)}`), timestamp, { kind: 'event', eventType: 'failure' });
       }
+      record.updatedAt = timestamp;
+      persist(snapshot.state, snapshot.hash);
+    });
+  }
+
+  /**
+   * Spends one coordinator respawn of a worker slot. The check and the increment happen in one serialized,
+   * persisted write, so concurrent callers can never exceed `cap`. The attempt (or the cap refusal, as a
+   * warning) is recorded as an event. Authority is the caller's: it must already be the bound orchestrator.
+   */
+  async function reserveWorkerRespawn(executionId: string, slotId: string, cap: number = DEFAULT_WORKER_RESPAWN_CAP): Promise<WorkerRespawnReservation> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      assertActive(record);
+      if (isOrchestratorSlotId(slotId)) return { ok: false as const, reason: 'orchestrator-slot' as const };
+      if (!workerSlotsOf(record).some((slot) => slot.slotId === slotId)) return { ok: false as const, reason: 'unknown-slot' as const };
+      if (record.state !== 'RUNNING') return { ok: false as const, reason: 'not-running' as const };
+      const limit = Math.max(0, Math.min(cap, 100));
+      const spent = record.workerRespawns?.[slotId] ?? 0;
+      const timestamp = now();
+      if (spent >= limit) {
+        // The refusal is recorded once per slot: a coordinator that keeps asking must not grow the event log.
+        if (record.workerRespawnCapNoted?.[slotId] === undefined) {
+          record.workerRespawnCapNoted = { ...(record.workerRespawnCapNoted ?? {}), [slotId]: 1 };
+          append(snapshot.state, record, record.state, 'warning', boundReason(`Worker ${slotId} was not respawned: the limit of ${limit} respawn(s) is used up`), timestamp, { kind: 'event', eventType: 'failure', slotId: boundReason(slotId, 120) });
+          record.updatedAt = timestamp;
+          persist(snapshot.state, snapshot.hash);
+        }
+        return { ok: false as const, reason: 'cap' as const, count: spent, cap: limit };
+      }
+      const next = { ...(record.workerRespawns ?? {}), [slotId]: spent + 1 };
+      if (Object.keys(next).length > MAX_WORKER_RESPAWN_SLOTS) return { ok: false as const, reason: 'cap' as const, count: spent, cap: limit };
+      record.workerRespawns = next;
+      record.updatedAt = timestamp;
+      persist(snapshot.state, snapshot.hash);
+      return { ok: true as const, count: spent + 1, cap: limit };
+    });
+  }
+
+  /**
+   * Settle a reservation once the host has answered. A refusal before anything was started gives the count back
+   * (`refund`), so a respawn that never began does not use up the slot's budget; a started respawn is recorded.
+   */
+  async function settleWorkerRespawn(
+    executionId: string,
+    slotId: string,
+    outcome: { refund: true } | { started: { count: number; cap: number } }
+  ): Promise<void> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      const timestamp = now();
+      if ('refund' in outcome) {
+        const spent = record.workerRespawns?.[slotId] ?? 0;
+        if (spent <= 0) return;
+        const next = { ...(record.workerRespawns ?? {}) };
+        if (spent === 1) delete next[slotId]; else next[slotId] = spent - 1;
+        if (Object.keys(next).length > 0) record.workerRespawns = next; else delete record.workerRespawns;
+        if (record.workerRespawnCapNoted) delete record.workerRespawnCapNoted[slotId];
+        record.updatedAt = timestamp;
+        persist(snapshot.state, snapshot.hash);
+        return;
+      }
+      if (terminalStates.has(record.state)) return;
+      append(snapshot.state, record, record.state, 'info', boundReason(`Respawned worker ${slotId} (${outcome.started.count} of ${outcome.started.cap})`), timestamp, { kind: 'event', eventType: 'progress', slotId: boundReason(slotId, 120) });
       record.updatedAt = timestamp;
       persist(snapshot.state, snapshot.hash);
     });
@@ -4276,7 +4364,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, markReported, markBlockerReported, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, warning, command, producerEvent, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, clearNativeRecoverySnapshot, recordAutomatedMcpCatalogueProvenance, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, recordWorkerRecovery, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, resolveNoRouteBlocker, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, countActiveOwned, listInProject, listActive, listUndisposedSquadWorktrees, listUnreportedExecutions, listUnreportedBlockers, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, markReported, markBlockerReported, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, warning, reserveWorkerRespawn, settleWorkerRespawn, command, producerEvent, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, clearNativeRecoverySnapshot, recordAutomatedMcpCatalogueProvenance, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, recordWorkerRecovery, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, resolveNoRouteBlocker, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, countActiveOwned, listInProject, listActive, listUndisposedSquadWorktrees, listUnreportedExecutions, listUnreportedBlockers, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 /**

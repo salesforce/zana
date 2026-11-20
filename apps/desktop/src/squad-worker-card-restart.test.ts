@@ -13,6 +13,7 @@ function deps(over: Partial<SquadWorkerCardRestartDeps> = {}): SquadWorkerCardRe
     getExecution: vi.fn(async () => ({ state: 'RUNNING', callerPrincipalId: 'u', teamLaunchRequestId: 'l1' })),
     isTerminalExecutionState: (s) => ['COMPLETED', 'STOPPED', 'FAILED'].includes(s),
     restart: vi.fn(async () => ({ ok: true as const })),
+    respawnExited: vi.fn(async () => ({ ok: true as const })),
     ...over
   };
 }
@@ -62,10 +63,28 @@ describe('restartSquadWorkerCard', () => {
     expect(d.launchIsClosing).toHaveBeenCalledWith('r1');
     expect(d.restart).not.toHaveBeenCalled();
   });
-  it('refuses an exited worker rather than creating a lookalike', async () => {
+  it('respawns an exited worker through the respawn path, not the plain restarter', async () => {
     const d = deps({ getSession: () => ({ ...session, status: 'exited' }) as never });
-    await expect(restartSquadWorkerCard(d, 's1')).resolves.toMatchObject({ reason: 'worker-exited' });
+    await expect(restartSquadWorkerCard(d, 's1')).resolves.toEqual({ ok: true });
+    expect(d.respawnExited).toHaveBeenCalledWith('r1', 'slot1');
     expect(d.restart).not.toHaveBeenCalled();
+  });
+  it('reports a refused or throwing respawn without paths and creates no lookalike', async () => {
+    const exited = { getSession: () => ({ ...session, status: 'exited' }) as never };
+    let d = deps({ ...exited, respawnExited: async () => ({ ok: false, message: 'failed at /Users/me/x/secret.txt' }) });
+    await expect(restartSquadWorkerCard(d, 's1')).resolves.toMatchObject({ ok: false, reason: 'worker-exited', message: 'failed at secret.txt' });
+    d = deps({ ...exited, respawnExited: async () => { throw new Error('boom'); } });
+    await expect(restartSquadWorkerCard(d, 's1')).resolves.toMatchObject({ ok: false, reason: 'worker-exited' });
+    expect(d.restart).not.toHaveBeenCalled();
+  });
+  it('does not respawn an exited worker of a closing or finished run', async () => {
+    const exited = { getSession: () => ({ ...session, status: 'exited' }) as never };
+    const closing = deps({ ...exited, launchIsClosing: async () => true });
+    await expect(restartSquadWorkerCard(closing, 's1')).resolves.toMatchObject({ reason: 'run-closing' });
+    const done = deps({ ...exited, getExecution: async () => ({ state: 'STOPPED', callerPrincipalId: 'u', teamLaunchRequestId: 'l1' }) });
+    await expect(restartSquadWorkerCard(done, 's1')).resolves.toMatchObject({ reason: 'run-finished' });
+    expect(closing.respawnExited).not.toHaveBeenCalled();
+    expect(done.respawnExited).not.toHaveBeenCalled();
   });
   it('passes through restarter refusals', async () => {
     const d = deps({ restart: async () => ({ ok: false, reason: 'busy' }) });

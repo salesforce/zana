@@ -148,6 +148,8 @@ export interface IpcCtx {
   teams: any;
   teamLifecycle: any;
   squadWorkerRestarter: any;
+  /** Starts a new session for a Squad worker whose session is over (`respawn(recordId, slotId)`). */
+  squadWorkerRespawner: any;
   templates: any;
   terminateSession: any;
   tray: any;

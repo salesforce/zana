@@ -298,6 +298,10 @@ export function registerTerminalsIpc(): void {
         };
       },
       isTerminalExecutionState: (state) => isTerminalExecutionState(state),
+      respawnExited: async (recordId, slotId) => {
+        const result = await ctx.squadWorkerRespawner.respawn(recordId, slotId);
+        return result.ok ? { ok: true as const } : { ok: false as const, message: result.message };
+      },
       restart: (id, opts) => ctx.squadWorkerRestarter.restart(id, opts)
     }, sessionId),
     () => ({ ok: false as const, reason: 'restart-failed' })

@@ -163,7 +163,7 @@ import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPre
 import { planNormalizationNote, resolveSquadPlan } from './team-trigger-semantics.js';
 import { renderCanonicalPlan } from '@zana-ai/zcc-server/services/execution/portable-plan-render';
 import type { PortablePlanWorkUnitInput } from '@zana-ai/zcc-server/services/execution/portable-plan';
-import { coldStartCanceled, createDeferredSeatHooks, createDeferredSeatRegistry, createSeatApprovals, createSeatRecycler, createSeatStarter, deferredSeatsOf, freshContextSeatsOf, lateSeatApprovalProblem, lifecycleRecycleOps, preissuedDeadlineMatches, respawnApproval, respawnLaunchShape, seatApprovalId, seatApprovalWindow, seatBindExtras, seatLaunchMode, seatLaunchProblem, seatRecovery, seatRosterEntry } from './on-demand-seat.js';
+import { coldStartCanceled, createDeferredSeatHooks, createDeferredSeatRegistry, createSeatApprovals, createSeatRecycler, createSeatStarter, createWorkerRespawner, deferredSeatsOf, freshContextSeatsOf, lateSeatApprovalProblem, lifecycleRecycleOps, preissuedDeadlineMatches, respawnApproval, respawnLaunchShape, seatApprovalId, seatApprovalWindow, seatBindExtras, seatLaunchMode, seatLaunchProblem, seatRecovery, seatRosterEntry } from './on-demand-seat.js';
 import { createSquadSourceSnapshotter, launchSquad, type SquadLaunchDeps, type SquadSourceProvider } from './squad-launch-core.js';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
@@ -1352,6 +1352,21 @@ const seatRecycler = createSeatRecycler({
   clearRecovery: async (executionId, slotId) => { await executionStore.clearNativeRecoverySnapshot(executionId, slotId); },
   queuedFor: (sessionId) => workerInjector.pendingCount(sessionId),
   close: terminateSession,
+  log: (message, error) => logMainError(message, error)
+});
+/** Starts a new session for a worker slot whose session is over, on the coordinator's request. Commits through the deferred-seat spawn. */
+const workerRespawner = createWorkerRespawner({
+  lifecycle: teamLifecycle,
+  hasSpawner: (recordId) => deferredSeats.has(recordId),
+  unsupported: (seat) => {
+    const project = seat.projectId ? store.listProjects().find((candidate) => candidate.id === seat.projectId) : undefined;
+    if (!project) return 'the worker\'s project is no longer registered';
+    return project.remote ? 'remote projects do not support worker respawn' : undefined;
+  },
+  closeSession: (sessionId) => terminateSession(sessionId),
+  sessionGone: async (sessionId) => !(await listLocalTmuxSessionIds()).includes(sessionId),
+  spawn: (recordId, slotId) => deferredSeats.spawn(recordId, slotId),
+  track: (record) => teamLifecycleIntegration.track(record),
   log: (message, error) => logMainError(message, error)
 });
 /** A run's spawners and recyclers are forgotten together when it ends, is stopped or is dismissed. */
@@ -6527,7 +6542,7 @@ export async function launchTeam(
     }
   }
   const freshSlotIds = new Set(freshContextSeatsOf(team, expectedSlots).map((seat) => seat.slotId));
-  const seatApprovals = createSeatApprovals(freshSlotIds);
+  const seatApprovals = createSeatApprovals(new Set([...freshSlotIds, ...expectedSlots.filter((slot) => slot.role === 'worker').map((slot) => slot.slotId)]));
   const onDemandProblem = seatLaunchProblem(team, expectedSlots, { durable: durableCoordination, structured: !!structured }, structured?.requirePreauthorization === true);
   if (onDemandProblem) {
     revokeRequestAuthorizations();
@@ -6642,6 +6657,9 @@ export async function launchTeam(
   }
   if (claim.outcome === 'conflict') return { ok: false, code: 'CONFLICT', message: 'launch request id reused with changed payload' };
 
+  /** A seat the coordinator asked to respawn (its lifecycle row carries the marker until the new session binds). */
+  const isRespawnSeat = async (slotId: string): Promise<boolean> =>
+    (await teamLifecycle.get(claim.record.id))?.workers.find((worker) => worker.slotId === slotId)?.respawned !== undefined;
   const launchSlot = async (
     expectedSlot: { slotId: string; personaId: string; label?: string; role: 'worker' | 'orchestrator' },
     request: CreateTerminalRequest,
@@ -6913,14 +6931,15 @@ export async function launchTeam(
   };
 
   /** Open one worker seat's session. `lateSeat` is a seat that starts on demand, after the launch call has returned. */
-  const startWorkerSeat = (expectedSlot: { slotId: string; personaId: string; label?: string; role: 'worker' | 'orchestrator' }, lateSeat: boolean, respawnApprovalId?: string) => {
+  const startWorkerSeat = async (expectedSlot: { slotId: string; personaId: string; label?: string; role: 'worker' | 'orchestrator' }, lateSeat: boolean, respawnApprovalId?: string) => {
      const { slotId, personaId, label: slotLabel } = expectedSlot;
+     const coordinatorRespawn = await isRespawnSeat(slotId);
        // Job/Team identity belongs to ZCC, not whichever harness happens to
        // provide an OSC title or registration hook. Every worker gets a stable
        // host-owned label before the harness starts.
        const label = slotLabel || personaName(personaId) || slotId;
        // A new session of a seat is a new conversation: it never resumes the one before it.
-       const recovery = seatRecovery(recoveryFor(slotId, 'worker', personaId), respawnLaunchShape(seatLaunchMode(lateSeat, respawnApprovalId)).dropsRecovery);
+       const recovery = seatRecovery(recoveryFor(slotId, 'worker', personaId), respawnLaunchShape(coordinatorRespawn ? 'respawn' : seatLaunchMode(lateSeat, respawnApprovalId)).dropsRecovery);
        const workerTask = durableCoordination
          ? jobWorkerPrompt({ executionId: structured?.executionId, slotId, label, personaName: personaName(personaId), ...(recovery.recoveryResume ? { recoveryResume: true } : {}) })
           : taskFor(slotId);
@@ -7011,11 +7030,11 @@ export async function launchTeam(
   }
 
   const seatStarter = createSeatStarter({
-    hasStarted: (slotId) => seatLifecycle.hadSession(claim.record.id, slotId),
+    hasStarted: async (slotId) => (structured?.requirePreauthorization === true && await isRespawnSeat(slotId)) || seatLifecycle.hadSession(claim.record.id, slotId),
     mintApproval: async (slotId) => respawnApproval(launchAuthorization, await seatLifecycle.priorApprovalOf(claim.record.id, slotId), seatApprovals.expectedFor(slotId)),
     start: (slotId, approvalId) => startWorkerSeat(expectedSlots.find((candidate) => candidate.slotId === slotId)!, true, approvalId)
   });
-  deferredSeats.register(claim.record.id, [...deferredSlotIds, ...freshSlotIds], createDeferredSeatHooks({
+  deferredSeats.register(claim.record.id, [...deferredSlotIds, ...freshSlotIds, ...expectedSlots.filter((slot) => slot.role === 'worker').map((slot) => slot.slotId)], createDeferredSeatHooks({
     recordId: claim.record.id,
     lifecycle: teamLifecycle,
     startSeat: seatStarter,
@@ -7662,6 +7681,7 @@ const squadExecutionService = new SquadExecutionService({
     deliverToWorker: (sessionId, text) => ptys.getSession(sessionId)
       ? workerInjector.deliver(sessionId, text) : replyToSquadMember(sessionId, text),
    spawnDeferredWorker: (recordId, slotId) => deferredSeats.spawn(recordId, slotId),
+   respawnWorker: (recordId, slotId) => workerRespawner.respawn(recordId, slotId),
    recycleSeat: (recordId, slotId) => seatRecycler.recycle(recordId, slotId),
    recordUnitDelivered: seatLifecycle.recordDelivered,
    // Keeps a worker parked on an open blocker out of the idle thread-session sweep (self-expiring timestamp).
@@ -9290,6 +9310,7 @@ function registerIpc() {
     get overseerAudit() { return overseerAudit; },
     get apiErrorResume() { return apiErrorResume; },
     get squadWorkerRestarter() { return squadWorkerRestarter; },
+    get squadWorkerRespawner() { return workerRespawner; },
     get workerApiErrorRecovery() { return workerApiErrorRecovery; },
     get packAndInstallLocal() { return packAndInstallLocal; },
     get pendingWhatsNew() { return pendingWhatsNew; },

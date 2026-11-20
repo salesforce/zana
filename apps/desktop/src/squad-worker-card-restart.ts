@@ -43,6 +43,11 @@ export interface SquadWorkerCardRestartDeps {
     { state: string; callerPrincipalId?: string; teamLaunchRequestId?: string } | undefined
   >;
   isTerminalExecutionState(state: string): boolean;
+  /**
+   * Respawn of a worker whose session is over, through the same path as the coordinator's `execution.worker.respawn`
+   * (lifecycle fences, deferred-seat spawn, launch-time snapshot), without its per-slot budget: a person asked.
+   */
+  respawnExited(recordId: string, slotId: string): Promise<{ ok: true } | { ok: false; message: string }>;
   /** `maySpawn` is the launch fence the restarter rechecks right before and right after it relaunches. */
   restart(sessionId: string, opts: { maySpawn: () => Promise<boolean> }): Promise<SquadWorkerRestartResult>;
 }
@@ -100,8 +105,9 @@ export async function restartSquadWorkerCard(
     return { ok: false, reason: 'run-closing', message: 'the Squad run is closing' };
   }
   if (session.status === 'exited') {
-    // An exited seat has no lifecycle edge back to running yet: a plain relaunch would be ignored.
-    return { ok: false, reason: 'worker-exited', message: 'this worker has exited and cannot rejoin the Squad yet' };
+    // An exited seat has no live session to relaunch: it is given a new one through the respawn path.
+    const respawned = await deps.respawnExited(record.id, cohort.slotId).catch(() => ({ ok: false as const, message: 'the worker could not be restarted' }));
+    return respawned.ok ? { ok: true } : { ok: false, reason: 'worker-exited', message: safeMessage(respawned.message) };
   }
   const result = await deps.restart(session.id, { maySpawn: async () => !await deps.launchIsClosing(record.id) });
   return result.ok ? result : { ...result, ...(result.message ? { message: safeMessage(result.message) } : {}) };
