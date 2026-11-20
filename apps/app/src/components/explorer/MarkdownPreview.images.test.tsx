@@ -74,6 +74,32 @@ describe('MarkdownPreview images', () => {
     expect(screen.getAllByText('Image').length).toBeGreaterThan(0);
   });
 
+  it.each([
+    ['http:', 'http://example.com/a.png'],
+    ['protocol-relative', '//attacker/share/x.png'],
+    ['zcc-thread:', 'zcc-thread:abc/pic.png'],
+    ['a non-image path', 'docs/readme.txt']
+  ])('shows the alt text for a %s source and never renders it as an image or reads it', (_name, src) => {
+    renderDoc(`![Blocked ${_name}](${src})`);
+    expect(screen.queryByRole('img')).toBeNull();
+    expect(screen.getByText(`Blocked ${_name}`)).toBeTruthy();
+    expect(mocks.readDataUrl).not.toHaveBeenCalled();
+  });
+
+  it('keeps blob: images inline and resolves file: sources against the disk', async () => {
+    renderDoc('![Blob](blob:null/1234)\n\n![File](file:///repo/assets/f.png)');
+    expect(screen.getByRole('img', { name: 'Blob' }).getAttribute('src')).toBe('blob:null/1234');
+    expect((await screen.findByRole('img', { name: 'File' })).getAttribute('src')).toBe(PNG_DATA_URL);
+    expect(mocks.readDataUrl).toHaveBeenCalledWith('/repo/assets/f.png');
+  });
+
+  it('does not read relative images from the local disk for a remote document', () => {
+    render(<MarkdownPreview remote content={'![Remote doc](pic.png)\n\n![Web](https://example.com/w.png)'} documentPath="/srv/docs/a.md" />);
+    expect(screen.getByText('Remote doc')).toBeTruthy();
+    expect(screen.getByRole('img', { name: 'Web' })).toBeTruthy();
+    expect(mocks.readDataUrl).not.toHaveBeenCalled();
+  });
+
   it('still finds text around a loaded image and keeps the image in the copied selection', async () => {
     const { container } = renderDoc('Before the figure\n\n![Logo](logo.png)\n\nAfter the figure');
     await screen.findByRole('img', { name: 'Logo' });
