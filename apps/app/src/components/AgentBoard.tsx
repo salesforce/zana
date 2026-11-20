@@ -5,7 +5,7 @@ import { Bot, AlertCircle, Zap, Moon, CheckCircle2, HelpCircle, CheckCheck, Paus
 import type { AgentState, ExecutionBoardProjection, IdleResolution, IdleTriageResult, OverseerActivity, Persona, ScheduledTask, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { scheduleSummary } from '@zana-ai/zcc-domain/schedule-spec';
 import { profileIcon, personaIcon } from '../lib/profileIcon.js';
-import { isRecentlyFinished } from '../lib/sessionBuckets.js';
+import { isRecentlyFinished, isRetainedWorkerExit } from '../lib/sessionBuckets.js';
 import { sortProjectsForDisplay, usePersonas, useData, useScheduler, useTeams, useUi } from '../store.js';
 import { agentSessionTransport, isModernSquadThread, squadTransportClass, squadTransportKind } from '../lib/squad-transport.js';
 import { useSessionGit } from '../lib/gitInfo.js';
@@ -767,6 +767,8 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
   // Advisory per CLAUDE.md rule 1 — main owns/normalizes the value.
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
   const includeScheduled = useData((s) => s.includeScheduledAgentsInAgentView);
+  const dismissedWorkerExits = useUi((s) => s.dismissedWorkerExits);
+  const dismissWorkerExit = useUi((s) => s.dismissWorkerExit);
   const projects = useData((s) => s.projects);
   const projectOrder = useMemo(() => sortProjectsForDisplay(projects).map((project) => project.id), [projects]);
   // Schedules, indexed by the session ids they've fired, so a scheduled card
@@ -898,7 +900,8 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
         cards: laneCards.filter(
           (item) =>
             pendingDone[boardItemKey(item)] !== undefined || (item.kind === 'agent' &&
-            (item.card.isSyntheticExecutionHost || isRecentlyFinished(item.card.session, now)))
+            (item.card.isSyntheticExecutionHost || isRecentlyFinished(item.card.session, now)
+              || isRetainedWorkerExit(item.card.session, dismissedWorkerExits)))
         )
       };
     }
@@ -1183,7 +1186,24 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
 
     // Lifecycle controls belong in Squad details or the card context menu. The
     // Kanban card is a compact status surface, never a button stack.
-    if (nestedWorkers.length === 0) return cardButton;
+    if (nestedWorkers.length === 0) {
+      if (!isRetainedWorkerExit(t, dismissedWorkerExits)) return cardButton;
+      // A failed Squad worker stays until acknowledged; the dismiss control is a sibling, never nested in the card button.
+      return (
+        <div key={t.id} className="agent-card-retained">
+          {cardButton}
+          <button
+            type="button"
+            className="agent-card-dismiss"
+            title="Dismiss this exited worker"
+            aria-label={`Dismiss exited worker ${t.title}`}
+            onClick={() => dismissWorkerExit(t.id)}
+          >
+            Dismiss
+          </button>
+        </div>
+      );
+    }
     return (
       <div key={t.id} className="agent-squad">
         {cardButton}

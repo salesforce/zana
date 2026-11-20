@@ -2373,16 +2373,25 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
    * Appends one persistent, bounded run-warning event. Unlike `event` it needs no state version: a launch
    * warning is advisory and must not race members that bump the version while the launch settles.
    */
-  async function warning(executionId: string, input: { slots: readonly unknown[] }): Promise<void> {
-    if (!input.slots.length) return;
+  async function warning(
+    executionId: string,
+    input: { slots: readonly unknown[] } | { slotId: string; summary: string }
+  ): Promise<void> {
+    const workerSlot = 'summary' in input ? input : undefined;
+    if (!workerSlot && !('slots' in input && input.slots.length)) return;
     await storeQueue.run(async () => {
       const snapshot = read();
       const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
       if (!record) throw new Error('execution not found');
       assertActive(record);
-      const summary = boundReason(`${input.slots.length} Team slot(s) failed to launch: ${formatFailedSlots(input.slots)}`);
       const timestamp = now();
-      append(snapshot.state, record, record.state, 'warning', summary, timestamp, { kind: 'event', eventType: 'failure' });
+      if (workerSlot) {
+        // A worker warning names its slot so the board and Inbox can tie it to one card.
+        append(snapshot.state, record, record.state, 'warning', boundReason(workerSlot.summary), timestamp, { kind: 'event', eventType: 'failure', slotId: boundReason(workerSlot.slotId, 120) });
+      } else {
+        const slots = (input as { slots: readonly unknown[] }).slots;
+        append(snapshot.state, record, record.state, 'warning', boundReason(`${slots.length} Team slot(s) failed to launch: ${formatFailedSlots(slots)}`), timestamp, { kind: 'event', eventType: 'failure' });
+      }
       record.updatedAt = timestamp;
       persist(snapshot.state, snapshot.hash);
     });

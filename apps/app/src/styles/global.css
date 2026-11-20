@@ -15024,6 +15024,22 @@ body.resizing-col .explorer-resizer::after {
   color: var(--danger);
 }
 
+.agent-card-retained {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.agent-card-dismiss {
+  align-self: flex-end;
+  font-size: 11px;
+  padding: 1px 8px;
+  border: 1px solid var(--border, currentColor);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
 /* Background (headless) badge — its own accent + a Moon glyph so a detached
    session reads distinctly from the muted Scheduled chip sitting beside it. */
 .agent-card-badge.bg {

@@ -301,6 +301,16 @@ export interface ExecutionServiceDeps {
   retainParkedWorker?: (record: ExecutionRecord, sessionId: string, retainUntilMs: number | null) => Promise<void>;
   /** Called once when a human-audience blocker is created. Failures are logged and never fail the engine. */
   onHumanBlocker?: (record: ExecutionRecord, blocker: NonNullable<ExecutionRecord['blockers']>[number]) => void | Promise<void>;
+  /**
+   * Called after a worker warning (non-zero exit or no turn) is recorded on the run, so the host can post an
+   * Inbox row. Failures are logged and never fail the engine.
+   */
+  onRunWarning?: (record: ExecutionRecord, warning: { slotId: string; summary: string; kind: 'worker-exit' | 'worker-no-turn' }) => void | Promise<void>;
+  /**
+   * How long a claimed worker may take no turn and emit no output before the run is warned. Defaults to the run's
+   * claim stall limit; E2E shortens it through host config.
+   */
+  noTurnWarnWindowMs?: () => number | undefined;
   inbox?: { append: (input: InboxInput) => Promise<InboxEntry>; appendOnce?: (input: InboxInput) => Promise<InboxEntry> };
   preflightWorkflow?: (teamId: string, workflow: SquadBundleWorkflowMetadataV1) => { ok: boolean; code?: string; message?: string };
   /** Trusted total slot count of the record's team; enables the all-slots-restorable gate. */
@@ -707,6 +717,8 @@ export class ExecutionService {
   private readonly parkedHolds: ParkedWorkerHolds;
   private activeClaimCursor?: ActiveClaimCursor;
   private activeReconcileRunning = false;
+  /** Claims already warned as taking no turn (`executionId:unitId:claimId`), bounded so it cannot grow without limit. */
+  private readonly noTurnWarned = new Set<string>();
   private readonly routeFactCircuits = new Map<string, { state: CircuitState; openedAt?: number }>();
   private readonly wakeConfirmations: CoordinatorWakeConfirmations;
 
@@ -1180,8 +1192,9 @@ export class ExecutionService {
         catch (error) { this.deps.logError?.(`Execution claim recovery lifecycle read failed for ${record.id}`, error); return [record, undefined] as const; }
       }));
       for (const [record, lifecycle] of lifecycles) {
-        if (!lifecycle?.workers) continue;
         const now = (this.deps.now ?? Date.now)();
+        await this.warnNoTurnWorkers(record, lifecycle, now);
+        if (!lifecycle?.workers) continue;
         const claims: { workUnitId: string; claimId: string; claimGeneration: number; reason: string; force?: boolean }[] = [];
         const renewSlots: string[] = [];
         for (const unit of record.workUnits ?? []) {
@@ -1216,6 +1229,59 @@ export class ExecutionService {
     }
   }
 
+  /** Records the run warning and offers it to the host (Inbox). Never throws: a warning must not break recovery. */
+  private async raiseWorkerWarning(record: ExecutionRecord, slotId: string, summary: string, kind: 'worker-exit' | 'worker-no-turn'): Promise<void> {
+    const bounded = boundReason(summary);
+    try {
+      await this.deps.store.warning(record.id, { slotId, summary: bounded });
+    } catch (error) {
+      this.deps.logError?.(`Worker warning failed for ${record.id}`, error);
+      return;
+    }
+    try {
+      await this.deps.onRunWarning?.(record, { slotId: boundReason(slotId, 120), summary: bounded, kind });
+    } catch (error) {
+      this.deps.logError?.(`Worker warning delivery failed for ${record.id}`, error);
+    }
+  }
+
+  /** A seat that started on demand and never had work is idle, not failed: only assigned or claimed seats warn. */
+  private slotHasAssignment(record: ExecutionRecord, worker: { slotId?: string; onDemand?: true }): boolean {
+    if (!worker.onDemand) return true;
+    return (record.workUnits ?? []).some((unit) => unit.assignedSlotId === worker.slotId || unit.claimedBy?.slotId === worker.slotId);
+  }
+
+  /** Warns once for a worker that exited with a non-zero code or by signal; a clean exit or a user stop is silent. */
+  private async warnWorkerExit(record: ExecutionRecord, worker: NonNullable<ExtractedLifecycle['workers']>[number]): Promise<void> {
+    if (worker.process !== 'exited' || !worker.slotId || !this.slotHasAssignment(record, worker)) return;
+    const crashed = worker.exitCode !== undefined ? worker.exitCode !== 0 : worker.exitSignal !== undefined && worker.exitSignal !== 0;
+    if (!crashed) return;
+    const how = worker.exitCode !== undefined ? `exited with code ${worker.exitCode}` : `was stopped by signal ${worker.exitSignal}`;
+    const why = worker.exitReason ? `: ${worker.exitReason}` : '';
+    await this.raiseWorkerWarning(record, worker.slotId, `Worker ${worker.slotId} ${how}${why}`, 'worker-exit');
+  }
+
+  /**
+   * Warns once per claim whose worker has reported no turn and produced no output for the window since it was
+   * claimed. A worker proven dead is skipped (its exit warns); a claim that is progressing never warns.
+   */
+  private async warnNoTurnWorkers(record: ExecutionRecord, lifecycle: ExtractedLifecycle | undefined, now: number): Promise<void> {
+    const window = this.deps.noTurnWarnWindowMs?.() ?? record.request.policy?.maxClaimStallMs ?? DEFAULT_DURABLE_CLAIM_STALL_MS;
+    for (const unit of record.workUnits ?? []) {
+      if (unit.state !== 'CLAIMED' || !unit.claimId || !unit.assignedSlotId || unit.claimedAt === undefined) continue;
+      if ((unit.turnCount ?? 0) > 0 || (unit.progressAt ?? unit.claimedAt) > unit.claimedAt) continue;
+      if (now - unit.claimedAt < window) continue;
+      const slotId = unit.assignedSlotId;
+      const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === slotId && candidate.projectId === record.projectId);
+      if (worker && DEAD_WORKER_PROCESSES.has(worker.process ?? '')) continue;
+      const key = `${record.id}:${unit.id}:${unit.claimId}`;
+      if (this.noTurnWarned.has(key)) continue;
+      this.noTurnWarned.add(key);
+      while (this.noTurnWarned.size > 512) this.noTurnWarned.delete(this.noTurnWarned.values().next().value as string);
+      await this.raiseWorkerWarning(record, slotId, `Worker ${slotId} has taken no turn for ${formatDuration(window)} after it was assigned work`, 'worker-no-turn');
+    }
+  }
+
   /**
    * Recover one worker claim immediately after main records its terminal PTY state.
    * This deliberately does not share {@link reconcileActive}'s in-flight guard:
@@ -1234,6 +1300,7 @@ export class ExecutionService {
     }
     const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === slotId && candidate.projectId === record.projectId);
     if (!worker || !DEAD_WORKER_PROCESSES.has(worker.process ?? '')) return;
+    await this.warnWorkerExit(record, worker);
     const unit = record.workUnits?.find((candidate) => candidate.state === 'CLAIMED' && candidate.assignedSlotId === slotId);
     if (!unit?.claimId || unit.claimGeneration === undefined) return;
     const reclaimed = await this.deps.store.reclaimExpiredClaims(record.id, [{

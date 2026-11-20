@@ -2286,6 +2286,11 @@ export interface AppConfig {
    */
   sponsorPromptDismissed?: boolean;
   /**
+   * Session ids of exited non-zero Squad worker cards the user dismissed from the Agent board. Such cards stay
+   * visible past the usual finished-linger window until dismissed. Newest last, capped by the config store.
+   */
+  dismissedWorkerExits?: string[];
+  /**
    * Auto-name a Claude tab or a conversation thread from its first instruction
    * via an LLM micro-call (the `tab-namer` prompt). Default true. When false,
    * tabs fall back to the legacy OSC idle-title rename, and threads keep the
