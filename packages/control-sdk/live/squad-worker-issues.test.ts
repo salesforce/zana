@@ -119,6 +119,7 @@ describe.skipIf(!enabled)('live squad worker issues (refusals and previews only)
       expect(result.ok, `${teamId} ${mode}: ${JSON.stringify(result)}`).toBe(false);
       expect(JSON.stringify(result)).not.toMatch(/executionId/);
       expect(JSON.stringify(result)).not.toMatch(/NOT_FOUND/);
+      expect(JSON.stringify(result)).toContain(ghost);
     }
   });
 
