@@ -18,17 +18,35 @@ export function boundedText(text: string, chars = TEXT_PREVIEW_CHARS, lines = TE
   return candidate.slice(0, end);
 }
 
+const DATA_URL_PAYLOAD = /(data:[\w.+-]+\/[\w.+-]+;base64,)[A-Za-z0-9+/=]+/g;
+
+/**
+ * The text the size caps apply to: embedded base64 `data:` payloads (images a caller inlined) count as a
+ * short stub, so a small document with screenshots is not mistaken for a huge one.
+ */
+export function measuredText(text: string): string {
+  return text.includes(';base64,') ? text.replace(DATA_URL_PAYLOAD, '$1') : text;
+}
+
+/** True when the document is over the character or line cap, ignoring embedded `data:` payloads. */
+export function isOversizedText(text: string): boolean {
+  const measured = measuredText(text);
+  return boundedText(measured).length < measured.length;
+}
+
 export function LargeTextPreview({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   const [failed, setFailed] = useState(false);
-  const preview = boundedText(text);
+  const measured = measuredText(text);
+  const preview = boundedText(measured);
+  const shortened = preview.length < measured.length;
   return <div>
-    <p role="status">Showing a text preview{preview.length < text.length ? ' of a large document' : ''}.</p>
+    <p role="status">{shortened ? `Showing a text preview: this document is over ${TEXT_PREVIEW_LINES.toLocaleString('en-US')} lines or ${TEXT_PREVIEW_CHARS.toLocaleString('en-US')} characters.` : 'Showing a text preview.'}</p>
     <button type="button" className="btn" onClick={() => {
       void copyText(text).then(() => { setCopied(true); setFailed(false); }).catch(() => setFailed(true));
     }}>{copied ? 'Copied full text' : 'Copy full text'}</button>
     {failed && <p role="alert">Could not copy text.</p>}
     <pre className="inbox-doc-pre">{preview}</pre>
-    {preview.length < text.length && <p>Preview shortened. Copy full text to read the complete content.</p>}
+    {shortened && <p>Preview shortened. Copy full text to read the complete content.</p>}
   </div>;
 }
