@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { ThreadTodoChecklist } from './thread-todo-checklist.js';
+import { ThreadTodoCard } from './timeline/ThreadBanners.js';
 import { ThreadPlanPanel } from './secondary-panel/ThreadPlanPanel.js';
 
 // The app chrome sets `user-select: none` on <body>. The to-do checklist shows
@@ -40,6 +41,14 @@ describe('plan and to-do text selection', () => {
     expect(view.container.querySelector('ul.thread-todo-checklist')).not.toBeNull();
     expect(lastValue('.thread-todo-checklist')).toBe('text');
     expect(rulesFor('.thread-todo-checklist').filter((rule) => rule.value === 'none')).toEqual([]);
+  });
+
+  it('mounts the composer to-do card around the same selectable checklist', () => {
+    const todos = { sourceSeq: 1, updatedAt: 1, items };
+    const view = render(<ThreadTodoCard todos={todos} isExpanded onToggle={() => undefined} />);
+    expect(screen.getByTestId('thread-todos').classList.contains('thread-todo-card')).toBe(true);
+    expect(view.container.querySelector('.thread-todo-card ul.thread-todo-checklist')).not.toBeNull();
+    expect(lastValue('.thread-todo-checklist')).toBe('text');
   });
 
   it('opts the plan panel in and keeps its buttons as chrome', () => {
