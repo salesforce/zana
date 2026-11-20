@@ -192,7 +192,10 @@ export function useThreadComposerOptions(input: {
   const loading = Boolean(input.hostPending) || (!cached && catalog.inflight.has(providerId));
   // Warm rows inherited from another project stay visible, but are not
   // authoritative enough to snap a model or report a saved choice as unavailable.
-  const settling = loading || Boolean(input.scopePending) || catalog.provisionalProviders.has(providerId);
+  // An existing thread whose provider has not arrived yet is shown under the
+  // default provider, whose catalog says nothing about the thread's saved model.
+  const providerPending = Boolean(input.threadId && !input.lockedProviderId);
+  const settling = loading || Boolean(input.scopePending) || providerPending || catalog.provisionalProviders.has(providerId);
   const modelLoadError = cached?.modelLoadError ?? null;
   const modelLoadErrorDetail = cached?.modelLoadErrorDetail ?? null;
   const acpModeOptions = cached?.acpMode?.options ?? [];

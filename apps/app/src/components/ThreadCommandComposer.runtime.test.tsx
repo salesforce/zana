@@ -186,6 +186,13 @@ describe('thread catalogue scope while switching threads', () => {
     view.rerender(composer({ threadId: 't2' }));
     expect(h.optionsArgs).toMatchObject({ scopePending: false, projectId: 'p2', hostId: 'host2' });
   });
+  it('takes the provider from the thread row before the detail view supplies one', () => {
+    h.threads = [{ id: 't3', hostId: 'host3', projectId: 'p3', providerId: 'pi' }];
+    const view = render(composer({ threadId: 't3' }));
+    expect(h.optionsArgs?.lockedProviderId).toBe('pi');
+    view.rerender(composer({ threadId: 't3', providerId: 'codex' }));
+    expect(h.optionsArgs?.lockedProviderId).toBe('codex');
+  });
   it('does not hold validation for a new thread', () => {
     render(composer({ threadId: undefined }));
     expect(h.optionsArgs?.scopePending).toBe(false);
