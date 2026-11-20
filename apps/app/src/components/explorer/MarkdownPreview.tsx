@@ -1,16 +1,37 @@
-import { useEffect, useRef, type RefObject } from 'react';
-import ReactMarkdown, { type Components } from 'react-markdown';
+import { useEffect, useMemo, useRef, type RefObject } from 'react';
+import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { DocumentImage } from '../DocumentImage.js';
 import { DocumentLinkBoundary } from '../DocumentLinkBoundary.js';
 import { CopyableFencedPre } from '../FencedCodeBlock.js';
 import { DomFindBar } from '../DomFindBar.js';
 import { documentLinkUrlTransform, type DocumentLink } from '../document-links.js';
+import { transformMarkdownMediaUrl } from '../thread/timeline/thread-inline-images.js';
 import { useDomFind } from '../../lib/use-dom-find.js';
 
 // Module-level so every render passes the same component types: inline arrows
 // would remount the table on each find keystroke and detach the highlighted
 // ranges.
-const MARKDOWN_COMPONENTS: Components = {
+const INLINE_IMAGE_SRC = /^(https?:|data:image\/|blob:|\/\/)/iu;
+
+// Images keep data: sources (the default transform strips them), and relative
+// paths stay untouched so the img component can resolve them against the file.
+function previewUrlTransform(url: string, key: string): string {
+  return key === 'src' ? transformMarkdownMediaUrl(url, defaultUrlTransform) : documentLinkUrlTransform(url, key);
+}
+
+function documentImageComponent(documentPath: string): Components['img'] {
+  return ({ src, alt, title }) => {
+    const raw = typeof src === 'string' ? src : '';
+    const label = alt || 'Image';
+    // Inline and remote images load as-is (CSP allows them); anything else is a
+    // path next to the open file, read through the confined file API.
+    if (INLINE_IMAGE_SRC.test(raw)) return <img className="inbox-md-img" src={raw} alt={label} title={title} loading="lazy" decoding="async" />;
+    return <DocumentImage documentPath={documentPath} src={raw} alt={label} title={title} />;
+  };
+}
+
+const BASE_COMPONENTS: Components = {
   table: ({ node: _node, ...props }) => <div className="inbox-md-table-wrap"><table {...props} /></div>,
   // Same pinned Copy code button as MarkdownContent (#464).
   pre: CopyableFencedPre
@@ -39,6 +60,8 @@ export default function MarkdownPreview({ content, documentPath, fragment, onOpe
   const hostRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   useFocusPreviewOnOpen(hostRef);
+  // One component per document: a stable identity keeps highlighted ranges attached while finding.
+  const components = useMemo<Components>(() => ({ ...BASE_COMPONENTS, img: documentImageComponent(documentPath) }), [documentPath]);
   const find = useDomFind(contentRef, hostRef, `${documentPath}\n${content}`);
   // The host owns Ctrl+F (data-own-find), so thread find stays out of the preview.
   return <div ref={hostRef} className="explorer-md-find-host" {...find.hostProps}>
@@ -53,7 +76,7 @@ export default function MarkdownPreview({ content, documentPath, fragment, onOpe
       focusRequest={find.focusRequest}
     />}
     <DocumentLinkBoundary className="explorer-md-preview" documentPath={documentPath} fragment={fragment} onOpenDocument={onOpenDocument}><div className="inbox-md" ref={contentRef}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={documentLinkUrlTransform} components={MARKDOWN_COMPONENTS}>{content}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={previewUrlTransform} components={components}>{content}</ReactMarkdown>
     </div></DocumentLinkBoundary>
   </div>;
 }
