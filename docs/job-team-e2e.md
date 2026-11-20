@@ -85,6 +85,20 @@ global setup prepares private app/native copies and unique artifacts, including
 for direct `playwright test` calls. No shared ABI switching or restore is needed.
 See [native runtime isolation](native-runtime-isolation.md).
 
+### Test-only launch fault
+
+To prove that a launch whose final lifecycle write fails leaves no live session, an E2E
+build can force that write to throw. The seam is compiled out of every other build:
+
+- `__ZCC_TEST_FAULTS__` is inlined by `electron.vite.config.ts` as `true` only when
+  `ZCC_E2E_BUILD=1` (set by `pnpm test:e2e` and `pnpm test:e2e:jobteam`). Production
+  builds get `false`, so the branch is removed and the variable is never read.
+- Even in an E2E build nothing happens unless the app is launched with
+  `ZCC_TEST_FAULT=launch-complete-throw`. It is off by default.
+- Effect: `launchTeam` throws just before `teamLifecycle.complete`. Every session the
+  request started must then be closed by id, run seats released and the launch request
+  cancelled; the original error is returned to the caller.
+
 ## Live coverage
 
 These deterministic specs prove the full plumbing with no model spend. A real

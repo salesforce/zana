@@ -3,7 +3,7 @@ import { squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
 import { fitRecoveryObjective } from './recovery-objective.js';
 import { createHash } from 'node:crypto';
 import { launchDigest } from '../launch/digest.js';
-import { EXECUTION_RETENTION_MS, unitSlotEligibility, levelCheckSkipped, type ExecutionRoutingPolicyV1, assignmentRequirementFailures, LOOP_LIMIT_BLOCKER_PREFIX, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
+import { EXECUTION_RETENTION_MS, boundReason, unitSlotEligibility, levelCheckSkipped, type ExecutionRoutingPolicyV1, assignmentRequirementFailures, LOOP_LIMIT_BLOCKER_PREFIX, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
 import { timeoutRecoveryBlockReason } from './timeout-recovery-policy.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
@@ -966,7 +966,7 @@ export class ExecutionService {
       });
       if (!launched.ok) {
         await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
-        await this.transitionOrCurrent(record, 'FAILED', 'error', launched.message ?? 'Team launch failed');
+        await this.transitionOrCurrent(record, 'FAILED', 'error', boundReason(launched.message ?? 'Team launch failed'));
         return { ok: false, code: launched.code ?? 'TEAM_LAUNCH_FAILED', message: launched.message ?? 'Team launch failed' };
       }
       if (!await this.launchMayProceed(record)) {
@@ -984,6 +984,13 @@ export class ExecutionService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
+      // Seats this launch request already started must not outlive the failed run. Scoped by launch
+      // request id; a failed close never masks the launch error.
+      try {
+        await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
+      } catch (cancelError) {
+        this.deps.logError?.(`execution ${record.id} launch cleanup`, cancelError);
+      }
       const current = await this.failLaunch(record, `Team launch error: ${message}`);
       return current.state === 'FAILED'
         ? { ok: false, code: message === 'TARGET_UNAVAILABLE' ? 'TARGET_UNAVAILABLE' : 'TEAM_LAUNCH_FAILED', message }
@@ -4004,7 +4011,7 @@ export class ExecutionService {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       if (current.state !== 'STARTING' && current.state !== 'RUNNING') return current;
       try {
-        const failed = await this.deps.store.transition(current.id, current.stateVersion, 'FAILED', 'error', summary);
+        const failed = await this.deps.store.transition(current.id, current.stateVersion, 'FAILED', 'error', boundReason(summary));
         await this.cleanupTerminal(failed);
         return failed;
       } catch (error) {

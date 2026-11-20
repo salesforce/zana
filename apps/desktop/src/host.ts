@@ -170,7 +170,7 @@ import { SQUAD_SEAT_MARKER, squadSeatRefusal } from './squad-seat-launch.js';
 import { createRestoreCapabilityStore, type RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
 import { createTeamLifecycleIntegration, createTeamLifecycleStore, type TeamLifecycleRecord, type TeamModernWorkerObservation } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
 import { createRemoteReapLedger, remoteReapOrphans, type RemoteReapEntry } from '@zana-ai/zcc-server/services/launch/remote-reap-ledger';
-import { createExecutionStore, isUserOwnedSquadWorktree, recordedLevelPolicy, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
+import { boundReason, createExecutionStore, isUserOwnedSquadWorktree, recordedLevelPolicy, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
 import { KeyedColdStartSemaphore, SquadExecutionService, type ExecutionRequestV1 } from '@zana-ai/zcc-server/services/execution/service';
@@ -193,6 +193,7 @@ import { expandTeamSlots } from '@zana-ai/zcc-server/services/agents/team-slot-e
 import { bindLaunchPrincipal, type LaunchAuthorizationBinding, type LaunchPrincipal, type LaunchPrincipalRef } from '@zana-ai/zcc-server/services/launch/types';
 import type { TerminalLaunchOptions } from '@zana-ai/zcc-server/services/launch/terminal-launcher';
 import * as testTap from './test-tap.js';
+import { testFaultActive } from './test-faults.js';
 import { AgentStatusTracker } from '@zana-ai/zcc-server/services/agents/agent-status';
 import { OutputActivityMonitor } from '@zana-ai/zcc-host-daemon/output-activity';
 import { ScreenScanBlockedDetector } from '@zana-ai/zcc-server/services/agents/screen-scan-blocked-detector';
@@ -1287,6 +1288,23 @@ async function terminateSession(sessionId: string, expected = true): Promise<boo
   const closed = expected ? ptys.closeExpected(sessionId) : (ptys.close(sessionId), true);
   if (project && !project.remote) await killLocalTmuxSession(sessionId);
   return closed;
+}
+
+/**
+ * Closes sessions by id when a launch cannot be recorded. Each close is independent: one stuck
+ * session never leaves the others running. Returns the ids that could not be confirmed closed.
+ */
+export async function closeStartedSessionsById(sessionIds: readonly string[]): Promise<string[]> {
+  const survivors: string[] = [];
+  await Promise.all([...new Set(sessionIds)].map(async (sessionId) => {
+    try {
+      if (!await terminateSession(sessionId)) survivors.push(sessionId);
+    } catch (error) {
+      logMainError(`close started session ${sessionId}`, error);
+      survivors.push(sessionId);
+    }
+  }));
+  return survivors;
 }
 
 export function sanitizeRendererTerminalRequest(req: CreateTerminalRequest): CreateTerminalRequest {
@@ -6331,6 +6349,8 @@ export async function launchTeam(
   const roster: RosterEntry[] = [];
   const workers: TeamLaunchedWorker[] = [];
   const failedSlots: TeamFailedWorkerSlot[] = [];
+  const SLOT_REASON_MAX = 500;
+  const joinedSlotReasons = (fallback: string) => boundReason(failedSlots.map((slot) => `${slot.slotId}: ${slot.reason}`).join('; ') || fallback);
   const launchRequestId = structured?.launchRequestId ?? randomUUID();
   const callerPrincipalId = structured?.callerPrincipalId ?? opts?.callerPrincipalId ?? `legacy:${launchRequestId}`;
   const teamPrincipalRef = {
@@ -6813,7 +6833,9 @@ export async function launchTeam(
         return { ok: false, code: reservation ? 'UNCERTAIN' : 'DENIED', message: error instanceof Error ? error.message : String(error) };
       } finally { releaseColdStart(); }
     }
-    const result = await launchAuthorizedTerminal(
+    // A spawn that throws is one failed seat, not a failed launch: the rejection becomes a result so
+    // sibling seats keep launching and the seat's lifecycle row is marked spawn-failed below.
+    const result: Result<{ id: string }> = await launchAuthorizedTerminal(
       request,
        teamPrincipalRef,
        { autonomous, coordinationMode, suppressPersonaInitialPrompt: durableCoordination, tabNamerPrompt, ...SQUAD_SEAT_MARKER, ...spawnExtras },
@@ -6847,7 +6869,9 @@ export async function launchTeam(
           maySpawn: () => teamLifecycle.workerMaySpawn(claim.record.id, slotId),
           claimRunning: () => teamLifecycle.claimWorkerRunning(claim.record.id, slotId)
         }
-    ).finally(releaseColdStart);
+    ).catch((error: unknown): Result<{ id: string }> => ({
+      ok: false, code: 'SPAWN_FAILED', message: boundReason(error instanceof Error ? error.message : String(error), SLOT_REASON_MAX)
+    })).finally(releaseColdStart);
     if (durableIdentity) {
       try {
         if (result.ok) {
@@ -6945,7 +6969,12 @@ export async function launchTeam(
          roster.push(seatRosterEntry({ slotId, label: quantity > 1 ? `${label} ${repeatIndex + 1}` : label }, { fresh: freshSlotIds.has(slotId) }));
          continue;
        }
-       const res = await startWorkerSeat(expectedSlot, false);
+       let res: Result<{ id: string }>;
+       try {
+         res = await startWorkerSeat(expectedSlot, false);
+       } catch (error) {
+         res = { ok: false, code: 'SPAWN_FAILED', message: error instanceof Error ? error.message : String(error) };
+       }
        if (res.ok) {
         launched += 1;
         // quantity>1 → suffix so two tabs of one slot are distinguishable in the
@@ -6959,7 +6988,7 @@ export async function launchTeam(
          const authorizationId = launchAuthorizationBySession.get(res.value.id)!;
          workers.push({ sessionId: res.value.id, cohortId, slotId, personaId, projectId: targetProjectId, authorizationId });
        } else {
-         failedSlots.push({ slotId, personaId, reason: res.message });
+         failedSlots.push({ slotId, personaId, reason: boundReason(res.message, SLOT_REASON_MAX) });
        }
   }
 
@@ -7098,27 +7127,48 @@ export async function launchTeam(
         });
       }
     } else {
-      failedSlots.push({ slotId: orchestratorSlotId, personaId: orchestratorId!, reason: res.message });
+      failedSlots.push({ slotId: orchestratorSlotId, personaId: orchestratorId!, reason: boundReason(res.message, SLOT_REASON_MAX) });
     }
     }
   }
 
   const result: LaunchTeamResult = { launchRequestId, launched, cohortId, workers, failedSlots, orchestratorSessionId, workerSessionIds };
-  if (durableCoordination && !orchestratorSessionId) {
-    releaseRunSeats(claim.record.id);
-    await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId);
+  let operationResult: Result<LaunchTeamResult>;
+  try {
+    if (durableCoordination && !orchestratorSessionId) {
+      releaseRunSeats(claim.record.id);
+      await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId);
+    }
+    operationResult = durableCoordination && !orchestratorSessionId
+      ? { ok: false, code: 'TEAM_LAUNCH_FAILED', message: joinedSlotReasons('Team coordinator failed to launch') }
+      : launched === 0 && structured
+      ? { ok: false, code: 'TEAM_LAUNCH_FAILED', message: joinedSlotReasons('team launched no workers') }
+      : { ok: true, value: result };
+    if (!operationResult.ok) {
+      revokeRequestAuthorizations();
+    }
+    if (testFaultActive('launch-complete-throw')) throw new Error('injected launch completion fault');
+    await teamLifecycle.complete(claim.record.id, operationResult, result);
+  } catch (error) {
+    // The launch record could not be finished: every seat this request started is closed by id so no
+    // live session outlives a launch that reports failure, then the original error surfaces.
+    try {
+      revokeRequestAuthorizations();
+      releaseRunSeats(claim.record.id);
+    } catch (releaseError) {
+      logMainError('team launch seat release after failed completion', releaseError);
+    }
+    await closeStartedSessionsById([...workerSessionIds, ...(orchestratorSessionId ? [orchestratorSessionId] : [])]);
+    await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId).catch((cancelError) => logMainError('team launch cleanup after failed completion', cancelError));
+    throw error;
   }
-  const operationResult: Result<LaunchTeamResult> = durableCoordination && !orchestratorSessionId
-    ? { ok: false, code: 'TEAM_LAUNCH_FAILED', message: failedSlots.map((slot) => `${slot.slotId}: ${slot.reason}`).join('; ') || 'Team coordinator failed to launch' }
-    : launched === 0 && structured
-    ? { ok: false, code: 'TEAM_LAUNCH_FAILED', message: failedSlots.map((slot) => `${slot.slotId}: ${slot.reason}`).join('; ') || 'team launched no workers' }
-    : { ok: true, value: result };
-  if (!operationResult.ok) {
-    revokeRequestAuthorizations();
+  // The launch is recorded as complete: a failed read or notify below must not tear it down.
+  try {
+    const lifecycleRecord = await teamLifecycle.get(claim.record.id);
+    if (lifecycleRecord) teamLifecycleIntegration.track(lifecycleRecord);
+  } catch (trackError) {
+    logMainError('team launch tracking after completion', trackError);
   }
-  await teamLifecycle.complete(claim.record.id, operationResult, result);
-  const lifecycleRecord = await teamLifecycle.get(claim.record.id);
-  if (lifecycleRecord) teamLifecycleIntegration.track(lifecycleRecord);
   return operationResult;
 
   /** Withdraw the launch approvals still held by seats that never started (run released its spawner). */
