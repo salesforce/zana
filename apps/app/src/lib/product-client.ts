@@ -1,3 +1,4 @@
+import type { PersonaLoadWarning } from '@zana-ai/zcc-domain/persona-validation';
 import type { LibraryDoc } from '@zana-ai/zcc-domain/product';
 import { httpProjectGit, scopedDesktopGit } from './project-git.js';
 import { machineTerminals } from './machine-terminals.js';
@@ -456,6 +457,10 @@ function httpProduct(): Pick<
       list: async () => {
         const body = await apiJson<{ personas: Persona[] }>('/personas');
         return body.personas;
+      },
+      loadWarnings: async () => {
+        const body = await apiJson<{ warnings?: PersonaLoadWarning[] }>('/personas');
+        return Array.isArray(body.warnings) ? body.warnings : [];
       },
       onChanged: (cb: (personas: Persona[]) => void) =>
         subscribeProductEvent<Persona[]>('personas:changed', cb)

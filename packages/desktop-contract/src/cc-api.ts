@@ -1,4 +1,5 @@
 import type { ThreadHistoryQuery, ThreadHistoryPage, ConversationTranscript } from '@zana-ai/zcc-domain/product';
+import type { PersonaLoadWarning } from '@zana-ai/zcc-domain/persona-validation';
 import type { DesktopBrowserApi } from './browser.js';
 import type { SquadLaunchPrefill, SquadProposalErrorCode } from '@zana-ai/zcc-domain/squad-proposal';
 import type { MarketplaceCatalogRow } from '@zana-ai/zcc-domain';
@@ -2055,6 +2056,8 @@ export interface CcApi {
    */
   personas: {
     list(): Promise<Persona[]>;
+    /** Persona files the loader ignored (basename, source, fixed reason; no contents). Takes no arguments. */
+    loadWarnings(): Promise<PersonaLoadWarning[]>;
     onChanged(cb: (personas: Persona[]) => void): () => void;
     revealDir(): Promise<{ ok: boolean; path: string; message?: string }>;
     /**

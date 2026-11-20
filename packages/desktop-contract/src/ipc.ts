@@ -808,6 +808,7 @@ export const IPC = {
   },
   personas: {
     list: 'personas:list',
+    loadWarnings: 'personas:load-warnings',
     onChanged: 'personas:onChanged',
     revealDir: 'personas:revealDir',
     save: 'personas:save',

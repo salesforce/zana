@@ -958,6 +958,7 @@ const api: CcApi = {
   },
   personas: {
     list: () => ipcRenderer.invoke(IPC.personas.list),
+    loadWarnings: () => ipcRenderer.invoke(IPC.personas.loadWarnings),
     revealDir: () => ipcRenderer.invoke(IPC.personas.revealDir),
     save: (input) => ipcRenderer.invoke(IPC.personas.save, input),
     duplicate: (id) => ipcRenderer.invoke(IPC.personas.duplicate, id),
