@@ -192,8 +192,210 @@
   var PAGE_CONFIG_ID = "dd-page";
   var PAGE_FILES_ID = "dd-files";
   var PAGE_HELLO = "dd-page-hello";
+  var MAX_FIND_QUERY_CHARS = 200;
   var MAX_PAGE_PROBLEMS = 50;
   var MAX_PAGE_STORAGE_CHARS = 256 * 1024;
+
+  // ../../apps/app/src/lib/dom-find.ts
+  var FIND_MATCH_LIMIT = 2e3;
+  var SHOW_TEXT = 4;
+  var SKIPPED_PARENTS = /* @__PURE__ */ new Set(["SCRIPT", "STYLE", "TEMPLATE", "NOSCRIPT"]);
+  function viewOf(el) {
+    return el.ownerDocument.defaultView ?? window;
+  }
+  function isElementHidden(el) {
+    if (SKIPPED_PARENTS.has(el.tagName) || el.hasAttribute("hidden") || el.classList.contains("sr-only")) return true;
+    const style = viewOf(el).getComputedStyle(el);
+    return style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse";
+  }
+  function isInClosedDetails(el, root) {
+    let child = null;
+    for (let node = el; node && node !== root.parentElement; child = node, node = node.parentElement) {
+      if (node.tagName === "DETAILS" && !node.open && child?.tagName !== "SUMMARY") return true;
+    }
+    return false;
+  }
+  function isRendered(parent, root, hiddenCache) {
+    if (isInClosedDetails(parent, root)) return false;
+    for (let el = parent; el && el !== root.parentElement; el = el.parentElement) {
+      let hidden = hiddenCache.get(el);
+      if (hidden === void 0) {
+        hidden = isElementHidden(el);
+        hiddenCache.set(el, hidden);
+      }
+      if (hidden) return false;
+    }
+    return true;
+  }
+  function textNodesOf(root) {
+    const nodes = [];
+    const hiddenCache = /* @__PURE__ */ new Map();
+    const walker = root.ownerDocument.createTreeWalker(root, SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const parent = node.parentElement;
+      if (parent && isRendered(parent, root, hiddenCache)) nodes.push(node);
+    }
+    return nodes;
+  }
+  function foldWithMap(text) {
+    let folded = "";
+    const origin = [];
+    for (let i = 0; i < text.length; ) {
+      const char = String.fromCodePoint(text.codePointAt(i));
+      const lower = char.toLowerCase();
+      folded += lower;
+      for (let k = 0; k < lower.length; k += 1) origin.push(i);
+      i += char.length;
+    }
+    return { folded, origin };
+  }
+  function createLocator(nodes) {
+    let nodeIndex = 0;
+    let nodeStart = 0;
+    return (offset, preferNext) => {
+      const length = () => nodes[nodeIndex].data.length;
+      while (nodeIndex < nodes.length - 1 && (preferNext ? offset >= nodeStart + length() : offset > nodeStart + length())) {
+        nodeStart += length();
+        nodeIndex += 1;
+      }
+      return [nodes[nodeIndex], offset - nodeStart];
+    };
+  }
+  function findTextRanges(root, needle) {
+    if (!needle) return [];
+    const nodes = textNodesOf(root);
+    if (nodes.length === 0) return [];
+    const original = nodes.map((node) => node.data).join("");
+    const { folded, origin } = foldWithMap(original);
+    const wanted = foldWithMap(needle).folded;
+    const locate2 = createLocator(nodes);
+    const ranges = [];
+    for (let at = folded.indexOf(wanted); at >= 0 && ranges.length < FIND_MATCH_LIMIT; at = folded.indexOf(wanted, at + wanted.length)) {
+      const start = origin[at];
+      const lastChar = origin[at + wanted.length - 1];
+      const end = lastChar + String.fromCodePoint(original.codePointAt(lastChar)).length;
+      const range = root.ownerDocument.createRange();
+      range.setStart(...locate2(start, true));
+      range.setEnd(...locate2(end, false));
+      ranges.push(range);
+    }
+    return ranges;
+  }
+  function highlightApi() {
+    const registry2 = globalThis.CSS?.highlights;
+    const Highlight = globalThis.Highlight;
+    return registry2 && Highlight ? { registry: registry2, Highlight } : null;
+  }
+  var highlighterCount = 0;
+  function createFindHighlighter() {
+    highlighterCount += 1;
+    const matchName = `find-match-${highlighterCount}`;
+    const currentName = `find-current-${highlighterCount}`;
+    let style = null;
+    const ensureStyle = () => {
+      if (style) return;
+      style = document.createElement("style");
+      style.textContent = `::highlight(${matchName}){background-color:rgba(230,184,0,.35)}::highlight(${currentName}){background-color:#ff9d00;color:#000}`;
+      document.head.appendChild(style);
+    };
+    const clear = () => {
+      const api = highlightApi();
+      api?.registry.delete(matchName);
+      api?.registry.delete(currentName);
+    };
+    return {
+      clear,
+      paint(ranges, current) {
+        const api = highlightApi();
+        if (!api || ranges.length === 0) {
+          clear();
+          return;
+        }
+        ensureStyle();
+        api.registry.set(matchName, new api.Highlight(...ranges));
+        const active = ranges[current];
+        if (active) api.registry.set(currentName, new api.Highlight(active));
+        else api.registry.delete(currentName);
+      },
+      dispose() {
+        clear();
+        style?.remove();
+        style = null;
+      }
+    };
+  }
+  function scrollableAncestor(start) {
+    for (let el = start; el; el = el.parentElement) {
+      const overflow = viewOf(el).getComputedStyle(el).overflowY;
+      if ((overflow === "auto" || overflow === "scroll") && el.scrollHeight > el.clientHeight) return el;
+    }
+    return null;
+  }
+  function scrollRangeIntoView(range, options = {}) {
+    const parent = range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentElement;
+    if (typeof range.getBoundingClientRect !== "function") {
+      parent?.scrollIntoView?.({ block: "center", inline: "nearest" });
+      return;
+    }
+    const scroller = scrollableAncestor(parent);
+    const rect = range.getBoundingClientRect();
+    if (!scroller) {
+      const view = options.scrollWindow && parent ? viewOf(parent) : null;
+      view?.scrollBy(0, rect.top + rect.height / 2 - view.innerHeight / 2);
+      return;
+    }
+    const box = scroller.getBoundingClientRect();
+    scroller.scrollTop += rect.top + rect.height / 2 - (box.top + box.height / 2);
+  }
+
+  // src/runtime/page-find.ts
+  var RECOUNT_DELAY_MS = 200;
+  function findKeyFor(event, barOpen) {
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && (event.key.toLowerCase() === "f" || event.code === "KeyF")) return "open";
+    if (!barOpen) return null;
+    if (event.key === "F3") return event.shiftKey ? "prev" : "next";
+    return event.key === "Escape" ? "close" : null;
+  }
+  function createPageFind(doc, post) {
+    const highlighter = createFindHighlighter();
+    let query = null;
+    let index = 0;
+    let ranges = [];
+    const root = () => doc.body ?? doc.documentElement;
+    const run = (step, scroll = true) => {
+      ranges = query ? findTextRanges(root(), query) : [];
+      index = ranges.length === 0 ? 0 : (Math.min(index, ranges.length - 1) + step + ranges.length) % ranges.length;
+      highlighter.paint(ranges, index);
+      const current = ranges[index];
+      if (current && scroll) scrollRangeIntoView(current, { scrollWindow: true });
+      post({ type: "find-result", index: current ? index : -1, count: ranges.length });
+    };
+    const view = doc.defaultView;
+    let timer;
+    const recount = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (query) run(0, false);
+      }, RECOUNT_DELAY_MS);
+    };
+    if (view?.MutationObserver) {
+      new view.MutationObserver(recount).observe(root(), { childList: true, subtree: true, characterData: true });
+    }
+    doc.addEventListener("keydown", (event) => {
+      const key = findKeyFor(event, query !== null);
+      if (!key) return;
+      event.preventDefault();
+      post({ type: "find-key", key });
+    }, true);
+    return {
+      handle(message) {
+        const next = message.query === null ? null : message.query.slice(0, MAX_FIND_QUERY_CHARS);
+        if (next !== query) index = 0;
+        query = next;
+        run(message.step);
+      }
+    };
+  }
 
   // src/shared/contract.ts
   var PLUGIN_ID = "design-docs";
@@ -988,6 +1190,7 @@ ${entry.code}
       style.setAttribute("data-dd-runtime", "");
       style.textContent = HIGHLIGHT_CSS;
       (doc.head ?? doc.documentElement).appendChild(style);
+      const pageFind = createPageFind(doc, post);
       doc.addEventListener("copy", (event) => copyContextSelection(event, doc.body, passageContext(config.docId, config.path, "")));
       doc.addEventListener("selectionchange", debounce(win, REPORT_DELAY_MS, reportSelection));
       win.addEventListener("scroll", reportScroll, { passive: true });
@@ -1003,6 +1206,7 @@ ${entry.code}
             paint();
           } else if (message?.type === "focus" && typeof message.quote === "string") focusQuote(message.quote);
           else if (message?.type === "clear-selection") win.getSelection()?.removeAllRanges();
+          else if (message?.type === "find" && (message.query === null || typeof message.query === "string") && [0, 1, -1].includes(message.step)) pageFind.handle(message);
         };
       }
     } else {

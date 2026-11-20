@@ -11,12 +11,19 @@
 /** Upper bound on matches so a one-letter query in a huge document stays cheap. */
 export const FIND_MATCH_LIMIT = 2000;
 
+/** `NodeFilter.SHOW_TEXT`; spelled out so a frame's document needs no `NodeFilter` global. */
+const SHOW_TEXT = 4;
 const SKIPPED_PARENTS = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT']);
+
+/** The window `el` is rendered in; a document with no browsing context falls back to this one. */
+function viewOf(el: Element): Window {
+  return el.ownerDocument.defaultView ?? window;
+}
 
 /** True when `el` itself is not painted (display, visibility, hidden, sr-only). */
 function isElementHidden(el: Element): boolean {
   if (SKIPPED_PARENTS.has(el.tagName) || el.hasAttribute('hidden') || el.classList.contains('sr-only')) return true;
-  const style = getComputedStyle(el);
+  const style = viewOf(el).getComputedStyle(el);
   return style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse';
 }
 
@@ -45,7 +52,7 @@ function isRendered(parent: Element, root: Element, hiddenCache: Map<Element, bo
 function textNodesOf(root: Element): Text[] {
   const nodes: Text[] = [];
   const hiddenCache = new Map<Element, boolean>();
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const walker = root.ownerDocument.createTreeWalker(root, SHOW_TEXT);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const parent = node.parentElement;
     if (parent && isRendered(parent, root, hiddenCache)) nodes.push(node as Text);
@@ -100,7 +107,7 @@ export function findTextRanges(root: Element, needle: string): Range[] {
     const start = origin[at]!;
     const lastChar = origin[at + wanted.length - 1]!;
     const end = lastChar + String.fromCodePoint(original.codePointAt(lastChar)!).length;
-    const range = document.createRange();
+    const range = root.ownerDocument.createRange();
     range.setStart(...locate(start, true));
     range.setEnd(...locate(end, false));
     ranges.push(range);
@@ -173,7 +180,7 @@ export function createFindHighlighter(): FindHighlighter {
 
 function scrollableAncestor(start: Element | null): Element | null {
   for (let el = start; el; el = el.parentElement) {
-    const overflow = getComputedStyle(el).overflowY;
+    const overflow = viewOf(el).getComputedStyle(el).overflowY;
     if ((overflow === 'auto' || overflow === 'scroll') && el.scrollHeight > el.clientHeight) return el;
   }
   return null;
@@ -182,17 +189,24 @@ function scrollableAncestor(start: Element | null): Element | null {
 /**
  * Scrolls the match itself into the middle of its scroll container. Uses the
  * range's own rectangle, so a match inside an element taller than the viewport
- * (a long code block) is still brought into view.
+ * (a long code block) is still brought into view. `scrollWindow` scrolls the
+ * window when no ancestor scrolls (a page rendered in its own frame).
  */
-export function scrollRangeIntoView(range: Range): void {
-  const parent = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
+export function scrollRangeIntoView(range: Range, options: { scrollWindow?: boolean } = {}): void {
+  // `nodeType`, not `instanceof Element`: a frame's nodes come from another realm.
+  const parent = range.startContainer.nodeType === 1 ? (range.startContainer as Element) : range.startContainer.parentElement;
   if (typeof range.getBoundingClientRect !== 'function') {
     parent?.scrollIntoView?.({ block: 'center', inline: 'nearest' });
     return;
   }
   const scroller = scrollableAncestor(parent);
-  if (!scroller) return;
   const rect = range.getBoundingClientRect();
+  if (!scroller) {
+    // A page that scrolls as a whole (a design doc in its own frame) has no scrolling ancestor.
+    const view = options.scrollWindow && parent ? viewOf(parent) : null;
+    view?.scrollBy(0, rect.top + rect.height / 2 - view.innerHeight / 2);
+    return;
+  }
   const box = scroller.getBoundingClientRect();
   scroller.scrollTop += rect.top + rect.height / 2 - (box.top + box.height / 2);
 }

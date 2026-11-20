@@ -54,3 +54,29 @@ describe('markdown Open in browser', () => {
     expect(button()).toBeNull();
   });
 });
+
+describe('find in a markdown preview', () => {
+  function mountText(content: string) {
+    const harness = createHarness({});
+    const doc = harness.store.create({ title: 'Notes', projectId: 'p1', files: [{ path: 'notes.md', content }] }, UI_USER);
+    harness.render(<FilePreview docId={doc.id} file={{ path: 'notes.md', kind: 'markdown', content, encoding: 'utf8' }} files={harness.store.get(doc.id).files} />);
+    return document.querySelector('.dd-preview') as HTMLElement;
+  }
+
+  it('opens on Ctrl+F, counts matches in the rendered text, steps, and closes on Esc', async () => {
+    const host = mountText('# Plan\n\nalpha beta **alpha**\n\nalpha');
+    fireEvent.keyDown(host, { key: 'f', ctrlKey: true });
+    const input = await screen.findByRole('searchbox', { name: 'Find in doc' });
+    fireEvent.change(input, { target: { value: 'alpha' } });
+    await waitFor(() => expect(screen.getByTestId('dom-find-bar-count').textContent).toBe('1/3'));
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(screen.getByTestId('dom-find-bar-count').textContent).toBe('2/3'));
+    fireEvent.keyDown(host, { key: 'Escape' });
+    expect(screen.queryByTestId('dom-find-bar')).toBeNull();
+  });
+
+  it('marks the preview as owning find, so thread find stays out', () => {
+    const host = mountText('text');
+    expect(host.hasAttribute('data-own-find')).toBe(true);
+  });
+});

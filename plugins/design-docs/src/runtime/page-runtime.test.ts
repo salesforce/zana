@@ -840,6 +840,25 @@ describe('comments', () => {
     deliver(null as never);
   });
 
+  it('finds text for the app, ignores malformed find messages, and hands find keys back', () => {
+    stubHighlights();
+    const { win, doc, ofType, deliver } = setup('<p>Runs and more runs</p>');
+    vi.stubGlobal('document', doc);
+    deliver({ type: 'find', query: 'runs', step: 0 });
+    deliver({ type: 'find', query: 'runs', step: 1 });
+    deliver({ type: 'find', query: 7 as never, step: 0 });
+    deliver({ type: 'find', query: 'runs', step: 5 as never });
+    expect(ofType('find-result')).toEqual([
+      { type: 'find-result', index: 0, count: 2 },
+      { type: 'find-result', index: 1, count: 2 }
+    ]);
+    const key = new win.KeyboardEvent('keydown', { key: 'f', ctrlKey: true, cancelable: true });
+    doc.dispatchEvent(key);
+    expect(key.defaultPrevented).toBe(true);
+    expect(ofType('find-key')).toEqual([{ type: 'find-key', key: 'open' }]);
+    vi.unstubAllGlobals();
+  });
+
   it('reports selections, and clears them on request', async () => {
     const { win, doc, ofType, deliver } = setup('<p id="p">Pick this text</p>');
     const range = doc.createRange();

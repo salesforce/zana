@@ -10,6 +10,8 @@ import { toast, useApi, type DocKind } from './api.js';
 import { codeFence, fenced, fileDataUrl, formatSubPath, inlineImages, referencedImages, resolveDocLink } from './content.js';
 import { COMMENT_HIGHLIGHT, FOCUS_HIGHLIGHT, findQuoteRanges, paintRanges } from './highlight.js';
 import { useOpenInBrowser } from './hooks.js';
+import { DomFindBar } from '../../../../apps/app/src/components/DomFindBar.js';
+import { useDomFind } from '../../../../apps/app/src/lib/use-dom-find.js';
 import { PageFrame } from './PageFrame.js';
 import { IconButton } from './ui.js';
 import { findHeading, onAnchorRequest, requestAnchor, takeAnchor } from './anchors.js';
@@ -132,6 +134,10 @@ export function FilePreview({
   const navigate = useZccNavigate();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  // Ctrl+F in the rendered text. An html page is a sandboxed frame with its own find (PageFrame).
+  const find = useDomFind(contentRef, scrollRef, `${file.path}
+${file.content}`);
+  const ownFind = file.kind !== 'html';
   const openInBrowser = useOpenInBrowser(docId, file.path);
   // The standalone view serves saved docs only: not a draft or old revision, not a template.
   const canOpenInBrowser = file.kind === 'markdown' && isRenderableMarkdownPath(file.path) && !draft && kind !== 'template';
@@ -346,6 +352,7 @@ export function FilePreview({
     <div
       className={`dd-preview dd-preview-${file.kind}`}
       ref={scrollRef}
+      {...(ownFind ? find.hostProps : {})}
       onCopy={(event) => {
         if (contentRef.current) copyContextSelection(event, contentRef.current, passageContext(docId, file.path, ''));
       }}
@@ -354,6 +361,18 @@ export function FilePreview({
         if (!(event.target as Element).closest?.('.dd-selection-chip')) setChip(null);
       }}
     >
+      {ownFind && find.open ? (
+        <DomFindBar
+          label="Find in doc"
+          value={find.query}
+          onChange={find.setQuery}
+          onStep={find.step}
+          onClose={find.close}
+          matchIndex={find.matchIndex}
+          matchCount={find.matchCount}
+          focusRequest={find.focusRequest}
+        />
+      ) : null}
       {canOpenInBrowser ? (
         <div className="dd-html-toolbar dd-md-toolbar">
           <span />
