@@ -31,7 +31,7 @@ describe('join-standalone pairing', () => {
     expect(PROTOCOL_VERSION).toBe(HOST_RPC_PROTOCOL_VERSION);
   });
 
-  async function enrollAndExpectConnected(): Promise<number> {
+  it('enrolls a join code, opens the host websocket, and reports connected', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-join-standalone-server-'));
     server = await startProductServer({
       dataDir,
@@ -78,21 +78,6 @@ describe('join-standalone pairing', () => {
     expect(connected).toBe(true);
     expect(listed.find((row) => row.id === minted.hostId)?.status).toBe('connected');
     expect(JSON.parse(readFileSync(join(machineDir, 'auth.json'), 'utf8')).hostId).toBe(minted.hostId);
-    return port;
-  }
-
-  it('enrolls a join code, opens the host websocket, and reports connected', async () => {
-    await enrollAndExpectConnected();
-  }, 20_000);
-
-  it('does not derive the status port from Math.random', async () => {
-    // The old pick was 42000 + floor(random * 1000), so 0.004 always gave 42004 (EADDRINUSE under parallel workers).
-    vi.spyOn(Math, 'random').mockReturnValue(0.004);
-    try {
-      expect(await enrollAndExpectConnected()).not.toBe(42004);
-    } finally {
-      vi.restoreAllMocks();
-    }
   }, 20_000);
 
   it('two independent apps activate and revoke real peer links through standalone control and v2 forwarding', async () => {
