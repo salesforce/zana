@@ -105,6 +105,7 @@ import {
   withRenewedSources, scopedSourceRenewal, splitProposedGoalSources,
   allWorkersUnresolvedReasons, unknownPersonaMessage
 } from './team-launch-support.js';
+import { warnUnknownPersonaModels } from './persona-model-check.js';
 import { modernRecoverySnapshot } from './team-native-recovery.js';
 import { openExecutionStorage } from './execution-storage.js';
 import { createPlanCorrectionHandoff, createPlanCorrectionHost } from './plan-correction/host.js';
@@ -6606,6 +6607,13 @@ export async function launchTeam(
       revokeRequestAuthorizations();
       return { ok: false, code: 'TEAM_LAUNCH_FAILED', message: boundReason(unresolvedReasons) };
     }
+  }
+  // Advisory only: a persona model the harness catalog does not list is flagged, never blocks the launch.
+  if (team.transport !== 'MODERN') {
+    warnUnknownPersonaModels({
+      slots: expectedSlots, personas: personaSnapshot, providerFor: (personaId) => providerFor(profileFor(personaId)),
+      project, notify: (notice) => inboxStore.append(notice), onError: logMainError
+    });
   }
   const refused = squadSeatRefusal({
     transport: team.transport, expectedSlots, personas: personaSnapshot, profileFor, personaName, coordinationMode, project,

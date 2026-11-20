@@ -1,6 +1,6 @@
 import { product } from '../lib/product-client.js';
 import { PrecedenceStrip } from './PrecedenceStrip.js';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { X, Trash2, Copy, Pencil, Plus, GripVertical, Crown } from 'lucide-react';
 import { ImprovePromptButton } from './ImprovePromptButton.js';
 import { stableDraftJson } from '../lib/stable-draft-json.js';
@@ -13,6 +13,8 @@ import { useInstalledSkillNames } from '../lib/use-uninstalled-skills.js';
 import { catalogueName } from '../lib/use-mcp-catalogue.js';
 import { ALWAYS_ALLOWED_MCP_SERVERS, effectiveMcpServers, mcpAllowlistCovers, uninstalledAllowlistSkills, type McpServerRef } from '@zana-ai/zcc-domain/product';
 import { getScopedProjectId } from '../lib/windowScope.js';
+import { getThreadModelCatalog, subscribeThreadModelCatalog } from './thread/pickers/thread-model-catalog.js';
+import { unknownPersonaModels } from '../lib/persona-model-warning.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { SquadTransportChip } from './SquadTransportChip.js';
 import { isLaunchApproval, type LaunchApproval } from '@zana-ai/zcc-domain/squad-proposal';
@@ -467,6 +469,14 @@ function TeamForm({
     if (orchestratorPersonaId && !personaById.has(orchestratorPersonaId)) ids.push(orchestratorPersonaId);
     return [...new Set(ids)];
   }, [allPersonas, slots, orchestratorPersonaId, personaById]);
+
+  // Advisory only (never gates save): member personas whose legacy model the loaded provider catalog does not list.
+  const modelCatalog = useSyncExternalStore(subscribeThreadModelCatalog, getThreadModelCatalog);
+  const unknownModels = useMemo(() => {
+    const ids = new Set([...slots.map((s) => s.personaId), ...(orchestratorPersonaId ? [orchestratorPersonaId] : [])]);
+    const members = [...ids].map((id) => personaById.get(id)).filter((p): p is Persona => !!p);
+    return unknownPersonaModels(members, modelCatalog);
+  }, [slots, orchestratorPersonaId, personaById, modelCatalog]);
 
   // Advisory only (never gates save): member personas whose skill allowlist names uninstalled skills.
   const restrictedMembers = useMemo(
@@ -933,6 +943,12 @@ function TeamForm({
         {unresolvedPersonaIds.length > 0 && (
           <p className="settings-help" role="status" data-testid="team-unresolved-persona-warning">
             Unknown persona: {unresolvedPersonaIds.join(', ')}. You can still save; a launch skips these slots, and refuses to start when no worker slot resolves.
+          </p>
+        )}
+
+        {unknownModels.length > 0 && (
+          <p className="settings-help" role="status" data-testid="team-unknown-model-warning">
+            Unrecognised model: {unknownModels.map((m) => `${m.personaName} (${m.model})`).join(', ')}. You can still save; the worker may fail to start or stall.
           </p>
         )}
 
