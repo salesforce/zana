@@ -36,7 +36,7 @@ import {
   highlightMarkdownCode,
   languageFromMarkdownClassName
 } from './markdown-code-highlight.js';
-import { boundedText, LargeTextPreview } from './LargeTextPreview.js';
+import { boundedText, isOversizedText, LargeTextPreview } from './LargeTextPreview.js';
 import { CodeBlockWithCopy, fencedCodeText } from './FencedCodeBlock.js';
 
 /**
@@ -90,7 +90,7 @@ export function DocContent({
   storage?: boolean;
   copyableCode?: boolean;
 }) {
-  if (boundedText(content).length < content.length) return <LargeTextPreview text={content} />;
+  if (isOversizedText(content)) return <LargeTextPreview text={content} />;
   const lower = path.toLowerCase();
   if (lower.endsWith('.md') || lower.endsWith('.markdown') || lower.endsWith('.mdx')) {
     // Library docs carry a `---`…`---` metadata header. react-markdown has no
@@ -203,8 +203,8 @@ export const MarkdownContent = memo(function MarkdownContent({
   /** Leave file-like hrefs as plain anchors for a host (e.g. a plugin) that resolves them in its own click handler. */
   fileLinksAsAnchors?: boolean;
 }) {
-  const preview = boundedText(text);
-  const body = unwrapBareFence(preview);
+  const oversized = isOversizedText(text);
+  const body = unwrapBareFence(oversized ? boundedText(text) : text);
   const [rewriteLocalhost] = useBooleanPreference(
     REWRITE_LOCALHOST_LINKS_STORAGE_KEY,
     REWRITE_LOCALHOST_LINKS_DEFAULT
@@ -263,7 +263,7 @@ export const MarkdownContent = memo(function MarkdownContent({
         onOpen={exportable ? undefined : () => setLightbox({ src, alt })} />
     );
   }, [documentPath, threadId, storage, projectId, exportable]);
-  if (preview.length < text.length) return <LargeTextPreview text={text} />;
+  if (oversized) return <LargeTextPreview text={text} />;
   return (
     <>
       <div className="inbox-md">
