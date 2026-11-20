@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -663,10 +663,11 @@ describe('team lifecycle integration', () => {
     expect(await integration.cancelTeamLaunch('principal-a', 'request-a')).toEqual({
       ok: true, canceledSessionIds: ['session-a'], pendingSessionIds: [], lifecycleState: 'cancel-pending'
     });
+    // The close was requested but the exit is not yet seen: still closing, so pending rather than done.
     expect(await integration.cancelTeamLaunch('principal-a', 'request-a')).toEqual({
-      ok: true, canceledSessionIds: [], pendingSessionIds: [], lifecycleState: 'cancel-pending'
+      ok: true, canceledSessionIds: [], pendingSessionIds: ['session-a'], lifecycleState: 'cancel-pending'
     });
-    expect(closed).toEqual(['session-a']);
+    expect(closed).toEqual(['session-a', 'session-a']);
     expect(released).toEqual([]);
     await integration.onSessionExit('session-a');
     expect(released).toEqual(['authorization-a']);
@@ -1009,6 +1010,98 @@ describe('team lifecycle integration', () => {
     expect(released).toEqual(['authorization-1']);
   }));
 
+  describe('closing marker and verified close', () => {
+    async function runningLaunch(filePath: string, liveness: { live: boolean } = { live: true }, closeSession: (id: string) => Promise<boolean> = async () => true) {
+      const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+      const claimed = await store.claim(claimInput('principal-a'));
+      await markClaimedWorkerRunning(store, claimed.record.id);
+      await store.complete(claimed.record.id, { ok: true, value: claimed.record.launchResult });
+      const integration = createTeamLifecycleIntegration({
+        store, isLiveSession: () => liveness.live, closeSession, releaseCapacity: () => undefined
+      });
+      integration.track((await store.get(claimed.record.id))!);
+      return { store, integration, recordId: claimed.record.id };
+    }
+
+    it('reports a session whose close was requested as pending until its exit is seen', async () => fixture(async (filePath) => {
+      const { integration, store, recordId } = await runningLaunch(filePath);
+      expect(await integration.cancelTeamLaunch('principal-a', 'request-1'))
+        .toMatchObject({ canceledSessionIds: ['session-1'], pendingSessionIds: [] });
+      for (let i = 0; i < 3; i += 1) {
+        expect(await integration.cancelTeamLaunch('principal-a', 'request-1'))
+          .toMatchObject({ canceledSessionIds: [], pendingSessionIds: ['session-1'], lifecycleState: 'cancel-pending' });
+      }
+      await integration.onSessionExit('session-1');
+      expect(await integration.cancelTeamLaunch('principal-a', 'request-1'))
+        .toEqual({ ok: true, canceledSessionIds: [], pendingSessionIds: [], lifecycleState: 'canceled' });
+      expect((await store.get(recordId))?.state).toBe('canceled');
+    }));
+
+    it('retries a close that failed, and a thrown close is pending rather than an error', async () => fixture(async (filePath) => {
+      const outcomes: Array<boolean | Error> = [false, new Error('kill refused'), true];
+      const { integration } = await runningLaunch(filePath, { live: true }, async () => {
+        const next = outcomes.shift()!;
+        if (next instanceof Error) throw next;
+        return next;
+      });
+      expect(await integration.cancelTeamLaunch('principal-a', 'request-1')).toMatchObject({ canceledSessionIds: [], pendingSessionIds: ['session-1'] });
+      expect(await integration.cancelTeamLaunch('principal-a', 'request-1')).toMatchObject({ canceledSessionIds: [], pendingSessionIds: ['session-1'] });
+      expect(await integration.cancelTeamLaunch('principal-a', 'request-1')).toMatchObject({ canceledSessionIds: ['session-1'], pendingSessionIds: [] });
+    }));
+
+    it('a session that was closing and then vanished without an exit event is finished on the next cancel', async () => fixture(async (filePath) => {
+      const liveness = { live: true };
+      const { integration, store, recordId } = await runningLaunch(filePath, liveness);
+      await integration.cancelTeamLaunch('principal-a', 'request-1');
+      liveness.live = false;
+      expect(await integration.cancelTeamLaunch('principal-a', 'request-1'))
+        .toEqual({ ok: true, canceledSessionIds: [], pendingSessionIds: [], lifecycleState: 'canceled' });
+      expect((await store.get(recordId))?.workers[0]).toMatchObject({ process: 'exited', capacityReleased: true });
+    }));
+
+    it('writes the closing marker before queueing behind in-flight lifecycle work', async () => fixture(async (filePath) => {
+      let releaseClose!: (value: boolean) => void;
+      const closeGate = new Promise<boolean>((resolve) => { releaseClose = resolve; });
+      const { integration, store, recordId } = await runningLaunch(filePath, { live: true }, () => closeGate);
+      const first = integration.cancelTeamLaunch('principal-a', 'request-1');
+      await vi.waitFor(async () => expect(await store.launchIsClosing(recordId)).toBe(true));
+      // A second caller marks (idempotently) and queues behind the first while the close is still in flight.
+      const second = integration.cancelTeamLaunch('principal-a', 'request-1');
+      expect(await store.launchIsClosing(recordId)).toBe(true);
+      releaseClose(true);
+      expect(await first).toMatchObject({ canceledSessionIds: ['session-1'] });
+      expect(await second).toMatchObject({ canceledSessionIds: [], pendingSessionIds: ['session-1'] });
+    }));
+
+    it('a spawn that commits after the marker is refused by every spawn path and a clear helper reports it', async () => fixture(async (filePath) => {
+      const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+      const claimed = await store.claim(claimInput('principal-a'));
+      await store.addDeferredWorker(claimed.record.id, {
+        slotId: 'seat-2', cohortId: 'cohort-1', personaId: 'persona-1', projectId: 'project-1', authorizationId: 'authorization-2',
+        attention: 'active', task: 'unknown', delivery: 'bound-at-spawn'
+      });
+      await store.updateWorker(claimed.record.id, 'slot-1', { process: 'spawning' });
+      expect(await store.launchIsClosing(claimed.record.id)).toBe(false);
+      expect(await store.workerMaySpawn(claimed.record.id, 'slot-1')).toBe(true);
+
+      await store.fenceCancel(claimed.record.id);
+
+      expect(await store.launchIsClosing(claimed.record.id)).toBe(true);
+      expect(await store.workerMaySpawn(claimed.record.id, 'slot-1')).toBe(false);
+      expect(await store.claimWorkerRunning(claimed.record.id, 'slot-1')).toBe(false);
+      expect(await store.claimDeferredSpawn(claimed.record.id, 'seat-2')).toBe(false);
+      await expect(store.addWorker(claimed.record.id, {
+        sessionId: 'late', cohortId: 'cohort-1', slotId: 'late-slot', personaId: 'persona-1', projectId: 'project-1',
+        authorizationId: 'authorization-late', process: 'spawning', attention: 'active', task: 'unknown', delivery: 'bound-at-spawn'
+      })).rejects.toThrow('not active');
+      await expect(store.addDeferredWorker(claimed.record.id, {
+        slotId: 'seat-3', cohortId: 'cohort-1', personaId: 'persona-1', projectId: 'project-1', authorizationId: 'authorization-3',
+        attention: 'active', task: 'unknown', delivery: 'bound-at-spawn'
+      })).rejects.toThrow('not active');
+      expect(await store.launchIsClosing('unknown-record')).toBe(true);
+    }));
+  });
+
   it('returns caller-scoped lifecycle state and records task outcome once', async () => fixture(async (filePath) => {
     const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
     const claimed = await store.claim(claimInput('principal-a'));
@@ -1180,4 +1273,69 @@ describe('team lifecycle integration', () => {
         .resolves.toMatchObject({ generation: 4, mayResume: true });
     }));
   });
+});
+
+describe('cancellation of workers that never had a session', () => {
+  const seat = {
+    cohortId: 'c', slotId: '0:w:0', personaId: 'w', projectId: 'p', authorizationId: 'a-seat',
+    attention: 'active' as const, task: 'unknown' as const, delivery: 'bound-at-spawn' as const
+  };
+  const result = { launchRequestId: 'request-1', launched: 0, cohortId: 'c', workers: [], failedSlots: [] };
+
+  // The fence already finishes on-demand seats; drop the marker so the seat is a plain spawning worker without a session.
+  async function dropOnDemand(filePath: string) {
+    const raw = JSON.parse(await readFile(filePath, 'utf8'));
+    for (const record of raw.records ?? []) for (const worker of record.workers ?? []) delete worker.onDemand;
+    await writeFile(filePath, JSON.stringify(raw));
+  }
+
+  async function sessionlessLaunch(filePath: string) {
+    const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+    await store.claim(pendingClaimInput('principal-a'));
+    await store.addDeferredWorker('record-1', seat);
+    await store.complete('record-1', { ok: true, value: result });
+    const released: string[] = [];
+    const integration = createTeamLifecycleIntegration({
+      store, isLiveSession: () => true, closeSession: async () => true, releaseCapacity: (id) => released.push(id)
+    });
+    return { store, integration, released };
+  }
+
+  it('finishes a spawning seat with no session so cancel reaches canceled', async () => fixture(async (filePath) => {
+    const { store, integration } = await sessionlessLaunch(filePath);
+    expect(await store.claimDeferredSpawn('record-1', '0:w:0')).toBe(true);
+    await dropOnDemand(filePath);
+    expect(await integration.cancelTeamLaunch('principal-a', 'request-1'))
+      .toEqual({ ok: true, canceledSessionIds: [], pendingSessionIds: [], lifecycleState: 'canceled' });
+    expect((await store.get('record-1'))!.workers[0]).toMatchObject({ process: 'canceled', capacityReleased: true });
+    expect(await integration.cancelTeamLaunch('principal-a', 'request-1'))
+      .toMatchObject({ ok: true, lifecycleState: 'canceled' });
+  }));
+
+  it('still fences a seat that gets a session after Stop', async () => fixture(async (filePath) => {
+    const { store, integration } = await sessionlessLaunch(filePath);
+    await store.claimDeferredSpawn('record-1', '0:w:0');
+    await dropOnDemand(filePath);
+    await integration.cancelTeamLaunch('principal-a', 'request-1');
+    expect(await store.launchIsClosing('record-1')).toBe(true);
+    await expect(store.bindDeferredWorker('record-1', '0:w:0', { sessionId: 'late', authorizationId: 'a-late', delivery: 'bound-at-spawn' }))
+      .rejects.toThrow();
+    expect(await store.claimWorkerRunning('record-1', '0:w:0')).toBe(false);
+  }));
+
+  it('does not finish sessionless workers while a live session is still pending', async () => fixture(async (filePath) => {
+    const store = createTeamLifecycleStore({ filePath, id: () => 'record-1' });
+    await store.claim(pendingClaimInput('principal-a'));
+    await store.addDeferredWorker('record-1', seat);
+    const input = claimInput('principal-a');
+    await store.addWorker('record-1', input.workers[0]);
+    await markClaimedWorkerRunning(store, 'record-1');
+    await store.complete('record-1', { ok: true, value: input.launchResult! });
+    await store.claimDeferredSpawn('record-1', '0:w:0');
+    const integration = createTeamLifecycleIntegration({
+      store, isLiveSession: () => true, closeSession: async () => false, releaseCapacity: () => undefined
+    });
+    expect(await integration.cancelTeamLaunch('principal-a', 'request-1'))
+      .toMatchObject({ ok: true, pendingSessionIds: ['session-1'], lifecycleState: 'cancel-pending' });
+  }));
 });

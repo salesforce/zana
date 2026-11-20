@@ -750,6 +750,37 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
     });
   }
 
+  /**
+   * Finish workers that never had a session (a spawning CLI seat, a modern binding whose runtime is gone) once
+   * cancellation has fenced the launch. There is nothing to close for them, and a seat that later gets a
+   * session is still refused by the fence (the record is no longer `active`). Returns the authorization ids
+   * whose capacity this call released.
+   */
+  async function finishSessionlessWorkers(recordId: string): Promise<{ record: TeamLifecycleRecord; releasedAuthorizationIds: string[] }> {
+    const safeRecordId = boundedString(recordId, 'record id');
+    return runExclusive(async () => {
+      const snapshot = readState();
+      const record = snapshot.state.records.find((candidate) => candidate.id === safeRecordId);
+      if (!record) throw new Error(`unknown team lifecycle record "${safeRecordId}"`);
+      const releasedAuthorizationIds: string[] = [];
+      if (record.state !== 'cancel-pending') return { record: clone(record), releasedAuthorizationIds };
+      for (const worker of record.workers) {
+        if (terminalProcesses.has(worker.process) || worker.sessionId !== undefined) continue;
+        worker.process = 'canceled';
+        if (worker.transport === 'MODERN') worker.bindingState = 'TERMINAL';
+        if (!worker.capacityReleased) {
+          worker.capacityReleased = true;
+          releasedAuthorizationIds.push(worker.authorizationId);
+        }
+      }
+      if (record.workers.every((worker) => terminalProcesses.has(worker.process))) record.state = 'canceled';
+      record.revision += 1;
+      record.updatedAt = now();
+      persist(snapshot.state, snapshot.hash);
+      return { record: clone(record), releasedAuthorizationIds };
+    });
+  }
+
   async function workerMaySpawn(recordId: string, slotId: string): Promise<boolean> {
     const safeRecordId = boundedString(recordId, 'record id');
     const safeSlotId = boundedString(slotId, 'slot id');
@@ -758,6 +789,21 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
       const worker = record?.workers.find((candidate) => candidate.slotId === safeSlotId);
       return record?.state === 'active' && worker !== undefined && launchAllowsSpawn(record, worker)
         && worker.process === 'spawning' && worker.transport !== 'MODERN';
+    });
+  }
+
+  /**
+   * True once cancellation has fenced the launch (or the launch is gone). The fence is the durable closing
+   * marker: it is written under the same lock every spawn path takes, so a spawn that commits after it sees
+   * `true` here and must close itself. A respawn or restart path calls this immediately before it starts a
+   * session; the claim helpers (`claimWorkerRunning`, `claimDeferredSpawn`, `bindDeferredWorker`) re-check the
+   * same marker atomically with their own write.
+   */
+  async function launchIsClosing(recordId: string): Promise<boolean> {
+    const safeRecordId = boundedString(recordId, 'record id');
+    return runExclusive(async () => {
+      const record = readState().state.records.find((candidate) => candidate.id === safeRecordId);
+      return record === undefined || record.state !== 'active';
     });
   }
 
@@ -1055,7 +1101,7 @@ export function createTeamLifecycleStore(opts: TeamLifecycleStoreOptions) {
     });
   }
 
-  return { claim, complete, setLaunchResult, addWorker, addDeferredWorker, neverStartedSlotsSync, claimDeferredSpawn, reopenDeferredSpawn, failDeferredSeat, bindDeferredWorker, detachWorkerForRecycle, recordUnitDelivered, updateWorker, workerMaySpawn, claimWorkerRunning,
+  return { claim, complete, setLaunchResult, addWorker, addDeferredWorker, neverStartedSlotsSync, claimDeferredSpawn, reopenDeferredSpawn, failDeferredSeat, bindDeferredWorker, detachWorkerForRecycle, recordUnitDelivered, updateWorker, finishSessionlessWorkers, workerMaySpawn, launchIsClosing, claimWorkerRunning,
     reserveModernWorker, acknowledgeModernWorker, markModernWorkerUncertain, modernWorkerMayClose, reconcileModernWorkers,
     fenceCancel: cancel, cancel, reconcileStartup, list, get, findRequest, findModernWorkerBinding };
 }
@@ -1178,11 +1224,23 @@ export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOpt
         });
       });
     },
-    cancelTeamLaunch(
+    async cancelTeamLaunch(
       callerPrincipalId: string,
       launchRequestId: string,
       cancelOpts?: { retainOrchestrator?: boolean }
     ) {
+      // Write the closing marker before queueing behind other lifecycle work, so no spawn path can commit a
+      // session while this cancellation waits its turn. The serialized body fences again (idempotent).
+      const early = (await opts.store.list()).find((candidate) =>
+        candidate.callerPrincipalId === callerPrincipalId && candidate.launchRequestId === launchRequestId
+      );
+      if (early?.state === 'active') {
+        const fenced = await opts.store.fenceCancel(early.id);
+        track(fenced);
+        for (const worker of fenced.workers) {
+          if (fenced.releasedSlotIds.includes(worker.slotId)) opts.releaseCapacity(worker.authorizationId);
+        }
+      }
       return serialize(async () => {
         const record = (await opts.store.list()).find((candidate) =>
           candidate.callerPrincipalId === callerPrincipalId && candidate.launchRequestId === launchRequestId
@@ -1212,9 +1270,12 @@ export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOpt
           if (terminalProcesses.has(worker.process)) continue;
           if (worker.sessionId === undefined) continue;
           if (retainOrchestrator && worker.sessionId === orchestratorSessionId) continue;
-          if (closeRequested.has(worker.sessionId)) continue;
+          // A close already requested for a session that has not been seen to exit is still closing: it is
+          // pending, never reported as stopped, and a live one gets another close request.
+          const alreadyClosing = closeRequested.has(worker.sessionId);
           const isModern = (worker.transport ?? 'CLI') === 'MODERN';
           if (isModern) {
+            if (alreadyClosing) { pendingSessionIds.push(worker.sessionId); continue; }
             if (!worker.threadId || worker.generation === undefined
               || !await opts.store.modernWorkerMayClose(record.id, worker.slotId, worker.generation, worker.threadId)) {
               pendingSessionIds.push(worker.sessionId);
@@ -1232,19 +1293,28 @@ export function createTeamLifecycleIntegration(opts: TeamLifecycleIntegrationOpt
             continue;
           }
           const isLive = opts.isLiveSession(worker.sessionId);
-          const closed = isLive === true && await opts.closeSession(worker.sessionId);
-          if (isLive === true && closed) {
+          let closed = false;
+          if (isLive === true) {
+            try { closed = await opts.closeSession(worker.sessionId); } catch { closed = false; }
+          }
+          if (isLive === true && closed && !alreadyClosing) {
             closeRequested.add(worker.sessionId);
             canceledSessionIds.push(worker.sessionId);
           } else if (isLive !== false) {
             pendingSessionIds.push(worker.sessionId);
           } else {
+            closeRequested.delete(worker.sessionId);
             const updated = await opts.store.updateWorker(record.id, worker.slotId, {
               process: worker.process === 'spawning' ? 'spawn-failed' : 'exited'
             });
             if (updated.capacityReleasedNow) opts.releaseCapacity(worker.authorizationId);
             track(updated.record);
           }
+        }
+        if (pendingSessionIds.length === 0) {
+          const finished = await opts.store.finishSessionlessWorkers(record.id);
+          for (const authorizationId of finished.releasedAuthorizationIds) opts.releaseCapacity(authorizationId);
+          track(finished.record);
         }
         const current = await opts.store.get(record.id);
         return {

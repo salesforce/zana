@@ -255,8 +255,10 @@ export interface ExecutionServiceDeps {
     ok: boolean;
     code?: string;
     message?: string;
-    value?: { canceledSessionIds: string[]; pendingSessionIds: string[] };
+    value?: { canceledSessionIds: string[]; pendingSessionIds: string[]; lifecycleState?: string };
   }>;
+  /** Bounded wait for sessions that are still closing after a cancel. Defaults to 4 checks 300ms apart. */
+  cancelSettle?: { attempts?: number; intervalMs?: number; sleep?: (ms: number) => Promise<void> };
   revokeTeamAuthorizations?: (authorizationIds: readonly string[]) => void | Promise<void>;
   replyToSession: (sessionId: string, text: string) => boolean | Promise<boolean>;
   /**
@@ -966,7 +968,7 @@ export class ExecutionService {
       });
       if (!launched.ok) {
         await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
-        await this.transitionOrCurrent(record, 'FAILED', 'error', boundReason(launched.message ?? 'Team launch failed'));
+        await this.failLaunch(record, launched.message ?? 'Team launch failed');
         return { ok: false, code: launched.code ?? 'TEAM_LAUNCH_FAILED', message: launched.message ?? 'Team launch failed' };
       }
       if (!await this.launchMayProceed(record)) {
@@ -984,14 +986,17 @@ export class ExecutionService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
-      // Seats this launch request already started must not outlive the failed run. Scoped by launch
-      // request id; a failed close never masks the launch error.
+      // Seats this launch request already started must not outlive the failed run. failLaunch cancels the
+      // launch when it writes the FAILED transition; only when that write itself throws does this path cancel
+      // directly, so a launch is never cancelled by two callers for one failure. A failed close never masks
+      // the launch error.
+      let current: ExecutionRecord;
       try {
-        await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
-      } catch (cancelError) {
-        this.deps.logError?.(`execution ${record.id} launch cleanup`, cancelError);
+        current = await this.failLaunch(record, `Team launch error: ${message}`);
+      } catch (failError) {
+        await this.cancelBestEffort(record, `execution ${record.id} launch cleanup`);
+        throw failError;
       }
-      const current = await this.failLaunch(record, `Team launch error: ${message}`);
       return current.state === 'FAILED'
         ? { ok: false, code: message === 'TARGET_UNAVAILABLE' ? 'TARGET_UNAVAILABLE' : 'TEAM_LAUNCH_FAILED', message }
         : { ok: false, code: 'TEAM_LAUNCH_STATE_CONFLICT', message: `Team launch failed while execution is ${current.state.toLowerCase()}` };
@@ -3275,7 +3280,7 @@ export class ExecutionService {
     // The ledger's cancelled state fences plan registration and resume, but must
     // never fence retries of terminal effects after a crash or transient failure.
     await this.cleanupTerminal(record);
-    const canceled = await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
+    const canceled = await this.cancelLaunchVerified(record);
     if (!canceled.ok && canceled.code !== 'NOT_FOUND') {
       throw new Error(`${canceled.code ?? 'CANCEL_FAILED'}: ${canceled.message ?? 'Team cancellation failed'}`);
     }
@@ -3291,7 +3296,7 @@ export class ExecutionService {
       // running as orphaned terminal cards.
       const rawLifecycle = await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
       const lifecycle = extractLifecycleInfo(rawLifecycle);
-      const canceled = await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
+      const canceled = await this.cancelLaunchVerified(record);
       if (!canceled.ok && canceled.code !== 'NOT_FOUND') {
         return {
           ok: false as const,
@@ -3812,7 +3817,7 @@ export class ExecutionService {
     }
     if (record.state === 'FAILED') {
       if (record.stateVersion !== expectedStateVersion) return { ok: false as const, code: 'CONFLICT', message: 'stale execution state', current: record };
-      const canceled = await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
+      const canceled = await this.cancelLaunchVerified(record);
       return canceled.ok
         ? { ok: true as const, value: record, canceled: canceled.value }
         : { ok: false as const, code: canceled.code ?? 'CANCEL_FAILED', message: canceled.message ?? 'Team cancellation failed' };
@@ -3822,7 +3827,7 @@ export class ExecutionService {
     const runChecks = this.runCheckCompletions.get(record.id);
     if (runChecks) { runChecks.controller.abort(); await runChecks.pending.catch(() => undefined); }
     for (const check of this.checkCompletions.values()) if (check.executionId === record.id) check.controller.abort();
-    const canceled = await this.deps.cancelTeamLaunch(record.callerPrincipalId, fenced.value.teamLaunchRequestId);
+    const canceled = await this.cancelLaunchVerified(fenced.value);
     if (!canceled.ok && canceled.code !== 'NOT_FOUND') return { ok: false as const, code: canceled.code ?? 'CANCEL_FAILED', message: canceled.message ?? 'Team cancellation failed' };
     const stopped = await this.transitionOrCurrent(fenced.value, 'STOPPED', 'info', 'Execution stopped');
     return { ok: true as const, value: stopped, canceled: canceled.value };
@@ -3940,15 +3945,76 @@ export class ExecutionService {
     severity: 'info' | 'warning' | 'error',
     summary: string
   ): Promise<ExecutionRecord> {
+    return (await this.transitionWithOutcome(record, state, severity, summary)).record;
+  }
+
+  /**
+   * Like {@link transitionOrCurrent}, but reports whether this caller wrote the transition. Only the writer
+   * runs terminal cleanup and, for FAILED, cancels the launch: a caller that lost a stale-version race
+   * returns the current record and leaves teardown to whoever won.
+   */
+  private async transitionWithOutcome(
+    record: ExecutionRecord,
+    state: ExecutionRecord['state'],
+    severity: 'info' | 'warning' | 'error',
+    summary: string
+  ): Promise<{ record: ExecutionRecord; wrote: boolean }> {
     try {
       const updated = await this.deps.store.transition(record.id, record.stateVersion, state, severity, summary);
-      if (isResumeGrantTerminal(updated.state)) await this.cleanupTerminal(updated);
-      return updated;
+      if (isResumeGrantTerminal(updated.state)) {
+        await this.cleanupTerminal(updated);
+        if (updated.state === 'FAILED') await this.cancelBestEffort(updated, `execution ${updated.id} failed-run cleanup`);
+      }
+      return { record: updated, wrote: true };
     } catch (error) {
       if (!(error instanceof Error) || error.message !== 'stale execution state') throw error;
       const current = await this.deps.store.get(record.id);
       if (!current) throw error;
-      return current;
+      return { record: current, wrote: false };
+    }
+  }
+
+  /**
+   * Cancel the run's launch and wait a bounded time for sessions that are still closing. A close that failed
+   * is retried on each check. The result is incomplete (CANCEL_INCOMPLETE) only if sessions survive the wait;
+   * a launch the lifecycle no longer knows is reported as-is (NOT_FOUND) for the caller to accept.
+   */
+  private async cancelLaunchVerified(
+    record: Pick<ExecutionRecord, 'id' | 'callerPrincipalId' | 'teamLaunchRequestId'>
+  ): Promise<Awaited<ReturnType<ExecutionServiceDeps['cancelTeamLaunch']>>> {
+    const settle = this.deps.cancelSettle;
+    const attempts = Math.max(1, settle?.attempts ?? 4);
+    const intervalMs = Math.max(0, settle?.intervalMs ?? 300);
+    const sleep = settle?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    let last: Awaited<ReturnType<ExecutionServiceDeps['cancelTeamLaunch']>> = { ok: false, code: 'CANCEL_FAILED', message: 'Team cancellation failed' };
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (attempt > 0) await sleep(intervalMs);
+      last = await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
+      // A refused cancellation is the caller's to retry; only surviving sessions are waited on here.
+      if (!last.ok) return last;
+      const pending = last.value?.pendingSessionIds ?? [];
+      if (pending.length === 0 && last.value?.lifecycleState !== 'cancel-pending') return last;
+    }
+    const pending = last.ok ? last.value?.pendingSessionIds ?? [] : [];
+    return {
+      ok: false,
+      code: 'CANCEL_INCOMPLETE',
+      message: pending.length > 0 ? `Team sessions are still closing: ${pending.join(', ')}` : 'Team sessions are still closing',
+      value: {
+        canceledSessionIds: last.value?.canceledSessionIds ?? [],
+        pendingSessionIds: pending,
+        ...(last.value?.lifecycleState ? { lifecycleState: last.value.lifecycleState } : {})
+      }
+    };
+  }
+
+  /** Terminal-path cancel that never throws: the run is already final, so a stuck session is logged for the next Stop to finish. */
+  private async cancelBestEffort(record: ExecutionRecord, context: string): Promise<void> {
+    try {
+      const canceled = await this.cancelLaunchVerified(record);
+      if (!canceled.ok && canceled.code !== 'NOT_FOUND') this.deps.logError?.(context, new Error(`${canceled.code}: ${canceled.message}`));
+    } catch (error) {
+      this.deps.logError?.(context, error);
     }
   }
 
@@ -4008,11 +4074,13 @@ export class ExecutionService {
 
   private async failLaunch(record: ExecutionRecord, summary: string): Promise<ExecutionRecord> {
     let current = record;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    // Members bump stateVersion while a launch is in flight; keep refetching so one writer lands FAILED.
+    for (let attempt = 0; attempt < 10; attempt += 1) {
       if (current.state !== 'STARTING' && current.state !== 'RUNNING') return current;
       try {
         const failed = await this.deps.store.transition(current.id, current.stateVersion, 'FAILED', 'error', boundReason(summary));
         await this.cleanupTerminal(failed);
+        await this.cancelBestEffort(failed, `execution ${failed.id} failed-launch cleanup`);
         return failed;
       } catch (error) {
         if (!(error instanceof Error) || error.message !== 'stale execution state') throw error;
@@ -4295,7 +4363,7 @@ export class ExecutionService {
   }
 
   private async cancelTimedOutLaunch(record: ExecutionRecord): Promise<void> {
-    const canceled = await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
+    const canceled = await this.cancelLaunchVerified(record);
     if (!canceled.ok) {
       throw new Error(`${canceled.code ?? 'CANCEL_FAILED'}: ${canceled.message ?? 'Team cancellation failed'}`);
     }

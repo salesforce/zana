@@ -132,6 +132,21 @@ it('does not nudge when the request-changes persist loses to a cancellation', as
   expect(stopExecution).toHaveBeenCalled();
 });
 
+it('does not report a cancelled correction while the stop is unverified, and finishes it on the retry', async () => {
+  const { service, bindInboxAction, store, stopExecution } = create();
+  await service.begin(ctx.executionId, 'bad plan', false);
+  await service.review(ctx, source);
+  const offer = latestOffer(bindInboxAction);
+  stopExecution.mockRejectedValueOnce(new Error('CANCEL_INCOMPLETE: Team sessions are still closing: worker-1'));
+
+  await expect(service.respond(ctx.executionId, 'cancel', offer)).rejects.toThrow('CANCEL_INCOMPLETE');
+  // The ledger fence is already down so no plan can register or resume, but the action is not consumed.
+  expect((await store.get(ctx.executionId))?.status).toBe('cancelled');
+
+  await expect(service.respond(ctx.executionId, 'cancel', offer)).resolves.toBe('cancelled');
+  expect(stopExecution).toHaveBeenCalledTimes(2);
+});
+
 it('logs an unreadable source plan and still instructs the coordinator', async () => {
   const { service, bindInboxAction, readSourcePlan, wakeCoordinator } = create();
   const logWarning = vi.fn();
