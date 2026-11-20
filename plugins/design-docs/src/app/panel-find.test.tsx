@@ -8,6 +8,7 @@ import { UI_USER } from '../server/rpc.js';
 import { DocView } from './DocView.js';
 import { Workbench } from './Workbench.js';
 import { panelFindKey } from './panel-find.js';
+import { commentsContentKey } from './CommentsPane.js';
 import type { DocLocation } from './content.js';
 import { AGENT, createHarness, type Harness } from './test-harness.js';
 
@@ -200,5 +201,41 @@ describe('Ctrl+F with a past revision open', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Full file' }));
     expect(ctrlF(row)).toBe(true);
     expect(await screen.findByRole('searchbox', { name: 'Find in doc' })).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole('searchbox', { name: 'Find in doc' }), { key: 'Escape' });
+
+    // The banner and its controls are not part of the snapshot, but the key still reaches the preview's bar.
+    expect(ctrlF(screen.getByRole('button', { name: 'Close revision' }))).toBe(true);
+    expect(await screen.findByRole('searchbox', { name: 'Find in doc' })).toBeTruthy();
+  });
+});
+
+describe('Ctrl+F with nothing to search', () => {
+  it('leaves the key alone in the editor, and does not pull focus to the doc list', { timeout: 20_000 }, async () => {
+    const harness = createHarness();
+    const doc = commentedDoc(harness);
+    function Host() {
+      const [location, setLocation] = useState<DocLocation>({ docId: doc.id, path: 'README.md' });
+      return <Workbench variant="global" projectId={null} location={location} onLocationChange={setLocation} />;
+    }
+    harness.render(<Host />);
+    await screen.findByRole('navigation', { name: 'Files' });
+    fireEvent.click(within(screen.getByRole('group', { name: 'View mode' })).getByRole('button', { name: 'Edit' }));
+    await screen.findByRole('textbox', { name: 'Edit README.md' });
+
+    expect(ctrlF(header())).toBe(false);
+    expect(screen.queryByRole('searchbox', { name: 'Find in doc' })).toBeNull();
+    expect(document.activeElement).not.toBe(screen.getByRole('textbox', { name: 'Search design docs' }));
+  });
+});
+
+describe('commentsContentKey', () => {
+  const comment = (body: string, replyBody: string) =>
+    ({ id: 'c1', status: 'open', body, replies: [{ id: 'r1', body: replyBody }] }) as never;
+
+  it('changes for same-length edits of a comment or a reply', () => {
+    const base = commentsContentKey('all', false, [comment('timeout', 'ok')]);
+    expect(commentsContentKey('all', false, [comment('deadline', 'ok')])).not.toBe(base);
+    expect(commentsContentKey('all', false, [comment('timeout', 'no')])).not.toBe(base);
+    expect(commentsContentKey('all', false, [comment('timeout', 'ok')])).toBe(base);
   });
 });

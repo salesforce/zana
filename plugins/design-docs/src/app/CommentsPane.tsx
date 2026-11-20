@@ -149,6 +149,11 @@ function CommentCard({
   );
 }
 
+/** Changes whenever the rendered comment text does, so find re-reads the DOM (lengths alone miss same-length edits). */
+export function commentsContentKey(scope: string, showResolved: boolean, visible: DesignDocComment[]): string {
+  return `${scope}|${showResolved}|${visible.map((comment) => `${comment.id}:${comment.status}:${comment.body}:${comment.replies.map((reply) => `${reply.id}:${reply.body}`).join('\u0001')}`).join('\u0002')}`;
+}
+
 export function CommentsPane({
   doc,
   activePath,
@@ -189,7 +194,7 @@ export function CommentsPane({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // Ctrl+F searches the comment threads; the text boxes keep the key too, without touching the draft.
-  const find = useDomFind(scrollRef, rootRef, `${scope}|${showResolved}|${visible.map((comment) => `${comment.id}:${comment.status}:${comment.body.length}:${comment.replies.length}`).join(',')}`);
+  const find = useDomFind(scrollRef, rootRef, commentsContentKey(scope, showResolved, visible));
 
   const run = async (action: () => Promise<unknown>, failure: string): Promise<boolean> => {
     try {

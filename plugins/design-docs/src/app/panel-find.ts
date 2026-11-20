@@ -1,6 +1,9 @@
 import type { KeyboardEvent } from 'react';
 import { shortcutForCommand } from '../../../../apps/app/src/lib/keyboard-shortcut-settings.js';
 
+/** Accessible name of the doc list's search box; Ctrl+F elsewhere in the panel focuses it by this. */
+export const DOC_SEARCH_LABEL = 'Search design docs';
+
 /**
  * True when this key press is Ctrl+F (`thread.find`) and nothing inside the
  * panel took it already. A pane with its own find (the doc content, the

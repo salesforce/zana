@@ -412,9 +412,11 @@ export function DocView({
       ref={measureRef}
       {...{ [OWN_FIND_ATTRIBUTE]: '' }}
       onKeyDown={(event) => {
-        if (!panelFindKey(event)) return;
+        // Nothing mounted to search (editor, binary file, loading): leave the key unclaimed rather than swallow it.
+        const handle = previewHandle.current;
+        if (!handle || !panelFindKey(event)) return;
         event.preventDefault();
-        previewHandle.current?.openFind();
+        handle.openFind();
       }}
       className={`dd-doc dd-doc-${layout}${narrow ? ' dd-doc-narrow' : ''}${railOpen ? ' dd-rail-open' : ''}${railInline ? '' : ' dd-rail-floating'}`}>
       <DocHeader

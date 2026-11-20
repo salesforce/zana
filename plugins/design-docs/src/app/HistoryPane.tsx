@@ -215,7 +215,7 @@ export function RevisionView({
   }, [previewHandle, showFull, openDiffFind]);
 
   return (
-    <div className="dd-revision" ref={rootRef} {...find.hostProps}>
+    <div className="dd-revision" ref={rootRef} {...(showFull ? {} : find.hostProps)}>
       {find.open && !showFull ? (
         <DomFindBar
           label="Find in doc"

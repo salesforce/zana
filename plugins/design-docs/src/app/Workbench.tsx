@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type Ref } from 'react';
 import { OWN_FIND_ATTRIBUTE } from '../../../../apps/app/src/lib/thread-find.js';
-import { panelFindKey } from './panel-find.js';
+import { DOC_SEARCH_LABEL, panelFindKey } from './panel-find.js';
 import { useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { PopoverPicklist, type PopoverPicklistOption } from '@zana-ai/zcc-ui/popover-picklist';
 import {
@@ -587,7 +587,7 @@ function DocList({
       <div className="dd-list-tools">
         <label className="dd-search">
           <Search size={13} aria-hidden />
-          <input value={query} placeholder="Search docs and content" aria-label="Search design docs" onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
+          <input value={query} placeholder="Search docs and content" aria-label={DOC_SEARCH_LABEL} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
             if (event.key !== 'Escape') return;
             setQuery('');
             listScroll.current?.focus();
@@ -1083,8 +1083,10 @@ function Landing({ templates, onNew, onEdit, onChanged }: { templates: TemplateI
 /** Ctrl+F anywhere in the panel that no pane took: the doc list's search box. */
 function focusListSearch(event: KeyboardEvent<HTMLElement>) {
   if (!panelFindKey(event)) return;
+  // A doc that has nothing to search (editor, binary file) leaves the key alone; it must not pull focus to the list.
+  if ((event.target as Element | null)?.closest?.('.dd-doc')) return;
   event.preventDefault();
-  const input = event.currentTarget.querySelector<HTMLInputElement>('input[aria-label="Search design docs"]');
+  const input = event.currentTarget.querySelector<HTMLInputElement>(`input[aria-label="${DOC_SEARCH_LABEL}"]`);
   input?.focus();
   input?.select();
 }
