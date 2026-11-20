@@ -14,6 +14,7 @@ import { isHostUnavailableError } from '../../lib/host-unavailable.js';
 import { product } from '../../lib/product-client.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { PROJECT_DRAG_MIME, projectFromDrag } from '../../lib/project-drag.js';
+import { registerComposerPathTarget } from '../../lib/composer-path-insert.js';
 import {
   composerPromptExtensions,
   MARKDOWN_IN_PROMPT_DEFAULT,
@@ -28,6 +29,7 @@ import {
 } from './filter-composer-suggestions.js';
 import {
   droppedPathsFromAbsolutePaths,
+  droppedPathsFromEntries,
   droppedPathsFromDataTransfer,
   isComposerPathDrag,
   mentionContentForDroppedPaths
@@ -575,6 +577,17 @@ export function useComposerPromptField({
     }
     return inserted;
   };
+
+  // Let other surfaces (the Explorer's "Add to chat") drop path mentions into
+  // this composer while it is mounted and enabled.
+  useEffect(() => {
+    if (!editor || disabled || !projectId) return;
+    return registerComposerPathTarget(projectId, (entries) => {
+      const paths = droppedPathsFromEntries(entries, projectRoot);
+      if (paths.length === 0 || editor.isDestroyed) return false;
+      return editor.chain().focus().insertContent(mentionContentForDroppedPaths(paths)).run();
+    });
+  }, [editor, disabled, projectId, projectRoot]);
 
   const dropHandlers = {
     onDragOver: (event: ReactDragEvent) => {

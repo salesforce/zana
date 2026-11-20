@@ -10,6 +10,7 @@ interface ExplorerContextMenuProps {
   gitFiles?: Record<string, GitFileCode>;
   onViewInEditor: () => void;
   onSendToTerminal: () => void;
+  onAddToChat?: () => void;
   onDownloadRemote?: () => void;
   onOpenInCursor?: () => void;
   onOpenInCode?: () => void;
@@ -32,6 +33,7 @@ export function ExplorerContextMenu({
   gitFiles,
   onViewInEditor,
   onSendToTerminal,
+  onAddToChat,
   onDownloadRemote,
   onOpenInCursor,
   onOpenInCode,
@@ -56,6 +58,11 @@ export function ExplorerContextMenu({
       {entry.kind === 'file' && (
         <button onClick={onViewInEditor}>
           View in editor
+        </button>
+      )}
+      {onAddToChat && (
+        <button onClick={onAddToChat}>
+          Add to chat
         </button>
       )}
       <button onClick={onSendToTerminal}>

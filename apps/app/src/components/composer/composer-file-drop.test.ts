@@ -177,3 +177,25 @@ describe('mentionContentForDroppedPaths', () => {
     ]);
   });
 });
+
+describe('droppedPathsFromEntries', () => {
+  it('maps explorer entries to root-relative file and directory mentions', async () => {
+    const { droppedPathsFromEntries } = await import('./composer-file-drop.js');
+    expect(droppedPathsFromEntries([
+      { path: '/repo/src/a.ts', kind: 'file' },
+      { path: '/repo/src', kind: 'directory' }
+    ], '/repo')).toEqual([
+      { path: 'src/a.ts', name: 'a.ts', entryKind: 'file' },
+      { path: 'src', name: 'src', entryKind: 'directory' }
+    ]);
+  });
+
+  it('drops blank paths and duplicates', async () => {
+    const { droppedPathsFromEntries } = await import('./composer-file-drop.js');
+    expect(droppedPathsFromEntries([
+      { path: '  ', kind: 'file' },
+      { path: '/repo/a', kind: 'file' },
+      { path: '/repo/a', kind: 'file' }
+    ], '/repo')).toHaveLength(1);
+  });
+});

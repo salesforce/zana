@@ -1,5 +1,6 @@
 import { copyText } from '../../lib/copy-text.js';
 import { product } from '../../lib/product-client.js';
+import { insertComposerPaths } from '../../lib/composer-path-insert.js';
 import { useCallback } from 'react';
 import type { OpenTarget } from '@zana-ai/zcc-domain/product';
 
@@ -54,6 +55,13 @@ export function useFileOperations({ viewRoot, isRemote, projectId, hostId, prima
     }
   }, [pushToast]);
 
+  // Insert an @path mention (path only, never a listing or content) into the
+  // project's open chat composer.
+  const addToChat = useCallback((path: string, kind: 'file' | 'dir') => {
+    const inserted = insertComposerPaths(projectId, [{ path, kind: kind === 'dir' ? 'directory' : 'file' }]);
+    if (!inserted) pushToast('Open a chat for this project first', 'error');
+  }, [projectId, pushToast]);
+
   const openInExternal = useCallback(async (target: OpenTarget, path: string) => {
     const r = await product.openers.openIn(target, path);
     if (!r.ok) pushToast(r.message ?? `Failed to open in ${target}`, 'error');
@@ -93,6 +101,7 @@ export function useFileOperations({ viewRoot, isRemote, projectId, hostId, prima
   return {
     sendPathToTerminal,
     copyPath,
+    addToChat,
     openInExternal,
     downloadRemoteFile,
     uploadLocalFiles

@@ -234,7 +234,7 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
     [project.path, project.id, viewRoot, pushToast, reloadWorktrees, baseScope]
   );
 
-  const { sendPathToTerminal, copyPath, openInExternal, downloadRemoteFile, uploadLocalFiles } = useFileOperations({
+  const { sendPathToTerminal, copyPath, addToChat, openInExternal, downloadRemoteFile, uploadLocalFiles } = useFileOperations({
     viewRoot,
     isRemote,
     projectId: project.id,
@@ -1082,6 +1082,7 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
             );
             setMenu(null);
           }}
+          onAddToChat={() => { addToChat(menu.entry.path, menu.entry.kind); setMenu(null); }}
           onDownloadRemote={isRemote && menu.entry.kind === 'file' ? () => { downloadRemoteFile(menu.entry.path); setMenu(null); } : undefined}
           onOpenInCursor={!isRemote && nativeFiles ? () => { openInExternal('cursor', viewRoot); setMenu(null); } : undefined}
           onOpenInCode={!isRemote && nativeFiles ? () => { openInExternal('code', viewRoot); setMenu(null); } : undefined}
