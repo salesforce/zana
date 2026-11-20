@@ -16,6 +16,8 @@ import { useData } from '@/store';
 import { CursorIcon } from '@/components/icons/CursorIcon';
 import { IntelliJIcon } from '@/components/icons/IntelliJIcon';
 import { Section, Field, ToggleSwitch } from '@/components/settings/FormFields';
+import { useBooleanPreference } from '../../lib/use-boolean-preference.js';
+import { EXPLORER_COMPACT_FOLDERS_DEFAULT, EXPLORER_COMPACT_FOLDERS_KEY } from '../../lib/explorer-compact-folders-preference.js';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 import { RevealContext } from '@/lib/settings-search/reveal';
 import { fileManagerBlurb, fileManagerTitle } from '@/lib/file-manager';
@@ -385,6 +387,10 @@ function ExplorerFileSettings({
   onUpdate: (patch: Partial<AppConfig>) => void;
 }) {
   const fileIconTheme = resolveExplorerFileIconTheme(config);
+  const [compactFolders, setCompactFolders] = useBooleanPreference(
+    EXPLORER_COMPACT_FOLDERS_KEY,
+    EXPLORER_COMPACT_FOLDERS_DEFAULT
+  );
   return (
     <Section
       anchorId="editor-explorer-files"
@@ -404,6 +410,13 @@ function ExplorerFileSettings({
           onChange={(theme) => onUpdate({ explorerFileIconTheme: theme as typeof fileIconTheme })}
           options={EXPLORER_FILE_ICON_THEME_CHOICES.map((v) => ({ value: v, label: EXPLORER_FILE_ICON_THEME_LABELS[v] }))}
         />
+      </Field>
+      <Field
+        label="Compact folders"
+        searchId="editor.explorer-compact-folders"
+        help="Show a chain of folders that each hold only one folder as a single row, like src/main/java."
+      >
+        <ToggleSwitch checked={compactFolders} onChange={setCompactFolders} label="Compact folders" />
       </Field>
     </Section>
   );

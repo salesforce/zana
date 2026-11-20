@@ -81,6 +81,8 @@ function fakeListDir(path: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // These cases assert the plain nested tree; compact folders have their own specs.
+  window.localStorage.setItem('zcc.explorerCompactFolders', 'false');
   useUi.setState({ explorerFile: {}, explorerGoto: {}, explorerTreeMode: {}, explorerDiff: {} });
   mocks.tree = {
     [ROOT]: [{ name: 'src', kind: 'dir' }, { name: 'README.md', kind: 'file' }],
