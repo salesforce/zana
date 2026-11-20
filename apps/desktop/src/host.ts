@@ -103,7 +103,7 @@ import {
   createDesktopNativeRecovery, gateInvalidProvidedPlan, recoverSquadStateAtBoot, runSpawnLifecycle, slotRecoveryLaunch,
   sweepUnretainedSquadWorktrees, teamAdmissionRequirements, teamJobFailureResponse, withProposalLaunch, findProposalExecution, type ProposalLaunchDeps,
   withRenewedSources, scopedSourceRenewal, splitProposedGoalSources,
-  allWorkersUnresolvedReasons, unknownPersonaMessage
+  allWorkersUnresolvedReasons, unknownPersonaMessage, UnknownPersonaError
 } from './team-launch-support.js';
 import { warnUnknownPersonaModels } from './persona-model-check.js';
 import { modernRecoverySnapshot } from './team-native-recovery.js';
@@ -5905,6 +5905,8 @@ async function resolveTeamModelSnapshots(
   const config = store.getConfig();
   const projectSettings = await getAuthoritativeProjectSettings(projectId);
   const personaSnapshot = personas.list();
+  const missingPersonas = slots.filter((slot) => !personaSnapshot.some((candidate) => candidate.id === slot.personaId)).map((slot) => slot.personaId);
+  if (missingPersonas.length > 0) throw new UnknownPersonaError(missingPersonas);
    const verified = await verifyHarnesses(config);
   const observedAt = Date.now();
   return Promise.all(slots.map(async (slot, index) => {

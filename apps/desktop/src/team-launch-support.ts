@@ -366,6 +366,24 @@ export function unknownPersonaMessage(personaId: string): string {
 }
 
 /**
+ * Admission refusal for a Squad whose worker personas are not in the live store. `safeMessage` names the
+ * missing persona ids (control characters stripped, bounded) so the launch dialog can show them.
+ */
+export class UnknownPersonaError extends Error {
+  readonly safeMessage: string;
+  constructor(personaIds: readonly string[]) {
+    const ids = [...new Set(personaIds)]
+      .map((id) => id.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 80))
+      .slice(0, 5);
+    const more = new Set(personaIds).size - ids.length;
+    const list = ids.join(', ') + (more > 0 ? ` and ${more} more` : '');
+    super(`unknown persona: ${list}`);
+    this.name = 'UnknownPersonaError';
+    this.safeMessage = `Squad launch refused: ${ids.length > 1 || more > 0 ? 'these personas are' : 'this persona is'} not available: ${list}. Fix or remove the slot in Settings > Squads.`;
+  }
+}
+
+/**
  * CLI launch guard. Structured: a launch whose every worker slot names an unresolved
  * persona fails before anything opens; a partial miss launches the resolved slots
  * and reports the others as failed. Freeform: any unresolved persona fails the launch,

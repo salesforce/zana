@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createDesktopNativeRecovery, findProposalExecution, gateInvalidProvidedPlan, recoverSquadStateAtBoot, runSpawnLifecycle, slotRecoveryLaunch,
   sweepUnretainedSquadWorktrees, teamAdmissionRequirements, splitProposedGoalSources, teamJobFailureResponse, withProposalLaunch,
-  allWorkersUnresolvedReasons, unknownPersonaMessage
+  allWorkersUnresolvedReasons, unknownPersonaMessage, UnknownPersonaError
 } from '../team-launch-support.js';
 
 describe('withProposalLaunch', () => {
@@ -345,5 +345,24 @@ describe('allWorkersUnresolvedReasons', () => {
       .toBe(`0:a:0: ${unknownPersonaMessage('a')}`);
     expect(allWorkersUnresolvedReasons([o('x'), w('1:b:0', 'b')], new Set(['b']), 'any')).toBeUndefined();
     expect(allWorkersUnresolvedReasons([o('x')], new Set(), 'any')).toBeUndefined();
+  });
+});
+
+describe('UnknownPersonaError', () => {
+  it('names the missing persona in a user-safe message', () => {
+    const error = new UnknownPersonaError(['ghost-worker']);
+    expect(error.safeMessage).toContain('ghost-worker');
+    expect(error.safeMessage).toMatch(/this persona is not available/);
+    expect(error.message).toBe('unknown persona: ghost-worker');
+  });
+
+  it('dedupes, bounds and strips control characters across several personas', () => {
+    const many = ['a', 'b', 'a', 'c', 'd', 'e', 'f', 'g'];
+    const error = new UnknownPersonaError(many);
+    expect(error.safeMessage).toContain('a, b, c, d, e and 2 more');
+    expect(error.safeMessage).toMatch(/these personas are/);
+    const odd = new UnknownPersonaError([`x\u0000\n${'y'.repeat(200)}`]);
+    expect(odd.safeMessage).not.toMatch(/[\u0000-\u001f]/);
+    expect(odd.safeMessage.length).toBeLessThan(260);
   });
 });

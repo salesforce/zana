@@ -103,6 +103,7 @@ test('a Squad whose every worker slot is unresolved is refused at admission and 
     const { projectId, result } = await runLaunch(ctx, 'All ghost slots', 'provided', [GHOST]);
     expect(result.ok).toBe(false);
     expect(result.error ?? '').toMatch(/ADMISSION_FAILED/);
+    expect(result.error ?? '').toContain('ghost-persona-not-on-disk');
     expect((await ctx.window.evaluate((id) => window.cc.executionBoard.listProject(id), projectId)).executions).toHaveLength(0);
     expect(await workerSessions(ctx)).toEqual([]);
   } catch (error) { throw jobTeamFailure(ctx, error); }
@@ -115,6 +116,7 @@ test('a freeform Squad with any unresolved worker persona is refused at admissio
     const { projectId, result } = await runLaunch(ctx, 'Freeform ghost slot', 'infer', [{ personaId: 'e2e-worker', quantity: 1 }, GHOST]);
     expect(result.ok).toBe(false);
     expect(result.error ?? '').toMatch(/ADMISSION_FAILED/);
+    expect(result.error ?? '').toContain('ghost-persona-not-on-disk');
     expect((await ctx.window.evaluate((id) => window.cc.executionBoard.listProject(id), projectId)).executions).toHaveLength(0);
     expect(await workerSessions(ctx)).toEqual([]);
   } catch (error) { throw jobTeamFailure(ctx, error); }
