@@ -22,6 +22,17 @@ export function isRecentlyFinished(session: TerminalSession, now: number): boole
 }
 
 /**
+ * True for an exited Squad worker that failed (non-zero exit code) and that the user has not dismissed. Such a
+ * card outlives {@link FINISHED_LINGER_MS}: a worker that crashed must stay visible until someone acknowledges it.
+ * A clean exit, a non-Squad session and a dismissed card follow the normal linger rule.
+ */
+export function isRetainedWorkerExit(session: TerminalSession, dismissed: readonly string[]): boolean {
+  if (session.status !== 'exited' || session.cohort?.role !== 'worker') return false;
+  if (typeof session.exitCode !== 'number' || session.exitCode === 0) return false;
+  return !dismissed.includes(session.id);
+}
+
+/**
  * Status bucket a session is sorted into for Project Focus Mode. Ordering of
  * the union mirrors the display order (most-urgent first), but the canonical
  * order lives in {@link BUCKET_ORDER} — don't rely on union order at runtime.

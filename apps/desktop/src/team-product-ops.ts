@@ -11,6 +11,7 @@ import {
   executionBoardProjection
 } from '@zana-ai/zcc-server/services/execution/projection';
 import type { ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
+import { SquadPreviewAdmissionError } from './squad-proposals/service.js';
 
 export interface TeamProductOpDeps {
   resolvePreview?(input: ProductTeamLaunchInput): Promise<import('@zana-ai/zcc-domain/squad-proposal').SquadLaunchPreview & { previewToken: string }>;
@@ -54,6 +55,7 @@ function jobStatus(record: ExecutionRecord): ProductTeamStatus {
     ...(projection.objective ? { goal: projection.objective } : {}),
     ...(projection.summary ? { summary: projection.summary } : {}),
     ...(result === undefined ? {} : { result }),
+    ...(record.state === 'FAILED' && record.failureReason ? { failure: record.failureReason } : {}),
     blockers: (record.blockers ?? []).map((blocker) => ({
       id: blocker.id,
       question: blocker.question,
@@ -74,6 +76,7 @@ export function createTeamProductOps(deps: TeamProductOpDeps): ProductTeamOps {
         teamId: input.teamId,
         projectId: input.projectId,
         goal: input.goal,
+        ...(input.planText ? { planText: input.planText } : {}),
         ...(input.previewToken === undefined ? {} : { previewToken: input.previewToken }),
         ...(input.worktree === undefined ? {} : { worktree: input.worktree }),
         ...(input.onComplete === undefined ? {} : { onComplete: input.onComplete }),
@@ -110,6 +113,8 @@ export function createTeamProductOps(deps: TeamProductOpDeps): ProductTeamOps {
       if (!deps.resolvePreview) return { ok: false, code: 'UNAVAILABLE', message: 'Trusted launch preview unavailable' };
       try { return { ok: true, value: await deps.resolvePreview(input) }; }
       catch (error) {
+        // Only trusted admission text (never filesystem errors) reaches the caller.
+        if (error instanceof SquadPreviewAdmissionError) return { ok: false, code: 'INVALID', message: error.message };
         try { deps.logError?.(`team preview project=${input.projectId} team=${input.teamId}`, error); } catch { /* logging must not affect preview response */ }
         return { ok: false, code: 'INVALID', message: 'Launch preview could not validate the plan or target.' };
       }

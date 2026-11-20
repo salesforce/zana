@@ -3,6 +3,18 @@ import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
+const dropHook = vi.hoisted(() => ({ forceSecond: false }));
+vi.mock('@zana-ai/zcc-domain/persona-validation', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@zana-ai/zcc-domain/persona-validation')>();
+  return {
+    ...actual,
+    personaDropReason: (raw: unknown, opts?: { strictReasoning?: boolean }) => {
+      if (dropHook.forceSecond && opts?.strictReasoning) return 'invalid_reasoning_level';
+      return actual.personaDropReason(raw, opts);
+    }
+  };
+});
+
 // Mock electron before importing the store
 const testHome = join(tmpdir(), `persona-store-test-${Date.now()}`);
 vi.mock('electron', () => ({
@@ -22,8 +34,10 @@ import {
   sanitizePersona,
   migratePersonaIfNeeded,
   projectPersonaFields,
-  resolvePersonaLaunch
+  resolvePersonaLaunch,
+  parsePersona
 } from './persona-store.js';
+import { PERSONA_DROP_REASON_TEXT, PERSONA_LOAD_WARNINGS_MAX } from '@zana-ai/zcc-domain/persona-validation';
 import { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-team-registry.js';
 import type { Project, Persona } from '@zana-ai/zcc-domain/product';
 import { registerListPersonasTool } from './register-personas-mcp-tool.js';
@@ -786,6 +800,115 @@ describe('PersonaStore', () => {
       }
     });
     expect(neutral.model).toBeUndefined();
+  });
+});
+
+describe('PersonaStore load warnings', () => {
+  const userDir = join(testHome, '.zcc', 'personas');
+  let store: PersonaStore;
+  let projectDir: string;
+  let projects: Project[];
+
+  beforeEach(() => {
+    if (existsSync(testHome)) rmSync(testHome, { recursive: true, force: true });
+    mkdirSync(userDir, { recursive: true });
+    projectDir = join(testHome, 'proj');
+    mkdirSync(join(projectDir, '.zcc', 'personas'), { recursive: true });
+    projects = [];
+    store = new PersonaStore(() => projects);
+  });
+  afterEach(() => {
+    store.stop();
+    if (existsSync(testHome)) rmSync(testHome, { recursive: true, force: true });
+  });
+
+  const cases: Array<[string, string, string]> = [
+    ['bad baseProfile', JSON.stringify({ id: 'a', name: 'A', baseProfile: 'nope' }), 'invalid_base_profile'],
+    ['bad permissionMode', JSON.stringify({ id: 'a', name: 'A', permissionMode: 'nope' }), 'invalid_permission_mode'],
+    ['bad modelLevel', JSON.stringify({ id: 'a', name: 'A', modelLevel: 'huge' }), 'invalid_model_level'],
+    ['bad skills', JSON.stringify({ id: 'a', name: 'A', skills: 'review' }), 'invalid_skills'],
+    ['non-string model', JSON.stringify({ id: 'a', name: 'A', model: 5 }), 'invalid_model'],
+    ['empty id', JSON.stringify({ id: ' ', name: 'A' }), 'missing_id'],
+    ['empty name', JSON.stringify({ id: 'a', name: '' }), 'missing_name'],
+    ['bad codexSandbox', JSON.stringify({ id: 'a', name: 'A', codexSandbox: 'x' }), 'invalid_codex_sandbox'],
+    ['bad codexApproval', JSON.stringify({ id: 'a', name: 'A', codexApproval: 'x' }), 'invalid_codex_approval'],
+    ['bad executionState', JSON.stringify({ id: 'a', name: 'A', executionState: 'x' }), 'invalid_execution_state'],
+    ['bad harnessRouting', JSON.stringify({ id: 'a', name: 'A', harnessRouting: { schemaVersion: 2 } }), 'invalid_harness_routing'],
+    ['non-object', '[1,2]', 'not_an_object'],
+    ['malformed JSON', '{"id": "a", SECRET-TOKEN', 'malformed_json']
+  ];
+
+  it.each(cases)('reports %s', (_label, content, reason) => {
+    expect(parsePersona(content)).toEqual({ persona: null, reason });
+    writeFileSync(join(userDir, 'bad.json'), content);
+    store.start();
+    expect(store.loadWarnings()).toEqual([{ file: 'bad.json', source: 'user', reason }]);
+    expect(store.list().some((p) => p.id === 'a')).toBe(false);
+  });
+
+  it('reports invalid_persona (not not_an_object) when normalization fails after validation', () => {
+    dropHook.forceSecond = true;
+    try {
+      expect(parsePersona(JSON.stringify({ id: 'a', name: 'A' }))).toEqual({ persona: null, reason: 'invalid_persona' });
+    } finally {
+      dropHook.forceSecond = false;
+    }
+  });
+
+  it('warns about unparseable remote project persona records with a bounded identifier', () => {
+    const remote = new PersonaStore(
+      () => [],
+      undefined,
+      () => [{ projectId: 'r1', projectName: 'R'.repeat(200), records: [JSON.stringify({ id: 'ok', name: 'Ok' }), '{ nope', '[]'] }]
+    );
+    try {
+      remote.start();
+      const warnings = remote.loadWarnings();
+      expect(warnings).toHaveLength(2);
+      expect(warnings.map((w) => w.reason)).toEqual(['malformed_json', 'not_an_object']);
+      expect(warnings.every((w) => w.source === 'project' && w.file.length <= 80)).toBe(true);
+      expect(remote.list().some((p) => p.id === 'ok')).toBe(true);
+    } finally {
+      remote.stop();
+    }
+  });
+
+  it('accepts an unknown reasoningLevel by ignoring the field', () => {
+    const r = parsePersona(JSON.stringify({ id: 'a', name: 'A', reasoningLevel: 'turbo' }));
+    expect(r.persona?.reasoningLevel).toBeUndefined();
+    expect(r.reason).toBeUndefined();
+  });
+
+  it('exposes only basename, source and fixed reason text, never file content', () => {
+    writeFileSync(join(userDir, 'leak.json'), '{"id":"a","name":"A","appendSystemPrompt":"TOP-SECRET", oops');
+    store.start();
+    const serialized = JSON.stringify(store.loadWarnings());
+    expect(serialized).not.toContain('TOP-SECRET');
+    expect(serialized).not.toContain(userDir);
+    expect(store.loadWarnings()[0]).toEqual({ file: 'leak.json', source: 'user', reason: 'malformed_json' });
+    expect(PERSONA_DROP_REASON_TEXT.malformed_json).not.toContain('TOP-SECRET');
+  });
+
+  it('labels project-level drops and clears warnings once the file is fixed', () => {
+    projects = [{ id: 'p1', name: 'P1', path: projectDir } as Project];
+    writeFileSync(join(projectDir, '.zcc', 'personas', 'x.json'), JSON.stringify({ id: 'x', name: 'X', baseProfile: 'nope' }));
+    store.start();
+    expect(store.loadWarnings()).toEqual([{ file: 'x.json', source: 'project', reason: 'invalid_base_profile' }]);
+    writeFileSync(join(projectDir, '.zcc', 'personas', 'x.json'), JSON.stringify({ id: 'x', name: 'X' }));
+    store.refresh();
+    expect(store.loadWarnings()).toEqual([]);
+  });
+
+  it('reports unreadable entries (a .json directory) without throwing', () => {
+    mkdirSync(join(userDir, 'dir.json'));
+    store.start();
+    expect(store.loadWarnings()).toEqual([{ file: 'dir.json', source: 'user', reason: 'unreadable_file' }]);
+  });
+
+  it('caps the warning list', () => {
+    for (let i = 0; i < PERSONA_LOAD_WARNINGS_MAX + 20; i++) writeFileSync(join(userDir, `b${i}.json`), '{');
+    store.start();
+    expect(store.loadWarnings()).toHaveLength(PERSONA_LOAD_WARNINGS_MAX);
   });
 });
 

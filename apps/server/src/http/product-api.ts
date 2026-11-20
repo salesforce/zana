@@ -43,7 +43,9 @@ import { conversationHistoryAsync } from '../services/threads/conversation-histo
 import { randomUUID } from 'node:crypto';
 import { isAbsolute, join, relative, sep, posix, win32 } from 'node:path';
 import { homedir } from 'node:os';
-import { realpathSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { readdir, readFile } from 'node:fs/promises';
+import { parsePersonaFileContent, pushPersonaWarning, type PersonaLoadWarning } from '@zana-ai/zcc-domain/persona-validation';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type {
   AppConfig,
@@ -60,6 +62,7 @@ import { listJsonFiles, readJsonFile, writeJsonFile } from './disk-json.js';
 import { applyTrustedOriginCors, readJsonBody, sendBytes, sendJson, beginNdjson } from './json.js';
 import {
   TEAM_GOAL_MAX_CHARS,
+  TEAM_PLAN_TEXT_MAX_CHARS,
   TEAM_ID_MAX_CHARS,
   TEAM_REPLY_MAX_CHARS,
   TEAM_TITLE_MAX_CHARS,
@@ -899,7 +902,7 @@ export async function handleProductHttp(
     }
 
     if (path === '/api/v1/personas' && method === 'GET') {
-      sendJson(response, 200, { personas: listJsonFiles(join(ctx.dataDir, 'personas')) });
+      sendJson(response, 200, await readPersonaDiagnostics(ctx.dataDir, ctx.toProjects().map((project) => project.path)));
       return true;
     }
 
@@ -915,6 +918,8 @@ export async function handleProductHttp(
       const goal = typeof body?.goal === 'string' ? body.goal.trim() : '';
       const previewMode = path.endsWith('/preview') ? (body as Partial<ProductTeamLaunchInput> & { coordinationMode?: unknown })?.coordinationMode : undefined;
       const mode = body?.mode === 'freeform' || body?.mode === 'structured' ? body.mode : previewMode === 'freeform' || previewMode === 'structured' ? previewMode : '';
+      const planRaw = body?.planText;
+      const planText = typeof planRaw === 'string' ? planRaw.trim() : undefined;
       const title = typeof body?.title === 'string' ? body.title.trim() : undefined;
       const summary = typeof body?.summary === 'string' ? body.summary.trim() : undefined;
       const { launchOptionsSchema } = await import('@zana-ai/zcc-domain/launch-options');
@@ -922,6 +927,10 @@ export async function handleProductHttp(
         ['worktree', 'onComplete', 'push', 'checks', 'failurePolicyDefault', 'target']
           .filter((key) => body && key in body).map((key) => [key, (body as Record<string, unknown>)[key]])
       ));
+      if (planRaw !== undefined && (typeof planRaw !== 'string' || planRaw.length > TEAM_PLAN_TEXT_MAX_CHARS)) {
+        sendJson(response, 400, { ok: false, code: 'INVALID', message: `planText must be a string of at most ${TEAM_PLAN_TEXT_MAX_CHARS} characters` });
+        return true;
+      }
       if (!options.success || body?.previewToken !== undefined && (typeof body.previewToken !== 'string' || body.previewToken.length > 256)) {
         sendJson(response, 400, { ok: false, code: 'INVALID', message: 'Invalid launch options' });
         return true;
@@ -951,6 +960,7 @@ export async function handleProductHttp(
           teamId,
           projectId,
           goal,
+          ...(planText ? { planText } : {}),
           mode,
           ...options.data,
           ...(body?.previewToken ? { previewToken: body.previewToken } : {}),
@@ -4053,7 +4063,7 @@ function sendTeamOpResult(
     return;
   }
   const status =
-    result.code === 'DISABLED' || result.code === 'CONFLICT' || result.code === 'TERMINAL' ? 409
+    result.code === 'DISABLED' || result.code === 'CONFLICT' || result.code === 'TERMINAL' || result.code === 'STOP_INCOMPLETE' ? 409
       : result.code === 'NOT_FOUND' || result.code === 'unknown-session' ? 404
         : result.code === 'INVALID' || result.code === 'NO_ORCHESTRATOR' || result.code === 'INVALID_CAPABILITY' ? 400
           : result.code === 'DENIED' ? 409
@@ -4119,3 +4129,44 @@ function sendHostFailure(response: ServerResponse, error: unknown): void {
 export function isProductApiPath(pathname: string): boolean {
   return pathname.startsWith('/api/');
 }
+
+/**
+ * User persona files that pass the shared validator (the same rules the app's
+ * PersonaStore applies), plus a warning per dropped user or project persona
+ * file. Warnings carry the basename, source and a fixed reason only. This
+ * server runs apart from Electron main, which owns the PersonaStore, so it
+ * re-applies the shared validator to the same directories.
+ */
+export async function readPersonaDiagnostics(
+  dataDir: string,
+  projectPaths: readonly string[]
+): Promise<{ personas: unknown[]; warnings: PersonaLoadWarning[] }> {
+  const personas: unknown[] = [];
+  const warnings: PersonaLoadWarning[] = [];
+  const scan = async (dir: string, source: PersonaLoadWarning['source']) => {
+    let names: string[];
+    try { names = await readdir(dir); } catch { return; }
+    const files = names.filter((file) => file.endsWith('.json'));
+    // Bounded concurrency; results are consumed in directory order so the
+    // response (and the warnings cap) is identical to a sequential scan.
+    for (let i = 0; i < files.length; i += PERSONA_SCAN_CONCURRENCY) {
+      const batch = files.slice(i, i + PERSONA_SCAN_CONCURRENCY);
+      const contents = await Promise.all(batch.map((file) => readFile(join(dir, file), 'utf8').catch(() => null)));
+      batch.forEach((file, index) => {
+        const content = contents[index];
+        if (content === null) {
+          pushPersonaWarning(warnings, { file, source, reason: 'unreadable_file' });
+          return;
+        }
+        const parsed = parsePersonaFileContent(content);
+        if (parsed.reason) pushPersonaWarning(warnings, { file, source, reason: parsed.reason });
+        else if (source === 'user') personas.push(parsed.value);
+      });
+    }
+  };
+  await scan(join(dataDir, 'personas'), 'user');
+  for (const path of projectPaths) await scan(join(path, '.zcc', 'personas'), 'project');
+  return { personas, warnings };
+}
+
+const PERSONA_SCAN_CONCURRENCY = 16;

@@ -346,7 +346,7 @@ PRODUCT API (app must be running — ZCC_SERVER_URL, default http://127.0.0.1:87
   settings show|general|experiment|appearance
   terminal list|create|show|output|wait|send|close
   team launch --team <id> --project <id> --goal "..." [--mode structured|freeform]
-       [--title] [--summary] [--wait] [--json]
+       [--plan-file <path>] [--dry-run] [--title] [--summary] [--wait] [--json]
   team status|wait|answer|stop <id>
   environment status|diff|diff-files|pull-request|processes <id>
   browser instances|tabs|create|acquire|connection|release|reveal|capture|close|watch|import-sources|import-cookies

@@ -14432,6 +14432,13 @@ body.resizing-col .explorer-resizer::after {
   transition: opacity 100ms ease, transform 100ms ease;
 }
 
+/* Squad editor slot controls sit at the left edge of a narrow drawer: grow the tooltip rightwards so it stays on screen. */
+.team-slot-reorder .composer-control-tooltip::after,
+.team-slot-orch-toggle.composer-control-tooltip::after {
+  left: 0;
+  right: auto;
+}
+
 .composer-control-tooltip:hover::after,
 .composer-control-tooltip:focus-within::after {
   opacity: 1;
@@ -15069,6 +15076,22 @@ body.resizing-col .explorer-resizer::after {
 .agent-card-badge.bad {
   background: color-mix(in srgb, var(--danger) 18%, transparent);
   color: var(--danger);
+}
+
+.agent-card-retained {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.agent-card-dismiss {
+  align-self: flex-end;
+  font-size: 11px;
+  padding: 1px 8px;
+  border: 1px solid var(--border, currentColor);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
 }
 
 /* Background (headless) badge — its own accent + a Moon glyph so a detached

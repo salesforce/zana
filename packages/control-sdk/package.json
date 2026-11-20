@@ -29,7 +29,8 @@
     "live:cli-scenarios": "cross-env ZCC_LIVE_CONTROL=1 vitest run --config vitest.config.ts --testTimeout 180000 live/cli-agent-scenarios.test.ts",
     "live:mode-reasoning": "cross-env ZCC_LIVE_CONTROL=1 vitest run --reporter=default --config vitest.config.ts --testTimeout 60000 live/harness-mode-reasoning.test.ts",
     "live:browser": "cross-env ZCC_LIVE_CONTROL=1 vitest run --config vitest.config.ts --testTimeout 120000 live/desktop-browser.test.ts",
-    "live:memory": "cross-env ZCC_LIVE_CONTROL=1 vitest run --reporter=default --config vitest.config.ts --testTimeout 120000 live/plugin-memory.test.ts"
+    "live:memory": "cross-env ZCC_LIVE_CONTROL=1 vitest run --reporter=default --config vitest.config.ts --testTimeout 120000 live/plugin-memory.test.ts",
+    "live:squad-worker-issues": "cross-env ZCC_LIVE_CONTROL=1 vitest run --reporter=default --config vitest.config.ts --testTimeout 60000 live/squad-worker-issues.test.ts"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

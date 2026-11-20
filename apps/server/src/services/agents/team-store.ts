@@ -15,7 +15,7 @@ import {
   type FSWatcher
 } from 'node:fs';
 import { join } from 'node:path';
-import { normalizeRoles, type Project, type SquadTransport, type Team, type TeamSlot } from '@zana-ai/zcc-domain/product';
+import { normalizeRoles, sanitizeTeamLimits, type Project, type SquadTransport, type Team, type TeamSlot } from '@zana-ai/zcc-domain/product';
 import { isLaunchApproval } from '@zana-ai/zcc-domain/squad-proposal';
 import type { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-team-registry.js';
 import { uniqueCopyName } from '../projects/unique-copy-name.js';
@@ -71,6 +71,7 @@ export function sanitizeTeam(raw: unknown): Team | null {
   if (typeof r.name !== 'string' || !r.name.trim()) return null;
   if (!Array.isArray(r.slots)) return null;
 
+  const limits = sanitizeTeamLimits(r.limits);
   const slots: TeamSlot[] = [];
   for (const s of r.slots.slice(0, TEAM_SLOTS_PER_TEAM_MAX)) {
     if (!s || typeof s !== 'object') continue;
@@ -116,6 +117,7 @@ export function sanitizeTeam(raw: unknown): Team | null {
     ...(r.leanWorkers === true ? { leanWorkers: true } : {}),
     defaultPlanning: r.defaultPlanning === 'infer' || r.defaultPlanning === 'provided' ? r.defaultPlanning : undefined,
     launchApproval: isLaunchApproval(r.launchApproval) ? r.launchApproval : undefined,
+    ...(limits ? { limits } : {}),
     isDefault: r.isDefault === true ? true : undefined
   };
 }

@@ -1,3 +1,4 @@
+import type { PersonaLoadWarning } from '@zana-ai/zcc-domain/persona-validation';
 import type { LibraryDoc } from '@zana-ai/zcc-domain/product';
 import { httpProjectGit, scopedDesktopGit } from './project-git.js';
 import { machineTerminals } from './machine-terminals.js';
@@ -285,6 +286,15 @@ function httpProduct(): Pick<
         });
         return body.config;
       },
+      // Remote clients have no append endpoint; read-modify-write is the best available.
+      dismissWorkerExit: async (sessionId: string) => {
+        const current = (await apiJson<{ config: AppConfig }>('/config')).config.dismissedWorkerExits ?? [];
+        const body = await apiJson<{ config: AppConfig }>('/config', {
+          method: 'PATCH',
+          body: JSON.stringify({ dismissedWorkerExits: current.includes(sessionId) ? current : [...current, sessionId] })
+        });
+        return body.config;
+      },
       // Folder trust is granted only through the desktop chooser.
       addTrustedPreviewFolder: async () => ({
         config: null,
@@ -457,6 +467,10 @@ function httpProduct(): Pick<
         const body = await apiJson<{ personas: Persona[] }>('/personas');
         return body.personas;
       },
+      loadWarnings: async () => {
+        const body = await apiJson<{ warnings?: PersonaLoadWarning[] }>('/personas');
+        return Array.isArray(body.warnings) ? body.warnings : [];
+      },
       onChanged: (cb: (personas: Persona[]) => void) =>
         subscribeProductEvent<Persona[]>('personas:changed', cb)
     } as CcApi['personas'],
@@ -564,6 +578,10 @@ function httpProduct(): Pick<
       clearAgentBlocked: async () => false,
       summarizeIdle: async () => ({ summarized: 0 }),
       summarizeSession: async () => ({ ok: false as const, reason: 'ineligible' as const }),
+      restartSquadWorker: async () => {
+        // Throws (not a verdict): main is the authority; a Squad worker must never fall back to a plain terminal.
+        throw new Error('restartSquadWorker requires the desktop app');
+      },
       sessionStats: async () => null,
       closeFollowup: async () => ({ summarized: 0, followedUp: 0 }),
       resize: async (sessionId, cols, rows) => {

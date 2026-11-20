@@ -159,7 +159,11 @@ ${readFileSync(serverPath, 'utf8')}`);
     await app.window.getByTestId('thread-secondary-hide').click();
 
     const appPath = join(source, 'app.tsx');
-    const updated = readFileSync(appPath, 'utf8').replace(`>${id}</h2>`, '>Reload verified</h2>');
+    // The template renders the name as a JSX expression, `{"id"}`; a no-op
+    // replace would leave the heading unchanged, so assert the edit applied.
+    const original = readFileSync(appPath, 'utf8');
+    const updated = original.replace(`>{${JSON.stringify(id)}}</h2>`, '>Reload verified</h2>');
+    expect(updated).not.toBe(original);
     writeFileSync(appPath, updated);
     const reloaded = await run(['plugin', 'dev', '--once']);
     expect(reloaded.code, reloaded.stderr).toBe(0);

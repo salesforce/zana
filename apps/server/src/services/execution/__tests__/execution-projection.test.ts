@@ -27,6 +27,21 @@ function record(): ExecutionRecord {
 }
 
 describe('projectExecutionProjection', () => {
+  it('projects failedWorkers only when slots failed to spawn, retaining the sanitized reason', () => {
+    expect(projectExecutionProjection([record()], [])[0]).not.toHaveProperty('failedWorkers');
+    const withFailed = { ...record(), failedWorkerSlots: [{ slotId: 'w:2', reason: 'injected worker spawn fault' }] } as ExecutionRecord;
+    expect(projectExecutionProjection([withFailed], [])[0]?.failedWorkers).toEqual([{ slotId: 'w:2', reason: 'injected worker spawn fault' }]);
+    expect(projectExecutionProjection([{ ...record(), failedWorkerSlots: [] } as ExecutionRecord], [])[0]).not.toHaveProperty('failedWorkers');
+  });
+
+  it('projects effective run limits from the persisted policy', () => {
+    const withPolicy = (policy?: Record<string, number>) => ({ ...record(), request: { ...record().request, ...(policy ? { policy } : {}) } }) as ExecutionRecord;
+    expect(projectExecutionProjection([withPolicy({ maxConcurrent: 2, maxClaimWallClockMs: 600_000, maxClaimStallMs: 120_000 })], [])[0]?.limits)
+      .toEqual({ maxConcurrent: 2, claimWallClockMs: 600_000, claimStallMs: 120_000 });
+    expect(projectExecutionProjection([withPolicy()], [])[0]?.limits).toEqual({ maxConcurrent: 32 });
+    expect(projectExecutionProjection([withPolicy({ maxConcurrent: 9, maxLaunches: 4 })], [])[0]?.limits).toEqual({ maxConcurrent: 4 });
+  });
+
   it('projects non-secret project execution state and finds only a live orchestrator', () => {
     const session = { id: 'orch', status: 'running', cohort: { executionId: 'execution-1', role: 'orchestrator' } } as TerminalSession;
     expect(projectExecutionProjection([record()], [session])[0]).toMatchObject({
@@ -455,5 +470,14 @@ describe('modernExecutionMembers', () => {
     expect(members[0]).toMatchObject({ threadId: 'new-a', live: true });
     expect(members.some((member) => member.threadId === 'old-a')).toBe(false);
     expect(members.filter((member) => member.slotId === 'a')).toHaveLength(1);
+  });
+});
+
+describe('failure reason projection', () => {
+  it('projects failureReason only for FAILED runs', () => {
+    const failed = { ...record(), state: 'FAILED' as const, failureReason: 'launch broke' };
+    expect(projectExecutionProjection([failed], [])[0]).toMatchObject({ failureReason: 'launch broke' });
+    expect(projectExecutionProjection([{ ...failed, state: 'RUNNING' as const }], [])[0]).not.toHaveProperty('failureReason');
+    expect(projectExecutionProjection([record()], [])[0]).not.toHaveProperty('failureReason');
   });
 });

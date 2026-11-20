@@ -68,6 +68,7 @@ export async function launchJobTeamCliOwner(ctx: JobTeamContext, opts: {
   prompt?: string;
   /** Extra fields merged into the orchestrator persona / the team (e.g. deniedTools, defaultPlanning). */
   orchestratorExtra?: Record<string, unknown>;
+  workerExtra?: Record<string, unknown>;
   teamExtra?: Record<string, unknown>;
 }): Promise<string> {
   const prompt = opts.prompt ?? 'E2E start Job Team';
@@ -83,10 +84,10 @@ export async function launchJobTeamCliOwner(ctx: JobTeamContext, opts: {
     id: 'e2e-orchestrator', name: 'E2E Orchestrator', description: 'Durable test coordinator',
     baseProfile: 'claude', permissionMode: 'default', systemPrompt: '', ...extra
   }), opts.orchestratorExtra ?? {});
-  await window.evaluate(() => window.cc.personas.save({
+  await window.evaluate((extra) => window.cc.personas.save({
     id: 'e2e-worker', name: 'E2E Worker', description: 'Durable test worker',
-    baseProfile: 'claude', permissionMode: 'default', systemPrompt: ''
-  }));
+    baseProfile: 'claude', permissionMode: 'default', systemPrompt: '', ...extra
+  }), opts.workerExtra ?? {});
   await window.evaluate(({ quantity, extra }) => window.cc.teams.save({
     id: 'e2e-job-team', name: 'E2E Job Team', description: 'CLI owner durable team',
     slots: [{ personaId: 'e2e-worker', quantity }], orchestratorPersonaId: 'e2e-orchestrator', ...extra
