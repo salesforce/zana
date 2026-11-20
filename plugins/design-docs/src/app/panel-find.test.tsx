@@ -9,7 +9,7 @@ import { DocView } from './DocView.js';
 import { Workbench } from './Workbench.js';
 import { panelFindKey } from './panel-find.js';
 import type { DocLocation } from './content.js';
-import { createHarness, type Harness } from './test-harness.js';
+import { AGENT, createHarness, type Harness } from './test-harness.js';
 
 /** fireEvent returns false when a listener called preventDefault. */
 const ctrlF = (target: Element) => !fireEvent.keyDown(target, { key: 'f', ctrlKey: true });
@@ -173,5 +173,32 @@ describe('panelFindKey', () => {
     expect(key(plain, { defaultPrevented: true })).toBe(false);
     expect(key(plain, { ctrlKey: false })).toBe(false);
     expect(key(inner)).toBe(false);
+  });
+});
+
+describe('Ctrl+F with a past revision open', () => {
+  it('finds in the diff and in the full snapshot from the history pane', { timeout: 20_000 }, async () => {
+    const harness = createHarness();
+    const doc = commentedDoc(harness);
+    await harness.asAgent((store) => store.writeFile(doc.id, { path: 'README.md', content: 'The overview now mentions a deadline.' }, AGENT));
+    renderDoc(harness, doc.id, 'README.md');
+    await screen.findByRole('navigation', { name: 'Files' });
+    fireEvent.click(within(rail()).getByRole('tab', { name: /History/ }));
+    await waitFor(() => expect(rail().querySelector('.dd-history-row')).toBeTruthy());
+    const row = rail().querySelector('.dd-history-row') as HTMLElement;
+    fireEvent.click(row);
+    await screen.findByRole('table', { name: /Changes in revision/ });
+
+    // Diff view: there is no preview, so the revision view owns the find bar.
+    expect(ctrlF(row)).toBe(true);
+    const bar = await screen.findByRole('searchbox', { name: 'Find in doc' });
+    fireEvent.change(bar, { target: { value: 'deadline' } });
+    await waitFor(() => expect(screen.getByTestId('dom-find-bar-count').textContent).toBe('1/1'));
+    fireEvent.keyDown(bar, { key: 'Escape' });
+
+    // Full snapshot: the preview inside it answers.
+    fireEvent.click(screen.getByRole('button', { name: 'Full file' }));
+    expect(ctrlF(row)).toBe(true);
+    expect(await screen.findByRole('searchbox', { name: 'Find in doc' })).toBeTruthy();
   });
 });

@@ -1,11 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { FilePen, FilePlus2, FileX2, History, MoveRight, RotateCcw, X } from 'lucide-react';
 import type { DesignDocDetail, DesignDocRevision, RevisionOp } from '../shared/contract.js';
 import { formatBytes } from '../shared/display.js';
 import { fileKindOf, isBinaryKind } from '../shared/paths.js';
 import { errorMessage, toast, useApi, type DocKind, type RevisionContent } from './api.js';
 import { diffStats, foldDiff, lineDiff } from './diff.js';
-import { FilePreview } from './FilePreview.js';
+import { DomFindBar } from '../../../../apps/app/src/components/DomFindBar.js';
+import { useDomFind } from '../../../../apps/app/src/lib/use-dom-find.js';
+import { FilePreview, type PreviewHandle } from './FilePreview.js';
 import { usePersistentState, useResource } from './hooks.js';
 import { ActorLabel, ConfirmDialog, EmptyState, IconButton, Spinner, TimeAgo, type ConfirmRequest, type Icon } from './ui.js';
 
@@ -134,13 +136,16 @@ export function RevisionView({
   revision,
   onClose,
   onOpenPath,
-  docKind
+  docKind,
+  previewHandle
 }: {
   doc: DesignDocDetail;
   revision: DesignDocRevision;
   onClose(): void;
   onOpenPath(path: string): void;
   docKind?: DocKind;
+  /** Lets Ctrl+F from elsewhere in the panel reach the find bar of whatever this view shows. */
+  previewHandle?: MutableRefObject<PreviewHandle | null>;
 }) {
   const api = useApi();
   const [mode, setMode] = useState<'changes' | 'full'>(revision.op === 'write' || revision.op === 'delete' ? 'changes' : 'full');
@@ -195,8 +200,34 @@ export function RevisionView({
   const canDiff = diff !== null;
   const showFull = mode === 'full' || !canDiff;
 
+  // The diff has no preview of its own, so it gets a find bar; the full snapshot uses FilePreview's.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const find = useDomFind(bodyRef, rootRef, `${revision.id}|${mode}|${pair.data ? 1 : 0}`);
+  const openDiffFind = find.openBar;
+  useEffect(() => {
+    if (!previewHandle || showFull) return;
+    const handle: PreviewHandle = { openFind: openDiffFind, focusQuote: () => false };
+    previewHandle.current = handle;
+    return () => {
+      if (previewHandle.current === handle) previewHandle.current = null;
+    };
+  }, [previewHandle, showFull, openDiffFind]);
+
   return (
-    <div className="dd-revision">
+    <div className="dd-revision" ref={rootRef} {...find.hostProps}>
+      {find.open && !showFull ? (
+        <DomFindBar
+          label="Find in doc"
+          value={find.query}
+          onChange={find.setQuery}
+          onStep={find.step}
+          onClose={find.close}
+          matchIndex={find.matchIndex}
+          matchCount={find.matchCount}
+          focusRequest={find.focusRequest}
+        />
+      ) : null}
       <div className="dd-banner dd-banner-info dd-revision-banner">
         <History size={14} aria-hidden />
         <span className="dd-banner-text">
@@ -220,7 +251,7 @@ export function RevisionView({
         </button>
         <IconButton icon={X} label="Close revision" onClick={onClose} />
       </div>
-      <div className="dd-revision-body">
+      <div className="dd-revision-body" ref={bodyRef}>
         {pair.error ? <div className="dd-banner dd-banner-error">{pair.error}</div> : null}
         {!pair.data ? (
           pair.loading ? (
@@ -239,6 +270,7 @@ export function RevisionView({
               onOpenPath={onOpenPath}
               draft
               kind={docKind}
+              handleRef={previewHandle}
             />
           </>
         ) : diff && diff !== 'too-large' ? (

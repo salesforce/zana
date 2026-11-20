@@ -908,7 +908,7 @@ textarea.dd-doc-summary { display: block; }
 .dd-editor-footer .btn { height: 26px; }
 
 /* Revision view + diff */
-.dd-revision { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.dd-revision { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .dd-revision-banner { flex: 0 0 auto; }
 .dd-revision-note { color: var(--text-muted); }
 .dd-revision-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: auto; }
