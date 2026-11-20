@@ -106,6 +106,19 @@ body,
   -webkit-user-select: text;
 }
 
+.thread-plan-panel,
+.thread-todo-checklist {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Plan-panel controls stay chrome: a drag across the panel must not highlight
+   button labels. */
+.thread-plan-panel button {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 /* Code / commands are ALWAYS copyable, in any pane. A `<code>`/`<pre>`/`<kbd>`
    often holds a shell command we're telling the user to run (e.g. the GUS
    "Salesforce CLI is authed" hint, or any extension panel mounted into the
