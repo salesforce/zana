@@ -12580,6 +12580,10 @@ body.resizing-col .explorer-resizer::after {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
+.shortcuts-modal:focus {
+  outline: none;
+}
+
 .shortcuts-modal {
   width: min(640px, 90vw);
   max-height: 78vh;

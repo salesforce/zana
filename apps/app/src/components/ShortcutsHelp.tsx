@@ -176,12 +176,16 @@ function useShortcutsFilter(onClose: () => void) {
   const inputRef = useRef<HTMLInputElement>(null);
   // Tab stays inside the dialog and focus returns to the opener on close; Esc is handled below.
   useDialogFocusTrap(hostRef, undefined);
+  // Declared after the trap so it records the real opener before focus moves into the panel.
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key !== 'Escape' || e.isComposing) return;
       if (!queryRef.current) return onClose();
       setQuery('');
-      hostRef.current?.focus();
+      inputRef.current?.focus();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

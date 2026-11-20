@@ -122,10 +122,11 @@ describe('ShortcutsHelp find', () => {
     renderOnLinux();
     const target = { root: () => document.body, main: () => document.body, isPrimary: () => true, open: vi.fn() };
     unregisterTarget = registerThreadFindTarget(target);
-    expect(document.activeElement).toBe(modal());
+    expect(document.activeElement).toBe(filter());
+    screen.getByRole('button', { name: 'Close' }).focus();
     const event = new KeyboardEvent('keydown', { ...ctrlF, bubbles: true, cancelable: true });
     expect(threadFindClaims(event)).toBe(false);
-    modal().dispatchEvent(event);
+    document.activeElement!.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
     expect(document.activeElement).toBe(filter());
   });
@@ -166,7 +167,7 @@ describe('ShortcutsHelp find', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(filter().value).toBe('');
     expect(onClose).not.toHaveBeenCalled();
-    expect(document.activeElement).toBe(modal());
+    expect(document.activeElement).toBe(filter());
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
@@ -176,7 +177,7 @@ describe('ShortcutsHelp find', () => {
     document.body.append(opener);
     opener.focus();
     const { unmount } = renderOnLinux();
-    expect(document.activeElement).toBe(modal());
+    expect(document.activeElement).toBe(filter());
     unmount();
     expect(document.activeElement).toBe(opener);
     opener.remove();
