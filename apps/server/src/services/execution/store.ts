@@ -451,6 +451,8 @@ export interface ExecutionRecord {
   successorExecutionId?: string;
   recoveryRequestId?: string;
   finalSummary?: string;
+  /** Sanitized, bounded reason a run ended FAILED; absent on older records. */
+  failureReason?: string;
   assembledResult?: ExecutionAssembledResultV1;
   usageObservations?: ExecutionUsageObservationV1[];
   usageBaseline?: ExecutionUsageBaselineV1;
@@ -762,6 +764,25 @@ const MAX_STRING = 2_048;
 // persistence") that the normalizer already accepted.
 const MAX_WORK_UNIT_TASK = 16_384;
 const MAX_FINAL_SUMMARY = 64 * 1024;
+const MAX_FAILURE_REASON = 2048;
+
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
+const WINDOWS_ABS_PATH = /(?<![\w])[A-Za-z]:[\\/](?:[^\s\\/'"`<>|]+[\\/])*([^\s\\/'"`<>|]+)/g;
+const POSIX_ABS_PATH = /(?<![\w:.\/~-])\/(?:[^\s\/'"`<>|]+\/)*([^\s\/'"`<>|]+)/g;
+
+/**
+ * Makes error text safe to store and show to agents, the CLI and peers: control characters become
+ * spaces, absolute paths shrink to their basename, and the result is capped at `max` characters.
+ */
+export function boundReason(text: string, max = MAX_FAILURE_REASON): string {
+  const cleaned = String(text ?? '')
+    .replace(CONTROL_CHARS, ' ')
+    .replace(WINDOWS_ABS_PATH, '$1')
+    .replace(POSIX_ABS_PATH, '$1')
+    .trim();
+  if (cleaned.length <= max) return cleaned;
+  return `${cleaned.slice(0, Math.max(0, max - 1))}…`;
+}
 const MAX_WORK_UNITS = 100;
 export const MAX_REPORTED_BLOCKER_IDS = 100;
 const MAX_UNIT_LIST = 100;
@@ -893,6 +914,7 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.successorExecutionId === undefined || validString(record.successorExecutionId))
     && (record.recoveryRequestId === undefined || validString(record.recoveryRequestId))
     && (record.finalSummary === undefined || typeof record.finalSummary === 'string' && record.finalSummary.length > 0 && record.finalSummary.length <= MAX_FINAL_SUMMARY)
+    && (record.failureReason === undefined || typeof record.failureReason === 'string' && record.failureReason.length > 0 && record.failureReason.length <= MAX_FAILURE_REASON)
     && (record.assembledResult === undefined || validAssembledResult(record.assembledResult))
     && (record.usageObservations === undefined || Array.isArray(record.usageObservations) && record.usageObservations.length <= MAX_USAGE_OBSERVATIONS_PER_EXECUTION && record.usageObservations.every(validUsageObservation))
     && (record.usageBaseline === undefined || validUsageRollup(record.usageBaseline))
@@ -2056,6 +2078,10 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       const fromState = record.state;
       const timestamp = now();
       record.state = state;
+      if (state === 'FAILED') {
+        const reason = boundReason(summary);
+        if (reason) record.failureReason = reason;
+      }
       record.stateVersion += 1;
       record.updatedAt = timestamp;
       append(snapshot.state, record, state, severity, string(summary, 'event summary'), timestamp, { kind: 'transition', fromState, toState: state });
@@ -3842,6 +3868,8 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       const fromState = record.state;
       record.state = 'FAILED';
       record.finalSummary = finalSummary;
+      const failureReason = boundReason(finalSummary);
+      if (failureReason) record.failureReason = failureReason;
       record.assembledResult = assembleExecutionResult(record, artifacts, finalSummary);
       if (includeRouteFit) record.routeFitProposal = evaluateRouteFit(record, now());
       record.stateVersion += 1;

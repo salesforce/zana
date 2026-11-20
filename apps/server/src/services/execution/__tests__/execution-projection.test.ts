@@ -457,3 +457,12 @@ describe('modernExecutionMembers', () => {
     expect(members.filter((member) => member.slotId === 'a')).toHaveLength(1);
   });
 });
+
+describe('failure reason projection', () => {
+  it('projects failureReason only for FAILED runs', () => {
+    const failed = { ...record(), state: 'FAILED' as const, failureReason: 'launch broke' };
+    expect(projectExecutionProjection([failed], [])[0]).toMatchObject({ failureReason: 'launch broke' });
+    expect(projectExecutionProjection([{ ...failed, state: 'RUNNING' as const }], [])[0]).not.toHaveProperty('failureReason');
+    expect(projectExecutionProjection([record()], [])[0]).not.toHaveProperty('failureReason');
+  });
+});

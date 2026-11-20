@@ -7164,6 +7164,8 @@ export interface ExecutionBoardProjection {
     }>;
   };
   finalSummary?: string;
+  /** Sanitized, bounded reason the run ended FAILED. */
+  failureReason?: string;
   eventCursor?: number;
   coordinator?: { status: 'live' | 'parked' | 'lost' | 'complete'; sessionId?: string };
   recoveryAttention?: boolean;
@@ -7311,6 +7313,8 @@ export interface ProductTeamStatus {
   summary?: string;
   /** Persisted terminal output; legacy executions may have only finalSummary text. */
   result?: NonNullable<ExecutionBoardProjection['assembledResult']> | string;
+  /** Sanitized, bounded reason the run ended FAILED. */
+  failure?: string;
   blockers?: Array<{ id: string; question?: string; resolved?: boolean }>;
 }
 

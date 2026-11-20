@@ -2,7 +2,7 @@ import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, resolve } from 'node:path';
 import { TEAM_GOAL_MAX_CHARS, type ProductTeamStatus } from '@zana-ai/zcc-domain/product';
-import { errResult, type CliResult } from '../cli-result.js';
+import { errResult, textResult, type CliResult } from '../cli-result.js';
 import { flagValue, hasFlag, stripFlags } from '../flag-parse.js';
 import { launchOptionsFromFlags } from './launch-forward.js';
 import { squadLaunchPreviewSchema } from '@zana-ai/zcc-domain/squad-proposal';
@@ -32,6 +32,7 @@ interface TeamStatusValue {
   goal?: string;
   summary?: string;
   result?: ProductTeamStatus['result'];
+  failure?: string;
   blockers?: Array<{ id?: string; question?: string; resolved?: boolean }>;
 }
 
@@ -94,7 +95,8 @@ async function resolveGoal(raw: string | undefined): Promise<{ ok: true; goal: s
 }
 
 function formatStatus(row: TeamStatusValue): string {
-  return `${row.id ?? '?'}\t${row.kind ?? '?'}\t${row.state ?? '?'}\t${row.teamId ?? '-'}`;
+  const base = `${row.id ?? '?'}\t${row.kind ?? '?'}\t${row.state ?? '?'}\t${row.teamId ?? '-'}`;
+  return row.failure ? `${base}\tfailed: ${row.failure}` : base;
 }
 
 function isTerminal(state: string | undefined): boolean {
@@ -121,7 +123,13 @@ async function waitForId(
     const row = shown.data.value ?? (shown.data as TeamStatusValue);
     if (isTerminal(row.state)) {
       if (row.result === undefined || row.result === null) {
-        return errResult(`terminal execution ${id} has no persisted result payload`);
+        return errResult(row.failure
+          ? `execution ${id} ${(row.state ?? 'failed').toLowerCase()}: ${row.failure}`
+          : `terminal execution ${id} has no persisted result payload`);
+      }
+      if (row.failure && !json) {
+        const body = typeof row.result === 'string' ? row.result : `${JSON.stringify(row.result, null, 2)}\n`;
+        return textResult(body, `Failed: ${row.failure}\n`);
       }
       return renderOrJson(json, row.result, typeof row.result === 'string' ? row.result : `${JSON.stringify(row.result, null, 2)}\n`);
     }

@@ -198,3 +198,28 @@ describe('team project and terminal result contracts', () => {
     for (const goal of ['@', `@${file}.missing`]) expect((await runCli([...fileLaunch, '--goal', goal], { fetchImpl: router({}) })).exitCode).toBe(2);
   });
 });
+
+describe('team failure reason', () => {
+  it('wait prints the failure reason when a terminal run has no result payload', async () => {
+    const result = await runTeamCommand('wait', ['ex-1'], false, { fetchImpl: router({
+      'GET /api/v1/executions/ex-1': { value: { id: 'ex-1', state: 'FAILED', failure: 'no portable plan steps found' } }
+    }) });
+    expect(result?.exitCode).toBe(1);
+    expect(result?.stderr).toContain('execution ex-1 failed: no portable plan steps found');
+    expect(result?.stderr).not.toContain('no persisted result payload');
+  });
+  it('wait keeps the result on stdout and adds the reason on stderr in human mode only', async () => {
+    const fetchImpl = router({ 'GET /api/v1/executions/ex-1': { value: { id: 'ex-1', state: 'FAILED', result: 'partial', failure: 'unit crashed' } } });
+    const human = await runTeamCommand('wait', ['ex-1'], false, { fetchImpl });
+    expect(human?.stdout).toBe('partial\n');
+    expect(human?.stderr).toBe('Failed: unit crashed\n');
+    const json = await runTeamCommand('wait', ['ex-1'], true, { fetchImpl });
+    expect(json?.stderr ?? '').toBe('');
+  });
+  it('status shows the failure reason', async () => {
+    const result = await runTeamCommand('status', ['ex-1'], false, { fetchImpl: router({
+      'GET /api/v1/executions/ex-1': { value: { id: 'ex-1', kind: 'job', state: 'FAILED', teamId: 't', failure: 'boom' } }
+    }) });
+    expect(result?.stdout).toBe('ex-1\tjob\tFAILED\tt\tfailed: boom\n');
+  });
+});

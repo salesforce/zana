@@ -76,7 +76,10 @@ export function buildSquadReport(record: ExecutionRecord, opts: { worktree?: Squ
   const duration = formatSquadDuration((record.updatedAt ?? 0) - (record.createdAt ?? 0));
   const outcome = squadOutcomeLabel(record.state);
   let title = oneLine(record.jobTitle);
-  let summary = trimTo(oneLine(record.finalSummary), SUMMARY_CHARS);
+  // A failed run's sanitized reason is the cause worth showing; the summary may be empty or absent.
+  const failed = record.state === 'FAILED' && record.failureReason ? oneLine(record.failureReason) : '';
+  const summarySource = failed && !oneLine(record.finalSummary) ? `Failed: ${failed}` : oneLine(record.finalSummary);
+  let summary = trimTo(summarySource, SUMMARY_CHARS);
   // An owner's PTY takes this as a user turn, so the coordinator-written summary is quoted and marked as data.
   const owner = opts.role === 'owner';
   if (owner) summary = summary.replace(/"/g, "'");
