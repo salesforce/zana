@@ -13,6 +13,8 @@ test.use({
   launchEnv: { ZCC_WORK_CLAIM_LEASE_MS: '120000', ZCC_EXECUTION_RECONCILE_INTERVAL_MS: '1000', ZCC_TEST_NO_TURN_WARN_MS: '3000' }
 });
 test.setTimeout(180_000);
+// CI's affected-boundary shards reuse a production artifact; the dedicated test-fault job covers this spec.
+test.skip(process.env.ZCC_E2E_BUILD !== '1', 'needs a `pnpm test:e2e` build with test faults compiled in');
 
 const PLAN = [
   '# No-turn plan',

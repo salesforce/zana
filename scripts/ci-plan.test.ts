@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { load } from 'js-yaml';
 import { spawnSync } from 'node:child_process';
 import { planVerification, previewAffected, runPlan } from './ci-plan.mjs';
@@ -175,7 +175,17 @@ it('runs test-fault Squad specs in a private fault-enabled build whenever e2e is
   const workflow = load(readFileSync('.github/workflows/ci.yml', 'utf8')) as any;
   const job = workflow.jobs['squad-test-faults'];
   expect(job.if).toBe("needs.plan.outputs.e2e == 'true'");
-  expect(job.steps.some((step: any) => step.run === 'xvfb-run -a pnpm test:e2e -- e2e/job-team-failed-slots.spec.ts e2e/job-team-launch-complete-fault.spec.ts')).toBe(true);
+  expect(job.steps.some((step: any) => step.run === 'xvfb-run -a pnpm test:e2e -- e2e/job-team-failed-slots.spec.ts e2e/job-team-launch-complete-fault.spec.ts e2e/job-team-no-turn-warning.spec.ts')).toBe(true);
+  // Build-gated `ZCC_TEST_*` knobs are compiled out of the production artifact the affected
+  // shards reuse, so every spec that sets one must skip there and run in this job.
+  const run = job.steps.map((step: any) => step.run ?? '').join('\n');
+  const faultSpecs = readdirSync('e2e').filter((name) => name.endsWith('.spec.ts'))
+    .filter((name) => /\bZCC_TEST_[A-Z_]+/.test(readFileSync(`e2e/${name}`, 'utf8')));
+  expect(faultSpecs.length).toBeGreaterThan(0);
+  for (const name of faultSpecs) {
+    expect(run, `${name} needs the test-fault job`).toContain(`e2e/${name}`);
+    expect(readFileSync(`e2e/${name}`, 'utf8'), `${name} must skip without a fault build`).toContain("process.env.ZCC_E2E_BUILD !== '1'");
+  }
   expect(workflow.jobs.verify.needs).toContain('squad-test-faults');
   expect(workflow.jobs.verify.steps[0].env.TEST_FAULTS_RESULT).toBe('${{ needs.squad-test-faults.result }}');
 });
