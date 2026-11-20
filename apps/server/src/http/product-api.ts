@@ -43,7 +43,8 @@ import { conversationHistoryAsync } from '../services/threads/conversation-histo
 import { randomUUID } from 'node:crypto';
 import { isAbsolute, join, relative, sep, posix, win32 } from 'node:path';
 import { homedir } from 'node:os';
-import { realpathSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { personaFileDropReason, pushPersonaWarning, type PersonaLoadWarning } from '@zana-ai/zcc-domain/persona-validation';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type {
   AppConfig,
@@ -899,7 +900,7 @@ export async function handleProductHttp(
     }
 
     if (path === '/api/v1/personas' && method === 'GET') {
-      sendJson(response, 200, { personas: listJsonFiles(join(ctx.dataDir, 'personas')) });
+      sendJson(response, 200, readPersonaDiagnostics(ctx.dataDir, ctx.toProjects().map((project) => project.path)));
       return true;
     }
 
@@ -4118,4 +4119,40 @@ function sendHostFailure(response: ServerResponse, error: unknown): void {
 
 export function isProductApiPath(pathname: string): boolean {
   return pathname.startsWith('/api/');
+}
+
+/**
+ * User persona files that pass the shared validator (the same rules the app's
+ * PersonaStore applies), plus a warning per dropped user or project persona
+ * file. Warnings carry the basename, source and a fixed reason only. This
+ * server runs apart from Electron main, which owns the PersonaStore, so it
+ * re-applies the shared validator to the same directories.
+ */
+export function readPersonaDiagnostics(
+  dataDir: string,
+  projectPaths: readonly string[]
+): { personas: unknown[]; warnings: PersonaLoadWarning[] } {
+  const personas: unknown[] = [];
+  const warnings: PersonaLoadWarning[] = [];
+  const scan = (dir: string, source: PersonaLoadWarning['source']) => {
+    if (!existsSync(dir)) return;
+    let names: string[];
+    try { names = readdirSync(dir); } catch { return; }
+    for (const file of names) {
+      if (!file.endsWith('.json')) continue;
+      let content: string;
+      try {
+        content = readFileSync(join(dir, file), 'utf8');
+      } catch {
+        pushPersonaWarning(warnings, { file, source, reason: 'unreadable_file' });
+        continue;
+      }
+      const reason = personaFileDropReason(content);
+      if (reason) pushPersonaWarning(warnings, { file, source, reason });
+      else if (source === 'user') personas.push(JSON.parse(content));
+    }
+  };
+  scan(join(dataDir, 'personas'), 'user');
+  for (const path of projectPaths) scan(join(path, '.zcc', 'personas'), 'project');
+  return { personas, warnings };
 }

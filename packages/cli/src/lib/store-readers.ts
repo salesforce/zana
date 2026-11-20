@@ -6,6 +6,7 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { personaFileDropReason, PERSONA_DROP_REASON_TEXT } from '@zana-ai/zcc-domain/persona-validation';
 import type {
   Project,
   Persona,
@@ -85,14 +86,14 @@ export function readPersonas(
       const path = join(globalDir, file);
       try {
         const content = readFileSync(path, 'utf-8');
-        const parsed = JSON.parse(content);
-        if (isValidPersona(parsed)) {
-          personas.push({ ...parsed, source: 'user' });
+        const reason = personaFileDropReason(content);
+        if (!reason) {
+          personas.push({ ...JSON.parse(content), source: 'user' });
         } else {
-          warnings.push(`personas/${file}: invalid shape, skipped`);
+          warnings.push(`personas/${file}: ${PERSONA_DROP_REASON_TEXT[reason]}, skipped`);
         }
-      } catch (err) {
-        warnings.push(`personas/${file}: ${(err as Error).message}`);
+      } catch {
+        warnings.push(`personas/${file}: ${PERSONA_DROP_REASON_TEXT.unreadable_file}, skipped`);
       }
     }
   }
@@ -107,29 +108,22 @@ export function readPersonas(
       const path = join(projDir, file);
       try {
         const content = readFileSync(path, 'utf-8');
-        const parsed = JSON.parse(content);
-        if (isValidPersona(parsed)) {
+        const reason = personaFileDropReason(content);
+        if (!reason) {
           personas.push({
-            ...parsed,
+            ...JSON.parse(content),
             source: { projectId: project.id, projectName: project.name }
           });
         } else {
-          warnings.push(`${project.name}/personas/${file}: invalid shape, skipped`);
+          warnings.push(`${project.name}/personas/${file}: ${PERSONA_DROP_REASON_TEXT[reason]}, skipped`);
         }
-      } catch (err) {
-        warnings.push(`${project.name}/personas/${file}: ${(err as Error).message}`);
+      } catch {
+        warnings.push(`${project.name}/personas/${file}: ${PERSONA_DROP_REASON_TEXT.unreadable_file}, skipped`);
       }
     }
   }
 
   return { data: personas, warnings };
-}
-
-function isValidPersona(obj: any): obj is Persona {
-  return obj &&
-         typeof obj === 'object' &&
-         typeof obj.id === 'string' &&
-         typeof obj.name === 'string';
 }
 
 /**
