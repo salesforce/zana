@@ -27,6 +27,13 @@ test('Markdown preview searches, edits formatted blocks, checks tasks and safely
   await document.getByRole('textbox', { name: 'Find in document' }).fill('A bold phrase');
   await expect(document).toContainText('1 of 1');
   await document.getByRole('textbox', { name: 'Find in document' }).press('Escape');
+  const keyboardTask = document.getByRole('checkbox').first();
+  await keyboardTask.focus();
+  await page.keyboard.press('Space');
+  await expect(keyboardTask).toBeChecked();
+  await expect(keyboardTask).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(keyboardTask).not.toBeChecked();
   await document.getByRole('checkbox').nth(1).check();
   expect(readFileSync(file, 'utf8')).toBe(original);
   await document.getByRole('group', { name: 'Markdown view' }).getByRole('button', { name: 'Source', exact: true }).click();

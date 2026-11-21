@@ -39,6 +39,17 @@ it('checks tasks into the draft, saves explicitly, and undoes across view change
   expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(true);
 });
 
+it('keeps keyboard focus on a checklist item after changing it', () => {
+  render(<Harness />);
+  const checkbox = screen.getByRole('checkbox');
+  checkbox.focus();
+  fireEvent.click(checkbox);
+  expect(screen.getByTestId('draft').textContent).toContain('- [x] Task');
+  expect(document.activeElement).toBe(checkbox);
+  fireEvent.click(checkbox);
+  expect(screen.getByTestId('draft').textContent).toContain('- [ ] Task');
+});
+
 it('edits only a selected formatted block, preserves opaque content, and adds paragraphs', async () => {
   const original = '---\ntitle: keep\n---\n\n# Heading\n\n<!--keep-->\n\nText\n';
   render(<Harness original={original} />);

@@ -1,5 +1,5 @@
 import { Children, createContext, isValidElement, memo, useCallback, useContext, useMemo, useState, type ComponentPropsWithoutRef, type ReactNode } from 'react';
-import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform, type ExtraProps } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -50,6 +50,7 @@ const MarkdownLinkScope = createContext<{
   rewriteLocalhost: boolean;
   documentLinks?: boolean;
   fileLinksAsAnchors?: boolean;
+  onTaskChange?: (bodyOffset: number, checked: boolean) => void;
 }>({ exportable: false, rewriteLocalhost: REWRITE_LOCALHOST_LINKS_DEFAULT });
 
 function MarkdownAnchor({ node: _node, ...props }: ComponentPropsWithoutRef<'a'> & { node?: unknown }) {
@@ -96,6 +97,21 @@ function MarkdownInlineCode(props: ComponentPropsWithoutRef<'code'>) {
     </MarkdownFileLink>;
   }
   return <code className={className || undefined}>{props.children}</code>;
+}
+
+function MarkdownListItem({ node, ...props }: ComponentPropsWithoutRef<'li'> & ExtraProps) {
+  return <li {...props} data-task-start={node?.position?.start.offset} />;
+}
+
+function MarkdownTaskInput({ node: _node, ...props }: ComponentPropsWithoutRef<'input'> & ExtraProps) {
+  const { onTaskChange } = useContext(MarkdownLinkScope);
+  return <input {...props}
+    disabled={!onTaskChange || props.type !== 'checkbox'}
+    aria-label={props.type === 'checkbox' ? 'Toggle checklist item' : undefined}
+    onChange={event => {
+      const start = event.currentTarget.closest('li[data-task-start]')?.getAttribute('data-task-start');
+      if (start !== null && start !== undefined) onTaskChange?.(Number(start), event.currentTarget.checked);
+    }} />;
 }
 
 /**
@@ -334,7 +350,7 @@ export const MarkdownContent = memo(function MarkdownContent({
   if (preview.length < text.length) return <LargeTextPreview text={text} />;
   return (
     <>
-      <MarkdownLinkScope.Provider value={{ threadId, projectId, filePathHints, exportable, hostname, rewriteLocalhost, documentLinks, fileLinksAsAnchors }}>
+      <MarkdownLinkScope.Provider value={{ threadId, projectId, filePathHints, exportable, hostname, rewriteLocalhost, documentLinks, fileLinksAsAnchors, onTaskChange }}>
       <div className="inbox-md">
         <ReactMarkdown
         remarkPlugins={remarkPlugins}
@@ -347,14 +363,8 @@ export const MarkdownContent = memo(function MarkdownContent({
         ]}
         components={{
           a: MarkdownAnchor,
-          li: ({ node, ...props }) => <li {...props} data-task-start={node?.position?.start.offset} />,
-          input: ({ node: _node, ...props }) => <input {...props}
-            disabled={!onTaskChange || props.type !== 'checkbox'}
-            aria-label={props.type === 'checkbox' ? 'Toggle checklist item' : undefined}
-            onChange={event => {
-              const start = event.currentTarget.closest('li[data-task-start]')?.getAttribute('data-task-start');
-              if (start !== null && start !== undefined) onTaskChange?.(Number(start), event.currentTarget.checked);
-            }} />,
+          li: MarkdownListItem,
+          input: MarkdownTaskInput,
           // GFM tables get a wrapper so horizontal overflow scrolls within
           // the comments block instead of stretching the whole panel.
           table: ({ node: _node, children, ...props }) => (
