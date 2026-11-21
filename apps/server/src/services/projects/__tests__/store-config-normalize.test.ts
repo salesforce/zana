@@ -1273,3 +1273,17 @@ describe('normalizeConfig — thread peer consent', () => {
       .not.toHaveProperty('threadCommunicationGeneration');
   });
 });
+
+describe('normalizeConfig — dismissedWorkerExits', () => {
+  it('keeps valid unique ids, drops malformed ones, and retains only the newest 200', () => {
+    const many = Array.from({ length: 250 }, (_, i) => `s${i}`);
+    const out = normalizeConfig({ dismissedWorkerExits: ['a', 'a', '', 5 as never, 'x'.repeat(129), ...many] }).dismissedWorkerExits!;
+    expect(out).toHaveLength(200);
+    expect(out[199]).toBe('s249');
+    expect(out).not.toContain('a');
+    expect(normalizeConfig({ dismissedWorkerExits: ['a', 'a', '', 5 as never] }).dismissedWorkerExits).toEqual(['a']);
+  });
+  it('ignores a non-array value', () => {
+    expect(normalizeConfig({ dismissedWorkerExits: 'a' as never })).not.toHaveProperty('dismissedWorkerExits');
+  });
+});

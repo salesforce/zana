@@ -165,6 +165,8 @@ export default defineConfig(({ command }) => {
     // still wins. Never define this on the renderer.
     define: {
       __ZCC_BUNDLED_APP_URL__: JSON.stringify(bundledAppUrl()),
+      // Test-only fault injection exists only in builds made by the E2E runner (`ZCC_E2E_BUILD=1`).
+      __ZCC_TEST_FAULTS__: JSON.stringify(process.env.ZCC_E2E_BUILD === '1'),
       __ZCC_BUNDLED_INSTALL_SCRIPT__: JSON.stringify(readFileSync(resolve(__dirname, 'apps/server/src/assets/install-machine.sh'), 'utf8'))
     },
     // Leave jiti external. Rolldown emits an empty `jiti-*.js` chunk when it is

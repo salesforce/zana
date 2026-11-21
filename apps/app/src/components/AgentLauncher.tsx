@@ -106,6 +106,8 @@ interface Props {
    * The stored preference is left untouched.
    */
   initialMode?: 'team';
+  /** Preselect this Squad in the Squad composer (Settings > Squads Launch). The picker stays editable. */
+  initialTeamId?: string;
   /** Pre-fill the Squad composer from a reviewed proposal; also preselects its project. */
   squadPrefill?: SquadLaunchPrefill;
 }
@@ -118,6 +120,7 @@ export const AgentLauncher = memo(function AgentLauncher({
   initialPrompt,
   initialProjectId,
   initialMode,
+  initialTeamId,
   squadPrefill
 }: Props) {
   // A reviewed proposal gets its own draft, so a retained launcher draft never overrides it.
@@ -128,7 +131,8 @@ export const AgentLauncher = memo(function AgentLauncher({
     'launcher',
     project?.id ?? null,
     squadPrefill?.proposalId ?? null,
-    ...(rowProjectId ? [rowProjectId] : [])
+    ...(rowProjectId ? [rowProjectId] : []),
+    ...(initialTeamId ? ['team', initialTeamId] : [])
   ]);
   const session = useMemo(() => composerSession(sessionKey), [sessionKey]);
   const restoreTerminal = useData((s) => s.restoreTerminal);
@@ -319,6 +323,7 @@ export const AgentLauncher = memo(function AgentLauncher({
               onComposerProjectIdChange={setComposerProjectId}
               initialText={initialPrompt}
               prefill={squadPrefill}
+              initialTeamId={initialTeamId}
               onClose={onClose}
             />
           </div>

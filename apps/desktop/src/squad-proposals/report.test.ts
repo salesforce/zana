@@ -184,3 +184,18 @@ describe('buildSquadBlockerReport', () => {
     expect(text).not.toContain('answers go through the Inbox');
   });
 });
+
+describe('buildSquadReport failure reason', () => {
+  it('reports the failure reason instead of none for a failed run without a summary', () => {
+    const text = buildSquadReport(record({ state: 'FAILED', finalSummary: undefined, workUnits: [], failureReason: 'worker spawn\nfailed' }), {});
+    expect(text).toContain('Units: 0 done, 0 failed, 0 skipped. Summary: Failed: worker spawn failed.');
+    expect(text).not.toContain('Summary: none');
+  });
+  it('keeps a written summary and ignores the reason for non-failed runs', () => {
+    expect(buildSquadReport(record({ state: 'FAILED', failureReason: 'x' }), {})).toContain('Summary: All good.');
+    expect(buildSquadReport(record({ state: 'STOPPED', finalSummary: undefined, failureReason: 'x' }), {})).toContain('Summary: none.');
+  });
+  it('quotes the reason for an owner', () => {
+    expect(buildSquadReport(record({ state: 'FAILED', finalSummary: undefined, failureReason: 'said "no"' }), { role: 'owner' })).toContain(`"Failed: said 'no'"`);
+  });
+});

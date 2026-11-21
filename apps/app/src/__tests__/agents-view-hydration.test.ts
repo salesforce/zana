@@ -164,3 +164,12 @@ it.each(['accept-edits', 'auto', 'full', null, undefined])('hydrates and synchro
   config.changed?.({ ...config.value, defaultThreadPermissionMode: null });
   expect(useData.getState().defaultThreadPermissionMode).toBeNull();
 });
+
+it('hydrates dismissed worker exits, dropping non-string entries, and ignores a missing list', async () => {
+  config.value = { dismissedWorkerExits: ['w1', 5, 'w2'], walkthroughCompleted: true, setupDismissed: true };
+  await useData.getState().init();
+  expect(useUi.getState().dismissedWorkerExits).toEqual(['w1', 'w2']);
+  config.value = { walkthroughCompleted: true, setupDismissed: true };
+  await useData.getState().init();
+  expect(useUi.getState().dismissedWorkerExits).toEqual(['w1', 'w2']);
+});

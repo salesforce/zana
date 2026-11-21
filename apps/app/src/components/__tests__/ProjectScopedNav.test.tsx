@@ -430,8 +430,7 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
 describe('ProjectScopedNav shortcut tooltips', () => {
   beforeEach(() => {
     stubKeybindingStorage();
-    // These assertions exercise Ctrl labels independently of the host platform.
-    vi.stubGlobal('navigator', { platform: 'Linux x86_64' });
+    vi.stubGlobal('navigator', { platform: 'Linux' });
   });
   afterEach(() => vi.unstubAllGlobals());
 

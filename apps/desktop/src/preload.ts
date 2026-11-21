@@ -568,6 +568,8 @@ const api: CcApi = {
     editMessage: async () => {
       throw new Error('threads require the product server');
     },
+    readMarkdown: async () => { throw new Error('Thread Markdown requires the product client'); },
+    writeMarkdown: async () => { throw new Error('Thread Markdown requires the product client'); },
     hostFileContent: async () => {
       throw new Error('threads require the product server');
     },
@@ -674,6 +676,8 @@ const api: CcApi = {
       ipcRenderer.invoke(IPC.terminals.summarizeIdle, projectId, sessionIds),
     summarizeSession: (projectId, sessionId) =>
       ipcRenderer.invoke(IPC.terminals.summarizeSession, projectId, sessionId),
+    restartSquadWorker: (sessionId) =>
+      ipcRenderer.invoke(IPC.terminals.restartSquadWorker, sessionId),
     closeFollowup: (projectId, sessionIds) =>
       ipcRenderer.invoke(IPC.terminals.closeFollowup, projectId, sessionIds),
     sessionStats: (projectId, sessionId) =>
@@ -761,6 +765,7 @@ const api: CcApi = {
   config: {
     get: () => ipcRenderer.invoke(IPC.config.get),
     set: (patch) => ipcRenderer.invoke(IPC.config.set, patch),
+    dismissWorkerExit: (sessionId) => ipcRenderer.invoke(IPC.config.dismissWorkerExit, sessionId),
     addTrustedPreviewFolder: () => ipcRenderer.invoke(IPC.config.addTrustedPreviewFolder),
     removeTrustedPreviewFolder: (path) => ipcRenderer.invoke(IPC.config.removeTrustedPreviewFolder, path),
     onChanged: (cb) => {
@@ -958,6 +963,7 @@ const api: CcApi = {
   },
   personas: {
     list: () => ipcRenderer.invoke(IPC.personas.list),
+    loadWarnings: () => ipcRenderer.invoke(IPC.personas.loadWarnings),
     revealDir: () => ipcRenderer.invoke(IPC.personas.revealDir),
     save: (input) => ipcRenderer.invoke(IPC.personas.save, input),
     duplicate: (id) => ipcRenderer.invoke(IPC.personas.duplicate, id),

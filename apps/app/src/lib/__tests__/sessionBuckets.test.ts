@@ -3,6 +3,7 @@ import type { AgentState, TerminalSession } from '@zana-ai/zcc-domain/product';
 import {
   bucketSessions,
   isRecentlyFinished,
+  isRetainedWorkerExit,
   FINISHED_LINGER_MS,
   type SessionBucketId
 } from '../sessionBuckets.js';
@@ -265,5 +266,23 @@ describe('isRecentlyFinished — finished-list auto-dismiss', () => {
 
   it('treats an exited session with no finishedAt stamp as recent (never hides prematurely)', () => {
     expect(isRecentlyFinished(session({ status: 'exited' }), NOW)).toBe(true);
+  });
+});
+
+describe('isRetainedWorkerExit', () => {
+  const cohort = { cohortId: 'c', teamId: 't', teamName: 'T', role: 'worker' as const };
+  const failed = session({ id: 'w', status: 'exited', exitCode: 2, cohort });
+  it('retains an exited non-zero Squad worker until dismissed', () => {
+    expect(isRetainedWorkerExit(failed, [])).toBe(true);
+    expect(isRetainedWorkerExit(failed, ['w'])).toBe(false);
+  });
+  it.each([
+    ['clean exit', { exitCode: 0 }],
+    ['unknown exit code', { exitCode: undefined }],
+    ['still running', { status: 'running' as const }],
+    ['orchestrator', { cohort: { ...cohort, role: 'orchestrator' as const } }],
+    ['non-Squad session', { cohort: undefined }]
+  ])('does not retain %s', (_name, over) => {
+    expect(isRetainedWorkerExit({ ...failed, ...over }, [])).toBe(false);
   });
 });

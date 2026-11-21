@@ -192,6 +192,7 @@ const monitorRequestSchema = { targetSessionId: z.string().min(1).max(2048), ...
 const resumeMonitorExecuteSchema = { token: z.string().min(1).max(2048), ...executionMessageSchema };
 const monitorStatusSchema = { token: z.string().min(1).max(2048), ...executionIdSchema };
 const monitorEventsSchema = { ...monitorStatusSchema, after: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(100).optional() };
+const executionRespawnSchema = { ...executionIdSchema, slotId: z.string().min(1).max(120) };
 const resumeBindingSchema = { ...executionIdSchema, token: z.string().min(1).max(2048) };
 const mintResumeGrantSchema = executionIdSchema;
 const revokeResumeGrantSchema = { ...executionIdSchema, effectiveOwnerPrincipalId: z.string().min(1).max(2048).optional() };
@@ -211,7 +212,7 @@ export const EXECUTION_MEMBER_TOOL_NAMES = {
   ],
   orchestrator: [
     'execution.snapshot', 'execution.event', 'execution.plan.register', 'execution.work.assign',
-    'execution.work.dispatch_ready', 'execution.work.retry', 'execution.work.answer',
+    'execution.work.dispatch_ready', 'execution.work.retry', 'execution.work.answer', 'execution.worker.respawn',
     'execution.source.list', 'execution.source.read', 'execution.complete'
   ]
 } as const;
@@ -264,7 +265,7 @@ type McpSafeExecutionRecord = Omit<ExecutionRecord, 'deliveries'>;
 type BoundSnapshotExecutionRecord = Pick<ExecutionRecord,
   'id' | 'projectId' | 'teamId' | 'launchKind' | 'launchDisplay' | 'jobTitle' | 'summary'
   | 'attempt' | 'state' | 'stateVersion' | 'lastEventSequence' | 'workUnits'
-  | 'blockers' | 'finalSummary' | 'coordinationMode' | 'createdAt' | 'updatedAt' | 'dismissedAt'
+  | 'blockers' | 'finalSummary' | 'failureReason' | 'coordinationMode' | 'createdAt' | 'updatedAt' | 'dismissedAt'
 >;
 
 function toMcpSafeExecution(record: ExecutionRecord): McpSafeExecutionRecord {
@@ -275,12 +276,12 @@ function toMcpSafeExecution(record: ExecutionRecord): McpSafeExecutionRecord {
 function toBoundSnapshotExecution(record: ExecutionRecord): BoundSnapshotExecutionRecord {
   const {
     id, projectId, teamId, launchKind, launchDisplay, jobTitle, summary, attempt, state, stateVersion,
-    lastEventSequence, workUnits, blockers, finalSummary, coordinationMode, createdAt, updatedAt,
+    lastEventSequence, workUnits, blockers, finalSummary, failureReason, coordinationMode, createdAt, updatedAt,
     dismissedAt
   } = record;
   return sanitizeStructuredResults({
     id, projectId, teamId, launchKind, launchDisplay, jobTitle, summary, attempt, state, stateVersion,
-    lastEventSequence, workUnits, blockers, finalSummary, coordinationMode, createdAt, updatedAt,
+    lastEventSequence, workUnits, blockers, finalSummary, failureReason, coordinationMode, createdAt, updatedAt,
     dismissedAt
   }) as BoundSnapshotExecutionRecord;
 }
@@ -543,6 +544,12 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.work.retry', { description: 'Coordinator retries and optionally reassigns failed or blocked work.', inputSchema: executionWorkSchema }, async ({ executionId, workUnitId, assignedSlotId }) => {
     if (!await authorized()) return denied('execution.work.retry'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.retry');
     return boundResult('execution.work.retry', await options.service.retryWork(bound, workUnitId, assignedSlotId));
+  });
+  register('execution.worker.respawn', { description: 'Coordinator-only: start a new session for a worker slot whose session has ended (exited or failed to start). The slot keeps its role and persona from launch. Each slot can be respawned a limited number of times per run (default 2); once used up, the call is refused and the failure is reported to the user. Refused while the worker is still running or the run is stopping.', inputSchema: executionRespawnSchema }, async ({ executionId, slotId }) => {
+    if (!await authorized()) return denied('execution.worker.respawn'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.worker.respawn');
+    // Authority is the main-resolved binding; `authorized()` is also true for an unfenced worker, so the role is checked explicitly.
+    if (bound.role !== 'orchestrator') return denied('execution.worker.respawn');
+    return boundResult('execution.worker.respawn', await options.service.respawnWorker(bound, slotId));
   });
   register('execution.delivery.pull', { description: 'Pull one pending blocker response bound to this worker route.', inputSchema: {} }, async () => {
     if (!await authorized()) return denied('execution.delivery.pull'); const bound = await binding(); if (!bound) return boundDenied('execution.delivery.pull');

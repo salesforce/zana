@@ -1,6 +1,6 @@
 import { product } from '../lib/product-client.js';
 import { PrecedenceStrip } from './PrecedenceStrip.js';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { X, Trash2, Copy, Pencil, Plus, GripVertical, Crown } from 'lucide-react';
 import { ImprovePromptButton } from './ImprovePromptButton.js';
 import { stableDraftJson } from '../lib/stable-draft-json.js';
@@ -11,8 +11,10 @@ import { personaIcon } from '../lib/profileIcon.js';
 import { PERSONA_ICON_NAMES, personaIconByName } from '../lib/profileIcon.js';
 import { useInstalledSkillNames } from '../lib/use-uninstalled-skills.js';
 import { catalogueName } from '../lib/use-mcp-catalogue.js';
-import { ALWAYS_ALLOWED_MCP_SERVERS, effectiveMcpServers, mcpAllowlistCovers, uninstalledAllowlistSkills, type McpServerRef } from '@zana-ai/zcc-domain/product';
+import { TEAM_LIMIT_BOUNDS, DEFAULT_CLAIM_WALL_CLOCK_MS, DEFAULT_CLAIM_STALL_MS, ALWAYS_ALLOWED_MCP_SERVERS, effectiveMcpServers, mcpAllowlistCovers, uninstalledAllowlistSkills, type McpServerRef } from '@zana-ai/zcc-domain/product';
 import { getScopedProjectId } from '../lib/windowScope.js';
+import { getThreadModelCatalog, subscribeThreadModelCatalog } from './thread/pickers/thread-model-catalog.js';
+import { unknownPersonaModels } from '../lib/persona-model-warning.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { SquadTransportChip } from './SquadTransportChip.js';
 import { isLaunchApproval, type LaunchApproval } from '@zana-ai/zcc-domain/squad-proposal';
@@ -305,10 +307,53 @@ interface TeamDraft {
   routingEnforced: boolean | undefined;
   retainOrchestrator: boolean;
   leanWorkers: boolean;
+  /** Run limits as typed: blank keeps the default; claim limits are in minutes. */
+  maxConcurrent: string;
+  claimWallClockMin: string;
+  claimStallMin: string;
   transport: SquadTransport;
   defaultPlanning: '' | 'infer' | 'provided';
   launchApproval: '' | LaunchApproval;
   slots: SlotDraft[];
+}
+
+interface LimitsDraft { maxConcurrent: string; claimWallClockMin: string; claimStallMin: string }
+
+const LIMIT_MINUTES = {
+  wall: { min: TEAM_LIMIT_BOUNDS.claimWallClockMs.min / 60_000, max: TEAM_LIMIT_BOUNDS.claimWallClockMs.max / 60_000 },
+  stall: { min: TEAM_LIMIT_BOUNDS.claimStallMs.min / 60_000, max: TEAM_LIMIT_BOUNDS.claimStallMs.max / 60_000 }
+};
+
+/** Whole minutes for the editor, clamped to bounds: 90000 ms shows 2, not an unsaveable 1.5. */
+function wholeMinutes(ms: number, bounds: { min: number; max: number }): number {
+  return Math.min(bounds.max, Math.max(bounds.min, Math.round(ms / 60_000)));
+}
+
+function parseLimit(text: string, min: number, max: number): number | undefined | 'invalid' {
+  if (!text.trim()) return undefined;
+  const value = Number(text);
+  return Number.isInteger(value) && value >= min && value <= max ? value : 'invalid';
+}
+
+/** Why the limits can't be saved, or undefined when each field is blank (default) or an in-range whole number. */
+function limitsDraftProblem(draft: LimitsDraft): string | undefined {
+  const c = TEAM_LIMIT_BOUNDS.maxConcurrent;
+  if (parseLimit(draft.maxConcurrent, c.min, c.max) === 'invalid') return `Max sessions must be a whole number from ${c.min} to ${c.max}.`;
+  if (parseLimit(draft.claimWallClockMin, LIMIT_MINUTES.wall.min, LIMIT_MINUTES.wall.max) === 'invalid') return `Claim wall-clock must be whole minutes from ${LIMIT_MINUTES.wall.min} to ${LIMIT_MINUTES.wall.max}.`;
+  if (parseLimit(draft.claimStallMin, LIMIT_MINUTES.stall.min, LIMIT_MINUTES.stall.max) === 'invalid') return `Claim stall must be whole minutes from ${LIMIT_MINUTES.stall.min} to ${LIMIT_MINUTES.stall.max}.`;
+  return undefined;
+}
+
+function limitsInput(draft: LimitsDraft): { limits?: NonNullable<TeamInput['limits']> } {
+  const maxConcurrent = parseLimit(draft.maxConcurrent, TEAM_LIMIT_BOUNDS.maxConcurrent.min, TEAM_LIMIT_BOUNDS.maxConcurrent.max);
+  const wall = parseLimit(draft.claimWallClockMin, LIMIT_MINUTES.wall.min, LIMIT_MINUTES.wall.max);
+  const stall = parseLimit(draft.claimStallMin, LIMIT_MINUTES.stall.min, LIMIT_MINUTES.stall.max);
+  const limits = {
+    ...(typeof maxConcurrent === 'number' ? { maxConcurrent } : {}),
+    ...(typeof wall === 'number' ? { claimWallClockMs: wall * 60_000 } : {}),
+    ...(typeof stall === 'number' ? { claimStallMs: stall * 60_000 } : {})
+  };
+  return Object.keys(limits).length ? { limits } : {};
 }
 
 function draftForTeam(team: Team | null): TeamDraft {
@@ -337,6 +382,9 @@ function draftForTeam(team: Team | null): TeamDraft {
     routingEnforced: team?.routingEnforced,
     retainOrchestrator: team?.retainOrchestrator === true,
     leanWorkers: team?.leanWorkers === true,
+    maxConcurrent: team?.limits?.maxConcurrent === undefined ? '' : String(team.limits.maxConcurrent),
+    claimWallClockMin: team?.limits?.claimWallClockMs === undefined ? '' : String(wholeMinutes(team.limits.claimWallClockMs, LIMIT_MINUTES.wall)),
+    claimStallMin: team?.limits?.claimStallMs === undefined ? '' : String(wholeMinutes(team.limits.claimStallMs, LIMIT_MINUTES.stall)),
     transport: team?.transport ?? 'CLI',
     defaultPlanning: team?.defaultPlanning ?? '',
     launchApproval: team?.launchApproval ?? '',
@@ -394,6 +442,9 @@ function TeamForm({
   const [routingEnforced, setRoutingEnforced] = useState<boolean | undefined>(initialDraft.current.routingEnforced);
   const [retainOrchestrator, setRetainOrchestrator] = useState(initialDraft.current.retainOrchestrator);
   const [leanWorkers, setLeanWorkers] = useState(initialDraft.current.leanWorkers);
+  const [maxConcurrent, setMaxConcurrent] = useState(initialDraft.current.maxConcurrent);
+  const [claimWallClockMin, setClaimWallClockMin] = useState(initialDraft.current.claimWallClockMin);
+  const [claimStallMin, setClaimStallMin] = useState(initialDraft.current.claimStallMin);
   const [transport, setTransport] = useState<SquadTransport>(initialDraft.current.transport);
   const [defaultPlanning, setDefaultPlanning] = useState<'' | 'infer' | 'provided'>(initialDraft.current.defaultPlanning);
   const [launchApproval, setLaunchApproval] = useState<'' | LaunchApproval>(initialDraft.current.launchApproval);
@@ -403,7 +454,7 @@ function TeamForm({
   const draft = {
     name, icon, description, initialPrompt, orchestratorPersonaId, defaultProjectId,
     worktreeIsolation, worktreeOnComplete, routingEnforced, retainOrchestrator,
-    leanWorkers, transport, defaultPlanning, launchApproval, slots
+    leanWorkers, maxConcurrent, claimWallClockMin, claimStallMin, transport, defaultPlanning, launchApproval, slots
   } satisfies TeamDraft;
   const isDirty = stableDraftJson(draft) !== stableDraftJson(initialDraft.current);
 
@@ -413,7 +464,8 @@ function TeamForm({
 
   const tabs = totalTabs(slots.map((s) => ({ personaId: s.personaId, quantity: s.quantity })));
   const hasValidSlot = slots.some((s) => s.personaId.trim().length > 0);
-  const canSave = name.trim().length > 0 && hasValidSlot && !saving;
+  const limitsProblem = limitsDraftProblem({ maxConcurrent, claimWallClockMin, claimStallMin });
+  const canSave = name.trim().length > 0 && hasValidSlot && !saving && !limitsProblem;
   const isBuiltinTeam = team?.id.startsWith('builtin:') ?? false;
 
   const addSlot = () => {
@@ -459,6 +511,26 @@ function TeamForm({
     }
     return [...unique.values()];
   }, [slots, orchestratorPersonaId, personaById]);
+
+  // Advisory only (never gates save): slot personas missing from the live persona list. Skipped until the list has loaded.
+  const unresolvedPersonaIds = useMemo(() => {
+    if (allPersonas.length === 0) return [];
+    const ids = slots.map((s) => s.personaId.trim()).filter((id) => id.length > 0 && !personaById.has(id));
+    if (orchestratorPersonaId && !personaById.has(orchestratorPersonaId)) ids.push(orchestratorPersonaId);
+    return [...new Set(ids)];
+  }, [allPersonas, slots, orchestratorPersonaId, personaById]);
+
+  // Advisory only (never gates save): member personas whose legacy model the loaded provider catalog does not list.
+  const modelCatalog = useSyncExternalStore(
+    subscribeThreadModelCatalog,
+    getThreadModelCatalog,
+    getThreadModelCatalog,
+  );
+  const unknownModels = useMemo(() => {
+    const ids = new Set([...slots.map((s) => s.personaId), ...(orchestratorPersonaId ? [orchestratorPersonaId] : [])]);
+    const members = [...ids].map((id) => personaById.get(id)).filter((p): p is Persona => !!p);
+    return unknownPersonaModels(members, modelCatalog);
+  }, [slots, orchestratorPersonaId, personaById, modelCatalog]);
 
   // Advisory only (never gates save): member personas whose skill allowlist names uninstalled skills.
   const restrictedMembers = useMemo(
@@ -536,6 +608,7 @@ function TeamForm({
       routingEnforced,
       retainOrchestrator,
       ...(leanWorkers ? { leanWorkers: true as const } : {}),
+      ...limitsInput({ maxConcurrent, claimWallClockMin, claimStallMin }),
       transport,
       ...(defaultPlanning ? { defaultPlanning } : {}),
       ...(launchApproval ? { launchApproval } : {}),
@@ -921,6 +994,56 @@ function TeamForm({
             </p>
           )}
         </div>
+
+        <div className="scheduler-form-field" data-testid="team-run-limits">
+          <label htmlFor="team-max-concurrent">Run limits</label>
+          <div className="team-run-limits-row">
+            <input
+              id="team-max-concurrent"
+              type="number"
+              min={TEAM_LIMIT_BOUNDS.maxConcurrent.min}
+              max={TEAM_LIMIT_BOUNDS.maxConcurrent.max}
+              placeholder={String(TEAM_LIMIT_BOUNDS.maxConcurrent.max)}
+              aria-label="Max sessions"
+              value={maxConcurrent}
+              onChange={(event) => setMaxConcurrent(event.target.value)}
+            />
+            <input
+              type="number"
+              min={LIMIT_MINUTES.wall.min}
+              max={LIMIT_MINUTES.wall.max}
+              placeholder={String(DEFAULT_CLAIM_WALL_CLOCK_MS / 60_000)}
+              aria-label="Claim wall-clock (minutes)"
+              value={claimWallClockMin}
+              onChange={(event) => setClaimWallClockMin(event.target.value)}
+            />
+            <input
+              type="number"
+              min={LIMIT_MINUTES.stall.min}
+              max={LIMIT_MINUTES.stall.max}
+              placeholder={String(DEFAULT_CLAIM_STALL_MS / 60_000)}
+              aria-label="Claim stall (minutes)"
+              value={claimStallMin}
+              onChange={(event) => setClaimStallMin(event.target.value)}
+            />
+          </div>
+          <p className="settings-help">
+            Max sessions the run may open, counting the coordinator and every worker (default and maximum {TEAM_LIMIT_BOUNDS.maxConcurrent.max}; a roster larger than this is refused at launch), then the minutes one claimed unit may run (default {DEFAULT_CLAIM_WALL_CLOCK_MS / 60_000}) and may stay silent (default {DEFAULT_CLAIM_STALL_MS / 60_000}) before it is reclaimed. Leave a field blank to keep its default. Applies to runs started after saving.
+          </p>
+          {limitsProblem && <p className="settings-help" role="alert" data-testid="team-run-limits-error">{limitsProblem}</p>}
+        </div>
+
+        {unresolvedPersonaIds.length > 0 && (
+          <p className="settings-help" role="status" data-testid="team-unresolved-persona-warning">
+            Unknown persona: {unresolvedPersonaIds.join(', ')}. You can still save, but a launch with an unknown worker persona is refused before anything starts, and the error names the missing personas. Fix or remove the slot to launch.
+          </p>
+        )}
+
+        {unknownModels.length > 0 && (
+          <p className="settings-help" role="status" data-testid="team-unknown-model-warning">
+            Unrecognised model: {unknownModels.map((m) => `${m.personaName} (${m.model})`).join(', ')}. You can still save; the worker may fail to start or stall.
+          </p>
+        )}
 
         {membersWithMissingSkills.length > 0 && (
           <p className="settings-help" role="status" data-testid="team-uninstalled-skills-warning">

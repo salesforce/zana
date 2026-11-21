@@ -281,6 +281,7 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).not.toContain('<HostMachinePicker');
     expect(source).toContain('HostSshIdentityDialog');
     expect(source.indexOf('{!compact && runSettings}')).toBeGreaterThan(metaIdx);
+    // Desktop moves permissions into the settings pill beside send; only compact keeps the picker.
     expect(source).not.toContain('{!compact && permissionPicker}');
     expect(source.indexOf('settings={compact ? undefined : <ComposerSettingsPill')).toBeLessThan(metaIdx);
     expect(source.indexOf('permission={compact ? permissionPicker : undefined}')).toBeLessThan(metaIdx);

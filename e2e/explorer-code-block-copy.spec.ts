@@ -7,6 +7,16 @@ import { openThreadToolLauncher } from './fixtures/thread-tool-panel.js';
 
 test.use({ e2e: true, launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { sponsorPromptDismissed: true } });
 
+// Exercise the real renderer/product/main copy path without changing the user's
+// OS clipboard while an isolated Electron test runs beside their desktop.
+test.beforeEach(async ({ app }) => {
+  await app.electron.evaluate(({ clipboard }) => {
+    let text = '';
+    clipboard.readText = () => text;
+    clipboard.writeText = value => { text = value; };
+  });
+});
+
 // Tabs, entities, a blank inner line and a deliberate blank last line: all
 // must survive the copy exactly; only the newline before the closing fence goes.
 const CODE = [
@@ -29,7 +39,7 @@ const DOC = [
   ''
 ].join('\n');
 
-/** The desktop session denies Chromium's clipboard, so read the real system clipboard from main. */
+/** The desktop session denies Chromium's clipboard; observe the native boundary in main. */
 function systemClipboard(app: AppHandle) {
   return {
     read: () => app.electron.evaluate(({ clipboard }) => clipboard.readText()),
@@ -67,7 +77,7 @@ async function openSnippets(scope: Locator): Promise<Locator> {
 async function expectExactCopy(app: AppHandle, preview: Locator) {
   const blocks = preview.locator('.inbox-md-codeblock');
   await expect(blocks).toHaveCount(2); // js + long line; the mermaid fence has none
-  await expect(preview.locator('pre code.language-mermaid')).toHaveCount(1);
+  await expect(preview.locator('.inbox-mermaid-frame svg')).toBeVisible();
   const block = blocks.first();
   const button = block.getByRole('button', { name: 'Copy code' });
   const pre = block.locator('pre');

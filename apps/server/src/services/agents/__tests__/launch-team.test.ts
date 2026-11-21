@@ -274,7 +274,7 @@ describe('launchTeam', () => {
     if (!res.ok) expect(res.code).toBe('NOT_FOUND');
   });
 
-  it('opens Σ quantity tabs, skipping unknown persona ids', async () => {
+  it('refuses an unstructured launch when any worker persona id is unknown (Modern parity)', async () => {
     TEAMS = [
       {
         id: 'squad',
@@ -289,9 +289,9 @@ describe('launchTeam', () => {
       }
     ];
     const res = await launchTeam('squad', 'p1');
-    expect(res.ok).toBe(true);
-    // 1 orchestrator + 2 engineers = 3 tabs; the unknown slot is skipped.
-    if (res.ok) expect(res.value.launched).toBe(3);
+    expect(res).toMatchObject({ ok: false, code: 'TEAM_LAUNCH_FAILED' });
+    if (!res.ok) expect(res.message).toContain('unknown persona: does-not-exist');
+    expect(createCalls).toHaveLength(0);
   });
 
   it('honors each legacy Team Persona harness profile', async () => {
@@ -480,12 +480,13 @@ describe('launchTeam', () => {
     if (!res.ok) expect(res.code).toBe('INVALID');
   });
 
-  it('preserves legacy zero-launch compatibility when every unstructured slot persona is unknown', async () => {
+  it('refuses an unstructured launch when every slot persona is unknown, instead of a zero-launch success', async () => {
     TEAMS = [
       { id: 'squad', name: 'Squad', slots: [{ personaId: 'ghost-1' }, { personaId: 'ghost-2' }] }
     ];
     const res = await launchTeam('squad', 'p1');
-    expect(res).toMatchObject({ ok: true, value: { launched: 0, workers: [] } });
+    expect(res).toMatchObject({ ok: false, code: 'TEAM_LAUNCH_FAILED' });
+    expect(createCalls).toHaveLength(0);
   });
 
   it('caps the total tabs opened by one launch (Rule 5)', async () => {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createExecutionStore, EXECUTION_RECOVERY_TTL_MS, isTerminalExecutionState, isUserOwnedSquadWorktree, KICKOFF_FAILURE_BLOCK_THRESHOLD } from '../store.js';
+import { boundReason, createExecutionStore, EXECUTION_RECOVERY_TTL_MS, isTerminalExecutionState, isUserOwnedSquadWorktree, KICKOFF_FAILURE_BLOCK_THRESHOLD } from '../store.js';
 import { usageRollup } from '../contracts.js';
 import { MAX_TEAM_INITIAL_TASK_BYTES } from '../../launch/team-lifecycle-store.js';
 
@@ -2483,6 +2483,46 @@ describe('local Composer durable report mark', () => {
     await store.claim(local() as never);
     const durable = JSON.parse(await readFile(filePath, 'utf8'));
     durable.records[0].localReport = false;
+    await writeFile(filePath, JSON.stringify(durable));
+    await expect(createExecutionStore({ filePath }).get('e-1')).rejects.toThrow('corrupt execution store');
+  }));
+});
+
+describe('failure reason', () => {
+  it('strips control characters, shortens absolute paths and caps length', () => {
+    expect(boundReason('boom\u0000\n\tat /Users/me/secret/dir/file.ts:10 and C:\\Users\\me\\x\\y.txt')).toBe('boom at file.ts:10 and y.txt');
+    expect(boundReason('see https://example.com/a/b and ./rel/path')).toBe('see https://example.com/a/b and ./rel/path');
+    expect(boundReason('naïve 日本語 ✓')).toBe('naïve 日本語 ✓');
+    expect(boundReason('x'.repeat(5000))).toHaveLength(2048);
+    expect(boundReason('x'.repeat(50), 10)).toHaveLength(10);
+    expect(boundReason('\u0001\u0002')).toBe('');
+    expect(boundReason(undefined as unknown as string)).toBe('');
+  });
+
+  it('records a sanitized reason on FAILED only and survives reload', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'e-1' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    expect(record.failureReason).toBeUndefined();
+    record = await store.transition(record.id, record.stateVersion, 'FAILED', 'error', `Team launch error: ENOENT /Users/me/proj/file.ts\n${'y'.repeat(1900)}`);
+    expect(record.failureReason!.startsWith('Team launch error: ENOENT file.ts ')).toBe(true);
+    expect(record.failureReason!.length).toBeLessThanOrEqual(2048);
+    expect((await createExecutionStore({ filePath }).get('e-1'))?.failureReason).toBe(record.failureReason);
+  }));
+
+  it('leaves the reason unset when the summary has only control characters', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'FAILED', 'error', '\u0001');
+    expect(record.failureReason).toBeUndefined();
+  }));
+
+  it('rejects a persisted record whose reason is over the cap, and loads records without one', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'e-1' });
+    const record = (await store.claim(request())).record;
+    expect(record.failureReason).toBeUndefined();
+    const durable = JSON.parse(await readFile(filePath, 'utf8'));
+    durable.records[0].failureReason = 'z'.repeat(2049);
     await writeFile(filePath, JSON.stringify(durable));
     await expect(createExecutionStore({ filePath }).get('e-1')).rejects.toThrow('corrupt execution store');
   }));

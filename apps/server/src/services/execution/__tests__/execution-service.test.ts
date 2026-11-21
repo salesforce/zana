@@ -748,6 +748,42 @@ describe('execution admission', () => {
   }));
 
 
+  it('closes the launch request and bounds the stored reason when launchTeam throws', async () => fixture(async (filePath) => {
+    const cancelTeamLaunch = vi.fn(async () => ({ ok: true }));
+    const serviceDeps = deps(filePath, {
+      cancelTeamLaunch,
+      launchTeam: async () => { throw new Error(`/Users/me/secret/dir ${'q'.repeat(5000)}`); }
+    });
+    const result = await new ExecutionService(serviceDeps).start('owner', 'project-1', request);
+    expect(result).toMatchObject({ ok: false, code: 'TEAM_LAUNCH_FAILED' });
+    expect(cancelTeamLaunch).toHaveBeenCalledWith(expect.any(String), expect.any(String));
+    const record = (await serviceDeps.store.get('execution-1'))!;
+    expect(record.state).toBe('FAILED');
+    expect(record.failureReason!.length).toBeLessThanOrEqual(2048);
+    expect(record.failureReason).not.toContain('/Users/me');
+  }));
+
+  it('still fails the run when the launch cleanup itself rejects', async () => fixture(async (filePath) => {
+    const logError = vi.fn();
+    const serviceDeps = deps(filePath, {
+      logError,
+      cancelTeamLaunch: async () => { throw new Error('lifecycle down'); },
+      launchTeam: async () => { throw new Error('boom'); }
+    });
+    const result = await new ExecutionService(serviceDeps).start('owner', 'project-1', request);
+    expect(result).toMatchObject({ ok: false, code: 'TEAM_LAUNCH_FAILED', message: 'boom' });
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('launch cleanup'), expect.any(Error));
+  }));
+
+  it('bounds an over-long launch failure message from the host', async () => fixture(async (filePath) => {
+    const serviceDeps = deps(filePath, { launchTeam: async () => ({ ok: false, message: 'm'.repeat(5000) }) });
+    const result = await new ExecutionService(serviceDeps).start('owner', 'project-1', request);
+    expect(result).toMatchObject({ ok: false });
+    const record = (await serviceDeps.store.get('execution-1'))!;
+    expect(record.state).toBe('FAILED');
+    expect(record.failureReason!.length).toBeLessThanOrEqual(2048);
+  }));
+
   it('does not claim an execution or authorize workers when the machine route is unsupported', async () => fixture(async (filePath) => {
     const authorizeTeamLaunch = vi.fn();
     const launchTeam = vi.fn();

@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   sidebarMode: 'expanded' as 'expanded' | 'rail' | 'hidden',
@@ -37,7 +37,9 @@ function renderOverlay() {
 describe('SidebarTriggerOverlay', () => {
   beforeEach(() => {
     h.sidebarMode = 'expanded';
+    vi.stubGlobal('navigator', { platform: 'Linux' });
   });
+  afterEach(() => vi.unstubAllGlobals());
 
   it('provides the persistent shell control used to restore the sidebar', () => {
     const markup = renderOverlay();

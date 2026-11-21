@@ -54,7 +54,7 @@ const h = vi.hoisted(() => {
       refreshAcpModeOptions: vi.fn(), refreshModels: vi.fn(),
       resetForNewThread: vi.fn(), useDefaultProvider: vi.fn(), providerSelectionSource: 'default'
     },
-    permissionError: undefined as string | undefined, rememberSendMode: vi.fn(),
+    permissionError: undefined as string | undefined, rememberSendMode: vi.fn(), nativeDiscovery: false, setPermission: vi.fn(),
     clear: vi.fn(), insertText: vi.fn(), removeAttachment: vi.fn(),
     send: vi.fn(async () => undefined),
     create: vi.fn(async (): Promise<{ ok: boolean; value: { id: string }; message?: string }> => ({ ok: true, value: { id: 'created' } })),

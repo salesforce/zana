@@ -221,7 +221,7 @@ it('keeps the existing document and shows a failed-refresh status', async () => 
   mocks.hostFileContent.mockRejectedValueOnce(new Error('offline'));
   mocks.readFile.mockResolvedValue({ ok: false });
   view.rerender(<ThreadFilePreviewTab path="report.md" threadId="t1" openerKey="host" previewRevision={1} />);
-  expect((await view.findByRole('status')).textContent).toContain('offline');
+  await view.findByText('Refresh failed: offline');
   expect(view.getByRole('heading', { name: 'Original' })).toBeTruthy();
 });
 
@@ -364,6 +364,21 @@ describe('retained reading offset', () => {
     expect(node.scrollTop).toBe(320);
     node.scrollTop = 515;
     fireEvent.scroll(node);
+    expect(position.scrollTop).toBe(515);
+  });
+
+  it('tracks the actual inner Markdown scroll container', async () => {
+    const position = { scrollTop: 320 };
+    const view = render(<FilePreviewScrollPositionContext.Provider value={position}>
+      <ThreadFilePreviewView path="notes.md" content="# Notes" error={null} storage />
+    </FilePreviewScrollPositionContext.Provider>);
+    await view.findByRole('heading', { name: 'Notes' });
+    const preview = view.container.querySelector('.md-document-preview')!;
+    expect(preview.scrollTop).toBe(320);
+    preview.scrollTop = 515; fireEvent.scroll(preview);
+    expect(position.scrollTop).toBe(515);
+    view.unmount();
+    preview.scrollTop = 0; fireEvent.scroll(preview);
     expect(position.scrollTop).toBe(515);
   });
 

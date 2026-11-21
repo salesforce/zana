@@ -3,6 +3,20 @@ import { product } from '../product-client.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
+it.each([undefined, 'project /#?'])('reads and saves Markdown through the thread-scoped route (%s)', async projectId => {
+  const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => Response.json({ ok: true, content: '# Draft', sha256: 'a'.repeat(64) }));
+  vi.stubGlobal('fetch', fetchMock);
+  await product.threads.readMarkdown('session /1', 'doc #1.md', projectId);
+  const url = new URL(String(fetchMock.mock.calls[0]![0]), 'http://localhost');
+  expect(url.pathname).toBe('/api/v1/threads/session%20%2F1/markdown');
+  expect(url.searchParams.get('path')).toBe('doc #1.md');
+  expect(url.searchParams.get('projectId')).toBe(projectId ?? null);
+  const body = { path: 'doc #1.md', content: '# Draft', expectedSha256: 'a'.repeat(64), projectId };
+  await product.threads.writeMarkdown('session /1', body);
+  expect(fetchMock.mock.calls[1]![1]?.method).toBe('PUT');
+  expect(JSON.parse(String(fetchMock.mock.calls[1]![1]?.body))).toEqual(JSON.parse(JSON.stringify(body)));
+});
+
 it.each([undefined, 'project /#?'])('sends the optional project scope without changing the file path (%s)', async (projectId) => {
   const file = { path: '.zcc/report #1.md', relPath: '.zcc/report #1.md', content: '# Preview', encoding: 'utf8', contentType: null };
   const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => Response.json(file));

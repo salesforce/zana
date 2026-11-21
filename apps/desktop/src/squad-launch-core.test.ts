@@ -8,7 +8,7 @@ import { ExecutionSourceError, createExecutionSourceRegistry, type ExecutionSour
 import { resolveSourcePolicy } from '@zana-ai/zcc-server/services/execution/source-policy';
 import type { ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
 import {
-  createSquadSourceSnapshotter, launchSquad, redactCapturedExecutionSourcePaths, unattendedRosterBlock,
+  createSquadSourceSnapshotter, launchSquad, redactCapturedExecutionSourcePaths, squadLimitsPolicy, unattendedRosterBlock,
   type SquadLaunchDeps, type SquadLaunchInput, type SquadSourceBundle, type SquadSourceSnapshotArgs
 } from './squad-launch-core.js';
 
@@ -227,6 +227,26 @@ describe('launchSquad', () => {
     expect(deps.snapshotSources).toHaveBeenCalledWith({ kind: 'window', windowId: 7 }, expect.objectContaining({
       projectId: 'p1', launchRequestId: 'ui:launch-1', sourceCapabilityIds: [], sourcePaths: [], goalSourceDescriptors: []
     }));
+  });
+
+  it('merges the Squad\'s saved run limits into the policy and bounds a hand-edited value', async () => {
+    const { deps, start } = makeDeps({ teamLimits: () => ({ maxConcurrent: 2, claimWallClockMs: 600_000, claimStallMs: 99, bogus: 1 }) });
+    await launchSquad(deps, makeInput(), { sources: { kind: 'window', windowId: 7 }, owner: { principalId: 'interactive:local' } });
+    expect(start.mock.calls[0]?.[2]).toMatchObject({ policy: { maxConcurrent: 2, maxClaimWallClockMs: 600_000, maxClaimStallMs: 60_000, deadlineMs: AUTONOMOUS_DEFAULTS.timeoutMs } });
+    expect((start.mock.calls[0]?.[2] as { policy: object }).policy).not.toHaveProperty('bogus');
+  });
+
+  it('leaves the policy untouched when the Squad has no limits', async () => {
+    const { deps, start } = makeDeps({ teamLimits: () => undefined });
+    await launchSquad(deps, makeInput(), { owner: { principalId: 'interactive:local' } });
+    expect((start.mock.calls[0]?.[2] as { policy: object }).policy).toEqual({ deadlineMs: AUTONOMOUS_DEFAULTS.timeoutMs, blockedWaitMs: AUTONOMOUS_DEFAULTS.blockedWaitMs });
+  });
+
+  it('squadLimitsPolicy maps each limit and ignores invalid input', () => {
+    expect(squadLimitsPolicy({ maxConcurrent: 3 })).toEqual({ maxConcurrent: 3 });
+    expect(squadLimitsPolicy({ claimWallClockMs: 120_000, claimStallMs: 60_000 })).toEqual({ maxClaimWallClockMs: 120_000, maxClaimStallMs: 60_000 });
+    expect(squadLimitsPolicy('nope')).toEqual({});
+    expect(squadLimitsPolicy({ maxConcurrent: 0 })).toEqual({});
   });
 
   it('carries the requested completion inbox notice into the execution request', async () => {

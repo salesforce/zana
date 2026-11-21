@@ -92,7 +92,7 @@ PRODUCT API (app must be running — ZCC_SERVER_URL, default http://127.0.0.1:87
   skill list|show|files|cli-skills-status|install-cli-skills
   settings show|general|experiment|appearance
   terminal list|create|show|output|wait|send|close
-  team launch --team <id> --project <id> --goal "..." [--mode freeform|structured]
+  team launch --team <id> --project <id> --goal "..." [--mode freeform|structured] [--plan-file <path>] [--dry-run]
   team status|wait|answer|stop <id>
   environment status|diff|diff-files|pull-request|processes <id>
   browser instances|tabs|create|acquire|connection|release|reveal|capture|close|watch|import-sources|import-cookies
@@ -259,6 +259,12 @@ extension's title for an extension-contributed persona (`source.extensionId`).
 > on disk, so they do **not** appear here. When no file-backed personas exist
 > the command prints a note saying so and still exits `0`.
 
+A persona file the loader cannot use is skipped, not listed. The command writes one
+line per skipped file to stderr, naming the file (never its contents) and a fixed
+reason, for example `Not valid JSON, skipped` or `Unknown "permissionMode", skipped`.
+The CLI applies the same rules as the app. See
+[Persona files that fail to load](teams-and-personas-guide.md#persona-files-that-fail-to-load).
+
 ```bash
 zcc personas ls --json
 ```
@@ -279,12 +285,32 @@ Start and watch one durable Team execution. `--mode freeform` (default) asks the
 Launch, answer, and stop are operator-only.
 
 ```bash
-zcc team launch --team <id> --project <id|path> --goal "ship it" [--mode freeform|structured] [--worktree true|false] [--on-complete leave|merge|delete] [--push] [--check <name>]... [--target project-root|worktree:<branch>] [--title <text>] [--summary <text>] [--wait] [--timeout 5m]
+zcc team launch --team <id> --project <id|path> --goal "ship it" [--mode freeform|structured] [--plan-file <path>] [--dry-run] [--worktree true|false] [--on-complete leave|merge|delete] [--push] [--check <name>]... [--target project-root|worktree:<branch>] [--title <text>] [--summary <text>] [--wait] [--timeout 5m]
 zcc team status <executionId>
 zcc team wait <id> [--timeout 5m]
 zcc team answer <id> --text "yes" [--blocker <blockerId>]
 zcc team stop <id>
 ```
+
+`--plan-file <path>` supplies the plan as a separate document, read locally by the
+CLI and sent as `planText` (at most 64,000 characters; the goal keeps its 4,000-character
+cap). It defaults `--mode` to `structured`, and combining it with `--mode freeform`
+exits 2. `planText` is parsed only as plan content: paths inside it are never scanned
+as goal execution sources. `--dry-run` runs the trusted preview and prints the resolved
+settings and location on stdout (or the preview as JSON with `--json`) without
+launching; it cannot be combined with `--wait`. Exit codes: 0 preview or launch
+succeeded; 2 usage error (missing, unreadable, empty or over-cap plan file, bad flag
+combination) or a preview the app refuses as invalid (for example an unparseable plan:
+the plan error is on stderr and nothing launches); 1 when the app is not running.
+
+`team status` and `team wait` show why a run failed. A FAILED run carries a
+sanitized failure reason (control characters removed, absolute paths reduced to
+file names, at most 2048 characters). `team status` prints it as `failed: <reason>`,
+and `team wait` exits with an error `execution <id> failed: <reason>` when the run has
+no result payload (when it has one, the payload is printed and `Failed: <reason>` goes
+to stderr). `--json` status output carries it as `failure`. A structured launch where any worker slot fails to
+start is FAILED at launch with the slot reasons; see
+[Launch failures and warnings](teams-and-personas-guide.md#launch-failures-and-warnings).
 
 `--project` accepts an id or a confined filesystem path. A path is realpath
 checked under HOME or cloneRoot before idempotent project registration; arbitrary

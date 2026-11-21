@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const scope = vi.hoisted(() => ({ projectId: null as string | null }));
 const storeState = vi.hoisted(() => ({ loading: false, empty: false }));
 
-vi.mock('../../lib/product-client.js', () => ({ product: { personas: { delete: vi.fn() } } }));
+vi.mock('../../lib/product-client.js', () => ({ product: { personas: { delete: vi.fn(), loadWarnings: vi.fn(async () => []) } } }));
 vi.mock('@/store', () => ({
   usePersonas: (selector: (s: { personas: unknown[]; loading: boolean }) => unknown) =>
     selector({
@@ -95,5 +95,49 @@ describe('PersonasView catalogue order', () => {
     storeState.empty = true;
     render(<PersonasView />);
     expect(screen.getByText('No personas found')).toBeDefined();
+  });
+});
+
+describe('PersonaLoadWarnings', () => {
+  it('renders nothing when there are no warnings', async () => {
+    const { PersonaLoadWarnings } = await import('./PersonasView');
+    const { container } = render(<PersonaLoadWarnings warnings={[]} />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it('lists file, source and fixed reason, with a cap note at 100', async () => {
+    const { PersonaLoadWarnings } = await import('./PersonasView');
+    const one = render(<PersonaLoadWarnings warnings={[{ file: 'bad.json', source: 'user', reason: 'malformed_json' }]} />);
+    expect(one.container.textContent).toContain('1 persona file was ignored');
+    expect(one.container.textContent).toContain('bad.json');
+    expect(one.container.textContent).toContain('Not valid JSON');
+    expect(one.container.textContent).not.toContain('Showing the first');
+    cleanup();
+    const many = Array.from({ length: 100 }, (_, i) => ({ file: `p${i}.json`, source: 'project' as const, reason: 'missing_id' as const }));
+    const capped = render(<PersonaLoadWarnings warnings={many} />);
+    expect(capped.container.textContent).toContain('100 persona files were ignored');
+    expect(capped.container.textContent).toContain('Showing the first 100');
+    expect(capped.container.textContent).toContain('(Project)');
+  });
+
+  it('falls back to generic text for an unknown reason', async () => {
+    const { PersonaLoadWarnings } = await import('./PersonasView');
+    const { container } = render(<PersonaLoadWarnings warnings={[{ file: 'x.json', source: 'user', reason: 'future' as never }]} />);
+    expect(container.textContent).toContain('Invalid persona file');
+  });
+});
+
+describe('PersonasView warnings load', () => {
+  it('shows warnings from the product client and tolerates a failing read', async () => {
+    const { product } = await import('../../lib/product-client.js');
+    const lw = (product as any).personas.loadWarnings as ReturnType<typeof vi.fn>;
+    lw.mockResolvedValueOnce([{ file: 'bad.json', source: 'user', reason: 'missing_name' }]);
+    const ok = render(<PersonasView />);
+    expect(await ok.findByTestId('persona-load-warnings')).toBeTruthy();
+    cleanup();
+    lw.mockRejectedValueOnce(new Error('boom'));
+    const bad = render(<PersonasView />);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(bad.queryByTestId('persona-load-warnings')).toBeNull();
   });
 });

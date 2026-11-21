@@ -191,6 +191,7 @@ into `website/lib/plugin-guide/`; do not hand-edit that folder).
 - `messageDirective` — render `::name{attr}` leaves in markdown
 - `messageAction` — per-message menu item on the timeline
 - `fileOpener` — open a previewed file by extension
+- `experimental_browserToolbarAction` — control in each thread browser tab toolbar. Props carry `threadId`, `tabId`, `url`, an optional desktop `page` (`evaluate`, `onMessage`) and a thread-scoped `composer` for context badges.
 
 ### Command palette
 
@@ -211,6 +212,11 @@ Headless (no pixels), plus picker chrome:
 - `settings-define` — `zcc.settings.define`
 - `background` — `zcc.background.service` / `schedule`
 - `desktop-browsers` — `zcc.sdk.experimental_desktopBrowsers` (experimental; first-party Browser Automation)
+- `providers` — `zcc.agents.experimental_registerProvider` adds a coding-agent harness (experimental; first-party Claude Code, Codex, Pi, ACP)
+- `hooks` — `zcc.hooks.on` / `onToolPolicy` dispatch admission and native tool policy (see [Platform hooks](#platform-hooks))
+- `server-io` — `rpc`, `http`, `realtime`, `storage`, `process`, `status`, `onDispose`
+- `services` — `zcc.services.provide` / `use` / `has` (experimental, see [Plugin services](#plugin-services-experimental))
+- `remote-hosts` — `zcc.sshConnections.register`, `zcc.remoteEnvironment.provide`, `zcc.host.projectCall`
 - `approvals` — stable `zcc.ui.requestToolApproval({ binding, title, summary?, details?, confirmLabel?, tone?, timeoutMs? })` waits for a main-owned sandboxed sheet from an active registered **server tool**. The host derives plugin/thread/invocation identity; supplied scope is only an assertion and mismatches are refused. Wait is a positive integer, at most five minutes (default five minutes). `requestApproval` and `experimental_requestApproval` are aliases with the same active-invocation restriction. Button flows use `requestApproval(pluginId, request)` from `@zana-ai/zcc-plugin-sdk/app`, without tool scope.
 
 ### Tool Approval
@@ -238,7 +244,7 @@ Thread/project/environment local scope is re-read before requesting, after the w
 Only the authenticated product server can request a tool sheet through main control. Operator/agent control requests and renderer requests for scoped proofs are refused. Missing desktop credential/window, headless/remote/hidden/unresolvable thread, cancellation, timeout, abort and runtime failure never grant approval. Existing provider and local permission checks still apply; this proof does not bypass them. Typed `confirmText` is compared by main. Tests can use `harness.approve(binding)` and an explicit fake-host `requestToolApproval` stub; default fake hosts return `unavailable`.
 
 ### Other Platform Hooks
-- `contentScripts` — `contentScripts.register`; background renderer subscriptions, including optional generic agent activity and own-plugin realtime signals. See [Background activity and sound plugins](#background-activity-and-sound-plugins).
+- `contentScripts` — `contentScripts.register`; background renderer subscriptions, including optional generic agent activity, own-plugin realtime signals and `experimental_setThreadRowStatus` sidebar row status. See [Background activity and sound plugins](#background-activity-and-sound-plugins).
 - `experimental_providerIcon` — picker glyph for a provider id
 
 Registrations replace wholesale per plugin id. Each carries a `generation` used

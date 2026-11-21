@@ -1,4 +1,5 @@
 import type { ThreadHistoryQuery, ThreadHistoryPage, ConversationTranscript } from '@zana-ai/zcc-domain/product';
+import type { PersonaLoadWarning } from '@zana-ai/zcc-domain/persona-validation';
 import type { DesktopBrowserApi } from './browser.js';
 import type { SquadLaunchPrefill, SquadProposalErrorCode } from '@zana-ai/zcc-domain/squad-proposal';
 import type { MarketplaceCatalogRow } from '@zana-ai/zcc-domain';
@@ -716,6 +717,8 @@ export interface CcApi {
       model?: string;
       reasoningLevel?: string;
     }): Promise<{ ok: true; operationId: string; requestSequence: number }>;
+    readMarkdown(threadId: string, path: string, projectId?: string): Promise<FsReadResult>;
+    writeMarkdown(threadId: string, body: { path: string; projectId?: string; content: string; expectedSha256: string }): Promise<FsWriteResult>;
     hostFileContent(threadId: string, path: string, projectId?: string): Promise<{
       path: string;
       relPath: string;
@@ -1110,6 +1113,16 @@ export interface CcApi {
       | { ok: false; reason: 'ineligible' | 'empty' | 'summary-failed' | 'write-failed' }
     >;
     /**
+     * Restart a Squad worker so the new process keeps its slot and run binding. The renderer sends
+     * only the session id; main resolves the slot and run from its own records and refuses sessions
+     * that are not a live Squad worker, finished runs and closing runs. `not-squad-worker` means the
+     * caller should use the ordinary restart path. Never throws.
+     */
+    restartSquadWorker(sessionId: string): Promise<
+      | { ok: true }
+      | { ok: false; reason: string; message?: string }
+    >;
+    /**
      * Read-only, display-only stats distilled from a claude session's transcript
      * (model, context tokens, rough cost, files touched, todo queue) for the
      * Agent Monitor status pane. Main authorizes from its own session record and
@@ -1137,6 +1150,8 @@ export interface CcApi {
   config: {
     get(): Promise<AppConfig>;
     set(patch: Partial<AppConfig>): Promise<AppConfig>;
+    /** Appends one exited-worker session id to `dismissedWorkerExits`. Main does the read-modify-write and applies the retention cap, so concurrent windows never overwrite each other. */
+    dismissWorkerExit(sessionId: string): Promise<AppConfig>;
     /** Opens the native folder chooser and trusts the picked folder for read-only preview. `config` is null when cancelled or refused; `error` explains a refusal (for example the 20-folder cap). */
     addTrustedPreviewFolder(): Promise<{ config: AppConfig | null; error?: string }>;
     /** Stops trusting one stored folder. Never deletes files. */
@@ -2055,6 +2070,8 @@ export interface CcApi {
    */
   personas: {
     list(): Promise<Persona[]>;
+    /** Persona files the loader ignored (basename, source, fixed reason; no contents). Takes no arguments. */
+    loadWarnings(): Promise<PersonaLoadWarning[]>;
     onChanged(cb: (personas: Persona[]) => void): () => void;
     revealDir(): Promise<{ ok: boolean; path: string; message?: string }>;
     /**
@@ -2105,7 +2122,7 @@ export interface CcApi {
     cancel(launchRequestId: string): Promise<Result<CancelTeamLaunchResult>>;
     /** Start a durable Team job. Main re-authorizes Team/project and maps slots. */
     startJob(input: TeamJobLaunchInput & { /** Opaque main-held preview binding; never a caller fingerprint. */ previewToken?: string }): Promise<TeamJobLaunchResponse>;
-    preview(input: Pick<TeamJobLaunchInput, 'teamId' | 'projectId' | 'goal' | 'coordinationMode' | 'sourceCapabilityIds'> & import('@zana-ai/zcc-domain/launch-options').LaunchOptions): Promise<Result<import('@zana-ai/zcc-domain/squad-proposal').SquadLaunchPreview & { previewToken: string }>>;
+    preview(input: Pick<TeamJobLaunchInput, 'teamId' | 'projectId' | 'goal' | 'planText' | 'coordinationMode' | 'sourceCapabilityIds'> & import('@zana-ai/zcc-domain/launch-options').LaunchOptions): Promise<Result<import('@zana-ai/zcc-domain/squad-proposal').SquadLaunchPreview & { previewToken: string }>>;
     /** Resolve a pending Squad proposal into a composer pre-fill. Desktop window only. */
     reviewProposal(
       proposalId: string

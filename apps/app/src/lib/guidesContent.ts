@@ -118,6 +118,18 @@ Open **New Chat**, choose **Squad** under Launch mode, pick a Squad and a
 Project, and describe the goal. Follow the run in the Agents board and answer
 its questions in the Inbox.
 
+If a Persona file has a mistake (for example an unknown permission mode), Zana
+ignores the file and lists it, with the reason, under **Settings > Personas**. A
+Squad slot that names an ignored or missing Persona is flagged in the Squad editor
+and list. A launch with any such slot is refused before anything starts, and the
+error names the missing Personas; fix or remove the slot in **Settings > Squads**.
+
+If a worker exits with an error, its card stays on the Agents board until you
+dismiss it, the run shows a warning with the exit code, and you can press
+**Restart** on the card to rejoin the Squad. A failed run shows why it failed in
+the run detail and the Inbox. **Settings > Squads > Launch** opens the New Agent
+dialog with that Squad already chosen.
+
 Read the step-by-step guide: https://zana-ide.com/docs/squads-start/
 `,
   shortcuts: `

@@ -13,16 +13,19 @@ import {
   SquareCode
 } from 'lucide-react';
 import {
-  joinLibraryMarkdown,
-  libraryMarkdownExtensions,
-  splitLibraryMarkdown
+  libraryMarkdownExtensions
 } from './library-markdown.js';
+import { loadMarkdownBlocks, saveMarkdownBlocks, serializeMarkdownNodes, type MarkdownBlocks } from '../../../components/markdown/markdown-preservation.js';
+import { MarkdownImageContext, type MarkdownImageScope } from '../../../components/markdown/markdown-editor-nodes.js';
 
 export interface LibraryMarkdownEditorProps {
   value: string;
   onChange: (markdown: string) => void;
   autofocus?: boolean;
   placeholder?: string;
+  editable?: boolean;
+  imageScope?: MarkdownImageScope;
+  onEditor?: (editor: Editor | null) => void;
 }
 
 interface BubbleAction {
@@ -141,71 +144,60 @@ export function LibraryMarkdownBubbleToolbar({ editor }: { editor: Editor }) {
   );
 }
 
-/**
- * WYSIWYG markdown editor for library docs. Front-matter is hidden from the
- * editor and reattached on every change so agent-authored metadata survives.
- */
+/** Continuous Markdown editor adapted from BB Docs' source-preserving architecture. */
 export function LibraryMarkdownEditor({
-  value,
-  onChange,
-  autofocus = false,
-  placeholder = 'Start writing…'
+  value, onChange, autofocus = false, placeholder = 'Start writing…', editable = true,
+  imageScope = { documentPath: '', localImages: false }, onEditor
 }: LibraryMarkdownEditorProps) {
-  const initial = splitLibraryMarkdown(value);
-  const headerRef = useRef(initial.header);
-  const lastEmittedRef = useRef(value);
+  const loaded = useRef<MarkdownBlocks | null>(null);
+  const lastEmitted = useRef<string | null>(null);
   const onChangeRef = useRef(onChange);
+  const didFocus = useRef(false);
   onChangeRef.current = onChange;
-  headerRef.current = splitLibraryMarkdown(value).header;
 
   const editor = useEditor({
     immediatelyRender: true,
     shouldRerenderOnTransaction: true,
     extensions: libraryMarkdownExtensions(placeholder),
-    content: initial.body || { type: 'doc', content: [{ type: 'paragraph' }] },
-    contentType: initial.body ? 'markdown' : 'json',
-    autofocus: autofocus ? 'end' : false,
+    content: { type: 'doc', content: [{ type: 'paragraph' }] },
+    editable,
     editorProps: {
       attributes: {
         class: 'library-md-editor-surface',
-        'data-testid': 'library-md-editor-surface'
+        'data-testid': 'library-md-editor-surface',
+        role: 'textbox',
+        'aria-label': 'Document content',
+        'aria-multiline': 'true'
       }
     },
     onUpdate: ({ editor: current }) => {
-      const next = joinLibraryMarkdown(headerRef.current, current.getMarkdown());
-      lastEmittedRef.current = next;
+      if (!loaded.current) return;
+      const next = saveMarkdownBlocks(current, loaded.current, nodes => serializeMarkdownNodes(current, nodes));
+      lastEmitted.current = next;
       onChangeRef.current(next);
     }
   });
 
   useEffect(() => {
-    if (!editor || editor.isDestroyed) return;
-    if (value === lastEmittedRef.current) return;
-    const next = splitLibraryMarkdown(value);
-    headerRef.current = next.header;
-    lastEmittedRef.current = value;
-    if (next.body) {
-      editor.commands.setContent(next.body, { contentType: 'markdown' });
-    } else {
-      editor.commands.setContent({ type: 'doc', content: [{ type: 'paragraph' }] });
-    }
-  }, [editor, value]);
+    if (!editor || editor.isDestroyed || value === lastEmitted.current) return;
+    loaded.current = loadMarkdownBlocks(editor, value, loaded.current ?? undefined);
+    lastEmitted.current = value;
+    if (autofocus && !didFocus.current) { didFocus.current = true; editor.commands.focus('end'); }
+  }, [editor, value, autofocus]);
+  useEffect(() => { editor?.setEditable(editable, false); }, [editor, editable]);
+  useEffect(() => { onEditor?.(editor); return () => onEditor?.(null); }, [editor, onEditor]);
 
-  if (!editor) {
-    return <div className="library-md-editor" data-testid="library-md-editor" />;
-  }
-
-  return (
-    <div className="library-md-editor" data-testid="library-md-editor">
-      <BubbleMenu
-        editor={editor}
-        appendTo={appendLibraryBubbleTo}
-        options={BUBBLE_MENU_OPTIONS}
-        shouldShow={shouldShowLibraryBubble}
-      >
-        <LibraryMarkdownBubbleToolbar editor={editor} />
-      </BubbleMenu>
-      <EditorContent editor={editor} />
+  return <MarkdownImageContext.Provider value={imageScope}>
+    <div className="library-md-editor" data-testid="library-md-editor" onMouseDown={event => {
+      if (event.button !== 0 || !editor?.isEditable || event.target !== event.currentTarget) return;
+      event.preventDefault(); editor.commands.focus('end');
+    }}>
+      {editor && <>
+        <BubbleMenu editor={editor} appendTo={appendLibraryBubbleTo} options={BUBBLE_MENU_OPTIONS} shouldShow={shouldShowLibraryBubble}>
+          <LibraryMarkdownBubbleToolbar editor={editor} />
+        </BubbleMenu>
+        <EditorContent editor={editor} />
+      </>}
     </div>
-  );
+  </MarkdownImageContext.Provider>;
 }

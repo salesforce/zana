@@ -2,6 +2,7 @@ import type { Persona, Project, Team } from '@zana-ai/zcc-domain/product';
 import { launchOptionsSchema, type LaunchOptions } from '@zana-ai/zcc-domain/launch-options';
 import type { SquadExecutionService } from '@zana-ai/zcc-server/services/execution/service';
 import { invalidProvidedPlanHold, planNormalizationNote, resolveTriggeredSquadPlan } from './team-trigger-semantics.js';
+import { squadLimitsPolicy } from './squad-launch-core.js';
 import { startTriggeredSquadExecution, triggeredSquadSlotTasks } from './scheduled-plan-correction.js';
 
 export interface TriggeredSquadInput extends LaunchOptions {
@@ -46,6 +47,11 @@ export function createTriggeredSquadLauncher(deps: TriggeredSquadDeps) {
     const { coordinationMode, workUnits, launch, idRenames, planError } = resolveTriggeredSquadPlan(input.planSource, input.objective);
     const normalizationNote = planNormalizationNote(idRenames);
     const slotInput = normalizationNote ? { ...input, objective: `${input.objective}\n\n${normalizationNote}` } : input;
+    // The saved Squad's run limits apply to unattended runs exactly as to a UI launch.
+    const policy = {
+      ...squadLimitsPolicy(team.limits),
+      ...(input.maxDurationMinutes && input.maxDurationMinutes > 0 ? { deadlineMs: input.maxDurationMinutes * 60 * 1000 } : {})
+    };
     // An invalid supplied plan follows the same parked-Squad correction path as an
     // interactive provided plan (binding begun in triggeredSquadSlotTasks): the
     // durable execution gives Inbox a real run to open; no Claude fallback agent
@@ -58,7 +64,7 @@ export function createTriggeredSquadLauncher(deps: TriggeredSquadDeps) {
       slots: triggeredSquadSlotTasks(slotInput, slots, planError, invalidProvidedPlanHold, deps.planCorrectionLaunchBinding),
       ...(workUnits ? { workUnits } : {}),
       ...(launch ? { planLaunch: launch } : {}),
-      ...(input.maxDurationMinutes && input.maxDurationMinutes > 0 ? { policy: { deadlineMs: input.maxDurationMinutes * 60 * 1000 } } : {})
+      ...(Object.keys(policy).length ? { policy } : {})
     }), deps.planCorrectionLaunchBinding);
   };
 }

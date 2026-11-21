@@ -5,6 +5,7 @@ import { useBasicUi } from '../../../lib/basic-ui.js';
 import { useThreadPanelOwnerId } from '../../../plugins/thread-panel-owner.js';
 import { htmlPreviewRetention } from './htmlPreviewRetention.js';
 import { DocContent } from '../../MarkdownContent.js';
+import { MarkdownFilePreview } from '../../markdown/MarkdownFilePreview.js';
 import { DocumentPdfButton } from '../../DocumentPdfButton.js';
 import { PluginSlotBoundary } from '../../../plugins/PluginSlotBoundary.js';
 import { listFileOpeners, subscribePluginSlots } from '../../../plugins/plugin-slots.js';
@@ -52,7 +53,8 @@ export function ThreadFilePreviewView({
   storage = false,
   lineNumber = null,
   onRetry,
-  reveal
+  reveal,
+  revision = 0
 }: {
   path: string;
   content: string | null;
@@ -63,6 +65,7 @@ export function ThreadFilePreviewView({
   lineNumber?: number | null;
   onRetry?: () => void;
   reveal?: FilePreviewRevealState;
+  revision?: number;
 }) {
   const retainScroll = useRetainedFilePreviewScroll();
   if (error && content === null) {
@@ -102,14 +105,14 @@ export function ThreadFilePreviewView({
   return (
     <div ref={retainScroll} className="thread-file-preview" data-testid="thread-file-preview">
       {error ? <p role="status" className="thread-detail-empty">Refresh failed: {error}</p> : null}
-      <DocContent
+      {/\.(md|markdown)$/i.test(path) ? <MarkdownFilePreview key={JSON.stringify([path, threadId, projectId, storage])} path={path} content={content} threadId={threadId} projectId={projectId} storage={storage} revision={revision} previewRef={retainScroll} /> : <DocContent
         path={path}
         content={content}
         exportable
         threadId={threadId}
         projectId={projectId}
         storage={storage}
-      />
+      />}
     </div>
   );
 }
@@ -442,6 +445,7 @@ export function ThreadFilePreviewTab({
       storage={storage}
       lineNumber={lineNumber}
       onRetry={() => setRetryRevision(revision => revision + 1)}
+      revision={previewRevision + retryRevision}
       reveal={reveal}
     />
   );

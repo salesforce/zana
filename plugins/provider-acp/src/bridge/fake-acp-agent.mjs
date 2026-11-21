@@ -602,14 +602,6 @@ async function handlePrompt(message) {
     } catch {
       notifyUpdate(messageChunk("write:denied"));
     }
-  } else if (text.includes("hang")) {
-    // Stay pending until the client sends session/cancel.
-    return;
-  } else if (text.includes("die")) {
-    process.exit(7);
-  } else if (text.includes("slow")) {
-    notifyUpdate(messageChunk(`echo:${text}`));
-    await sleep(300);
   } else if (text.includes("echo-permission-env")) {
     notifyUpdate(messageChunk(`permission:${process.env.OPENCODE_PERMISSION ?? "unset"}`));
   } else if (text.includes("echo-argv")) {
@@ -641,6 +633,16 @@ async function handlePrompt(message) {
     notifyUpdate(
       messageChunk(`mcp-server-config:${JSON.stringify(currentMcpServers)}`),
     );
+  // Explicit echo-* probes win over the bare hang/die/slow keywords: injected
+  // instructions can contain those substrings ("changing", "studied").
+  } else if (text.includes("hang")) {
+    // Stay pending until the client sends session/cancel.
+    return;
+  } else if (text.includes("die")) {
+    process.exit(7);
+  } else if (text.includes("slow")) {
+    notifyUpdate(messageChunk(`echo:${text}`));
+    await sleep(300);
   } else {
     notifyUpdate(messageChunk(`echo:${text}`));
   }
