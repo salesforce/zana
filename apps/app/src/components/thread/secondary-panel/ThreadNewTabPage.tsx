@@ -33,10 +33,12 @@ export function ThreadNewTabView({
   query,
   onQueryChange,
   matches,
+  storageMatches = [],
   desktop,
   actions,
   recents = [],
   onOpenFile,
+  onOpenStorageFile,
   onOpenBrowser,
   onOpenAgent,
   onOpenExplorer,
@@ -51,10 +53,14 @@ export function ThreadNewTabView({
   query: string;
   onQueryChange: (query: string) => void;
   matches: Array<{ path: string; rel?: string }>;
+  /** Thread-storage files (storage-relative paths) matching the query. */
+  storageMatches?: ReadonlyArray<{ path: string }>;
   desktop: boolean;
   actions: Array<{ pluginId: string; id: string; title: string; category?: string; icon?: string; layout?: 'padded' | 'flush' }>;
   recents?: readonly ThreadRecentItem[];
   onOpenFile: (path: string, title: string) => void;
+  /** Opens a thread-storage match; the storage group renders only when set. */
+  onOpenStorageFile?: (path: string, title: string) => void;
   onOpenBrowser: () => void;
   /** Plugin-panel hosts only: start a conversation without leaving the page. */
   onOpenAgent?: () => void;
@@ -199,7 +205,26 @@ export function ThreadNewTabView({
           </ul>
         </section>
       ) : null}
-      {search && matches.length === 0 && essentials.length === 0 && categories.size === 0 ? (
+      {search && onOpenStorageFile && storageMatches.length > 0 ? (
+        <section className="thread-new-tab-category" aria-label="Thread storage">
+          <h3 className="thread-new-tab-category-title">Thread storage</h3>
+          <ul className="thread-new-tab-files">
+            {storageMatches.map((file) => {
+              const title = file.path.split('/').pop() || file.path;
+              return (
+                <li key={file.path}>
+                  <button type="button" title={file.path} onClick={() => onOpenStorageFile(file.path, title)}>
+                    <FileText size={14} aria-hidden="true" />
+                    <span className="thread-info-truncate">{file.path}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
+      {search && matches.length === 0 && (!onOpenStorageFile || storageMatches.length === 0)
+        && essentials.length === 0 && categories.size === 0 ? (
         <div className="thread-new-tab-empty" role="status">No matching tools or files</div>
       ) : null}
     </div>
@@ -211,6 +236,7 @@ export function ThreadNewTabPage({
   cwd,
   threadId,
   onOpenFile,
+  onOpenStorageFile,
   onOpenBrowser,
   onOpenAgent,
   onOpenExplorer,
@@ -226,6 +252,8 @@ export function ThreadNewTabPage({
   cwd: string | null;
   threadId?: string | null;
   onOpenFile: (path: string, title: string) => void;
+  /** Opens a thread-storage file (storage-relative path); enables the storage search group. */
+  onOpenStorageFile?: (path: string, title: string) => void;
   onOpenBrowser: () => void;
   onOpenAgent?: () => void;
   onOpenExplorer?: () => void;
@@ -275,6 +303,24 @@ export function ThreadNewTabPage({
 
   const matches = useMemo(() => matchNewTabFiles(filesRoot === root ? files : [], query), [files, filesRoot, root, query]);
 
+  const storageThreadId = onOpenStorageFile && threadId ? threadId : null;
+  const [storageFiles, setStorageFiles] = useState<{ threadId: string; files: Array<{ path: string }> } | null>(null);
+  useEffect(() => {
+    if (!searching || !storageThreadId || storageFiles?.threadId === storageThreadId) return;
+    let cancelled = false;
+    void product.threads.storageFiles(storageThreadId).then(
+      (result) => applyIfCurrent(cancelled, result.files.map((file) => ({ path: file.path })), (next) => {
+        setStorageFiles({ threadId: storageThreadId, files: next });
+      }),
+      () => applyIfCurrent(cancelled, [], (next) => setStorageFiles({ threadId: storageThreadId, files: next }))
+    );
+    return () => { cancelled = true; };
+  }, [searching, storageThreadId, storageFiles?.threadId]);
+  const storageMatches = useMemo(
+    () => matchNewTabFiles(storageFiles && storageFiles.threadId === storageThreadId ? storageFiles.files : [], query),
+    [storageFiles, storageThreadId, query]
+  );
+
   const handleOpenPlugin = (moduleId: string, title: string, options?: OpenPluginOptions) => {
     const actionId = options?.actionId;
     const threadAction = threadActions.find((row) => row.pluginId === moduleId && row.id === actionId);
@@ -315,6 +361,7 @@ export function ThreadNewTabPage({
       query={query}
       onQueryChange={setQuery}
       matches={matches}
+      storageMatches={storageMatches}
       desktop={desktop}
       recents={recents}
       actions={actions.map((action) => ({
@@ -326,6 +373,7 @@ export function ThreadNewTabPage({
         layout: action.layout
       }))}
       onOpenFile={onOpenFile}
+      onOpenStorageFile={storageThreadId ? onOpenStorageFile : undefined}
       onOpenBrowser={onOpenBrowser}
       onOpenAgent={onOpenAgent}
       onOpenExplorer={onOpenExplorer}

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildSystemPromptGuidance, extraArgsPinSession, extractPinnedSessionId, inboxAllowedTools } from './index.js';
-import { IN_APP_PREVIEW_GUIDANCE } from '@zana-ai/zcc-domain';
+import { IN_APP_PREVIEW_GUIDANCE, THREAD_ARTIFACT_GUIDANCE } from '@zana-ai/zcc-domain';
 
 // Distinctive per-block markers (a tool id unique to each guidance block).
 const MESH = 'register_agent';
@@ -34,6 +34,11 @@ describe('buildSystemPromptGuidance', () => {
     expect(buildSystemPromptGuidance(scheduled)).toContain('zana-ui-proposals');
     expect(IN_APP_PREVIEW_GUIDANCE).toContain('zcc guide browser');
     expect(IN_APP_PREVIEW_GUIDANCE).toContain('unless the user explicitly requests an external browser');
+  });
+  it('tells agents to keep deliverables in thread storage and link them as Markdown', () => {
+    expect(buildSystemPromptGuidance(false)).toContain(THREAD_ARTIFACT_GUIDANCE);
+    expect(THREAD_ARTIFACT_GUIDANCE).toContain('ZCC_THREAD_STORAGE');
+    expect(THREAD_ARTIFACT_GUIDANCE).toContain('Use Markdown links for files, artifacts, and URLs');
   });
   it('non-scheduled interactive: mesh + awareness + library + followup present, schedule absent', () => {
     const g = buildSystemPromptGuidance(false);

@@ -725,6 +725,10 @@ function ThreadDetailBody({
           appendThreadRecentItem(threadId, { kind: 'file', source: 'workspace', path });
           panel.addTab({ kind: 'file-preview', title, path });
         }}
+        onOpenStorageFile={(path, title) => {
+          appendThreadRecentItem(threadId, { kind: 'file', source: 'thread-storage', path });
+          panel.addTab({ kind: 'storage-preview', title, path });
+        }}
         onOpenBrowser={() => panel.addTab({ kind: 'browser', title: 'Browser', url: '' })}
         onOpenExplorer={() => panel.addTab({ kind: 'explorer', title: 'Explorer' })}
         onOpenInbox={() => panel.addTab({ kind: 'inbox', title: 'Inbox' })}

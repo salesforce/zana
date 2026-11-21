@@ -456,6 +456,34 @@ describe("codex item translation", () => {
     );
   });
 
+  it("rewrites Codex file citations in completed agent messages to Markdown links", () => {
+    const harness = createHarness();
+    const events = harness.translate(
+      codexEvent("item/completed", {
+        threadId: "t1",
+        turnId: "turn-1",
+        completedAtMs: 0,
+        item: {
+          type: "agentMessage",
+          id: "item-cite",
+          text: 'Done.\n:codex-file-citation{path="/tmp/out/report.pdf" purpose="output"}',
+          phase: null,
+          memoryCitation: null,
+          delivery: null,
+        },
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "item/completed",
+        item: expect.objectContaining({
+          type: "agentMessage",
+          text: "Done.\n[report.pdf](/tmp/out/report.pdf)",
+        }),
+      }),
+    );
+  });
+
   it("suppresses item/started with userMessage as a provider echo", () => {
     const harness = createHarness();
     const events = harness.translate(
