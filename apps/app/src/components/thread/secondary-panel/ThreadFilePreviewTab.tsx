@@ -1,6 +1,9 @@
-import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { Code2, Copy, Eye, FileText } from 'lucide-react';
 import { product } from '../../../lib/product-client.js';
+import { useBasicUi } from '../../../lib/basic-ui.js';
+import { useThreadPanelOwnerId } from '../../../plugins/thread-panel-owner.js';
+import { htmlPreviewRetention } from './htmlPreviewRetention.js';
 import { DocContent } from '../../MarkdownContent.js';
 import { MarkdownFilePreview } from '../../markdown/MarkdownFilePreview.js';
 import { DocumentPdfButton } from '../../DocumentPdfButton.js';
@@ -174,34 +177,23 @@ export function htmlPreviewUrl(
   return `/api/v1/file-preview/html?${params}`;
 }
 
-export function ThreadHtmlPreviewFrame({ path, src }: { path: string; src: string }) {
-  const frameRef = useRef<HTMLIFrameElement>(null);
-  const [retryRevision, setRetryRevision] = useState(0);
-  useEffect(() => {
-    const retry = (event: MessageEvent) => {
-      // Sandboxed documents have an opaque origin. Accept only this frame's
-      // retry signal, and keep its authorized URL entirely under host control.
-      if (event.source && event.source === frameRef.current?.contentWindow
-        && event.data?.type === 'zcc:html-preview:retry') {
-        setRetryRevision(revision => revision + 1);
-      }
-    };
-    window.addEventListener('message', retry);
-    return () => window.removeEventListener('message', retry);
-  }, []);
+export function ThreadHtmlPreviewFrame({ path, src, ownerId, tabId }: {
+  path: string;
+  src: string;
+  ownerId?: string | null;
+  tabId?: string | null;
+}) {
+  const anchorRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current;
+    if (!anchor) return;
+    return htmlPreviewRetention(anchor.ownerDocument).mount(anchor, { path, src, ownerId, tabId });
+  }, [path, src, ownerId, tabId]);
   // A srcdoc frame inherits the app CSP, which blocks inline and CDN scripts.
   // The server sends the file with its own sandboxing CSP, so scripts run in an
   // opaque origin with no same-origin access to the app or its IPC.
   return (
-    <iframe
-      ref={frameRef}
-      key={retryRevision}
-      className="thread-file-preview-html"
-      data-testid="thread-file-preview-html"
-      title={path}
-      sandbox="allow-scripts allow-forms allow-modals"
-      src={src}
-    />
+    <div ref={anchorRef} style={{ display: 'contents' }} />
   );
 }
 
@@ -214,7 +206,8 @@ export function ThreadFilePreviewChrome({
   statusBadge = null,
   htmlMode = null,
   onHtmlModeChange,
-  reveal
+  reveal,
+  basic = false
 }: {
   path: string;
   matches: readonly PluginFileOpenerRegistration[];
@@ -225,6 +218,7 @@ export function ThreadFilePreviewChrome({
   htmlMode?: HtmlPreviewMode | null;
   onHtmlModeChange?: (mode: HtmlPreviewMode) => void;
   reveal?: FilePreviewRevealState;
+  basic?: boolean;
 }) {
   const { name, dir } = previewPathParts(path);
   const [copied, setCopied] = useState(false);
@@ -232,12 +226,12 @@ export function ThreadFilePreviewChrome({
     <header className="thread-file-preview-chrome" data-testid="thread-file-preview-chrome">
       <FileText size={14} strokeWidth={1.75} className="thread-file-preview-chrome-icon" aria-hidden />
       <span className="thread-file-preview-path" title={path}>
-        {dir ? <span className="thread-file-preview-dir">{dir}/</span> : null}
+        {!basic && dir ? <span className="thread-file-preview-dir">{dir}/</span> : null}
         <span className="thread-file-preview-name">{name}</span>
       </span>
       {statusBadge ? <PlanStatusBadge badge={statusBadge} /> : null}
       <div className="thread-file-preview-chrome-actions">
-        {htmlMode && onHtmlModeChange ? (
+        {!basic && htmlMode && onHtmlModeChange ? (
           <div className="thread-file-preview-mode" role="group" aria-label="HTML view">
             {(['code', 'preview'] as const).map((mode) => (
               <button
@@ -257,7 +251,7 @@ export function ThreadFilePreviewChrome({
         {/\.(md|mdx|markdown)$/i.test(path) && (
           <DocumentPdfButton path={path} title={name} content={documentContent} />
         )}
-        <button
+        {!basic ? <button
           type="button"
           className="thread-file-preview-copy"
           data-testid="thread-file-preview-copy"
@@ -271,9 +265,9 @@ export function ThreadFilePreviewChrome({
           }}
         >
           <Copy size={12} />
-        </button>
+        </button> : null}
         {reveal ? <FilePreviewRevealButton state={reveal} /> : null}
-        {matches.length > 0 ? (
+        {!basic && matches.length > 0 ? (
           <label className="thread-file-open-with">
             <span className="thread-file-open-with-label">Open with</span>
             <select
@@ -306,7 +300,8 @@ export function ThreadFilePreviewTab({
   planDocument = null,
   todos = null,
   lineNumber = null,
-  previewRevision = 0
+  previewRevision = 0,
+  previewId
 }: {
   threadId?: string;
   path: string;
@@ -318,7 +313,11 @@ export function ThreadFilePreviewTab({
   todos?: ThreadTimelinePendingTodos | null;
   lineNumber?: number | null;
   previewRevision?: number;
+  /** Stable panel tab identity; closing the tab releases its live HTML page. */
+  previewId?: string;
 }) {
+  const basic = useBasicUi();
+  const panelOwnerId = useThreadPanelOwnerId() ?? threadId;
   const openerScope = JSON.stringify([path, threadId, projectId, storage, openerKey]);
   const [selection, setSelection] = useState({ scope: openerScope, key: openerKey ?? null });
   // This component is reused across tabs. Only this file's local selection can
@@ -340,7 +339,7 @@ export function ThreadFilePreviewTab({
   // A line jump means "show me the source", so it opens on Code.
   const [htmlChoice, setHtmlChoice] = useState<{ scope: string; mode: HtmlPreviewMode } | null>(null);
   const htmlMode: HtmlPreviewMode | null = isHtmlPreviewPath(path) && !opener && !livePlan
-    ? (htmlChoice?.scope === contentScope ? htmlChoice.mode : lineNumber != null && lineNumber > 0 ? 'code' : 'preview')
+    ? (basic ? 'preview' : htmlChoice?.scope === contentScope ? htmlChoice.mode : lineNumber != null && lineNumber > 0 ? 'code' : 'preview')
     : null;
 
   const liveDocument = livePlan
@@ -396,6 +395,7 @@ export function ThreadFilePreviewTab({
   const chrome = (
     <>
       <ThreadFilePreviewChrome
+        basic={basic}
         path={path}
         matches={matches}
         selectedKey={opener ? fileOpenerKey(opener) : 'host'}
@@ -432,6 +432,8 @@ export function ThreadFilePreviewTab({
     <ThreadHtmlPreviewFrame
       path={path}
       src={htmlPreviewUrl(path, threadId, storage, projectId, previewRevision)}
+      ownerId={panelOwnerId}
+      tabId={previewId}
     />
   ) : (
     <ThreadFilePreviewView

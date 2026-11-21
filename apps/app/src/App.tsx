@@ -10,9 +10,10 @@ import {
 import { ConversationHistoryDialog } from './components/history/ConversationHistoryDialog.js';
 import '@/lib/monaco-loader';
 import './styles/shell-inset.css';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Bell, PlayCircle, Star } from 'lucide-react';
+import { TitlebarThemeToggle } from './components/TitlebarThemeToggle.js';
 import { HelpProvider } from './components/help/HelpProvider.js';
 import { HelpToggle } from './components/help/HelpToggle.js';
 import { HelpMenu } from './components/help/HelpMenu.js';
@@ -20,6 +21,8 @@ import { HelpVideoLibrary } from './components/help/HelpVideoLibrary.js';
 import { useHelpVideos } from './components/help/help-videos-store.js';
 import { InstanceMenu } from './components/InstanceMenu.js';
 import { Sidebar } from './components/Sidebar.js';
+import { BasicConversationSidebar, BasicShellHeading, BasicUiModeSwitch, BasicUnsupportedDestination } from './components/basic/BasicShellChrome.js';
+import { isBasicUiRouteSupported, useBasicUi } from './lib/basic-ui.js';
 import { MobileAgentNavigation } from './components/MobileAgentNavigation.js';
 import {
   MobileNavDrawer,
@@ -116,6 +119,7 @@ import { product } from './lib/product-client.js';
 import { waitForProductWsOpen } from './lib/product-ws.js';
 import { useCliAgentTerminalSignal } from './components/thread/secondary-panel/useThreadOpenTerminalSignal.js';
 import { installThreadOpenFileSignals } from './components/thread/secondary-panel/useThreadOpenFileSignal.js';
+import { installHtmlPreviewRetentionLifecycle } from './components/thread/secondary-panel/htmlPreviewRetentionLifecycle.js';
 import { installAgentBoardMoves } from './stores/agent-board-moves.js';
 import {
   AGENTS_ROUTE_PATH,
@@ -249,6 +253,8 @@ export function App() {
 }
 
 function AppShell() {
+  const basicUi = useBasicUi();
+  const [basicSidebarCollapsed, setBasicSidebarCollapsed] = useState(false);
   const hasSetupPages = useSetupPages(s => s.pages.length > 0);
   const hasPluginTabs = useApplicationTabs(s => s.open.some(tab => tab.kind === 'plugin' && (!getScopedProjectId() || tab.projectId === getScopedProjectId())));
   const onboardingActive = useOnboarding(s => !s.loaded || s.open);
@@ -262,12 +268,13 @@ function AppShell() {
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
   const splitWorkspaceShowing = isSplitWorkspacePath(location.pathname);
+  const basicUnsupported = basicUi && !isBasicUiRouteSupported(location.pathname);
   const nav = route.nav;
   const sidebarMode = useUi((s) => s.sidebarMode);
   const mobileNavigation = useMobileNavigation();
   const sidebarCollapsed = mobileNavigation.isCompact
     ? !mobileNavigation.drawerOpen
-    : sidebarMode === 'hidden';
+    : basicUi ? basicSidebarCollapsed : sidebarMode === 'hidden';
   const storeFocusedProjectId = useUi((s) => s.focusedProjectId);
   // URL project wins; the store keeps sticky focus for Inbox / Next Steps /
   // Settings so the project rail stays while those destinations have no
@@ -319,6 +326,7 @@ function AppShell() {
   const shellChrome = useShellChromeState();
   useCliAgentTerminalSignal();
   useEffect(installThreadOpenFileSignals, []);
+  useEffect(installHtmlPreviewRetentionLifecycle, []);
 
   // Server-owned plugins publish a redacted app snapshot through the supervised
   // runtime. Their bundles load from the same-origin static host, not the legacy
@@ -784,7 +792,7 @@ function AppShell() {
   // Settings / Plugins show rail expanded; compact never gets rail (see helper).
   const { effectiveMode, railVariant, railClass, overlayCollapsed } = resolveSidebarShellState({
     isCompact: mobileNavigation.isCompact,
-    sidebarMode,
+    sidebarMode: basicUi ? 'expanded' : sidebarMode,
     shellRail: shellLayout.rail,
     sidebarCollapsed
   });
@@ -793,7 +801,8 @@ function AppShell() {
     <div
       className={`app-shell nav-${nav} shell-rail-${shellLayout.rail} ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''} ${railClass} scoped-no-list ${
         updateBannerVisible ? 'has-update-banner' : ''
-      }${!mobileNavigation.isCompact ? ' shell-inset' : ''}`}
+      }${!mobileNavigation.isCompact ? ' shell-inset' : ''}${basicUi ? ' basic-ui' : ''}${basicUnsupported ? ' basic-ui-has-unsupported-route' : ''}`}
+      data-ui-mode={basicUi ? 'basic' : 'advanced'}
       data-mobile={mobileNavigation.isCompact}
       data-platform={shellChrome.platform}
       data-fullscreen={shellChrome.isFullScreen}
@@ -801,6 +810,10 @@ function AppShell() {
       data-windows-caption={shellChrome.reserveWindowsCaptionButtons}
     >
       <div className="titlebar">
+        {basicUi && <BasicShellHeading compact={mobileNavigation.isCompact} collapsed={sidebarCollapsed}
+          onToggleNavigation={mobileNavigation.isCompact
+            ? () => mobileNavigation.setDrawerOpen(!mobileNavigation.drawerOpen)
+            : () => setBasicSidebarCollapsed(value => !value)} />}
         {mobileNavigation.isCompact && <MobileSettingsBack hidden={mobileNavigation.drawerOpen} />}
         {/* Keep portal targets mounted while independent viewport subscribers update. */}
         <div id={MOBILE_THREAD_TITLE_ID} className="mobile-thread-title-slot" />
@@ -847,6 +860,8 @@ function AppShell() {
             </span>
           )}
         </button>
+        {!mobileNavigation.isCompact && <TitlebarThemeToggle />}
+        <BasicUiModeSwitch />
         <div id={MOBILE_THREAD_CONTROLS_ID} className="mobile-thread-controls-slot" />
         <div id={MOBILE_THREAD_ACTIONS_ID} className="mobile-thread-actions-slot" />
       </div>
@@ -862,7 +877,7 @@ function AppShell() {
         enabled={mobileNavigation.isCompact}
         open={!sidebarCollapsed}
         onClose={() => mobileNavigation.setDrawerOpen(false)}
-        shortcuts={<>
+        shortcuts={basicUi ? undefined : <>
           <button type="button" className="mobile-nav-notifications" onClick={() => {
             mobileNavigation.setDrawerOpen(false);
             useUi.getState().toggleNotificationsDrawer();
@@ -878,8 +893,9 @@ function AppShell() {
             <PlayCircle size={18} aria-hidden="true" /> Videos
           </button>
         </>}
-        headerStart={nav === 'settings' ? <MobileSettingsBack onNavigate={() => mobileNavigation.setDrawerOpen(false)} /> : undefined}
+        headerStart={!basicUi && nav === 'settings' ? <MobileSettingsBack onNavigate={() => mobileNavigation.setDrawerOpen(false)} /> : undefined}
       >
+      {basicUi ? <BasicConversationSidebar hidden={sidebarCollapsed} onNavigate={() => mobileNavigation.setDrawerOpen(false)} /> : <>
       <MobileAgentNavigation
         enabled={mobileNavigation.isCompact && shellLayout.rail !== 'settings' && shellLayout.rail !== 'extensions'}
         projectId={scopedProject?.id}
@@ -900,6 +916,7 @@ function AppShell() {
         <Sidebar railVariant={railVariant} />
       )}
       </MobileAgentNavigation>
+      </>}
       </MobileNavDrawer>
       <MobileShellReporter unread={unreadInbox} />
       {/* One persistent landmark. display:contents on .shell-main so route
@@ -907,10 +924,11 @@ function AppShell() {
           mounted (CSS-hidden) so the terminal portal always has its park
           anchor. TerminalSurface must stay mounted across nav — this landmark
           already does that; it must not sit beside the shell as a host node. */}
-      <main className="shell-main" inert={mobileNavigation.isCompact && mobileNavigation.drawerOpen}>
+      <main className="shell-main" inert={basicUnsupported || (mobileNavigation.isCompact && mobileNavigation.drawerOpen)}>
         <HashNavigationScroll />
         <AppRoutes suggestionsEnabled={suggestionsEnabled} />
       </main>
+      {basicUnsupported && <BasicUnsupportedDestination />}
       {/* The global Agents sidebar can open the shared launcher while no project
           workspace is mounted. Keep one host here for every non-project route;
           Workspace continues to own project-scoped launches — but only while
@@ -924,7 +942,7 @@ function AppShell() {
           onLaunched={(session, projectId) => stayOnAgentsBoard(session, projectId, navigate)}
         />
       )}
-      <SidebarTriggerOverlay
+      {!basicUi && <SidebarTriggerOverlay
         collapsed={overlayCollapsed}
         // Display the mode actually rendered (Settings/Plugins show rail expanded);
         // the click still cycles from the stored mode.
@@ -932,7 +950,7 @@ function AppShell() {
         onToggle={mobileNavigation.isCompact
           ? () => mobileNavigation.setDrawerOpen(!mobileNavigation.drawerOpen)
           : undefined}
-      />
+      />}
       {/* Headless, always-mounted module backgrounds. Runtime activation results
           retain valid background components, which mount here outside nav-conditional
           views so long-lived work keeps running when a panel is not selected. */}

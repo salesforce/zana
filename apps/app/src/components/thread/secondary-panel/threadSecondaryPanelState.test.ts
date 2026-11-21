@@ -584,3 +584,10 @@ describe('plugin tab state', () => {
     expect(parseSecondaryPanelState(notPlugin).tabs[0]!.tabState).toBeUndefined();
   });
 });
+it('retains a local preview refresh revision through restoration and ignores malformed revisions', () => {
+  const state = { ...emptySecondaryPanelState(), tabs: [{ id: 'html', kind: 'file-preview', title: 'Result', path: 'result.html', previewRevision: 2 }] };
+  expect(parseSecondaryPanelState(JSON.parse(JSON.stringify(state))).tabs[0]?.previewRevision).toBe(2);
+  for (const previewRevision of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1, '2', null]) {
+    expect(parseSecondaryPanelState({ ...state, tabs: [{ ...state.tabs[0], previewRevision }] }).tabs[0]?.previewRevision).toBeUndefined();
+  }
+});

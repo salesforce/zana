@@ -3,9 +3,10 @@ import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { SessionStats, TerminalSession } from '@zana-ai/zcc-domain/product';
 
-const layout = vi.hoisted(() => ({ compact: false }));
+const layout = vi.hoisted(() => ({ compact: false, basic: false }));
 const plugin = vi.hoisted(() => ({ props: [] as Array<{ active?: boolean; tabState?: unknown; onTabStateChange?: (state: unknown) => void }> }));
 vi.mock('../hooks/useCompactLayout.js', () => ({ useCompactLayout: () => layout.compact }));
+vi.mock('../lib/basic-ui.js', () => ({ useBasicUi: () => layout.basic }));
 
 vi.mock('./AgentDetailPanel.js', () => ({
   AgentDetailPanel: () => <div data-testid="agent-info-body">Status PID</div>
@@ -89,6 +90,7 @@ function installMemoryStorage(): void {
 describe('AgentSessionView', () => {
   afterEach(() => {
     layout.compact = false;
+    layout.basic = false;
     if (typeof localStorage !== 'undefined') localStorage.clear();
   });
   it.each([false, true])('shows the mobile fallback for the shared agent view (modal=%s)', (modal) => {
@@ -117,6 +119,19 @@ describe('AgentSessionView', () => {
       </PaneContextProvider>
     );
     expect(html).toContain(`data-browser-allowed="${allowed}"`);
+  });
+  it.each([false, true])('hides a retained CLI browser in Basic and restores its existing tab (modal=%s)', (modal) => {
+    installMemoryStorage();
+    const ownerId = modal ? 's1:modal' : 's1';
+    persistPanel(ownerId, { activeId: 'preview', tabs: [{ id: 'preview', kind: 'browser', title: 'Preview', url: 'http://localhost:3003/' }] });
+    const saved = localStorage.getItem(`zcc.secondaryPanel.${ownerId}`);
+    const markup = () => renderToStaticMarkup(<AgentSessionView session={session()} projectId="p1" projectName="demo" state="idle" terminalAnchorId="a" modal={modal} />);
+    expect(markup()).toContain('data-browser-allowed="true"');
+    layout.basic = true;
+    expect(markup()).toContain('data-browser-allowed="false"');
+    expect(localStorage.getItem(`zcc.secondaryPanel.${ownerId}`)).toBe(saved);
+    layout.basic = false;
+    expect(markup()).toContain('data-browser-allowed="true"');
   });
   it('keeps the secondary panel closed by default in the inspector modal', () => {
     const html = renderToStaticMarkup(

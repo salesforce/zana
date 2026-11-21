@@ -241,8 +241,10 @@ describe('ThreadCommandComposer submit path', () => {
     expect(source).not.toContain('Queue if active');
     expect(source).not.toContain('VoiceInputButton');
     const metaIdx = source.indexOf('thread-command-composer-meta');
-    expect(source.indexOf('<ComposerModePicker')).toBeLessThan(source.indexOf('<ModelReasoningPicker'));
-    expect(source.indexOf('<ModelReasoningPicker')).toBeLessThan(source.indexOf('<ReasoningEffortPicker'));
+    // The shared model node is defined once for both Basic and Advanced.
+    // Verify Advanced toolbar placement rather than JSX definition order.
+    expect(source.indexOf('<ComposerModePicker')).toBeLessThan(source.indexOf('model={modelPicker}'));
+    expect(source.indexOf('model={modelPicker}')).toBeLessThan(source.indexOf('<ReasoningEffortPicker'));
     expect(source.indexOf('<ReasoningEffortPicker')).toBeLessThan(metaIdx);
     expect(source).toContain('onSelectedProviderChange={threadId ? undefined : options.setProviderId}');
     expect(source).not.toContain('showLegacyAgent');

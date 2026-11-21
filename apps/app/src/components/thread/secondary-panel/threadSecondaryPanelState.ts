@@ -167,6 +167,9 @@ function parseTab(value: unknown): ClosableSecondaryTab | null {
     ...(typeof value.lineNumber === 'number' && value.lineNumber > 0
       ? { lineNumber: Math.floor(value.lineNumber) }
       : {}),
+    ...(typeof value.previewRevision === 'number' && Number.isSafeInteger(value.previewRevision) && value.previewRevision >= 0
+      ? { previewRevision: value.previewRevision }
+      : {}),
     ...('params' in value ? { params: parseJsonValue(value.params) } : {}),
     ...(value.kind === 'plugin' && value.tabState != null ? parseTabState(value.tabState) : {})
   };

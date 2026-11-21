@@ -17,6 +17,54 @@ afterEach(() => {
 });
 
 describe('ThreadSecondaryPanel chrome', () => {
+  it('keeps native content mounted across Basic switches and hides unsupported tool controls', () => {
+    const onOpenAdvanced = vi.fn();
+    const state = { ...openSecondaryPanel(emptySecondaryPanelState()), activeId: 'shell', tabs: [
+      { id: 'shell', kind: 'terminal' as const, title: 'Terminal', sessionId: 'pty' },
+      { id: 'doc', kind: 'file-preview' as const, title: 'Report', path: 'report.html' }
+    ] };
+    const props = { state, onSelectInfo: noop, onSelectDiff: noop, onNewTab: noop, onCloseTab: noop,
+      onActivateTab: noop, onToggleMaximized: noop, onHide: noop, onResize: noop, onOpenAdvanced };
+    const ui = (basic: boolean) => <ThreadSecondaryPanel {...props} basic={basic}><input aria-label="Retained tool" defaultValue="Draft" /></ThreadSecondaryPanel>;
+    const view = render(ui(false));
+    const input = view.getByRole('textbox');fireEvent.change(input, { target: { value: 'Unsent' } });
+    view.rerender(ui(true));
+    expect(screen.getByText('Available in Advanced')).toBeTruthy();
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(view.container.querySelector('input')).toBe(input);
+    expect(screen.queryByRole('button', { name: 'New tab' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open Terminal in Advanced' }));
+    expect(onOpenAdvanced).toHaveBeenCalledOnce();
+    view.rerender(ui(false));
+    expect(view.getByRole('textbox')).toBe(input);expect((input as HTMLInputElement).value).toBe('Unsent');
+    expect(view.getByRole('button', { name: 'New tab' })).toBeTruthy();
+    expect(state.activeId).toBe('shell');expect(state.tabs).toHaveLength(2);
+  });
+  it('retains saved bottom tools while Basic hides the dock and keeps previews available on compact screens', () => {
+    const dock = { side: 'bottom' as const, onMove: noop, onDragStart: noop, onDragEnd: noop, onDrop: noop, onDragOver: noop };
+    const state = { ...openSecondaryPanel(emptySecondaryPanelState()), activeId: 'doc', tabs: [{ id: 'doc', kind: 'file-preview' as const, title: 'Report', path: 'report.html' }] };
+    const props = { state, onSelectInfo: noop, onSelectDiff: noop, onNewTab: noop, onCloseTab: noop,
+      onActivateTab: noop, onToggleMaximized: noop, onHide: noop, onResize: noop };
+    const view = render(<ThreadSecondaryPanel {...props} basic dock={dock}>Retained result</ThreadSecondaryPanel>);
+    expect((view.getByTestId('thread-bottom-panel') as HTMLElement).hidden).toBe(true);
+    expect(view.container.textContent).toContain('Retained result');
+    layout.compact = true;
+    view.rerender(<ThreadSecondaryPanel {...props} basic>Retained result</ThreadSecondaryPanel>);
+    expect(screen.getByRole('button', { name: 'Report', exact: true })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'New tab' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Maximize panel' })).toBeTruthy();
+  });
+  it('marks Basic narrow results and handles Escape from chrome without intercepting result form input', () => {
+    const onHide = vi.fn();
+    render(<ThreadSecondaryPanel state={openSecondaryPanel(emptySecondaryPanelState())} basic basicCompact
+      onSelectInfo={noop} onSelectDiff={noop} onNewTab={noop} onCloseTab={noop} onActivateTab={noop}
+      onToggleMaximized={noop} onHide={onHide} onResize={noop}><textarea aria-label="Result notes" /></ThreadSecondaryPanel>);
+    expect(screen.getByTestId('thread-secondary-panel').getAttribute('data-basic-panel-compact')).toBe('true');
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Result notes' }), { key: 'Escape' });
+    expect(onHide).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Back to chat' }), { key: 'Escape' });
+    expect(onHide).toHaveBeenCalledOnce();
+  });
   it('passes bulk close to the lifecycle owner as one ordered group', () => {
     const onCloseTabs = vi.fn(), onCloseTab = vi.fn();
     const state = { ...openSecondaryPanel(emptySecondaryPanelState()), tabs: [

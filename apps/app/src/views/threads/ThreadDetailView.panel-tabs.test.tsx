@@ -2,18 +2,19 @@
 import { act,cleanup,fireEvent,render,screen,waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach,expect,it,vi } from 'vitest';
-const h=vi.hoisted(() => ({event:(_:any) => {},updated:(_:any) => {},reconnect:() => {},off:vi.fn(),get:vi.fn(),createTerminal:vi.fn(),addTab:vi.fn(),selectPin:vi.fn(),panelProps:null as any,bottomProps:null as any,diffProps:null as any,newTabProps:null as any,activateTab:vi.fn(),setTabState:vi.fn(),dockEnabled:false,timeline:vi.fn(),upsert:vi.fn(),state:{tabs:[] as any[],isOpen:true,isMaximized:false,activeId:'info' as string | null,widthPx:320}}));
+const h=vi.hoisted(() => ({event:(_:any) => {},updated:(_:any) => {},reconnect:() => {},off:vi.fn(),get:vi.fn(),createTerminal:vi.fn(),addTab:vi.fn(),selectPin:vi.fn(),panelProps:null as any,bottomProps:null as any,diffProps:null as any,newTabProps:null as any,browserProps:[] as any[],activateTab:vi.fn(),setTabState:vi.fn(),dockEnabled:false,basicCompact:false,timeline:vi.fn(),upsert:vi.fn(),state:{tabs:[] as any[],isOpen:true,isMaximized:false,activeId:'info' as string | null,widthPx:320}}));
 vi.mock('../../hooks/useHosts.js', () => ({ useHosts: () => [] }));
 vi.mock('../../lib/product-client.js',() => ({product:{environments:{status:vi.fn(async () => ({branchName:null})),pullRequest:vi.fn(async () => ({pullRequest:null}))},terminals:{create:h.createTerminal},threads:{get:h.get,timeline:h.timeline,onEvent:(fn:any) => {h.event=fn;return h.off;},onUpdated:(fn:any) => {h.updated=fn;return h.off;}}}}));
 vi.mock('../../lib/product-ws.js',() => ({subscribeProductReconnect:(fn:any) => {h.reconnect=fn;return h.off;}}));
 vi.mock('../../thread-store.js',async original => ({...await original<any>(),useThreads:Object.assign((pick:any) => pick({threads:[],upsert:h.upsert}),{getState:() => ({threads:[],upsert:h.upsert})})}));
 vi.mock('../../store.js',() => ({useData:(pick:any) => pick({projects:[],dockableThreadToolsEnabled:h.dockEnabled})}));
 vi.mock('../../hooks/useRouteState.js',() => ({useRouteState:() => ({threadId:'a',isProjectFocused:false})}));
+vi.mock('../../hooks/useBasicPanelLayout.js', () => ({useBasicPanelLayout: (_ref:any, basic:boolean) => basic && h.basicCompact}));
 vi.mock('../../hooks/useCompactLayout.js',() => ({useCompactLayout:() => false}));
 vi.mock('../../components/useMobileThreadTitleTarget.js',() => ({useMobileThreadTitleTarget:() => null,useMobileThreadActionsTarget:() => null,useMobileThreadControlsTarget:() => null}));
 vi.mock('../../components/thread/secondary-panel/useThreadSecondaryPanel.js',() => ({useThreadSecondaryPanel:() => ({state:h.state,open:() => {},addTab:h.addTab,selectPin:h.selectPin,activateTab:h.activateTab,patchTab:() => {},setTabState:h.setTabState})}));
 vi.mock('../../components/thread/secondary-panel/ThreadSecondaryPanel.js',() => ({ThreadSecondaryPanel:(props:any) => { if (props.dock?.side !== 'bottom') h.panelProps=props; else h.bottomProps=props; return <aside data-testid="secondary-panel">{props.children}</aside>; }}));
-vi.mock('../../components/thread/secondary-panel/BrowserTabDeck.js',() => ({BrowserTabDeck:() => null}));
+vi.mock('../../components/thread/secondary-panel/BrowserTabDeck.js',() => ({BrowserTabDeck:(props:any) => {h.browserProps.push(props);return null;}}));
 vi.mock('../../components/thread/secondary-panel/useInAppBrowserPanel.js',() => ({useInAppBrowserPanel:() => {}}));
 vi.mock('../../lib/use-desktop-browser-reveal.js',() => ({useDesktopBrowserReveal:() => {}}));
 vi.mock('../../components/thread/secondary-panel/useThreadOpenFileSignal.js',() => ({useThreadOpenFileSignal:() => {},dispatchThreadOpenFile:() => {}}));
@@ -39,7 +40,8 @@ vi.mock('../../components/thread/secondary-panel/ThreadPluginTab.js',() => ({Thr
 vi.mock('../../components/thread/secondary-panel/ThreadExplorerTab.js',() => ({ThreadExplorerTab:(props:any) => <div data-testid="tab-ThreadExplorerTab" data-props={JSON.stringify(props,(_k,v) => typeof v === 'function' ? undefined : v)}/>}));
 vi.mock('../../components/thread/secondary-panel/ThreadInboxTab.js',() => ({ThreadInboxTab:(props:any) => <div data-testid="tab-ThreadInboxTab" data-props={JSON.stringify(props,(_k,v) => typeof v === 'function' ? undefined : v)}/>}));
 import { ThreadDetail } from './ThreadDetailView.js';
-afterEach(() => {cleanup();vi.clearAllMocks();h.dockEnabled=false;h.bottomProps=null;localStorage.clear();});
+import { getBasicUiMode, setBasicUiMode } from '../../lib/basic-ui.js';
+afterEach(() => {cleanup();setBasicUiMode('advanced');vi.clearAllMocks();h.dockEnabled=false;h.basicCompact=false;h.bottomProps=null;h.browserProps=[];localStorage.clear();});
 
 const tabs = [
   { id: 't-new', kind: 'new-tab', title: 'New Tab' },
@@ -185,6 +187,87 @@ it('moves pinned views between panes and keeps independent selections without cl
   h.state = { ...h.state, activeId: newTab.id, tabs: [...h.state.tabs, newTab] };
   view.rerender(content());
   expect(h.bottomProps.state.activeId).toBe(newTab.id);
+});
+
+it('keeps the native composer and selected document mounted across Basic and Advanced', async () => {
+  h.state = { tabs, isOpen: true, isMaximized: false, activeId: 't-file', widthPx: 320 };
+  h.get.mockResolvedValue({ thread: { id: 'a', title: 'Document chat', status: 'idle', createdAt: 1 } });
+  h.timeline.mockResolvedValue({ rows: [], maxSeq: 0, status: 'idle' });
+  render(<MemoryRouter initialEntries={['/thread/a']}><ThreadDetail threadId="a"/></MemoryRouter>);
+  await screen.findByRole('heading', { name: 'Document chat' });
+  const composer = screen.getByTestId('composer-tier');
+  const document = screen.getByTestId('tab-ThreadFilePreviewTab');
+  const state = h.state;
+  act(() => setBasicUiMode('basic'));
+  expect(h.panelProps.basic).toBe(true);
+  expect(screen.getByTestId('composer-tier')).toBe(composer);
+  expect(screen.getByTestId('tab-ThreadFilePreviewTab')).toBe(document);
+  expect(h.panelProps.state).toBe(state);
+  act(() => h.panelProps.onOpenAdvanced());
+  expect(getBasicUiMode()).toBe('advanced');
+  expect(h.panelProps.basic).toBe(false);
+  expect(screen.getByTestId('composer-tier')).toBe(composer);
+  expect(screen.getByTestId('tab-ThreadFilePreviewTab')).toBe(document);
+  expect(h.setTabState).not.toHaveBeenCalled();
+  expect(h.activateTab).not.toHaveBeenCalled();
+});
+
+it('hides native browser views on retained unsupported routes in Basic and restores them in Advanced', async () => {
+  h.state = { tabs, isOpen: true, isMaximized: false, activeId: 't-browser', widthPx: 320 };
+  h.get.mockResolvedValue({ thread: { id: 'a', title: 'Browser chat', status: 'idle', createdAt: 1 } });
+  h.timeline.mockResolvedValue({ rows: [], maxSeq: 0, status: 'idle' });
+  render(<MemoryRouter initialEntries={['/settings']}><ThreadDetail threadId="a"/></MemoryRouter>);
+  await screen.findByRole('heading', { name: 'Browser chat' });
+  expect(h.browserProps.at(-1).canShowNativeBrowserView).toBe(true);
+  act(() => setBasicUiMode('basic'));
+  expect(h.browserProps.at(-1).canShowNativeBrowserView).toBe(false);
+  expect(h.state.activeId).toBe('t-browser');
+  act(() => setBasicUiMode('advanced'));
+  expect(h.browserProps.at(-1).canShowNativeBrowserView).toBe(true);
+});
+
+it('retains the saved bottom browser dock while only the right browser is visible in Basic', async () => {
+  h.dockEnabled = true;
+  h.state = { tabs, isOpen: true, isMaximized: false, activeId: 't-browser', widthPx: 320 };
+  h.get.mockResolvedValue({ thread: { id: 'a', title: 'Dock browser chat', status: 'idle', createdAt: 1 } });
+  h.timeline.mockResolvedValue({ rows: [], maxSeq: 0, status: 'idle' });
+  render(<MemoryRouter initialEntries={['/thread/a']}><ThreadDetail threadId="a"/></MemoryRouter>);
+  await screen.findByRole('heading', { name: 'Dock browser chat' });
+  act(() => h.panelProps.dock.onMove('t-browser'));
+  expect(h.bottomProps.state.activeId).toBe('t-browser');
+  expect(h.browserProps.at(-1).canShowNativeBrowserView).toBe(true);
+  act(() => setBasicUiMode('basic'));
+  expect(h.bottomProps.state.activeId).toBe('t-browser');
+  expect(h.bottomProps.basic).toBe(true);
+  expect(h.browserProps.at(-1).canShowNativeBrowserView).toBe(false);
+  act(() => setBasicUiMode('advanced'));
+  expect(h.bottomProps.state.activeId).toBe('t-browser');
+  expect(h.browserProps.at(-1).canShowNativeBrowserView).toBe(true);
+});
+
+it('makes a narrow Basic result exclusive and restores the same composer on return', async () => {
+  h.basicCompact = true;
+  h.state = { tabs, isOpen: true, isMaximized: false, activeId: 't-file', widthPx: 320 };
+  h.get.mockResolvedValue({ thread: { id: 'a', title: 'Narrow chat', status: 'idle', createdAt: 1 } });
+  h.timeline.mockResolvedValue({ rows: [], maxSeq: 0, status: 'idle' });
+  const ui = () => <MemoryRouter initialEntries={['/thread/a']}><ThreadDetail threadId="a"/></MemoryRouter>;
+  const view = render(ui());
+  await screen.findByRole('heading', { name: 'Narrow chat' });
+  const composer = screen.getByTestId('composer-tier');
+  const main = composer.closest<HTMLElement>('.thread-detail-main')!;
+  act(() => setBasicUiMode('basic'));
+  expect(h.panelProps.basicCompact).toBe(true);
+  expect(main.hidden).toBe(true);
+  expect(main.hasAttribute('inert')).toBe(true);
+  expect(screen.queryByRole('heading', { name: 'Narrow chat' })).toBeNull();
+  h.state = { ...h.state, isOpen: false };
+  view.rerender(ui());
+  expect(main.hidden).toBe(false);
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Show right panel' }));
+  expect(main.hasAttribute('inert')).toBe(false);
+  expect(screen.getByTestId('composer-tier')).toBe(composer);
+  act(() => setBasicUiMode('advanced'));
+  expect(screen.getByTestId('thread-detail').hasAttribute('data-basic-panel-compact')).toBe(false);
 });
 
 it('opens new-tab thread-storage matches as storage previews and records them as recents', async () => {
