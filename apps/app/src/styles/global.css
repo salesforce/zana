@@ -2427,6 +2427,7 @@ body.resizing-col webview {
 
 .list-filter:focus-within {
   border-color: var(--accent-blue);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-blue) 20%, transparent);
 }
 
 .list-filter-icon {

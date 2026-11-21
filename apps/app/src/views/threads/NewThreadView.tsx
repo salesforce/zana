@@ -6,6 +6,7 @@ import { AuroraGrid } from '@/components/AuroraGrid';
 import { HomeAgentComposer } from '@/components/HomeAgentComposer';
 import { PluginNewThreadActions } from '@/plugins/PluginNewThreadActions';
 import { composePromptSeedFrom } from '@/lib/compose-prompt-seed';
+import { useBasicUi } from '@/lib/basic-ui';
 import { NewChatPanelLayout } from './NewChatPanelLayout.js';
 import { useOptionalPaneContext } from '../thread-detail/PaneContext.js';
 
@@ -18,6 +19,7 @@ import { useOptionalPaneContext } from '../thread-detail/PaneContext.js';
  * and read-only.
  */
 export function NewThreadView({ project: projectProp }: { project?: Project } = {}) {
+  const basic = useBasicUi();
   const { projectId: routeProjectId } = useParams();
   const location = useLocation();
   const [search] = useSearchParams();
@@ -52,7 +54,7 @@ export function NewThreadView({ project: projectProp }: { project?: Project } = 
               onCreated={onCreated}
               onAgentCreated={onAgentCreated}
             />
-            <PluginNewThreadActions projectId={project?.id ?? null} />
+            <div className="basic-new-thread-actions" hidden={basic} inert={basic || undefined}><PluginNewThreadActions projectId={project?.id ?? null} /></div>
           </div>
         </section>
       )}

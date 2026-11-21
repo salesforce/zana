@@ -1,6 +1,8 @@
 import { test, expect, dismissConsentOverlays } from './fixtures/app.js';
 import { chmodSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { Page } from '@playwright/test';
+import { expectComposerSetting } from './fixtures/composer-settings.js';
 
 test.use({
   launchEnv: { ZCC_FAKE_PROVIDER: '1' },
@@ -43,6 +45,14 @@ for (const surface of ['home', 'dialog'] as const) {
   });
 }
 
+async function expectPermissionFor(window: Page, mode: string, label: string) {
+  if (mode === 'Modern') {
+    await expectComposerSetting(window, window, 'permission', label);
+  } else {
+    await expect(window.getByRole('button', { name: 'Permission mode', exact: true })).toContainText(label);
+  }
+}
+
 test('Composer settings default to Auto and persist a Full access opt-in for both agent composers', async ({ app }) => {
   const { window, home } = app;
   const binary = join(home, 'composer-claude');
@@ -60,7 +70,7 @@ test('Composer settings default to Auto and persist a Full access opt-in for bot
     await window.getByTestId('model-reasoning-picker-trigger').click();
     await window.getByTestId('model-reasoning-provider-claude-code').click();
     await window.getByTestId('model-reasoning-picker-trigger').click();
-    await expect(window.getByRole('button', { name: 'Permission mode', exact: true })).toContainText('Auto');
+    await expectPermissionFor(window, mode, 'Auto');
   }
   await window.getByRole('link', { name: 'Settings', exact: true }).click();
   await window.getByTestId('settings-nav-composer').click();
@@ -74,7 +84,7 @@ test('Composer settings default to Auto and persist a Full access opt-in for bot
   await window.getByTestId('nav-home').click();
   for (const mode of ['CLI Agent', 'Modern']) {
     await modes.getByRole('button', { name: mode, exact: true }).click();
-    await expect(window.getByRole('button', { name: 'Permission mode', exact: true })).toContainText('Full');
+    await expectPermissionFor(window, mode, 'Full');
   }
   await window.getByRole('link', { name: 'Settings', exact: true }).click();
   await window.getByTestId('settings-nav-composer').click();
@@ -85,6 +95,6 @@ test('Composer settings default to Auto and persist a Full access opt-in for bot
   await window.getByTestId('nav-home').click();
   for (const mode of ['Modern', 'CLI Agent']) {
     await modes.getByRole('button', { name: mode, exact: true }).click();
-    await expect(window.getByRole('button', { name: 'Permission mode', exact: true })).toContainText('Auto');
+    await expectPermissionFor(window, mode, 'Auto');
   }
 });

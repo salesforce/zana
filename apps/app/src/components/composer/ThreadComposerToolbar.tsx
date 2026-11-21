@@ -13,7 +13,8 @@ export function ThreadComposerToolbar({
   primaryActions,
   secondaryActions,
   stop,
-  send
+  send,
+  settings
 }: {
   mode: ReactNode;
   model: ReactNode;
@@ -25,6 +26,12 @@ export function ThreadComposerToolbar({
   secondaryActions: ReactNode;
   stop: ReactNode;
   send: ReactNode;
+  /**
+   * Desktop model-first layout: the model owns the row and one settings pill
+   * holds mode, thinking, permissions and send mode. Omit on compact layouts,
+   * which keep the options disclosure.
+   */
+  settings?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
   const id = useId();
@@ -56,7 +63,11 @@ export function ThreadComposerToolbar({
         toggle.current?.focus();
       }}
     >
-      <div className="thread-command-footer-start">
+      {settings ? (
+        <div className="thread-command-footer-start">
+          <div className="thread-command-model">{model}</div>
+        </div>
+      ) : <div className="thread-command-footer-start">
         <div
           ref={options}
           id={`${id}-options`}
@@ -83,7 +94,7 @@ export function ThreadComposerToolbar({
         </div>
         <div className="thread-command-model">{model}</div>
         {permission && <div className="thread-command-permission">{permission}</div>}
-      </div>
+      </div>}
       <div className="thread-command-footer-end">
         {primaryActions ? (
           <div className="thread-command-primary-actions">
@@ -93,7 +104,7 @@ export function ThreadComposerToolbar({
         <div id={`${id}-actions`} className="thread-command-secondary-actions">
           {secondaryActions}
         </div>
-        <button
+        {settings ? <div className="thread-command-settings">{settings}</div> : <button
           ref={toggle}
           type="button"
           className="ui-command-icon-button thread-command-options-toggle"
@@ -103,7 +114,7 @@ export function ThreadComposerToolbar({
           onClick={() => setExpanded((current) => !current)}
         >
           <SlidersHorizontal size={20} aria-hidden="true" />
-        </button>
+        </button>}
         {stop}
         {send}
       </div>

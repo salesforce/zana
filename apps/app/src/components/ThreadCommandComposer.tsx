@@ -39,6 +39,10 @@ import { ComposerModePicker } from './thread/pickers/ComposerModePicker.js';
 import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
 import { ReasoningEffortPicker } from './thread/pickers/ReasoningEffortPicker.js';
 import { ComposerSendModePicker } from './thread/pickers/ComposerSendModePicker.js';
+import { COMPOSER_SEND_MODE_OPTIONS } from './thread/pickers/composer-send-mode-options.js';
+import { ComposerSettingsPill, type SettingsGroup } from './composer/ComposerSettingsPill.js';
+import { ComposerModeIcon } from './thread/pickers/composer-mode-icon.js';
+import { isComposerHiddenReasoningLevel, REASONING_LABELS } from './thread/pickers/reasoning-labels.js';
 import { permissionModeOptionsFor } from './thread/pickers/permission-mode-options.js';
 import { useThreadPermissionMode } from './thread/pickers/useThreadPermissionMode.js';
 import {
@@ -86,6 +90,8 @@ import { ComposerRunSettings, composerRunSummary } from './composer/ComposerRunS
 import { useMobileComposerExpansion } from './composer/useMobileComposerExpansion.js';
 import { COMPOSER_TERMINAL_COMMAND, parseComposerTerminalCommand, submitComposerTerminalCommand } from './composer/composer-terminal-command.js';
 import '../styles/mobile-composer.css';
+import { setBasicUiMode, useBasicUi } from '../lib/basic-ui.js';
+import { BasicProjectPicker } from './basic/BasicProjectPicker.js';
 
 export type ThreadSendMode = 'start' | 'auto' | 'steer' | 'queue-if-active' | 'steer-if-active';
 
@@ -177,6 +183,7 @@ function ThreadComposerContent({
   onPlanActionPending,
   onPlanActionHandled
 }: ThreadCommandComposerProps) {
+  const basic = useBasicUi();
   const capturePageContext = usePluginAssistantPageContext();
   const session = useComposerSession(threadId ? JSON.stringify(['thread', threadId]) : undefined);
   const compact = useCompactLayout();
@@ -184,6 +191,7 @@ function ThreadComposerContent({
   const route = useRouteState();
   const projects = useData((s) => s.projects);
   const loadProjects = useData((s) => s.loadProjects);
+  const rememberLastProjectId = useData((s) => s.rememberLastProjectId);
   const lastProjectId = useData((s) => s.lastProjectId);
   const selectedProjectId = useUi((s) => s.selectedProjectId);
   const upsertThread = useThreads((s) => s.upsert);
@@ -365,6 +373,10 @@ function ThreadComposerContent({
     hostConnected: hosts.find((row) => row.id === providerCliHostId)?.status === 'connected'
   });
   const providerCliBlocked = !threadId && providerCli.blocked;
+  // Keep advanced draft settings intact. A Basic project picker cannot express
+  // an alternate scratch machine or a managed working folder, so require an
+  // explicit return to Advanced before launching that saved configuration.
+  const basicLaunchNeedsAdvanced = basic && !threadId && (workspace.kind !== 'unmanaged' || foreignHost);
   const canSend = Boolean(
     threadId
     || ((pinnedProject || projectId) && resolvedProviderId && options.rosterReady)
@@ -383,6 +395,7 @@ function ThreadComposerContent({
     && !composerModeEntriesForProvider.some(entry => entry.id === composerMode)
     ? 'The saved composer mode is unavailable. Choose an available mode before sending.'
     : null;
+  const basicSetupNeeded = basic && (hostSendBlocked || providerCliBlocked || Boolean(options.selectionError) || Boolean(permissionSelectionError) || Boolean(composerModeError));
 
   useEffect(() => {
     hydratedRequestedRef.current = null;
@@ -626,6 +639,7 @@ function ThreadComposerContent({
     return () => { currentVoiceOwner.current = null; };
   }, [voiceOwner]);
   const sendRecording = () => {
+    if (basicLaunchNeedsAdvanced) return;
     if (composerModeError) { setError(composerModeError); return; }
     if (permissionSelectionError) { setError(permissionSelectionError); return; }
     if (options.selectionError) { setError(options.selectionError); return; }
@@ -674,6 +688,7 @@ function ThreadComposerContent({
 
   const submit = useCallback(async (opts?: { modifierEnter?: boolean }) => {
     if (busy) return;
+    if (basicLaunchNeedsAdvanced) return;
     if (composerModeError) { setError(composerModeError); return; }
     if (permissionSelectionError) { setError(permissionSelectionError); return; }
     if (options.selectionError) { setError(options.selectionError); return; }
@@ -682,6 +697,7 @@ function ThreadComposerContent({
     const pageContext = capturePageContext?.();
     const revision = field.captureRevision();
     if (parseComposerTerminalCommand(serialized.text)) {
+      if (basic) { setError('Open Advanced to run terminal commands.'); return; }
       setBusy(true);
       setError(null);
       try {
@@ -823,6 +839,8 @@ function ThreadComposerContent({
     permissionSelectionError,
     composerModeError,
     busy,
+    basic,
+    basicLaunchNeedsAdvanced,
     sendBlocked,
     sendBlockedHint,
     hostSendBlocked,
@@ -868,7 +886,7 @@ function ThreadComposerContent({
     field.handleChromeKeyDown(event);
   };
 
-  const terminalIntent = onRunTerminal ? parseComposerTerminalCommand(field.text) : null;
+  const terminalIntent = !basic && onRunTerminal ? parseComposerTerminalCommand(field.text) : null;
   const sendLabel = busy ? 'Sending' : terminalIntent ? 'Run terminal' : submitMode.kind === 'queue'
     ? composerSendMode === 'steer' ? 'Steer' : 'Queue'
     : 'Send';
@@ -887,7 +905,7 @@ function ThreadComposerContent({
       }
       aria-busy={busy}
       data-testid="thread-command-send"
-      disabled={busy || (!terminalIntent && (sendBlocked || hostSendBlocked || providerCliBlocked || followUpSubmitBlocked || Boolean(options.selectionError) || Boolean(permissionSelectionError) || !canSend))}
+      disabled={busy || basicLaunchNeedsAdvanced || basicSetupNeeded || (!terminalIntent && (sendBlocked || hostSendBlocked || providerCliBlocked || followUpSubmitBlocked || Boolean(options.selectionError) || Boolean(permissionSelectionError) || !canSend))}
       onMouseDown={(event) => event.preventDefault()}
       onClick={() => void submit()}
     >
@@ -915,8 +933,75 @@ function ThreadComposerContent({
       minWidth={280}
     />
   ) : null;
+  const showPermission = permissionOptions.length > 1 || (permissionOptions.length > 0 && Boolean(permissionSelectionError));
+  const visibleReasoning = options.reasoningOptions.filter((row) => !isComposerHiddenReasoningLevel(row.value));
+  const reasoningValue = isComposerHiddenReasoningLevel(options.reasoningLevel)
+    ? (visibleReasoning.at(-1)?.value ?? options.reasoningLevel)
+    : options.reasoningLevel;
+  const settingsGroups: SettingsGroup[] = [
+    {
+      id: 'mode',
+      label: 'Composer mode',
+      title: 'Mode',
+      value: selectedComposerMode?.id ?? composerMode,
+      choices: composerModeEntriesForProvider.map((entry) => ({
+        value: entry.id,
+        label: entry.label,
+        icon: <ComposerModeIcon mode={entry.kind === 'plan' ? 'plan' : 'agent'} />
+      })),
+      onChange: setComposerWorkMode,
+      hint: 'Shift+Tab cycles modes',
+      hideWhenSingle: true,
+      ...(nativeAgentDiscoveryEnabled ? { action: { label: 'Refresh roles', onClick: () => options.refreshAcpModeOptions() } } : {})
+    },
+    {
+      id: 'reasoning',
+      label: 'Thinking effort',
+      title: 'Thinking',
+      value: reasoningValue,
+      choices: visibleReasoning.map((row) => ({ value: row.value, label: REASONING_LABELS[row.value] ?? row.label })),
+      onChange: (value) => options.setReasoningLevel(value as typeof options.reasoningLevel)
+    },
+    {
+      id: 'permission',
+      label: 'Permission mode',
+      title: 'Permissions',
+      value: permissionMode,
+      choices: showPermission ? permissionOptions.map((row) => ({
+        value: row.value,
+        label: row.compactLabel,
+        description: row.description,
+        ...(row.tone ? { tone: row.tone } : {})
+      })) : [],
+      onChange: (value) => setPermissionMode(value as typeof permissionMode)
+    },
+    {
+      id: 'send-mode',
+      label: 'Send mode',
+      title: 'Enter while running',
+      value: composerSendMode,
+      choices: COMPOSER_SEND_MODE_OPTIONS,
+      onChange: (value) => { void setComposerSendMode(value as typeof composerSendMode); },
+      hint: COMPOSER_SEND_MODE_OPTIONS.find((row) => row.value === composerSendMode)?.description
+    }
+  ];
+  const modelPicker = (
+    <ModelReasoningPicker
+      providerOptions={options.providerOptions}
+      selectedProviderId={resolvedProviderId ?? options.providerId}
+      onSelectedProviderChange={threadId ? undefined : options.setProviderId}
+      modelValue={options.model}
+      modelOptions={options.modelOptions}
+      moreModelOptions={options.moreModelOptions}
+      modelIsLoading={options.modelIsLoading}
+      modelLoadError={options.modelLoadError}
+      modelLoadErrorDetail={options.modelLoadErrorDetail}
+      onReloadModels={options.refreshModels}
+      onModelChange={options.setModel}
+    />
+  );
   const runMachine = hosts.find((host) => host.id === (selectedProject?.remote ? selectedProject.hostId : hostId));
-  const runSettings = !threadId && !fixedRunTarget ? (
+  const runSettings = !basic && !threadId && !fixedRunTarget ? (
     <ComposerRunSettings summary={composerRunSummary({
       machineName: runMachine?.name,
       remote: Boolean(selectedProject?.remote),
@@ -944,7 +1029,7 @@ function ThreadComposerContent({
       insertContextReference={field.insertContextReference}
       focus={field.focus}
       providerId={resolvedProviderId}
-      allowCreatePlugin={!pluginPanel}
+      allowCreatePlugin={!basic && !pluginPanel}
     >
     <div
       ref={composerRoot}
@@ -963,7 +1048,7 @@ function ThreadComposerContent({
           <Minimize2 size={18} aria-hidden="true" /> Done
         </button>
       </header>}
-      {!threadId && providerCli.status && providerCliBlocked ? (
+      {!basic && !threadId && providerCli.status && providerCliBlocked ? (
         <ProviderCliBanner
           displayName={providerCli.status.displayName}
           installed={providerCli.status.installed}
@@ -985,7 +1070,7 @@ function ThreadComposerContent({
         </div>
       ) : null}
       {options.selectionError && !error ? <p className="thread-command-error" role="status">{options.selectionError}</p> : null}
-      {!threadId && !lockedProviderId ? <ThreadDefaultHint
+      {!basic && !threadId && !lockedProviderId ? <ThreadDefaultHint
         providerId={options.providerId}
         defaultProviderId={threadDefault.providerId}
         source={threadDefault.source}
@@ -1036,7 +1121,7 @@ function ThreadComposerContent({
               stream={voice.stream}
               onConfirm={() => voice.stop()}
               onSend={sendRecording}
-              sendDisabled={busy || sendBlocked || hostSendBlocked || providerCliBlocked}
+              sendDisabled={busy || basicLaunchNeedsAdvanced || sendBlocked || hostSendBlocked || providerCliBlocked}
               onCancel={voice.cancel}
             />
           </ComposerToolbar>
@@ -1055,21 +1140,7 @@ function ThreadComposerContent({
                 onRefresh={nativeAgentDiscoveryEnabled ? options.refreshAcpModeOptions : undefined}
               />
             }
-            model={
-              <ModelReasoningPicker
-                providerOptions={options.providerOptions}
-                selectedProviderId={resolvedProviderId ?? options.providerId}
-                onSelectedProviderChange={threadId ? undefined : options.setProviderId}
-                modelValue={options.model}
-                modelOptions={options.modelOptions}
-                moreModelOptions={options.moreModelOptions}
-                modelIsLoading={options.modelIsLoading}
-                modelLoadError={options.modelLoadError}
-                modelLoadErrorDetail={options.modelLoadErrorDetail}
-                onReloadModels={options.refreshModels}
-                onModelChange={options.setModel}
-              />
-            }
+            model={modelPicker}
             reasoning={
               <ReasoningEffortPicker
                 value={options.reasoningLevel}
@@ -1142,6 +1213,7 @@ function ThreadComposerContent({
               )
             }
             send={sendButton}
+            settings={compact ? undefined : <ComposerSettingsPill groups={settingsGroups} />}
           />
         )}
 
@@ -1150,7 +1222,7 @@ function ThreadComposerContent({
         <div className="thread-command-composer-meta-start">
           {threadId ? (
             <>
-              {!fixedRunTarget && !compact && <span data-testid="thread-env-label" className="thread-command-env"><ComposerProjectPicker
+              {!basic && !fixedRunTarget && !compact && <span data-testid="thread-env-label" className="thread-command-env"><ComposerProjectPicker
                 projects={projects}
                 value={currentThread?.projectId ?? projectId}
                 hostId={currentThread?.hostId ?? catalogHostId}
@@ -1159,7 +1231,7 @@ function ThreadComposerContent({
                   state: { initialPrompt: field.text, focusPrompt: true }
                 })}
               /></span>}
-              <ComposerHostActionChip
+              {!basic && <ComposerHostActionChip
                 action={hostAction}
                 busyLabel={hostBusy}
                 pairingCommand={pairingCommand}
@@ -1167,13 +1239,20 @@ function ThreadComposerContent({
                 onCopyPairing={pairingCommand
                   ? () => void copyText(pairingCommand)
                   : undefined}
-              />
+              />}
             </>
           ) : (
             <>
               {/* A fixed run target still names its project, read-only, so the
                   operator sees where a side-panel conversation will run. */}
-              {(
+              {basic ? <BasicProjectPicker projects={projects} value={projectId} pinned={pinnedProject} onChange={next => {
+                if (next.id === projectId) return;
+                pickedLocationProjectRef.current = next.id;
+                setError(null);
+                setHostId(defaultHostId(hosts, next));
+                setProjectId(next.id);
+                rememberLastProjectId?.(next.id);
+              }} /> : (
               <div className="thread-command-project"><ComposerProjectPicker
                 projects={projects}
                 value={projectId}
@@ -1189,7 +1268,7 @@ function ThreadComposerContent({
               /></div>
               )}
               {!compact && runSettings}
-              <ComposerHostActionChip
+              {!basic && <ComposerHostActionChip
                 action={hostAction}
                 busyLabel={hostBusy}
                 pairingCommand={pairingCommand}
@@ -1197,20 +1276,23 @@ function ThreadComposerContent({
                 onCopyPairing={pairingCommand
                   ? () => void copyText(pairingCommand)
                   : undefined}
-              />
+              />}
             </>
           )}
         </div>
-        <div className="thread-command-composer-meta-end">
-          {!compact && permissionPicker}
+        <div className="thread-command-composer-meta-end" hidden={basic} inert={basic || undefined} style={basic ? { display: 'none' } : undefined}>
           <PluginComposerMeta
             scope={threadId ? { kind: 'thread', threadId } : { kind: 'new-thread', projectId: projectId ?? null }}
           />
         </div>
       </div>
-      <PluginComposerAdvanced
+      {basicLaunchNeedsAdvanced || basicSetupNeeded ? <div className="basic-composer-setup" role="status">
+        <p>{basicLaunchNeedsAdvanced ? 'This draft uses a custom working location. Continue in Advanced to keep its settings.' : 'This chat needs setup in Advanced before you can send.'}</p>
+        <button type="button" className="settings-btn" onClick={() => setBasicUiMode('advanced')}>Continue in Advanced</button>
+      </div> : null}
+      <div hidden={basic} inert={basic || undefined} style={basic ? { display: 'none' } : { display: 'contents' }}><PluginComposerAdvanced
         scope={threadId ? { kind: 'thread', threadId } : { kind: 'new-thread', projectId: projectId ?? null }}
-      />
+      /></div>
     </div>
     </PluginComposerChrome>
     {sshPick && (

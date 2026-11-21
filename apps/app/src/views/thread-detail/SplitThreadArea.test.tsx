@@ -6,7 +6,7 @@ import { startTransition, Suspense, useLayoutEffect } from 'react';
 import { MemoryRouter, useLocation, useNavigate, type NavigateFunction } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const viewport = vi.hoisted(() => ({ compact: false }));
+const viewport = vi.hoisted(() => ({ compact: false, basic: false }));
 const archived = vi.hoisted(() => new Set<(threadId: string) => void>());
 vi.mock('../../thread-store.js', () => ({
   onThreadArchived: (listener: (threadId: string) => void) => {
@@ -15,6 +15,7 @@ vi.mock('../../thread-store.js', () => ({
   }
 }));
 vi.mock('../../hooks/useIsCompactViewport.js', () => ({ useIsCompactViewport: () => viewport.compact }));
+vi.mock('../../lib/basic-ui.js', () => ({ useBasicUi: () => viewport.basic }));
 
 vi.mock('../home/HomeView.js', () => ({ HomeView: () => <div data-testid="home-view"><input aria-label="Draft" defaultValue="" /></div> }));
 vi.mock('../inbox/InboxView.js', () => ({ InboxView: () => <div data-testid="inbox-view" /> }));
@@ -83,6 +84,7 @@ import { SplitThreadArea } from './SplitThreadArea.js';
 
 function resetSplitWorkspace(): void {
   viewport.compact = false;
+  viewport.basic = false;
   useSplitWorkspace.setState({
     layout: null,
     maximizedPaneId: null,
@@ -466,6 +468,33 @@ describe('split shell interaction', () => {
     expect(screen.getByTestId('split-workspace').querySelector('.split-pane-slot:not([hidden]) [data-split-pane-id]')?.getAttribute('data-split-pane-id')).toBe('pane-2');
   });
 
+  it('shows only the focused conversation in Basic without changing the saved split or maximized pane', () => {
+    const layout = splitPane(createSinglePaneLayout({ kind: 'thread', projectId: null, threadId: 'a' }), 'pane-1', 'right', { kind: 'thread', projectId: null, threadId: 'b' });
+    useSplitWorkspace.setState({ layout, maximizedPaneId: 'pane-2' });
+    const ui = () => <MemoryRouter initialEntries={['/threads/b']}><SplitThreadArea routeContent={{ kind: 'thread', projectId: null, threadId: 'b' }} /></MemoryRouter>;
+    const view = render(ui());
+    const before = useSplitWorkspace.getState();
+    const first = screen.getAllByTestId('thread-detail').find(element => element.dataset.thread === 'a')!;
+    const second = screen.getAllByTestId('thread-detail').find(element => element.dataset.thread === 'b')!;
+    viewport.basic = true;
+    view.rerender(ui());
+    expect(screen.getByTestId('split-workspace').dataset.split).toBe('false');
+    expect(first.closest('[hidden]')).not.toBeNull();
+    expect(second.closest('[hidden]')).toBeNull();
+    expect(first.dataset.timelineEnabled).toBe('false');
+    expect(second.dataset.timelineEnabled).toBe('true');
+    expect(paneCommandsAvailable()).toBe(false);
+    expect(useSplitWorkspace.getState().layout).toBe(before.layout);
+    expect(useSplitWorkspace.getState().maximizedPaneId).toBe(before.maximizedPaneId);
+    viewport.basic = false;
+    view.rerender(ui());
+    expect(screen.getByTestId('split-workspace').dataset.split).toBe('true');
+    expect(screen.getAllByTestId('thread-detail')).toContain(first);
+    expect(screen.getAllByTestId('thread-detail')).toContain(second);
+    expect(useSplitWorkspace.getState().layout).toBe(before.layout);
+    expect(useSplitWorkspace.getState().maximizedPaneId).toBe('pane-2');
+  });
+
   it('tracks keyboard focus and supports focus, cycle, maximize and close shortcuts', () => {
     vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
     renderPair();
@@ -609,6 +638,15 @@ describe('pane editing state', () => {
     viewport.compact = false;
     view.rerender(<MemoryRouter><RoutedArea /></MemoryRouter>);
     expectDraft();
+    const advancedLayout = useSplitWorkspace.getState().layout;
+    viewport.basic = true;
+    view.rerender(<MemoryRouter><RoutedArea /></MemoryRouter>);
+    expectDraft();
+    expect(useSplitWorkspace.getState().layout).toBe(advancedLayout);
+    viewport.basic = false;
+    view.rerender(<MemoryRouter><RoutedArea /></MemoryRouter>);
+    expectDraft();
+    expect(useSplitWorkspace.getState().layout).toBe(advancedLayout);
     const layout = useSplitWorkspace.getState().layout!;
     const other = layout.focusedPaneId === 'pane-1' ? 'pane-2' : 'pane-1';
     act(() => useSplitWorkspace.getState().updateLayout((layout) => removePane(layout!, other)));
@@ -619,6 +657,38 @@ describe('pane editing state', () => {
 
 describe('pane slot ownership', () => {
   afterEach(() => { cleanup(); resetSplitWorkspace(); });
+  it('atomically reparents connected hosts across Basic layout changes and releases closed pane hosts', async () => {
+    const original = Object.getOwnPropertyDescriptor(Element.prototype, 'moveBefore');
+    const move = vi.fn(function (this: Element, node: Node) {
+      expect(node.isConnected).toBe(true);
+      expect(this.isConnected).toBe(true);
+      this.appendChild(node);
+    });
+    Object.defineProperty(Element.prototype, 'moveBefore', { configurable: true, value: move });
+    try {
+      const layout = splitPane(createSinglePaneLayout({ kind: 'home' }), 'pane-1', 'right', { kind: 'thread', projectId: null, threadId: 'b' });
+      useSplitWorkspace.setState({ layout });
+      const ui = () => <MemoryRouter initialEntries={['/threads/b']}><SplitThreadArea routeContent={{ kind: 'thread', projectId: null, threadId: 'b' }} /></MemoryRouter>;
+      const view = render(ui());
+      const hosts = [...view.container.querySelectorAll('.split-pane-host')];
+      viewport.basic = true;
+      view.rerender(ui());
+      await Promise.resolve();
+      expect([...view.container.querySelectorAll('.split-pane-host')]).toEqual(hosts);
+      viewport.basic = false;
+      view.rerender(ui());
+      await Promise.resolve();
+      expect([...view.container.querySelectorAll('.split-pane-host')]).toEqual(hosts);
+      expect(move).toHaveBeenCalled();
+      view.unmount();
+      await Promise.resolve();
+      expect(document.querySelector('[data-connected-dom-parking] .split-pane-host')).toBeNull();
+    } finally {
+      cleanup();
+      if (original) Object.defineProperty(Element.prototype, 'moveBefore', original);
+      else Reflect.deleteProperty(Element.prototype, 'moveBefore');
+    }
+  });
   it('replaces the old host when navigation reuses a slot', () => {
     const { rerender, container } = render(<MemoryRouter><SplitThreadArea routeContent={{ kind: 'home' }} /></MemoryRouter>);
     rerender(<MemoryRouter><SplitThreadArea routeContent={{ kind: 'inbox' }} /></MemoryRouter>);

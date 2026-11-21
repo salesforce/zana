@@ -167,3 +167,14 @@ it('collapses when writing resumes, without reacting to other fields or retainin
   unmount();
   expect(removed).toHaveBeenCalledTimes(2);
 });
+
+it('puts the model on the row and the settings pill beside send in model-first mode', () => {
+  render(toolbar({ settings: <button>Settings pill</button>, permission: <button>Full access</button> }));
+  const model = screen.getByRole('button', { name: 'Model' });
+  expect(model.closest('.thread-command-footer-start')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Settings pill' }).closest('.thread-command-footer-end')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Composer options' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Agent' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Thinking effort' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Full access' })).toBeNull();
+});

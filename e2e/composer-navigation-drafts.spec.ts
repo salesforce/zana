@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures/app.js';
+import { expectComposerSetting, pickComposerSetting } from './fixtures/composer-settings.js';
 
 test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
 
@@ -24,18 +25,16 @@ test('chat drafts and send configuration survive thread navigation, hiding and s
   await input.fill('Unsent message A');
   const imagePicker = page.getByTestId('thread-detail').locator('input[type="file"]');
   await imagePicker.setInputFiles({ name: 'draft.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64') });
-  const sendMode = page.getByTestId('composer-send-mode-picker');
-  await sendMode.click();
-  await page.getByRole('option', { name: /^Steer / }).click();
+  const detail = page.getByTestId('thread-detail');
+  await pickComposerSetting(page, detail, 'send-mode', 'Steer');
   await navigate(`/threads/${ids[1]}`);
   await expect(input).toHaveText('');
   await input.fill('Unsent message B');
-  await sendMode.click();
-  await page.getByRole('option', { name: /^Queue / }).click();
+  await pickComposerSetting(page, detail, 'send-mode', 'Queue');
   await navigate(`/threads/${ids[0]}`);
   await expect(input).toHaveText('Unsent message A');
   await expect(page.getByTestId('thread-detail').getByRole('button', { name: 'Remove draft.png' })).toBeVisible();
-  await expect(sendMode).toContainText('Steer');
+  await expectComposerSetting(page, detail, 'send-mode', 'Steer');
   await page.evaluate(() => { dispatchEvent(new Event('blur')); dispatchEvent(new Event('focus')); });
   await expect(input).toHaveText('Unsent message A');
   await navigate('/inbox');
@@ -47,7 +46,7 @@ test('chat drafts and send configuration survive thread navigation, hiding and s
   await expect(input).toHaveText('Unsent message B');
   await navigate(`/threads/${ids[0]}`);
   await expect(input).toHaveText('');
-  await expect(sendMode).toContainText('Steer');
+  await expectComposerSetting(page, detail, 'send-mode', 'Steer');
 });
 
 test('home draft survives leaving and returning without appearing in the new-thread surface', async ({ app }) => {

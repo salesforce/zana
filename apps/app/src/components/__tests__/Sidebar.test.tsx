@@ -430,6 +430,8 @@ describe('Sidebar shortcut tooltips', () => {
   beforeEach(() => {
     h.state.sidebarCollapsed = false;
     stubKeybindingStorage();
+    // These assertions exercise Ctrl labels independently of the host platform.
+    vi.stubGlobal('navigator', { platform: 'Linux x86_64' });
   });
   afterEach(() => vi.unstubAllGlobals());
 
