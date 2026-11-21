@@ -2,7 +2,7 @@
 export function documentSearchRanges(root: HTMLElement, query: string, cap = 1000): Range[] {
   if (!query || query.length > 500) return [];
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
-    acceptNode: node => node instanceof Element && node.matches('button, script, style, [aria-hidden="true"], [data-document-search-skip]') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
+    acceptNode: node => node instanceof Element && node.matches('button, script, style, [hidden], [aria-hidden="true"], [data-document-search-skip]') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
   });
   let text = '';
   const nodes: { node: Text; start: number }[] = [];

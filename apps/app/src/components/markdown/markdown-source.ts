@@ -1,3 +1,4 @@
+import { parse as parseYaml } from 'yaml';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
@@ -14,7 +15,7 @@ interface MarkdownNode {
 }
 
 const parser = unified().use(remarkParse).use(remarkGfm).use(remarkMath);
-const supported = new Set(['paragraph', 'heading', 'text', 'emphasis', 'strong', 'delete', 'inlineCode', 'break', 'link', 'list', 'listItem', 'blockquote', 'code', 'thematicBreak', 'table', 'tableRow', 'tableCell']);
+const supported = new Set(['paragraph', 'heading', 'text', 'emphasis', 'strong', 'delete', 'inlineCode', 'break', 'link', 'list', 'listItem', 'blockquote', 'code', 'thematicBreak', 'table', 'tableRow', 'tableCell', 'image', 'imageReference', 'linkReference']);
 
 /** Offsets always refer to the original string, including BOM and CRLF. */
 export function markdownBody(source: string): { body: string; offset: number } {
@@ -22,7 +23,14 @@ export function markdownBody(source: string): { body: string; offset: number } {
   const text = source.slice(bom);
   // Scan delimiters without normalizing newlines: the renderer helper only
   // recognizes LF, while editing must keep CRLF offsets and metadata intact.
-  const header = /^---[ \t]*\r?\n(?:[\s\S]*?\r?\n)?(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.exec(text);
+  let header = /^---[ \t]*\r?\n([\s\S]*?)(?:^---|^\.\.\.)[ \t]*(?:\r?\n|$)/m.exec(text);
+  if (header?.index !== 0) header = null;
+  if (header) {
+    try {
+      const metadata: unknown = parseYaml(header[1]!, { maxAliasCount: 20 });
+      if (metadata !== null && (typeof metadata !== 'object' || Array.isArray(metadata))) header = null;
+    } catch { header = null; }
+  }
   const offset = bom + (header?.[0].length ?? 0);
   return { body: source.slice(offset), offset };
 }
@@ -33,17 +41,17 @@ function treeFor(source: string): { root: MarkdownNode; offset: number } {
 }
 
 function canEdit(node: MarkdownNode): boolean {
-  return supported.has(node.type) && !(node.type === 'code' && (node.lang === 'mermaid' || node.meta)) && !node.align?.some(Boolean) && (node.children?.every(canEdit) ?? true);
+  return supported.has(node.type) && !(node.type === 'code' && (node.lang === 'mermaid' || node.meta)) && (node.children?.every(canEdit) ?? true);
 }
 
-export interface MarkdownBlock { start: number; end: number; source: string; editable: boolean }
+export interface MarkdownBlock { start: number; end: number; source: string; editable: boolean; kind: string }
 
 export function markdownBlocks(source: string): MarkdownBlock[] {
   const { root, offset } = treeFor(source);
   return (root.children ?? []).flatMap(node => {
     const start = node.position?.start.offset;
     const end = node.position?.end.offset;
-    return start === undefined || end === undefined ? [] : [{ start: offset + start, end: offset + end, source: source.slice(offset + start, offset + end), editable: canEdit(node) }];
+    return start === undefined || end === undefined ? [] : [{ start: offset + start, end: offset + end, source: source.slice(offset + start, offset + end), editable: canEdit(node), kind: node.type }];
   });
 }
 
@@ -67,11 +75,4 @@ export function toggleMarkdownTask(source: string, bodyStart: number, checked: b
   const task = markdownTasks(source).get(bodyStart);
   if (!task || source[task.offset] !== task.marker) return source;
   return source.slice(0, task.offset) + (checked ? 'x' : ' ') + source.slice(task.offset + 1);
-}
-
-/** A stale editor may never splice into a different block. */
-export function replaceMarkdownBlock(source: string, block: MarkdownBlock, replacement: string): string | null {
-  if (source.slice(block.start, block.end) !== block.source) return null;
-  const newline = block.source.includes('\r\n') || source.includes('\r\n') ? '\r\n' : '\n';
-  return source.slice(0, block.start) + replacement.replace(/\r?\n/g, newline) + source.slice(block.end);
 }

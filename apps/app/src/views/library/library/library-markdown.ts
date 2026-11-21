@@ -5,6 +5,7 @@ import StarterKit from '@tiptap/starter-kit';
 import { TableKit } from '@tiptap/extension-table';
 import TaskItem from '@tiptap/extension-task-item';
 import TaskList from '@tiptap/extension-task-list';
+import { MarkdownImage, MarkdownSource } from '../../../components/markdown/markdown-editor-nodes.js';
 import { parseFrontMatter } from '@zana-ai/zcc-extension-sdk/helpers';
 
 /**
@@ -59,6 +60,8 @@ export function libraryMarkdownExtensions(placeholder = 'Start writing…') {
       link: { openOnClick: false, autolink: true },
       trailingNode: false
     }),
+    MarkdownImage,
+    MarkdownSource,
     TaskList,
     TaskItem.configure({ nested: true }),
     TableKit.configure({

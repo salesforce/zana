@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect } from './fixtures/app.js';
 
@@ -12,7 +12,9 @@ test('a Docs card opens inside its thread inspector when the URL has no thread',
   const { window, home } = app;
   const projectPath = join(home, 'docs-inspector-project');
   mkdirSync(join(projectPath, '.zcc', 'library'), { recursive: true });
-  writeFileSync(join(projectPath, '.zcc', 'library', 'inspector.md'), '# Inspector document\n\nOwned by the visible conversation.');
+  const original = '---\ntitle: \"Keep  exactly\"\n---\n\n# Inspector document\n\nOwned by the visible conversation.\n\nSecond paragraph.\n\n<!-- preserve me -->\n';
+  const file = join(projectPath, '.zcc', 'library', 'inspector.md');
+  writeFileSync(file, original);
   const threadId = await window.evaluate(async (path) => {
     const project = await window.cc.projects.add(path);
     if (!project.ok) throw new Error(project.message);
@@ -45,6 +47,10 @@ test('a Docs card opens inside its thread inspector when the URL has no thread',
   const panel = modal.locator('.docs-document-panel');
   await expect(panel).toBeVisible();
   await expect(panel).toContainText('Owned by the visible conversation.');
+  const editor = panel.getByRole('textbox', { name: 'Document content' });
+  await expect(editor).toContainText('Second paragraph.');
+  await editor.locator('h1').fill('Updated inspector');
+  await expect.poll(() => readFileSync(file, 'utf8')).toBe(original.replace('# Inspector document', '# Updated inspector'));
   expect(new URL(window.url()).pathname).toBe('/agents');
   await expect(window.locator('.library-panel')).toHaveCount(0);
 });

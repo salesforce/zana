@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { markdownBlocks, markdownBody, markdownTasks, replaceMarkdownBlock, toggleMarkdownTask } from './markdown-source.js';
+import { markdownBlocks, markdownBody, markdownTasks, toggleMarkdownTask } from './markdown-source.js';
 import { recallMarkdownDraft, rememberMarkdownDraft } from './markdown-drafts.js';
 
 describe('source-preserving Markdown edits', () => {
@@ -26,23 +26,21 @@ describe('source-preserving Markdown edits', () => {
     });
     expect(toggleMarkdownTask(source, -1, true)).toBe(source);
   });
-  it('splices a changed block and preserves all untouched bytes and CRLF', () => {
-    const block = markdownBlocks(source)[0]!;
-    const next = replaceMarkdownBlock(source, block, '# New\n\nMore');
-    expect(next).toBe(source.slice(0, block.start) + '# New\r\n\r\nMore' + source.slice(block.end));
-    expect(replaceMarkdownBlock('changed' + source, block, 'oops')).toBeNull();
-    expect(replaceMarkdownBlock('hello', markdownBlocks('hello')[0]!, 'world')).toBe('world');
-  });
   it('keeps unsupported syntax opaque instead of round-tripping it', () => {
-    for (const input of ['[reference][id]\n\n[id]: /keep "title"', '<!-- comment -->', '```mermaid\ngraph TD; A-->B\n```', 'With $x^2$ math', '![image](asset.png)']) {
+    for (const input of ['<!-- comment -->', '```mermaid\ngraph TD; A-->B\n```', 'With $x^2$ math']) {
       expect(markdownBlocks(input).every(block => !block.editable)).toBe(true);
     }
+    expect(markdownBlocks('![image](asset.png)')[0]?.editable).toBe(true);
     expect(markdownBlocks('# Heading\n\n**Bold**\n\n- [ ] Task\n\n| a | b |\n| - | - |\n| 1 | 2 |').every(block => block.editable)).toBe(true);
     expect(markdownBody('plain')).toEqual({ body: 'plain', offset: 0 });
     expect(markdownBody('---\r\n---\r\nBody')).toEqual({ body: 'Body', offset: 10 });
     expect(markdownBody('---\nkey: value\n...\nBody').body).toBe('Body');
     expect(markdownBody('---\nnot metadata').body).toBe('---\nnot metadata');
     expect(markdownBlocks('')).toEqual([]);
+    for (const content of ['---\nOrdinary prose\n---\n', '---\n- one\n- two\n---\n', '---\ntitle: [invalid\n---\n', '# Intro\n---\ntitle: text\n---\n']) {
+      expect(markdownBody(content)).toEqual({ body: content, offset: 0 });
+    }
+    expect(markdownBody('---\nnull\n---\nBody').body).toBe('Body');
   });
 });
 
