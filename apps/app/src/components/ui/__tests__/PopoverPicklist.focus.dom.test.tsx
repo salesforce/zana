@@ -57,3 +57,19 @@ it('refocuses the search input on reopen and returns focus to the trigger on clo
   fireEvent.click(trigger);
   expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Search…' }));
 });
+
+it('keeps the menu anchored when the surrounding panel scrolls or the viewport resizes', () => {
+  render(<div data-testid="pane"><PopoverPicklist ariaLabel="Project" value="beta" options={options} onChange={vi.fn()} /></div>);
+  const trigger = screen.getByRole('button', {name: 'Project'});
+  const rect = (top: number) => ({ top, bottom: top + 30, left: 50, right: 250, width: 200, height: 30 }) as DOMRect;
+  const bounds = vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue(rect(150));
+  fireEvent.click(trigger);
+  const menu = screen.getByRole('listbox');
+  expect(menu.style.top).toBe('184px');
+  bounds.mockReturnValue(rect(90));
+  fireEvent.scroll(screen.getByTestId('pane'));
+  expect(menu.style.top).toBe('124px');
+  bounds.mockReturnValue(rect(window.innerHeight - 40));
+  fireEvent.resize(window);
+  expect(menu.style.bottom).toBe('44px');
+});

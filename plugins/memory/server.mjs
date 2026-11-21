@@ -48,6 +48,13 @@ export default function plugin(zcc) {
   db.migrate(MEMORY_SCHEMA);
   const store = new MemoryStore(db);
 
+  zcc.rpc.method('listTagged', (input) => {
+    const [tag] = validateTags([input?.tag ?? '']);
+    const offset = input?.offset ?? 0;
+    if (!tag || typeof input.projectId !== 'string' || !input.projectId.trim()) throw new Error('tag and projectId are required');
+    if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('invalid offset');
+    return store.listTagged(tag, input.projectId, offset);
+  });
   zcc.rpc.method('listMemories', () => ({ memories: store.listAll() }));
   zcc.rpc.method('updateMemory', (input) => {
     const record = input && typeof input === 'object' ? input : {};

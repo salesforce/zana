@@ -1,0 +1,26 @@
+{
+  "name": "@zcc-ext/bots",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Persistent bots: one main thread with a personality, scheduled routines, memory and hidden background jobs.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "scripts": {
+    "build": "node --import tsx ../../packages/plugin-build/scripts/build-app.mjs ."
+  },
+  "zcc": {
+    "name": "Bots",
+    "description": "Persistent bots: one main thread with a personality, scheduled routines, memory and hidden background jobs.",
+    "branding": {
+      "icon": "Bot"
+    },
+    "server": "./server.ts",
+    "app": "./app.tsx"
+  },
+  "devDependencies": {
+    "@zana-ai/zcc-ui": "workspace:*"
+  }
+}

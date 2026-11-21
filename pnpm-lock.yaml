@@ -1345,6 +1345,12 @@ importers:
 
   plugins/automations: {}
 
+  plugins/bots:
+    devDependencies:
+      '@zana-ai/zcc-ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
+
   plugins/browser-automation:
     dependencies:
       zod:
