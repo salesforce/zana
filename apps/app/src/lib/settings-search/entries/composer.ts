@@ -20,7 +20,7 @@ export const entries: readonly SettingsSearchEntry[] = [
     section: 'composer',
     anchor: 'launch-surfaces',
     label: 'CLI Agent',
-    help: 'PTY coding-CLI session. Shown first in the launch switcher.',
+    help: 'Start a coding agent in a terminal.',
     keywords: ['pty', 'terminal agent', 'launch switcher'],
     kind: 'setting',
     value: (s) => onOff(s.config.composerShowCliAgent, true)
@@ -30,7 +30,7 @@ export const entries: readonly SettingsSearchEntry[] = [
     section: 'composer',
     anchor: 'launch-surfaces',
     label: 'Modern',
-    help: 'HTTP conversation timeline.',
+    help: 'Start a conversation in the chat view.',
     keywords: ['thread', 'timeline', 'chat', 'launch switcher'],
     kind: 'setting',
     value: (s) => onOff(s.config.composerShowModern, true)
@@ -40,7 +40,7 @@ export const entries: readonly SettingsSearchEntry[] = [
     section: 'composer',
     anchor: 'launch-surfaces',
     label: 'Squad',
-    help: 'Show durable Squad mode.',
+    help: 'Launch a group of agents.',
     keywords: ['team', 'multi-agent', 'launch switcher'],
     kind: 'setting',
     value: (s) => onOff(s.config.composerShowAutonomousTeam, true)
@@ -49,10 +49,22 @@ export const entries: readonly SettingsSearchEntry[] = [
     id: 'composer.composer-intro',
     section: 'composer',
     anchor: 'composer',
-    label: 'Composer',
-    help: 'Composer and markdown behavior for new and running agents.',
+    label: 'New chat defaults',
+    help: 'Choose a harness, model, permissions and send behavior.',
     keywords: ['prompt box'],
     kind: 'subsection'
+  },
+  {
+    id: 'composer.thread-harness', section: 'composer', anchor: 'composer', label: 'Default for threads',
+    help: 'Used for new threads unless a project chooses another harness.', keywords: ['provider', 'agent', 'harness'], kind: 'setting'
+  },
+  {
+    id: 'composer.model', section: 'composer', anchor: 'composer', label: 'Model',
+    help: 'Remembered for this harness on this device.', keywords: ['default model'], kind: 'setting'
+  },
+  {
+    id: 'composer.effort', section: 'composer', anchor: 'composer', label: 'Thinking effort',
+    keywords: ['reasoning', 'model'], kind: 'setting'
   },
   {
     id: 'composer.default-permissions',
@@ -66,9 +78,12 @@ export const entries: readonly SettingsSearchEntry[] = [
     value: (s) => PERMISSIONS[s.config.defaultThreadPermissionMode ?? ''] ?? 'Keep existing defaults'
   },
   {
+    id: 'composer.editing', section: 'composer', anchor: 'composer-editing', label: 'Writing and navigation', kind: 'subsection'
+  },
+  {
     id: 'composer.navigate-on-create',
     section: 'composer',
-    anchor: 'composer',
+    anchor: 'composer-editing',
     label: 'Navigate to agents on creation',
     help: 'Open a new agent as soon as you send the first message. Off keeps you on the current page.',
     keywords: ['open agent', 'jump', 'redirect'],
@@ -77,7 +92,7 @@ export const entries: readonly SettingsSearchEntry[] = [
   {
     id: 'composer.markdown-in-prompt',
     section: 'composer',
-    anchor: 'composer',
+    anchor: 'composer-editing',
     label: 'Markdown in the prompt box',
     help: 'Allow headings, lists, and emphasis in the composer. Mentions still work either way.',
     keywords: ['formatting', 'bold', 'italic', 'mentions'],
@@ -107,7 +122,7 @@ export const entries: readonly SettingsSearchEntry[] = [
   {
     id: 'composer.rewrite-localhost',
     section: 'composer',
-    anchor: 'composer',
+    anchor: 'composer-editing',
     label: 'Rewrite localhost links',
     help: 'Replace localhost and 127.0.0.1 in agent markdown links with this window’s hostname so a remote viewer reaches the machine they’re looking at.',
     keywords: ['127.0.0.1', 'remote viewer', 'links', 'hostname'],
@@ -116,7 +131,7 @@ export const entries: readonly SettingsSearchEntry[] = [
   {
     id: 'composer.reload-slash-commands',
     section: 'composer',
-    anchor: 'composer',
+    anchor: 'composer-editing',
     label: 'Reload slash commands',
     help: 'Refresh the / menu from installed plugin skills. On desktop this also re-deploys bundled skills and project MCP configs. Reload',
     keywords: ['refresh', 'skills', 'mcp', 'commands menu'],

@@ -32,14 +32,23 @@ test('thread defaults are explicit, independent, persistent, and never silently 
   await expect(input).toHaveText('Keep this draft and harness');
   await expect(home.getByTestId('thread-default-hint')).toContainText('This thread only');
 
-  // The Settings action persists only the thread default through the real server.
-  await navigate('/settings/harness');
+  // Both settings pages share the same default while CLI agents keep their own.
+  await navigate('/settings/composer');
+  await expect(page.getByRole('heading', { name: 'New chat defaults' })).toBeVisible();
   await page.getByRole('button', { name: 'Default for threads', exact: true }).click();
   await page.getByRole('option', { name: 'Fake', exact: true }).click();
   await expect.poll(async () => (await page.evaluate(() => window.cc.config.get())).defaultThreadProviderId).toBe('fake');
   expect((await page.evaluate(() => window.cc.config.get())).defaultHarness).toBe('claude');
+  const defaults = page.getByRole('region', { name: 'New chat defaults' });
+  await expect(defaults.getByRole('button', { name: 'Model', exact: true })).toContainText('Fake Model');
+  await defaults.screenshot({ path: info.outputPath('composer-defaults.png') });
+  await navigate('/settings/harness');
   await page.reload();
   await expect(page.getByRole('button', { name: 'Default for threads', exact: true })).toContainText('Fake');
+  const row = page.locator('[data-provider-id="fake"]');
+  await row.getByRole('button', { name: 'Configure Fake' }).click();
+  await expect(row.getByRole('button', { name: 'Model', exact: true })).toContainText('Fake Model');
+  await row.screenshot({ path: info.outputPath('harness-details.png') });
   await page.screenshot({ path: info.outputPath('thread-and-cli-defaults.png') });
 
   await navigate('/');

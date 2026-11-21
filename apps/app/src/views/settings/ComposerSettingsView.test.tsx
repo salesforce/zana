@@ -6,6 +6,8 @@ import { COMPOSER_LAUNCH_SURFACES_REV, type AppConfig } from '@zana-ai/zcc-domai
 import { ComposerSettingsView } from './ComposerSettingsView.js';
 import { FULL_ACCESS_BY_DEFAULT_KEY } from '../../lib/composer-permission-preference.js';
 
+vi.mock('@/hooks/useRegisteredThreadProviders', () => ({ useRegisteredThreadProviders: () => ({ providers: [{ id: 'test-provider', displayName: 'Demo harness' }], loading: false }) }));
+vi.mock('@/hooks/useHosts', () => ({ useHosts: () => [], primaryHost: () => undefined }));
 beforeEach(() => localStorage.clear());
 afterEach(cleanup);
 
@@ -57,6 +59,36 @@ describe('ComposerSettingsView', () => {
     expect(onUpdate).toHaveBeenCalledOnce();
   });
 
+  it('saves the selected thread harness and send behavior from New chat defaults', async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    render(<ComposerSettingsView config={{ ...config, steerActiveThreadOnEnter: true }} onUpdate={update} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Default for threads' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Demo harness' }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith({ defaultThreadProviderId: 'test-provider' }));
+    const send = screen.getByRole('button', { name: 'Send mode' });
+    expect(send.textContent).toContain('Steer');
+    fireEvent.click(send);
+    fireEvent.click(screen.getByRole('option', { name: 'Queue' }));
+    expect(update).toHaveBeenCalledWith({ composerSendMode: 'queue-if-active', steerActiveThreadOnEnter: false });
+  });
+
+  it('keeps the preferred launch mode available when a surface is disabled and refreshes commands', async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    render(<ComposerSettingsView config={config} onUpdate={update} />);
+    const launch = screen.getByRole('button', { name: 'Default launch mode' });
+    fireEvent.click(launch);
+    fireEvent.click(screen.getByRole('option', { name: 'CLI Agent' }));
+    fireEvent.click(screen.getByRole('switch', { name: 'CLI Agent' }));
+    expect(launch.textContent).toContain('Modern');
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ composerShowCliAgent: false }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Modern' }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Squad' }));
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ composerShowModern: false }));
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ composerShowAutonomousTeam: false }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
+    await screen.findByText('Refreshed the / menu from installed plugins');
+  });
+
   it('lists launch surfaces with CLI Agent first and one Team toggle', () => {
     const html = renderToStaticMarkup(
       <ComposerSettingsView config={config} onUpdate={vi.fn().mockResolvedValue(undefined)} />
@@ -67,7 +99,7 @@ describe('ComposerSettingsView', () => {
     expect(html).toContain('aria-label="CLI Agent"');
     expect(html).toContain('aria-label="Modern"');
     expect(html).toContain('aria-label="Squad"');
-    expect(html).toContain('Show durable Squad mode.');
+    expect(html).toContain('Launch a group of agents.');
     expect(html).not.toContain('when at least one team exists');
     expect(html).not.toContain('aria-label="Autonomous Team"');
     expect(html).not.toContain('aria-label="Job Team"');

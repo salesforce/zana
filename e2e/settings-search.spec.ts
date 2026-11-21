@@ -119,7 +119,7 @@ test('a term that lives only in a collapsed Advanced block expands it', async ({
   await captureElectronScreenshot(app.electron, win, testInfo.outputPath('04-advanced-expanded.png'));
 });
 
-test('a Harness page field selects the right tab', async ({ app }, testInfo) => {
+test('a Harness field opens the matching harness', async ({ app }, testInfo) => {
   const win = app.window;
   const search = await openSettings(win);
   await search.fill('append system prompt');
@@ -127,7 +127,7 @@ test('a Harness page field selects the right tab', async ({ app }, testInfo) => 
   await expect(hit).toBeVisible();
   await hit.click();
   await expect(win).toHaveURL(/\/settings\/harness/);
-  await expect(win.getByTestId('harness-legacy-pane')).toBeVisible();
+  await expect(win.getByRole('button', { name: 'Configure Claude Code' })).toHaveAttribute('aria-expanded', 'true');
   await inView(win, '[data-settings-target="harness.claude.append-system-prompt"]');
   await captureElectronScreenshot(app.electron, win, testInfo.outputPath('05-harness-tab.png'));
 });

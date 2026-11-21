@@ -5,15 +5,15 @@ import { settingsNavGroups } from '@/lib/settings-nav-search';
 import { SETTINGS_GROUPS, SETTINGS_SECTIONS, SETTINGS_SUBSECTIONS } from '@/views/settings/SettingsView';
 
 describe('Settings subsection navigation', () => {
-  it('lists Installed harnesses, Model lists, then Modern and CLI Agent', () => {
+  it('leads with a single harness inventory', () => {
     expect(SETTINGS_SECTIONS.find((section) => section.id === 'harness')).toMatchObject({
       label: 'AI Harness'
     });
     expect(SETTINGS_SUBSECTIONS.harness?.slice(0, 4)).toEqual([
-      { id: 'harness-status', label: 'Installed harnesses' },
+      { id: 'harness-registered', label: 'Your AI harnesses' },
+      { id: 'harness-defaults', label: 'Defaults' },
       { id: 'harness-models', label: 'Model lists' },
-      { id: 'harness-thread', label: 'Modern' },
-      { id: 'harness-legacy', label: 'CLI Agent' }
+      { id: 'harness-environment', label: 'API keys and environment' }
     ]);
   });
 
