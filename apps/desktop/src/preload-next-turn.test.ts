@@ -26,6 +26,15 @@ it('exposes Send now through the authorized UI-send IPC channel', async () => {
   expect(electron.invoke).toHaveBeenCalledExactlyOnceWith(IPC.uiSend, 'thread/one', 'item two');
 });
 
+it('requires the scoped product client for Markdown instead of exposing a filesystem IPC fallback', async () => {
+  await import('./preload.js');
+  const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
+  electron.invoke.mockClear();
+  await expect(api.threads.readMarkdown('thread', 'README.md')).rejects.toThrow('Thread Markdown requires the product client');
+  await expect(api.threads.writeMarkdown('thread', 'README.md', 'draft', 'revision')).rejects.toThrow('Thread Markdown requires the product client');
+  expect(electron.invoke).not.toHaveBeenCalled();
+});
+
 it('exposes memo counters through the dedicated usage IPC channel', async () => {
   await import('./preload.js');
   const api = electron.exposeInMainWorld.mock.calls.find(([name]) => name === 'cc')?.[1];
