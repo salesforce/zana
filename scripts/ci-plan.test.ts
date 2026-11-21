@@ -97,13 +97,13 @@ it('plans only populated Electron shards with no install and agrees with actual 
 it('writes explicit outputs, handles initial push bases and propagates planning failures', () => {
   const io = { execute: vi.fn().mockReturnValue('docs/help.md\0'), append: vi.fn(), log: vi.fn() };
   expect(runPlan({ GITHUB_OUTPUT: '/outputs' }, io).preview).toBe(false);
-  expect(io.execute.mock.calls[0][1]).toContain('HEAD^');
+  expect(io.execute.mock.calls[0][1]).toContain('HEAD^...HEAD');
   expect(io.append).toHaveBeenCalledWith('/outputs', 'preview=false\n');
   expect(io.append).toHaveBeenCalledWith('/outputs', 'e2e_matrix=[1]\n');
   runPlan({ CI_BASE_SHA: '0000', CI_FORCE_PREVIEW: 'true' }, io);
   expect(io.append).toHaveBeenCalledWith(undefined, 'preview=true\n');
   runPlan({ CI_BASE_SHA: 'base' }, io);
-  expect(io.execute.mock.calls.at(-1)![1]).toContain('base');
+  expect(io.execute.mock.calls.at(-1)![1]).toContain('base...HEAD');
   io.execute.mockImplementation(() => { throw new Error('bad base'); });
   expect(() => runPlan({}, io)).toThrow('bad base');
 });
