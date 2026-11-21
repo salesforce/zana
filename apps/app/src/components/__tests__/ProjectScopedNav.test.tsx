@@ -428,7 +428,10 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
 
 
 describe('ProjectScopedNav shortcut tooltips', () => {
-  beforeEach(() => stubKeybindingStorage());
+  beforeEach(() => {
+    stubKeybindingStorage();
+    vi.stubGlobal('navigator', { platform: 'Linux' });
+  });
   afterEach(() => vi.unstubAllGlobals());
 
   it.each(['focus', 'window'] as const)('adds shortcuts to New Chat, Explorer and Settings in the %s rail', (variant) => {
