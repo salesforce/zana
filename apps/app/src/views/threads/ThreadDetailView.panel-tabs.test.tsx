@@ -2,7 +2,7 @@
 import { act,cleanup,fireEvent,render,screen,waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach,expect,it,vi } from 'vitest';
-const h=vi.hoisted(() => ({event:(_:any) => {},updated:(_:any) => {},reconnect:() => {},off:vi.fn(),get:vi.fn(),createTerminal:vi.fn(),addTab:vi.fn(),selectPin:vi.fn(),panelProps:null as any,bottomProps:null as any,diffProps:null as any,activateTab:vi.fn(),setTabState:vi.fn(),dockEnabled:false,timeline:vi.fn(),upsert:vi.fn(),state:{tabs:[] as any[],isOpen:true,isMaximized:false,activeId:'info' as string | null,widthPx:320}}));
+const h=vi.hoisted(() => ({event:(_:any) => {},updated:(_:any) => {},reconnect:() => {},off:vi.fn(),get:vi.fn(),createTerminal:vi.fn(),addTab:vi.fn(),selectPin:vi.fn(),panelProps:null as any,bottomProps:null as any,diffProps:null as any,newTabProps:null as any,activateTab:vi.fn(),setTabState:vi.fn(),dockEnabled:false,timeline:vi.fn(),upsert:vi.fn(),state:{tabs:[] as any[],isOpen:true,isMaximized:false,activeId:'info' as string | null,widthPx:320}}));
 vi.mock('../../hooks/useHosts.js', () => ({ useHosts: () => [] }));
 vi.mock('../../lib/product-client.js',() => ({product:{environments:{status:vi.fn(async () => ({branchName:null})),pullRequest:vi.fn(async () => ({pullRequest:null}))},terminals:{create:h.createTerminal},threads:{get:h.get,timeline:h.timeline,onEvent:(fn:any) => {h.event=fn;return h.off;},onUpdated:(fn:any) => {h.updated=fn;return h.off;}}}}));
 vi.mock('../../lib/product-ws.js',() => ({subscribeProductReconnect:(fn:any) => {h.reconnect=fn;return h.off;}}));
@@ -32,7 +32,7 @@ vi.mock('../../plugins/PluginThreadHeaderActions.js',() => ({PluginThreadHeaderA
 vi.mock('../../plugins/thread-panel-owner.js',() => ({ThreadPanelOwnerProvider:({children}:any) => children}));
 vi.mock('../../components/thread/secondary-panel/ThreadInfoContent.js',() => ({ThreadInfoContent:(props:any) => <div data-testid="tab-ThreadInfoContent" data-props={JSON.stringify(props,(_k,v) => typeof v === 'function' ? undefined : v)}/>}));
 vi.mock('../../components/thread/ThreadDiffPanel.js',() => ({ThreadDiffPanel:(props:any) => {h.diffProps=props;return <div data-testid="tab-ThreadDiffPanel" data-props={JSON.stringify(props,(_k,v) => typeof v === 'function' ? undefined : v)}/>;}}));
-vi.mock('../../components/thread/secondary-panel/ThreadNewTabPage.js',() => ({ThreadNewTabPage:(props:any) => <div data-testid="tab-ThreadNewTabPage" data-props={JSON.stringify(props,(_k,v) => typeof v === 'function' ? undefined : v)}/>}));
+vi.mock('../../components/thread/secondary-panel/ThreadNewTabPage.js',() => ({ThreadNewTabPage:(props:any) => {h.newTabProps=props;return <div data-testid="tab-ThreadNewTabPage" data-props={JSON.stringify(props,(_k,v) => typeof v === 'function' ? undefined : v)}/>;}}));
 vi.mock('../../components/thread/secondary-panel/ThreadFilePreviewTab.js',() => ({ThreadFilePreviewTab:(props:any) => <div data-testid="tab-ThreadFilePreviewTab" data-props={JSON.stringify(props,(_k,v) => typeof v === 'function' ? undefined : v)}/>}));
 vi.mock('../../components/thread/secondary-panel/ThreadTerminalTab.js',() => ({ThreadTerminalTab:(props:any) => <div data-testid="tab-ThreadTerminalTab" data-props={JSON.stringify(props,(_k,v) => typeof v === 'function' ? undefined : v)}/>}));
 vi.mock('../../components/thread/secondary-panel/ThreadPluginTab.js',() => ({ThreadPluginTab:(props:any) => <div data-testid="tab-ThreadPluginTab" data-props={JSON.stringify(props,(_k,v) => typeof v === 'function' ? undefined : v)} onClick={() => props.onTabStateChange({ place: 3 })}/>}));
@@ -185,4 +185,16 @@ it('moves pinned views between panes and keeps independent selections without cl
   h.state = { ...h.state, activeId: newTab.id, tabs: [...h.state.tabs, newTab] };
   view.rerender(content());
   expect(h.bottomProps.state.activeId).toBe(newTab.id);
+});
+
+it('opens new-tab thread-storage matches as storage previews and records them as recents', async () => {
+  h.get.mockResolvedValue({ thread: { id: 'a', title: 'Storage thread', status: 'idle', createdAt: 1 } });
+  h.timeline.mockResolvedValue({ rows: [], maxSeq: 0, status: 'idle' });
+  h.state = { tabs: [{ id: 't-new', kind: 'new-tab', title: 'New Tab' }], isOpen: true, isMaximized: false, activeId: 't-new', widthPx: 320 };
+  render(<MemoryRouter><ThreadDetail threadId="a"/></MemoryRouter>);
+  await waitFor(() => expect(h.newTabProps?.onOpenStorageFile).toBeTypeOf('function'));
+  act(() => h.newTabProps.onOpenStorageFile('out/report.html', 'report.html'));
+  expect(h.addTab).toHaveBeenLastCalledWith({ kind: 'storage-preview', title: 'report.html', path: 'out/report.html' });
+  expect(localStorage.length).toBeGreaterThan(0);
+  expect(Object.values({ ...localStorage }).join('')).toContain('out/report.html');
 });
