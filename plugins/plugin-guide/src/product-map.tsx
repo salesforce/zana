@@ -13,6 +13,7 @@ import {
   annotationChipCounterScale,
   annotationNeighbors,
   CHIP_COUNTER_SCALE_PROPERTY,
+  FIXTURE_AUTHORED_WIDTH,
   panCarets,
   spatialFixtureScale,
   SURFACE_NUMBERS
@@ -32,7 +33,7 @@ import {
 } from './wireframes.js';
 
 export { annotationNeighbors, panCarets, spatialFixtureScale, SURFACE_NUMBERS } from './annotation.js';
-export { MAX_FIXTURE_SCALE } from './annotation.js';
+export { FIXTURE_AUTHORED_WIDTH, MAX_FIXTURE_SCALE } from './annotation.js';
 
 function SlideContent({ group }: { group: SurfaceGroup }): ReactNode {
   switch (group.id) {
@@ -61,7 +62,6 @@ function SpatialFixture({ children }: { children: ReactNode }): ReactNode {
   const [geometry, setGeometry] = useState({
     scale: 1,
     height: null as number | null,
-    width: null as number | null,
     offsetX: 0
   });
 
@@ -71,7 +71,9 @@ function SpatialFixture({ children }: { children: ReactNode }): ReactNode {
     if (!frame || !fixture) return;
     const viewport = frame.closest<HTMLElement>('[data-guide-stage-viewport]');
     const measure = () => {
-      const authoredWidth = fixture.scrollWidth;
+      // The fixture is always laid out at its authored width, so columns never
+      // reflow; only the uniform scale changes with the available space.
+      const authoredWidth = FIXTURE_AUTHORED_WIDTH;
       const authoredHeight = fixture.scrollHeight;
       const flowCard = frame.closest('section')?.querySelector<HTMLElement>('[data-guide-card-flow]');
       const cardFootprint = flowCard
@@ -84,17 +86,14 @@ function SpatialFixture({ children }: { children: ReactNode }): ReactNode {
           8
         : undefined;
       const scale = spatialFixtureScale(frame.clientWidth, authoredWidth, availableHeight, authoredHeight);
-      const scaled = Math.abs(scale - 1) >= 0.0001;
-      const height = scaled ? authoredHeight * scale : null;
-      const width = scaled ? authoredWidth : null;
-      const offsetX = scaled ? (frame.clientWidth - authoredWidth) / 2 : 0;
+      const height = authoredHeight > 0 ? authoredHeight * scale : null;
+      const offsetX = frame.clientWidth > 0 ? (frame.clientWidth - authoredWidth) / 2 : 0;
       setGeometry((current) =>
         Math.abs(current.scale - scale) < 0.0001 &&
         current.height === height &&
-        current.width === width &&
         Math.abs(current.offsetX - offsetX) < 0.5
           ? current
-          : { scale, height, width, offsetX }
+          : { scale, height, offsetX }
       );
     };
     measure();
@@ -105,14 +104,13 @@ function SpatialFixture({ children }: { children: ReactNode }): ReactNode {
     return () => observer.disconnect();
   }, []);
 
-  const scaled = geometry.height !== null;
   return (
     <div
       ref={frameRef}
       data-guide-responsive-strategy="scale-together"
       data-guide-scale={geometry.scale.toFixed(4)}
       className="plugin-guide-spatial"
-      style={scaled ? { height: geometry.height ?? undefined } : undefined}
+      style={geometry.height !== null ? { height: geometry.height } : undefined}
     >
       <div
         ref={fixtureRef}
@@ -120,13 +118,9 @@ function SpatialFixture({ children }: { children: ReactNode }): ReactNode {
         style={
           {
             [CHIP_COUNTER_SCALE_PROPERTY]: annotationChipCounterScale(geometry.scale),
-            ...(scaled
-              ? {
-                  transform: `scale(${geometry.scale})`,
-                  width: geometry.width ?? undefined,
-                  marginLeft: geometry.offsetX
-                }
-              : undefined)
+            width: FIXTURE_AUTHORED_WIDTH,
+            marginLeft: geometry.offsetX,
+            transform: `scale(${geometry.scale})`
           } as CSSProperties
         }
       >

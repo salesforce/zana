@@ -2,6 +2,8 @@ import { Fragment, createElement, type ReactNode } from 'react';
 import { SURFACE_GROUPS, type PluginSurface } from './surfaces.js';
 
 export const MAX_FIXTURE_SCALE = 1.2;
+/** Every spatial wireframe is drawn at this width, then scaled as one picture. */
+export const FIXTURE_AUTHORED_WIDTH = 960;
 export const MAX_CHIP_COUNTER_SCALE = 3;
 export const CHIP_COUNTER_SCALE_PROPERTY = '--guide-chip-scale';
 

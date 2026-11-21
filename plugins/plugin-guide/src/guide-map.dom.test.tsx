@@ -6,7 +6,7 @@ import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProductMap } from './product-map.js';
-import { SURFACE_NUMBERS } from './annotation.js';
+import { FIXTURE_AUTHORED_WIDTH, SURFACE_NUMBERS } from './annotation.js';
 import { PaletteWireframe, SurfaceMapContext } from './wireframes.js';
 import { ProjectShellWireframe, SurfaceMapContext as WebsiteSurfaceMap } from '../../../website/lib/plugin-guide/wireframes.js';
 
@@ -94,5 +94,27 @@ describe('ProductMap click-away', () => {
       host.querySelector('h2')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
     });
     expect(host.querySelector('[role="dialog"]')).toBeFalsy();
+  });
+});
+
+describe('spatial fixtures', () => {
+  it('lays every wireframe out at the authored width and scales it as one picture', () => {
+    const host = mount(createElement(ProductMap, { initialSlideId: 'thread' }));
+    const fixtures = [...host.querySelectorAll<HTMLElement>('.plugin-guide-spatial-inner')];
+    expect(fixtures).toHaveLength(7);
+    for (const fixture of fixtures) {
+      expect(fixture.style.width).toBe(`${FIXTURE_AUTHORED_WIDTH}px`);
+      expect(fixture.style.transform).toMatch(/^scale\(/);
+    }
+    (host as HTMLElement & { unmount(): void }).unmount();
+  });
+
+  it('marks the browser toolbar action inside the thread side panel', () => {
+    const host = mount(createElement(ProductMap, { initialSlideId: 'thread' }));
+    const marker = host.querySelector('a[data-guide-region="experimental_browserToolbarAction"]');
+    expect(marker?.closest('.plugin-guide-browser')).toBeTruthy();
+    act(() => { marker?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); });
+    expect(host.querySelector('[role="dialog"][aria-label="Browser toolbar action"]')?.textContent).toContain('page.evaluate');
+    (host as HTMLElement & { unmount(): void }).unmount();
   });
 });
