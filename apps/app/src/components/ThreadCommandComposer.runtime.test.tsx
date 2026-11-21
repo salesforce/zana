@@ -52,7 +52,7 @@ const h = vi.hoisted(() => {
       refreshAcpModeOptions: vi.fn(), refreshModels: vi.fn(),
       resetForNewThread: vi.fn(), useDefaultProvider: vi.fn(), providerSelectionSource: 'default'
     },
-    permissionError: undefined as string | undefined, rememberSendMode: vi.fn(),
+    permissionError: undefined as string | undefined, rememberSendMode: vi.fn(), nativeDiscovery: false, setPermission: vi.fn(),
     clear: vi.fn(), insertText: vi.fn(), removeAttachment: vi.fn(),
     send: vi.fn(async () => undefined),
     create: vi.fn(async (): Promise<{ ok: boolean; value: { id: string }; message?: string }> => ({ ok: true, value: { id: 'created' } })),
@@ -70,7 +70,7 @@ const h = vi.hoisted(() => {
 vi.mock('../store.js', () => ({
   useData: (select: (state: unknown) => unknown) => select({ projects: [h.project, ...h.extraProjects], lastProjectId: 'p1',
     loadProjects: h.loadProjects, defaultHarness: 'codex', composerSendMode: 'queue-if-active',
-    setComposerSendMode: h.rememberSendMode, nativeAgentDiscoveryEnabled: false }),
+    setComposerSendMode: h.rememberSendMode, nativeAgentDiscoveryEnabled: h.nativeDiscovery }),
   useUi: Object.assign((select: (state: unknown) => unknown) => select({ selectedProjectId: 'p1' }),
     { getState: () => ({ appendHostInstallLogs: h.appendLogs, setHostInstallDrawerOpen: h.setDrawerOpen }) })
 }));
@@ -93,7 +93,7 @@ vi.mock('./composer-host-status.js', () => ({
   bootstrapOutcome: vi.fn(), composerBootstrapErrorMessage: vi.fn()
 }));
 vi.mock('./thread/pickers/useThreadComposerOptions.js', () => ({ useThreadComposerOptions: (args: typeof h.optionsArgs) => { h.optionsArgs = args; return h.options; } }));
-vi.mock('./thread/pickers/useThreadPermissionMode.js', () => ({ useThreadPermissionMode: () => ({ permissionMode: 'full', setPermissionMode: vi.fn(), selectionError: h.permissionError }) }));
+vi.mock('./thread/pickers/useThreadPermissionMode.js', () => ({ useThreadPermissionMode: () => ({ permissionMode: 'full', setPermissionMode: h.setPermission, selectionError: h.permissionError }) }));
 vi.mock('./composer/use-composer-provider-cli.js', () => ({ useComposerProviderCli: () => ({ blocked: h.cliBlocked }) }));
 vi.mock('./composer/useMobileComposerExpansion.js', () => ({ useMobileComposerExpansion: () => undefined }));
 vi.mock('./composer/use-composer-prompt-field.js', () => ({
@@ -141,9 +141,15 @@ vi.mock('./thread/pickers/ReasoningEffortPicker.js', () => ({ ReasoningEffortPic
 vi.mock('./composer/ComposerSettingsPill.js', () => ({ ComposerSettingsPill: ({ groups }: { groups: Array<{ id: string; value: string; onChange: (v: string) => void }> }) => {
   const mode = groups.find((g) => g.id === 'mode')!;
   const send = groups.find((g) => g.id === 'send-mode')!;
+  const rest = (groups as Array<{ id: string; label: string; value: string; hint?: string; choices: Array<{ value: string; label: string }>; onChange: (v: string) => void; action?: { label: string; onClick: () => void } }>)
+    .filter((g) => g.id === 'reasoning' || g.id === 'permission');
   return <>
     <button data-mode={mode.value} onClick={() => mode.onChange('plan')}>Plan mode</button>
-    <button data-send-mode={send.value} onClick={() => send.onChange('steer')}>Send mode</button>
+    <button data-send-mode={send.value} data-hint={(send as { hint?: string }).hint} onClick={() => send.onChange('steer')}>Send mode</button>
+    {rest.map((g) => <button key={g.id} data-value={g.value} data-choices={g.choices.map((c) => `${c.value}:${c.label}`).join(',')}
+      onClick={() => g.onChange(g.choices.at(-1)?.value ?? '')}>{g.label}</button>)}
+    {(mode as { action?: { label: string; onClick: () => void } }).action
+      ? <button onClick={(mode as { action: { onClick: () => void } }).action.onClick}>{(mode as { action: { label: string } }).action.label}</button> : null}
   </>;
 } }));
 vi.mock('./thread/pickers/ComposerSendModePicker.js', () => ({ ComposerSendModePicker: ({ onChange, value }: { onChange: (mode: string) => void; value: string }) =>
@@ -152,7 +158,8 @@ vi.mock('./thread/pickers/ComposerSendModePicker.js', () => ({ ComposerSendModeP
 beforeEach(() => {
   resetComposerSessions();
   vi.clearAllMocks();
-  h.compact = false;
+  h.compact = false; h.nativeDiscovery = false;
+  h.options.reasoningLevel = 'high'; (h.options as { reasoningOptions: unknown[] }).reasoningOptions = [];
   h.extraProjects = []; h.locationProps = null; h.foreignLocation = false;
   h.references = undefined; h.promptHistory.mockResolvedValue({entries: []});
   h.text = 'Draft'; h.images = []; h.attachments = []; h.editor.isDestroyed = false;
@@ -704,6 +711,35 @@ describe('Modern composer draft session', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send mode' }));
     expect(h.rememberSendMode).toHaveBeenCalledWith('steer');
     expect(screen.getByRole('button', { name: 'Send mode' }).getAttribute('data-send-mode')).toBe('steer');
+  });
+
+  it('wires thinking, permission and role refresh through the settings pill', () => {
+    h.nativeDiscovery = true;
+    h.options.provider = { id: 'codex', displayName: 'Codex', permissionModes: ['accept-edits', 'full'], composerActions: ['plan'] };
+    h.options.reasoningLevel = 'max';
+    (h.options as { reasoningOptions: unknown[] }).reasoningOptions = [
+      { value: 'low', label: 'low' }, { value: 'high', label: 'high' }, { value: 'max', label: 'max' }];
+    render(composer());
+    const thinking = screen.getByRole('button', { name: 'Thinking effort' });
+    expect(thinking.getAttribute('data-value')).toBe('high');
+    expect(thinking.getAttribute('data-choices')).toBe('low:Low,high:High');
+    fireEvent.click(thinking);
+    expect(h.options.setReasoningLevel).toHaveBeenCalledWith('high');
+    const permission = screen.getByRole('button', { name: 'Permission mode' });
+    expect(permission.getAttribute('data-choices')).toContain('full:');
+    fireEvent.click(permission);
+    expect(h.setPermission).toHaveBeenCalledWith('full');
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh roles' }));
+    expect(h.options.refreshAcpModeOptions).toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Send mode' }).getAttribute('data-hint')).toBeTruthy();
+  });
+
+  it('keeps an unknown reasoning label and hides a single permission choice', () => {
+    h.options.reasoningLevel = 'max';
+    (h.options as { reasoningOptions: unknown[] }).reasoningOptions = [{ value: 'max', label: 'max' }];
+    render(composer());
+    expect(screen.getByRole('button', { name: 'Thinking effort' }).getAttribute('data-value')).toBe('max');
+    expect(screen.getByRole('button', { name: 'Permission mode' }).getAttribute('data-choices')).toBe('');
   });
 
   it('falls back to the default mode when a hydrated thread mode stops being offered', () => {

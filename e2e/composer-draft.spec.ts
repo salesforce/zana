@@ -53,7 +53,7 @@ async function expectPermissionFor(window: Page, mode: string, label: string) {
   }
 }
 
-test('Composer settings default to Auto and persist a Full access opt-in for both agent composers', async ({ app }) => {
+test('Composer settings default to Auto and follow the Default permissions setting in both agent composers', async ({ app }) => {
   const { window, home } = app;
   const binary = join(home, 'composer-claude');
   writeFileSync(binary, '#!/bin/sh\nprintf "2.1.220 (Claude Code)\\n"\n');
@@ -73,27 +73,22 @@ test('Composer settings default to Auto and persist a Full access opt-in for bot
     await window.getByTestId('model-reasoning-picker-trigger').click();
     await expectPermission(mode, 'Auto');
   }
-  await window.getByRole('link', { name: 'Settings', exact: true }).click();
-  await window.getByTestId('settings-nav-composer').click();
-  const toggle = window.getByRole('switch', { name: 'Full access by default' });
-  await expect(toggle).toHaveAttribute('aria-checked', 'false');
-  await toggle.click();
-  await expect(toggle).toHaveAttribute('aria-checked', 'true');
-  await window.reload();
-  await expect(toggle).toHaveAttribute('aria-checked', 'true');
-  await window.getByRole('link', { name: 'Back to app' }).click();
-  await window.getByTestId('nav-home').click();
+  // Settings → Composer → Default permissions applies to both agent composers.
+  const chooseDefault = async (option: RegExp) => {
+    await window.getByRole('link', { name: 'Settings', exact: true }).click();
+    await window.getByTestId('settings-nav-composer').click();
+    await window.getByRole('button', { name: 'Default permissions', exact: true }).click();
+    await window.getByRole('option', { name: option }).click();
+    await window.reload();
+    await window.getByRole('link', { name: 'Back to app' }).click();
+    await window.getByTestId('nav-home').click();
+  };
+  await chooseDefault(/^Full Access/);
   for (const mode of ['CLI Agent', 'Modern']) {
     await modes.getByRole('button', { name: mode, exact: true }).click();
     await expectPermission(mode, 'Full');
   }
-  await window.getByRole('link', { name: 'Settings', exact: true }).click();
-  await window.getByTestId('settings-nav-composer').click();
-  await toggle.click();
-  await window.reload();
-  await expect(toggle).toHaveAttribute('aria-checked', 'false');
-  await window.getByRole('link', { name: 'Back to app' }).click();
-  await window.getByTestId('nav-home').click();
+  await chooseDefault(/^Keep existing defaults/);
   for (const mode of ['Modern', 'CLI Agent']) {
     await modes.getByRole('button', { name: mode, exact: true }).click();
     await expectPermission(mode, 'Auto');
