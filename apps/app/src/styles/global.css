@@ -26772,6 +26772,9 @@ body.resizing-col .library-resizer::after {
 }
 
 .library-md-editor .tiptap pre {
+  color: #dce6f5;
+  white-space: pre;
+  max-height: 400px;
   margin: 10px 0;
   border-radius: 6px;
   border: 1px solid var(--border);
@@ -26786,6 +26789,10 @@ body.resizing-col .library-resizer::after {
 .library-md-editor .tiptap pre code {
   background: none;
   padding: 0;
+  color: inherit;
+  white-space: inherit;
+  word-break: normal;
+  overflow-wrap: normal;
 }
 
 .library-md-editor .tiptap blockquote {
@@ -42991,3 +42998,10 @@ body.split-frame-guard webview {
     border: 1px solid CanvasText;
   }
 }
+
+/* Source-preserving rich document nodes shared with the Library plugin. */
+.library-md-editor .md-editor-image { display:inline-block; max-width:100%; vertical-align:middle; }
+.library-md-editor .md-editor-image img { max-width:100%; height:auto; border-radius:5px; }
+.library-md-editor .md-editor-source { border:1px solid var(--border-subtle, #80808040); border-radius:6px; margin:16px 0; }
+.library-md-editor .md-editor-source::before { content:'Markdown source'; display:block; padding:6px 12px; font-size:10px; color:var(--text-muted); border-bottom:1px solid var(--border-subtle, #80808040); }
+.library-md-editor .md-editor-source pre { margin:0; }

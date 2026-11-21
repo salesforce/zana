@@ -1,6 +1,8 @@
 /**
  * @vitest-environment happy-dom
  */
+import { useState } from 'react';
+import type { PluginThreadPanelProps } from '@zana-ai/zcc-plugin-sdk/app';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { renderSlot } from '@zana-ai/zcc-plugin-sdk/testing/app';
@@ -27,6 +29,11 @@ vi.mock('./LibraryMarkdownEditor.js', () => ({
   )
 }));
 
+function DelayedOwner(props: PluginThreadPanelProps) {
+  const [owner, setOwner] = useState<string>();
+  return <><button onClick={() => setOwner('owner')}>Resolve project</button><DocumentPanel {...props} projectId={owner} /></>;
+}
+
 describe('DocumentPanel', () => {
   it('shows an empty state for invalid params', () => {
     const slot = renderSlot(
@@ -38,6 +45,33 @@ describe('DocumentPanel', () => {
       }
     );
     expect(slot.getByRole('status').textContent).toMatch(/missing a library path/i);
+  });
+
+  it('loads and saves a card opened before its owning project has resolved', async () => {
+    const read = vi.fn(() => ({ ok: true, content: '# Note', sha256: 'a'.repeat(64) }));
+    const write = vi.fn(() => ({ ok: true }));
+    const slot = renderSlot({ component: DelayedOwner }, { pluginId: 'docs', threadId: 'thread', params: { path: 'note.md' } }, { rpc: { read, write } });
+    expect(slot.getByRole('status').textContent).toContain('missing a library path');
+    expect(read).not.toHaveBeenCalled();
+    fireEvent.click(slot.getByRole('button', { name: 'Resolve project' }));
+    const editor = await slot.findByTestId('mock-md');
+    expect(read).toHaveBeenCalledWith({ path: 'note.md', scope: 'project', projectId: 'owner' });
+    vi.useFakeTimers();
+    fireEvent.change(editor, { target: { value: '# Updated' } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(700); });
+    expect(write).toHaveBeenCalledWith({ path: 'note.md', scope: 'project', projectId: 'owner', content: '# Updated', expectedSha256: 'a'.repeat(64) });
+  });
+
+  it.each([{ path: 'note.md', projectId: 'explicit' }, { path: 'note.md', scope: 'global' }])('retains an already scoped draft when thread metadata arrives: %o', async params => {
+    const read = vi.fn(() => ({ ok: true, content: '# Note' }));
+    const slot = renderSlot({ component: DelayedOwner }, { pluginId: 'docs', threadId: 'thread', params }, { rpc: { read, write: () => ({ ok: true }) } });
+    const editor = await slot.findByTestId('mock-md');
+    vi.useFakeTimers();
+    fireEvent.change(editor, { target: { value: 'Unsaved draft' } });
+    fireEvent.click(slot.getByRole('button', { name: 'Resolve project' }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect((slot.getByTestId('mock-md') as HTMLTextAreaElement).value).toBe('Unsaved draft');
+    expect(read).toHaveBeenCalledOnce();
   });
 
   it('renders HTML in a script-only sandbox', async () => {
