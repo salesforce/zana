@@ -1,5 +1,5 @@
 import React, { lazy } from 'react';
-import { FileText, Save, Eye, Pencil, GitCompare } from 'lucide-react';
+import { FileText, Save, GitCompare } from 'lucide-react';
 import type { OnMount } from '@monaco-editor/react';
 import type { FsReadResult, GitShowResult, Project } from '@zana-ai/zcc-domain/product';
 import { ViewerBoundary } from './ViewerBoundary.js';
@@ -12,7 +12,7 @@ import { useMonacoMinimap } from './useMonacoMinimap.js';
 import type { DocumentLink } from '../document-links.js';
 
 const Editor = lazy(() => import('./ExplorerEditor.js'));
-const MarkdownPreview = lazy(() => import('./MarkdownPreview.js'));
+const MarkdownDocument = lazy(() => import('../markdown/MarkdownDocument.js'));
 const DiffViewer = lazy(() => import('../DiffViewer.js').then(module => ({ default: module.DiffViewer })));
 
 interface FileViewerProps {
@@ -44,6 +44,8 @@ interface FileViewerProps {
   onToggleDiff: () => void;
   onOpenDocument?: (link: DocumentLink) => void;
   fragment?: string;
+  sourceKey?: string;
+  saveRecovery?: React.ReactNode;
 }
 
 function formatBytes(n: number) {
@@ -94,7 +96,9 @@ export function FileViewer({
   onTogglePreview,
   onToggleDiff,
   onOpenDocument,
-  fragment
+  fragment,
+  sourceKey = '',
+  saveRecovery
 }: FileViewerProps) {
   const {
     minimap,
@@ -198,7 +202,7 @@ export function FileViewer({
           {formatBytes(fileResult.bytes ?? 0)}
         </span>
         <span className="explorer-viewer-actions">
-          {isDirty && (
+          {isDirty && !isMarkdown && (
             <button
               type="button"
               className="opener-btn active"
@@ -207,17 +211,6 @@ export function FileViewer({
               onClick={onSave}
             >
               <Save size={13} />
-            </button>
-          )}
-          {isMarkdown && !showDiff && (
-            <button
-              type="button"
-              className={`opener-btn ${previewMode ? 'active' : ''}`}
-              title={previewMode ? 'Edit markdown' : 'Preview markdown'}
-              aria-pressed={previewMode}
-              onClick={onTogglePreview}
-            >
-              {previewMode ? <Pencil size={13} /> : <Eye size={13} />}
             </button>
           )}
           {diffAvailable && (
@@ -242,10 +235,14 @@ export function FileViewer({
           )}
         </span>
       </div>
+      {saveRecovery}
       <div className="explorer-viewer-monaco" ref={handleMonacoRef}>
-        <ViewerBoundary key={showPreview ? 'preview' : showDiff ? 'diff' : 'editor'} resetKey={explorerFile}>
-          {showPreview ? (
-            <MarkdownPreview content={editedContent ?? fileResult.content ?? ''} documentPath={explorerFile} fragment={fragment} onOpenDocument={onOpenDocument} />
+        <ViewerBoundary key={isMarkdown && !showDiff ? 'markdown' : showDiff ? 'diff' : 'editor'} resetKey={explorerFile}>
+          {isMarkdown && !showDiff ? (
+            <MarkdownDocument key={`${sourceKey}:${explorerFile}`} value={editedContent ?? fileResult.content ?? ''} savedValue={fileResult.content ?? ''}
+              documentPath={explorerFile} localImages={!isRemote} fragment={fragment} onOpenDocument={onOpenDocument} saving={saving}
+              readOnlyReason={fileResult.truncated ? 'This preview is truncated. Open the complete file to edit it.' : isRemote ? 'Editing Markdown on this legacy remote connection is unavailable. Use a registered checkout.' : undefined}
+              onChange={value => onContentChange(value === fileResult.content ? null : value)} onSave={onSave} onSourceMount={handleEditorMount} />
           ) : showDiff ? (
             headLoading || !headResult ? (
               <div className="explorer-viewer-empty">

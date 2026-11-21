@@ -68,3 +68,4 @@ export type {
   UnsubscribeMessage,
   JsonValue,
 } from "@zana-ai/zcc-domain/thread-runtime";
+export * from './api/thread-markdown.js';

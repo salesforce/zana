@@ -717,6 +717,8 @@ export interface CcApi {
       model?: string;
       reasoningLevel?: string;
     }): Promise<{ ok: true; operationId: string; requestSequence: number }>;
+    readMarkdown(threadId: string, path: string, projectId?: string): Promise<FsReadResult>;
+    writeMarkdown(threadId: string, body: { path: string; projectId?: string; content: string; expectedSha256: string }): Promise<FsWriteResult>;
     hostFileContent(threadId: string, path: string, projectId?: string): Promise<{
       path: string;
       relPath: string;

@@ -568,6 +568,8 @@ const api: CcApi = {
     editMessage: async () => {
       throw new Error('threads require the product server');
     },
+    readMarkdown: async () => { throw new Error('Thread Markdown requires the product client'); },
+    writeMarkdown: async () => { throw new Error('Thread Markdown requires the product client'); },
     hostFileContent: async () => {
       throw new Error('threads require the product server');
     },
