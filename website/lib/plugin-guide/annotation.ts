@@ -31,6 +31,31 @@ export function panCarets(index: number, slideCount: number): { previous: boolea
   return { previous: index > 0, next: index < slideCount - 1 };
 }
 
+export interface SpatialFixtureGeometry {
+  scale: number;
+  /** Scaled outer height, or null before the fixture has laid out. */
+  height: number | null;
+  /** Left margin that centres the authored-width fixture inside the frame. */
+  offsetX: number;
+}
+
+/**
+ * Geometry for a wireframe drawn at {@link FIXTURE_AUTHORED_WIDTH}: columns
+ * never reflow, the whole picture scales uniformly to fit the frame.
+ */
+export function spatialFixtureGeometry(
+  frameWidth: number,
+  authoredHeight: number,
+  availableHeight?: number
+): SpatialFixtureGeometry {
+  const scale = spatialFixtureScale(frameWidth, FIXTURE_AUTHORED_WIDTH, availableHeight, authoredHeight);
+  return {
+    scale,
+    height: authoredHeight > 0 ? authoredHeight * scale : null,
+    offsetX: frameWidth > 0 ? (frameWidth - FIXTURE_AUTHORED_WIDTH) / 2 : 0
+  };
+}
+
 export function spatialFixtureScale(
   availableWidth: number,
   authoredWidth: number,

@@ -15,7 +15,7 @@ import {
   CHIP_COUNTER_SCALE_PROPERTY,
   FIXTURE_AUTHORED_WIDTH,
   panCarets,
-  spatialFixtureScale,
+  spatialFixtureGeometry,
   SURFACE_NUMBERS
 } from './annotation.js';
 import { GROUP_BY_SURFACE_ID, SURFACE_GROUPS, SURFACES_BY_ID, type SurfaceGroup } from './surfaces.js';
@@ -32,7 +32,7 @@ import {
   ThreadWireframe
 } from './wireframes.js';
 
-export { annotationNeighbors, panCarets, spatialFixtureScale, SURFACE_NUMBERS } from './annotation.js';
+export { annotationNeighbors, panCarets, spatialFixtureGeometry, spatialFixtureScale, SURFACE_NUMBERS } from './annotation.js';
 export { FIXTURE_AUTHORED_WIDTH, MAX_FIXTURE_SCALE } from './annotation.js';
 
 function SlideContent({ group }: { group: SurfaceGroup }): ReactNode {
@@ -71,9 +71,6 @@ function SpatialFixture({ children }: { children: ReactNode }): ReactNode {
     if (!frame || !fixture) return;
     const viewport = frame.closest<HTMLElement>('[data-guide-stage-viewport]');
     const measure = () => {
-      // The fixture is always laid out at its authored width, so columns never
-      // reflow; only the uniform scale changes with the available space.
-      const authoredWidth = FIXTURE_AUTHORED_WIDTH;
       const authoredHeight = fixture.scrollHeight;
       const flowCard = frame.closest('section')?.querySelector<HTMLElement>('[data-guide-card-flow]');
       const cardFootprint = flowCard
@@ -85,9 +82,8 @@ function SpatialFixture({ children }: { children: ReactNode }): ReactNode {
           cardFootprint -
           8
         : undefined;
-      const scale = spatialFixtureScale(frame.clientWidth, authoredWidth, availableHeight, authoredHeight);
-      const height = authoredHeight > 0 ? authoredHeight * scale : null;
-      const offsetX = frame.clientWidth > 0 ? (frame.clientWidth - authoredWidth) / 2 : 0;
+      // Laid out at the authored width so columns never reflow; only the scale changes.
+      const { scale, height, offsetX } = spatialFixtureGeometry(frame.clientWidth, authoredHeight, availableHeight);
       setGeometry((current) =>
         Math.abs(current.scale - scale) < 0.0001 &&
         current.height === height &&
