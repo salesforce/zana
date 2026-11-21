@@ -165,7 +165,7 @@ it('runs native Windows Squad admission on every PR and includes it in required 
   const job = workflow.jobs['squad-windows-admission'];
   expect(job['runs-on']).toBe('windows-2025');
   expect(job.if).toBeUndefined();
-  expect(job.steps.some((step: any) => step.run === 'pnpm test:e2e -- e2e/windows-squad-named-check-admission.spec.ts')).toBe(true);
+  expect(job.steps.some((step: any) => step.run === 'pnpm test:e2e -- e2e/windows-squad-named-check-admission.spec.ts e2e/squad-source-snapshot-path.spec.ts')).toBe(true);
   expect(job.steps.some((step: any) => step.run === 'pnpm exec vitest run apps/server/src/services/execution/__tests__/named-check-runner.test.ts')).toBe(true);
   expect(workflow.jobs.verify.needs).toContain('squad-windows-admission');
   expect(workflow.jobs.verify.steps[0].env.WINDOWS_ADMISSION_RESULT).toBe('${{ needs.squad-windows-admission.result }}');
