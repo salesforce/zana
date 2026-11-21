@@ -94,6 +94,7 @@ export function useDomFind(contentRef: RefObject<Element | null>, hostRef: RefOb
     focusRequest,
     step,
     close,
+    openBar: onOpen,
     hostProps: {
       [OWN_FIND_ATTRIBUTE]: '',
       tabIndex: -1,

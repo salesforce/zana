@@ -1,4 +1,5 @@
 import { useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
+import { OWN_FIND_ATTRIBUTE } from '../../../../apps/app/src/lib/thread-find.js';
 import { passageContext } from '../shared/passage-context.js';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, FileWarning, History, MessageSquare, Bot, PanelLeftOpen, X } from 'lucide-react';
@@ -14,6 +15,7 @@ import { FilePane, type ViewMode } from './FilePane.js';
 import type { PreviewHandle } from './FilePreview.js';
 import { FileTree } from './FileTree.js';
 import { HistoryPane } from './HistoryPane.js';
+import { panelFindKey } from './panel-find.js';
 import { useDoc, useNow, usePersistentState, useProjects, useWidthTier } from './hooks.js';
 import { ConfirmDialog, EmptyState, FileIcon, IconButton, Popover, Spinner, type ConfirmRequest } from './ui.js';
 
@@ -406,7 +408,17 @@ export function DocView({
   );
 
   return (
-    <div ref={measureRef} className={`dd-doc dd-doc-${layout}${narrow ? ' dd-doc-narrow' : ''}${railOpen ? ' dd-rail-open' : ''}${railInline ? '' : ' dd-rail-floating'}`}>
+    <div
+      ref={measureRef}
+      {...{ [OWN_FIND_ATTRIBUTE]: '' }}
+      onKeyDown={(event) => {
+        // Nothing mounted to search (editor, binary file, loading): leave the key unclaimed rather than swallow it.
+        const handle = previewHandle.current;
+        if (!handle || !panelFindKey(event)) return;
+        event.preventDefault();
+        handle.openFind();
+      }}
+      className={`dd-doc dd-doc-${layout}${narrow ? ' dd-doc-narrow' : ''}${railOpen ? ' dd-rail-open' : ''}${railInline ? '' : ' dd-rail-floating'}`}>
       <DocHeader
         doc={data}
         projects={projects.data ?? []}

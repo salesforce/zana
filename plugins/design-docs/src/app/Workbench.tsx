@@ -1,4 +1,6 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type Ref } from 'react';
+import { OWN_FIND_ATTRIBUTE } from '../../../../apps/app/src/lib/thread-find.js';
+import { DOC_SEARCH_LABEL, panelFindKey } from './panel-find.js';
 import { useZccContext, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { PopoverPicklist, type PopoverPicklistOption } from '@zana-ai/zcc-ui/popover-picklist';
 import {
@@ -585,7 +587,11 @@ function DocList({
       <div className="dd-list-tools">
         <label className="dd-search">
           <Search size={13} aria-hidden />
-          <input value={query} placeholder="Search docs and content" aria-label="Search design docs" onChange={(event) => setQuery(event.target.value)} />
+          <input value={query} placeholder="Search docs and content" aria-label={DOC_SEARCH_LABEL} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
+            if (event.key !== 'Escape') return;
+            setQuery('');
+            listScroll.current?.focus();
+          }} />
           {query ? (
             <button type="button" className="dd-search-clear" aria-label="Clear search" onClick={() => setQuery('')}>
               <X size={12} aria-hidden />
@@ -1074,6 +1080,17 @@ function Landing({ templates, onNew, onEdit, onChanged }: { templates: TemplateI
  * Doc list + doc. `variant` "global" (the nav panel) lists every project's
  * docs; "project" (the project tab) lists one project's docs plus global ones.
  */
+/** Ctrl+F anywhere in the panel that no pane took: the doc list's search box. */
+function focusListSearch(event: KeyboardEvent<HTMLElement>) {
+  if (!panelFindKey(event)) return;
+  // A doc that has nothing to search (editor, binary file) leaves the key alone; it must not pull focus to the list.
+  if ((event.target as Element | null)?.closest?.('.dd-doc')) return;
+  event.preventDefault();
+  const input = event.currentTarget.querySelector<HTMLInputElement>(`input[aria-label="${DOC_SEARCH_LABEL}"]`);
+  input?.focus();
+  input?.select();
+}
+
 export function Workbench({
   projectId,
   location,
@@ -1142,7 +1159,7 @@ export function Workbench({
 
   return (
     <PinnableContext.Provider value={global}>
-    <div className="dd-root dd-workbench">
+    <div className="dd-root dd-workbench" {...{ [OWN_FIND_ATTRIBUTE]: '' }} onKeyDown={focusListSearch}>
       {listOpen ? (
         <DocList
           projectId={variant === 'project' ? projectId : null}
