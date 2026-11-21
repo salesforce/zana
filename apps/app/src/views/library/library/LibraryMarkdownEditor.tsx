@@ -180,14 +180,19 @@ export function LibraryMarkdownEditor({
 
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
-    if (value === lastEmittedRef.current) return;
+    // A source-preserving block splice may restore CRLF after serialization.
+    // That acknowledgement must not replace the live editor or move its caret.
+    if (value.replace(/\r\n/g, '\n') === lastEmittedRef.current.replace(/\r\n/g, '\n')) {
+      lastEmittedRef.current = value;
+      return;
+    }
     const next = splitLibraryMarkdown(value);
     headerRef.current = next.header;
     lastEmittedRef.current = value;
     if (next.body) {
-      editor.commands.setContent(next.body, { contentType: 'markdown' });
+      editor.commands.setContent(next.body, { contentType: 'markdown', emitUpdate: false });
     } else {
-      editor.commands.setContent({ type: 'doc', content: [{ type: 'paragraph' }] });
+      editor.commands.setContent({ type: 'doc', content: [{ type: 'paragraph' }] }, { emitUpdate: false });
     }
   }, [editor, value]);
 

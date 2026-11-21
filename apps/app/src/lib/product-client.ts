@@ -945,6 +945,10 @@ function httpProduct(): Pick<
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(body)
         }),
+      readMarkdown: async (threadId, path, projectId) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/markdown?path=${encodeURIComponent(path)}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}`),
+      writeMarkdown: async (threadId, body) =>
+        apiJson(`/threads/${encodeURIComponent(threadId)}/markdown`, { method: 'PUT', body: JSON.stringify(body) }),
       hostFileContent: async (threadId, path, projectId) =>
         apiJson(`/threads/${encodeURIComponent(threadId)}/host-files/content?path=${encodeURIComponent(path)}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}`),
       storageFiles: async (threadId) =>

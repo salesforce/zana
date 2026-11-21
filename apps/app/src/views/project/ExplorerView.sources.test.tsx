@@ -29,8 +29,12 @@ vi.mock('@/components/explorer', () => ({
   ExplorerTreeHeader: ({ onRefresh }: any) => <button onClick={onRefresh}>Refresh files</button>,
   ExplorerContextMenu: () => null, ChangesList: () => null, useFileOperations: () => ({}), DirectoryLoading: ({ label }: any) => <div className="tree-loading">{label ?? 'Loading files'}</div>,
   TreeList: ({ list, onFileClick, entries, onToggleDir }: any) => <>{list.map((row: any) => <React.Fragment key={row.path}><button onClick={() => (row.kind === 'dir' ? onToggleDir?.(row) : onFileClick(row))}>{row.name}</button>{entries?.get(row.path)?.map((child: any) => <button key={child.path} onClick={() => onFileClick(child)}>{child.name}</button>)}</React.Fragment>)}</>,
-  FileViewer: ({ fileResult, editedContent, onContentChange, onSave, nativeFiles }: any) => <div>
+  FileViewer: ({ fileResult, editedContent, onContentChange, onSave, nativeFiles, saveRecovery, isMarkdown, saving }: any) => <div>
+    {saveRecovery}
+    <span>{saving ? 'Saving fixture' : 'Ready fixture'}</span>
+    <div className={isMarkdown ? 'md-document' : undefined}>
     {fileResult?.ok && <textarea aria-label="File contents" value={editedContent ?? fileResult.content} onChange={event => onContentChange(event.target.value)} />}
+    </div>
     <button onClick={onSave}>Save fixture</button><span>{nativeFiles ? 'native openers' : 'no native openers'}</span>
   </div>
 }));
@@ -117,6 +121,75 @@ it('does not erase keystrokes entered while a save is pending', async () => {
   expect(screen.getByDisplayValue('newer edit')).toBeTruthy();
   fireEvent.click(screen.getByText('Save fixture'));
   await waitFor(() => expect(mocks.write).toHaveBeenLastCalledWith('/a/owner.txt', 'newer edit', { projectId: 'p', hostId: 'a' }, 'next'));
+});
+
+async function openMarkdown() {
+  mocks.list.mockImplementation(async (path: string) => ['note.md', 'next.md'].map(name => ({ name, path: `${path}/${name}`, kind: 'file' })));
+  render(<ExplorerView project={project} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'note.md' }));
+  await screen.findByDisplayValue('machine-a');
+  fireEvent.change(screen.getByLabelText('File contents'), { target: { value: 'my draft' } });
+}
+
+it('reviews a conflicting revision and uses its hash without discarding the Markdown draft', async () => {
+  await openMarkdown();
+  mocks.write.mockResolvedValueOnce({ ok: false, message: 'The file changed' });
+  fireEvent.click(screen.getByText('Save fixture'));
+  expect(await screen.findByRole('region', { name: 'Markdown save recovery' })).toBeTruthy();
+  mocks.read.mockResolvedValueOnce({ ok: true, content: 'new on disk', sha256: 'reviewed' });
+  fireEvent.click(screen.getByRole('button', { name: 'Review latest version' }));
+  expect((await screen.findByLabelText('Latest saved version')).textContent).toBe('new on disk');
+  expect(mocks.read).toHaveBeenLastCalledWith('/a/note.md', { projectId: 'p', hostId: 'a' });
+  fireEvent.click(screen.getByRole('button', { name: 'Use reviewed revision for next save' }));
+  expect(screen.getByDisplayValue('my draft')).toBeTruthy();
+  expect(screen.queryByRole('region', { name: 'Markdown save recovery' })).toBeNull();
+  fireEvent.click(screen.getByText('Save fixture'));
+  await waitFor(() => expect(mocks.write).toHaveBeenLastCalledWith('/a/note.md', 'my draft', { projectId: 'p', hostId: 'a' }, 'reviewed'));
+});
+
+it('can discard a failed Markdown draft only after reviewing and confirming the latest revision', async () => {
+  await openMarkdown();
+  mocks.write.mockRejectedValueOnce('offline');
+  fireEvent.click(screen.getByText('Save fixture'));
+  expect((await screen.findByRole('alert')).textContent).toContain('Failed to save file');
+  mocks.read.mockResolvedValueOnce({ ok: true, content: 'latest source', sha256: 'reviewed' });
+  fireEvent.click(screen.getByRole('button', { name: 'Review latest version' }));
+  const discard = await screen.findByRole('button', { name: 'Discard draft and use latest' });
+  vi.mocked(window.confirm).mockReturnValueOnce(true);
+  fireEvent.click(discard);
+  expect(screen.getByDisplayValue('latest source')).toBeTruthy();
+  expect(screen.queryByRole('region', { name: 'Markdown save recovery' })).toBeNull();
+  fireEvent.click(screen.getByText('Save fixture'));
+  expect(mocks.write).toHaveBeenCalledTimes(1);
+});
+
+it.each(['resolve', 'reject'])('keeps a late save %s from replacing the next document or its saving state', async outcome => {
+  let finish!: (value: any) => void;
+  let fail!: (reason: unknown) => void;
+  mocks.write.mockImplementationOnce(() => new Promise((resolve, reject) => { finish = resolve; fail = reject; }));
+  await openMarkdown();
+  fireEvent.click(screen.getByText('Save fixture'));
+  expect(screen.getByText('Saving fixture')).toBeTruthy();
+  vi.mocked(window.confirm).mockReturnValue(true);
+  fireEvent.click(screen.getByRole('button', { name: 'next.md' }));
+  await screen.findByDisplayValue('machine-a');
+  fireEvent.change(screen.getByLabelText('File contents'), { target: { value: 'next draft' } });
+  await act(async () => outcome === 'resolve' ? finish({ ok: true, sha256: 'stale' }) : fail(new Error('late offline')));
+  expect(screen.getByDisplayValue('next draft')).toBeTruthy();
+  expect(screen.getByText('Ready fixture')).toBeTruthy();
+  expect(screen.queryByRole('region', { name: 'Markdown save recovery' })).toBeNull();
+  fireEvent.click(screen.getByText('Save fixture'));
+  await waitFor(() => expect(mocks.write).toHaveBeenLastCalledWith('/a/next.md', 'next draft', { projectId: 'p', hostId: 'a' }, 'revision'));
+});
+
+it('lets the Markdown document own its save shortcut, while the outer shortcut still saves other targets', async () => {
+  await openMarkdown();
+  const event = new KeyboardEvent('keydown', { key: 's', ctrlKey: true, metaKey: true, bubbles: true, cancelable: true });
+  fireEvent(screen.getByLabelText('File contents'), event);
+  expect(event.defaultPrevented).toBe(false);
+  expect(mocks.write).not.toHaveBeenCalled();
+  fireEvent.keyDown(window, { key: 's', ctrlKey: true, metaKey: true });
+  await waitFor(() => expect(mocks.write).toHaveBeenCalledOnce());
 });
 it('does not select a sole connected foreign machine when primary identity is absent', () => {
   mocks.hosts = [{ id: 'b', name: 'Secondary', status: 'connected' }];
@@ -515,4 +588,3 @@ it('ignores checkout metadata failures that finish after the menu closes', async
   await act(async () => rejectWorktrees(new Error('late failure')));
   expect(screen.queryByRole('alert')).toBeNull();
 });
-

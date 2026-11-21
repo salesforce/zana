@@ -127,6 +127,7 @@ import { listQueuedMessages, createQueuedMessage, updateQueuedMessage, deleteQue
 import { readLastThreadExecution } from '../services/threads/thread-last-execution.js';
 import { markThreadRead } from '../services/threads/thread-reads.js';
 import { readThreadHostFile } from '../services/threads/thread-host-file.js';
+import { readThreadMarkdown, writeThreadMarkdown } from './thread-markdown.js';
 import { sendVideoPreview } from './video-preview.js';
 import { sendHtmlPreview } from './html-preview.js';
 import { listThreadStorageFiles, readThreadStorageFile } from '../services/threads/thread-storage.js';
@@ -1685,6 +1686,15 @@ export async function handleProductHttp(
         }
         sendHostFailure(response, error);
       }
+      return true;
+    }
+
+    const threadMarkdown = routeParams(path, '/api/v1/threads/:id/markdown');
+    if (threadMarkdown && (method === 'GET' || method === 'PUT')) {
+      try {
+        const input = method === 'GET' ? Object.fromEntries(requestUrl.searchParams) : await readJsonBody(request, 12_100_000);
+        sendJson(response, 200, await (method === 'GET' ? readThreadMarkdown(ctx, threadMarkdown.id, input) : writeThreadMarkdown(ctx, threadMarkdown.id, input)));
+      } catch (error) { sendHostFailure(response, error); }
       return true;
     }
 

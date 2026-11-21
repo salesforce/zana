@@ -1,4 +1,6 @@
 import type { Hono } from "hono";
+import type { FsReadResult, FsWriteResult } from '@zana-ai/zcc-domain/product';
+import { threadMarkdownQuerySchema, threadMarkdownWriteSchema, type ThreadMarkdownQuery, type ThreadMarkdownWrite } from './api/thread-markdown.js';
 import { hc, type ClientRequestOptions } from "hono/client";
 import type {
   AppTheme,
@@ -1638,6 +1640,16 @@ export const publicApiRoutes = {
         threadStorageContentQuerySchema,
       ),
       response: binaryResponse<Uint8Array>(),
+    }),
+    readMarkdown: defineRoute({
+      path: '/threads/:id/markdown', method: 'get',
+      request: queryRequest<PathId, ThreadMarkdownQuery>(threadMarkdownQuerySchema),
+      response: jsonResponse<FsReadResult>(),
+    }),
+    writeMarkdown: defineRoute({
+      path: '/threads/:id/markdown', method: 'put',
+      request: jsonRequest<PathId, ThreadMarkdownWrite>(threadMarkdownWriteSchema),
+      response: jsonResponse<FsWriteResult>(),
     }),
     hostFileContent: defineRoute({
       path: "/threads/:id/host-files/content",
