@@ -12,15 +12,25 @@ for (const initial of [{ mode: 'auto', label: 'Auto' }, { mode: 'full', label: '
     // without requiring a separately installed/authenticated provider in CI.
     await window.route('**/api/v1/system/execution-options*', async (route) => {
       const response = await route.fetch();
-      const body = await response.json();
-      if (Array.isArray(body.providers)) {
-        body.providers = body.providers.filter((p: { id: string }) => p.id === 'fake')
-          .map((p: { capabilities: Record<string, unknown> }) => ({
-            ...p, capabilities: { ...p.capabilities, permissionModes: ['accept-edits', 'auto', 'full'] }
-          }));
-      }
+      const patch = (body: { providers?: Array<{ id: string; capabilities: Record<string, unknown> }> }) => {
+        if (Array.isArray(body.providers)) {
+          body.providers = body.providers.filter((p) => p.id === 'fake')
+            .map((p) => ({ ...p, capabilities: { ...p.capabilities, permissionModes: ['accept-edits', 'auto', 'full'] } }));
+        }
+        return body;
+      };
+      // Model discovery streams one NDJSON event per provider; other reads return one JSON body.
+      const streamed = new URL(route.request().url()).searchParams.get('stream') === '1';
+      const text = await response.text();
+      const body = streamed
+        ? text.split('\n').filter(Boolean).map((line) => {
+          const event = JSON.parse(line) as { options?: Parameters<typeof patch>[0] };
+          if (event.options) patch(event.options);
+          return JSON.stringify(event);
+        }).join('\n') + '\n'
+        : JSON.stringify(patch(JSON.parse(text)));
       // Reload can cancel an in-flight catalog request before its response arrives.
-      await route.fulfill({ response, json: body }).catch((error: unknown) => {
+      await route.fulfill({ response, body }).catch((error: unknown) => {
         if (!(error instanceof Error) || !error.message.includes('Route is already handled')) throw error;
       });
     });

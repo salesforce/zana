@@ -27,10 +27,14 @@ test('Modern Native role picker preserves semantic modes and custom roles', asyn
 
   const composer = window.locator('.thread-command-composer').first();
   await expect(composer).toBeVisible();
-  const executionOptions = await window.evaluate(async () => {
+  type ExecutionOptions = { acpMode?: { currentValue?: string; options: Array<{ value: string; name?: string }> }; modelLoadError?: unknown };
+  const readOptions = () => window.evaluate(async () => {
     const response = await fetch('/api/v1/system/execution-options?providerId=acp-opencode');
     return response.json();
-  }) as { acpMode?: { currentValue?: string; options: Array<{ value: string; name?: string }> }; modelLoadError?: unknown };
+  }) as Promise<ExecutionOptions>;
+  // The OpenCode provider plugin can still be starting on a cold CI runner.
+  let executionOptions: ExecutionOptions = {};
+  await expect.poll(async () => (executionOptions = await readOptions()).acpMode !== undefined, { timeout: 30_000 }).toBe(true);
   expect(executionOptions.acpMode, JSON.stringify(executionOptions)).toEqual({
     currentValue: 'build',
     options: [
