@@ -39,11 +39,21 @@ test('a Docs card opens inside its thread inspector when the URL has no thread',
         : row)
     } });
   });
+  // Timeline rows can arrive before thread metadata. Open the card in that gap.
+  let resolveProject!: () => void;
+  const projectReady = new Promise<void>(resolve => { resolveProject = resolve; });
+  await window.route(url => url.pathname === `/api/v1/threads/${threadId}`, async route => {
+    await projectReady;
+    await route.continue();
+  });
   await window.getByTestId('nav-agents').click();
   await window.locator('.agent-card[data-kind="thread"]').filter({ hasText: 'Docs inspector regression' }).click();
   const modal = window.getByTestId('thread-modal');
-  await expect(modal).toBeVisible();
-  await modal.locator('.plugin-directive-card-main').filter({ hasText: 'Inspector document' }).click();
+  try {
+    await expect(modal).toBeVisible();
+    await modal.locator('.plugin-directive-card-main').filter({ hasText: 'Inspector document' }).click();
+    await expect(modal.getByText('This document link is missing a library path.')).toBeVisible();
+  } finally { resolveProject(); }
   const panel = modal.locator('.docs-document-panel');
   await expect(panel).toBeVisible();
   await expect(panel).toContainText('Owned by the visible conversation.');
