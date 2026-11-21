@@ -5,6 +5,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { resolveHostArtifact } from '../services/hosts/host-artifact.js';
 import { startProductServer, type ProductServer } from './product-server.js';
+import { reserveFreePort } from './test-free-port.js';
 
 let server: ProductServer | null = null;
 let child: ReturnType<typeof spawn> | null = null;
@@ -44,7 +45,7 @@ describe('packed join artifact RPC', () => {
     const listedRoot = join(machineDir, 'listed');
     mkdirSync(listedRoot);
     writeFileSync(join(listedRoot, 'hello.txt'), 'hi\n');
-    const port = 43000 + Math.floor(Math.random() * 1000);
+    const port = await reserveFreePort();
     child = spawn(process.execPath, [
       join(unpack, 'join.mjs'),
       'join',

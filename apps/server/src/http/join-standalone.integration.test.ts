@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HOST_RPC_PROTOCOL_VERSION } from '@zana-ai/zcc-contracts/host-rpc';
 import { PROTOCOL_VERSION, runJoinStandalone } from '../../../host-daemon/src/join-standalone.js';
 import { startProductServer, type ProductServer } from './product-server.js';
+import { reserveFreePort } from './test-free-port.js';
 
 let server: ProductServer | null = null;
 let running: { close(): Promise<void> } | null = null;
@@ -44,7 +45,7 @@ describe('join-standalone pairing', () => {
     }).then((response) => response.json()) as { joinCode: string; hostId: string };
 
     const machineDir = mkdtempSync(join(tmpdir(), 'zcc-join-standalone-machine-'));
-    const port = 42000 + Math.floor(Math.random() * 1000);
+    const port = await reserveFreePort();
     running = await runJoinStandalone([
       'join',
       '--join-code', minted.joinCode,
