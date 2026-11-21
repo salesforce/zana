@@ -1,0 +1,113 @@
+/* Stable retained wrappers preserve existing flex children and native tools. */
+.home-composer-retained:not([hidden]),
+.basic-new-thread-actions:not([hidden]),
+.thread-secondary-retained-content:not([hidden]),
+.basic-thread-advanced-chrome:not([hidden]) { display: contents; }
+.home-composer-retained[hidden],
+.basic-new-thread-actions[hidden],
+.thread-secondary-retained-content[hidden] { display: none; }
+
+.basic-home-welcome[hidden] { display: none; }
+.basic-ui .basic-home-welcome { text-align: center; padding: 0 12px 28px; }
+.basic-ui .basic-home-welcome .zana-brand-icon { margin: 0 auto 28px; color: var(--accent-blue); }
+.basic-ui .basic-home-welcome h1 { font-size: clamp(26px, 3vw, 40px); font-weight: 450; letter-spacing: -1.4px; line-height: 1.2; margin: 0 0 16px; }
+.basic-ui .basic-home-welcome p { font-size: 14px; color: var(--text-muted); line-height: 1.7; margin: 0; }
+.basic-ui .home-panel .aurora-grid,
+.basic-ui .new-thread-view .aurora-grid,
+.basic-ui .home-plugin-sections[hidden],
+.basic-ui .home-launcher-tips [data-contextual-help-ui],
+.basic-ui .home-agent-composer > .launch-segmented { display: none; }
+.basic-ui .home-panel .settings-inner { width: min(740px, 100%); max-width: 740px; gap: 0; }
+.basic-ui .home-panel { background: var(--bg-base); padding: 34px 32px; }
+.basic-ui .home-panel .contextual-help-surface { width: 100%; }
+.basic-ui .home-panel .thread-command-card { border-radius: 20px; }
+.basic-ui .thread-detail-column { max-width: 800px; }
+.basic-ui .thread-detail-header { padding-top: 15px; padding-bottom: 15px; }
+.basic-ui .thread-detail-heading { min-width: 0; }
+.basic-ui .thread-detail-title { font-size: 14px; font-weight: 500; }
+.basic-ui .thread-command-card { border-radius: 18px; }
+.basic-ui .thread-command-composer-meta-end { display: none; }
+.basic-ui .thread-command-composer-meta { font-size: 11px; }
+
+.basic-ui .thread-detail-header .basic-thread-advanced-chrome[hidden] { display: none; }
+.basic-thread-project[hidden] { display: none; }
+.basic-ui .basic-thread-project { color: var(--text-muted); font-size: 11px; }
+.basic-ui .thread-tool-bottom[hidden] { display: none; }
+.basic-ui .thread-secondary-panel[data-basic-panel] .thread-info-content > :not(.thread-info-storage) { display: none; }
+.basic-ui .thread-secondary-panel[data-basic-panel] .thread-info-content { padding-top: 14px; }
+.basic-ui .basic-secondary-chrome { padding: 8px 10px; min-height: 48px; }
+.basic-ui .basic-secondary-chrome .thread-secondary-tab-label { font-size: 12px; }
+.basic-ui .basic-secondary-chrome .basic-panel-files-label { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; line-height: 1; }
+.basic-ui .basic-panel-files-label svg { display: block; flex-shrink: 0; }
+.basic-ui .basic-secondary-chrome .thread-secondary-tabs { min-width: 0; flex: 1; }
+.basic-ui .basic-secondary-chrome .thread-secondary-controls { flex-shrink: 0; }
+.basic-composer-handoff,
+.basic-panel-handoff { padding: 24px; border: 1px solid var(--border); border-radius: 14px; background: var(--bg-panel); }
+.basic-composer-handoff h2,
+.basic-panel-handoff h3 { font-size: 16px; font-weight: 500; margin: 0 0 12px; }
+.basic-composer-handoff p,
+.basic-panel-handoff p { color: var(--text-muted); font-size: 13px; line-height: 1.7; margin: 0 0 18px; }
+.basic-panel-handoff { margin: 20px; }
+@media (max-width: 700px) {
+  .basic-ui .home-panel { padding: 24px 18px; }
+  .basic-ui .basic-home-welcome { padding-bottom: 25px; }
+  .basic-ui .basic-home-welcome p { font-size: 13px; }
+  .basic-ui .basic-home-welcome .zana-brand-icon { margin-bottom: 23px; }
+  .basic-ui .basic-secondary-chrome .thread-secondary-controls button { min-width: 36px; min-height: 36px; }
+  .basic-ui .thread-detail-header { padding: 10px 14px; }
+}
+
+/* Basic results stay beside the chat only while both surfaces have room. */
+.app-shell.basic-ui .thread-detail-view.is-secondary-open:not(.is-secondary-maximized) .thread-secondary-panel[data-basic-panel]:not([data-basic-panel-compact]),
+.app-shell.basic-ui .split-workspace-host > .thread-secondary-panel[data-basic-panel]:not(.is-maximized):not([data-basic-panel-compact]),
+.app-shell.basic-ui .new-chat-panel-layout:not(.is-secondary-maximized) > .thread-secondary-panel[data-basic-panel]:not([data-basic-panel-compact]) {
+  position: relative;
+  inset: auto;
+  width: auto;
+  max-width: 45%;
+  flex-basis: min(var(--thread-secondary-width, 22rem), 45%);
+  z-index: auto;
+  box-shadow: none;
+}
+.app-shell.basic-ui .thread-detail-view .thread-detail-main[hidden],
+.app-shell.basic-ui .new-chat-panel-layout > .new-chat-panel-main[hidden],
+.app-shell.basic-ui .split-workspace-host:has(> .thread-secondary-panel[data-basic-panel-compact]) > .split-workspace-main {
+  display: none;
+}
+.app-shell.basic-ui .thread-detail-view.is-secondary-open .thread-secondary-panel[data-basic-panel-compact],
+.app-shell.basic-ui .split-workspace-host > .thread-secondary-panel[data-basic-panel-compact],
+.app-shell.basic-ui .new-chat-panel-layout > .thread-secondary-panel[data-basic-panel-compact] {
+  position: relative;
+  inset: auto;
+  flex: 1 1 0;
+  width: 100%;
+  max-width: 100%;
+  min-height: 0;
+  height: 100%;
+  border-left: 0;
+  z-index: auto;
+  box-shadow: none;
+}
+.basic-ui .basic-panel-back {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.basic-ui .basic-panel-back:hover { background: var(--bg-hover); }
+.basic-ui .basic-secondary-chrome:has(.basic-panel-back) { flex-wrap: wrap; gap: 4px; padding: 6px 10px; }
+.basic-ui .basic-secondary-chrome:has(.basic-panel-back) .thread-secondary-tabs { flex-basis: 100%; }
+.basic-ui .basic-secondary-chrome:has(.basic-panel-back) .thread-secondary-controls { display: none; }
+
+.app-shell.basic-ui .split-workspace-host:has(> .thread-secondary-panel[data-basic-panel].is-maximized) > .split-workspace-main { display: none; }
+.app-shell.basic-ui .split-workspace-host > .thread-secondary-panel[data-basic-panel].is-maximized {
+  position: relative; inset: auto; flex: 1 1 0; width: 100%; max-width: 100%; border-left: 0;
+}

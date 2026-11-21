@@ -3,6 +3,7 @@ import { product } from '../../../lib/product-client.js';
 import { useData, useUi } from '../../../store.js';
 import { closePanelTab, waitForPanelTerminalExit } from './panelTerminalLifecycle.js';
 import { forgetAgentTerminal } from './useThreadOpenTerminalSignal.js';
+import { forgetRetainedHtmlPreviewTab, observeRetainedHtmlPreviewTabs, retainHtmlPreviewOwnerTabs } from './htmlPreviewRetention.js';
 import { useCompactLayout } from '../../../hooks/useCompactLayout.js';
 import { createSecondaryPanelCommands } from './threadSecondaryPanelLogic.js';
 import {
@@ -70,6 +71,7 @@ export function useSecondaryPanel(
     const restored = restoreSecondaryPanel(ownerId, { defaultOpen });
     return compact ? closeSecondaryPanel(restored) : restored;
   });
+  const stateOwnerRef = useRef(ownerRef.current);
   const applyRemoteTabs = useCallback((tabs: ThreadTab[]) => {
     setState((current) => {
       const next = applyContractTabs(current, tabs);
@@ -77,6 +79,11 @@ export function useSecondaryPanel(
       return layoutRef.current.compact ? { ...next, isOpen: current.isOpen } : next;
     });
   }, []);
+  useEffect(() => {
+    if (ownerId && stateOwnerRef.current === ownerRef.current) {
+      retainHtmlPreviewOwnerTabs(ownerId, new Set(state.tabs.map(tab => tab.id)));
+    }
+  }, [ownerId, state.tabs]);
   useEffect(() => {
     if (compact) setState((current) => closeSecondaryPanel(current));
   }, [compact]);
@@ -96,6 +103,14 @@ export function useSecondaryPanel(
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    if (!ownerId || !syncServer || !serverHydrated || stateOwnerRef.current !== ownerRef.current || !serverTabsRef.current) return;
+    // Hydration can create a preview after its HTTP response was observed.
+    // Child layout effects mount the iframe before this passive effect runs.
+    const savedTabs = JSON.parse(serverTabsRef.current) as ThreadTab[];
+    observeRetainedHtmlPreviewTabs(ownerId, revisionRef.current, new Set(savedTabs.map(tab => tab.id)));
+  }, [ownerId, syncServer, serverHydrated, state.tabs]);
+
+  useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
@@ -109,6 +124,7 @@ export function useSecondaryPanel(
     serverTabsRef.current = null;
     localVersionRef.current = 0;
     savedVersionRef.current = 0;
+    stateOwnerRef.current = ownerRef.current;
     const restored = restoreSecondaryPanel(ownerId, { defaultOpen });
     const next = layoutRef.current.compact ? closeSecondaryPanel(restored) : restored;
     setState((current) => (secondaryPanelStatesEqual(current, next) ? current : next));
@@ -129,6 +145,7 @@ export function useSecondaryPanel(
         // Even a cached panel needs the current revision before its first PUT.
         if (body.revision < revisionRef.current) return;
         revisionRef.current = revisionFromTabsResponse(body);
+        observeRetainedHtmlPreviewTabs(ownerId, revisionRef.current, new Set(body.tabs.map(tab => tab.id)));
         serverTabsRef.current = tabsSignature(body.tabs);
         if (!hasLocalTabs && body.tabs.length > 0 && localVersionRef.current === initialVersion) {
           applyRemoteTabs(body.tabs);
@@ -189,6 +206,7 @@ export function useSecondaryPanel(
                   : await product.threads.updateTabs(pending.owner.id, tabsPutBody(pending.state, revisionRef.current)) as ThreadTabsResponse;
               }
               if (!mountedRef.current || ownerRef.current !== pending.owner) continue;
+              observeRetainedHtmlPreviewTabs(pending.owner.id, body.revision, new Set(body.tabs.map(tab => tab.id)));
               if (body.revision >= revisionRef.current) serverTabsRef.current = tabsSignature(body.tabs);
               revisionRef.current = Math.max(revisionRef.current, revisionFromTabsResponse(body as ThreadTabsResponse));
               savedVersionRef.current = Math.max(savedVersionRef.current, pending.version);
@@ -258,6 +276,7 @@ export function useSecondaryPanel(
         released: id => { forgetAgentTerminal(id); useData.getState().dismissTerminals([id]); },
         remove: id => {
           if (mountedRef.current && owner === ownerRef.current) {
+            if (owner.id) forgetRetainedHtmlPreviewTab(owner.id, id);
             // The next bulk-close step may run before React renders this removal.
             // Keep shared terminal references current so their final tab stops the shell.
             stateRef.current = closeClosableTab(stateRef.current, id);

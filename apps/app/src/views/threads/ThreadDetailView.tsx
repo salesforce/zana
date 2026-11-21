@@ -2,9 +2,12 @@ import { PeerMessageReviews } from '../../components/thread/timeline/PeerMessage
 import { subscribeProductReconnect } from '../../lib/product-ws.js';
 import { ArchivedThreadBanner } from '../../components/history/ArchivedThreadBanner.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { PanelBottom, PanelRight } from 'lucide-react';
+import { isBasicUiRouteSupported, setBasicUiMode, useBasicUi } from '../../lib/basic-ui.js';
+import '../../components/basic/basic-conversation.css';
+import { useBasicPanelLayout } from '../../hooks/useBasicPanelLayout.js';
 import type { ActiveThinking, ThreadTimelineGoal, ThreadTimelineModelFallback, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
 import { mergeTimelinePages, type ThreadContextWindowUsage, type TimelineRow } from '@zana-ai/zcc-server-contract';
 import { type TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
@@ -162,6 +165,9 @@ function ThreadDetailBody({
   includePluginMessageActions?: boolean;
 }) {
   const navigate = useNavigate();
+  const basic = useBasicUi();
+  const location = useLocation();
+  const basicRouteHidden = basic && !isBasicUiRouteSupported(location.pathname);
   const route = useRouteState();
   const upsertThread = useThreads((s) => s.upsert);
   const childThreads = useThreads(useShallow(({ threads }) => pendingChildThreads(threads, threadId)));
@@ -175,14 +181,22 @@ function ThreadDetailBody({
   const hostedSecondary = pane?.secondaryPanelHost != null;
   const viewRef = useRef<HTMLElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
+  const basicCompact = useBasicPanelLayout(viewRef, basic);
   const panel = useThreadSecondaryPanel(threadId, {
     modal,
     getContainerWidthPx: () => viewRef.current?.clientWidth ?? 0
   });
+  const wasBasicPanelOpen = useRef(false);
+  useEffect(() => {
+    if (basic && wasBasicPanelOpen.current && !panel.state.isOpen) {
+      mainRef.current?.querySelector<HTMLButtonElement>('[data-testid="thread-secondary-show"]')?.focus({ preventScroll: true });
+    }
+    wasBasicPanelOpen.current = basic && panel.state.isOpen;
+  }, [basic, panel.state.isOpen]);
   const dockEnabled = useData(s => s.dockableThreadToolsEnabled) === true && !compact && showSecondaryPanel;
   const toolDock = useThreadToolDock(threadId, panel.state, dockEnabled);
   const [draggedTool, setDraggedTool] = useState<string | null>(null);
-  useEffect(() => { setDraggedTool(null); }, [threadId, dockEnabled]);
+  useEffect(() => { setDraggedTool(null); }, [threadId, dockEnabled, basic]);
   const moveTool = (id: string, side: ToolDockSide) => {
     toolDock.move(id, side);
     if (side === 'right') {
@@ -753,6 +767,7 @@ function ThreadDetailBody({
       : null;
     panelBody = (
       <ThreadFilePreviewTab
+        previewId={closable.id}
         threadId={threadId}
         previewRevision={closable.previewRevision}
         path={closable.path}
@@ -807,6 +822,9 @@ function ThreadDetailBody({
     return (
         <ThreadSecondaryPanel
           state={state}
+          basic={basic}
+          basicCompact={basicCompact}
+          onOpenAdvanced={() => setBasicUiMode('advanced')}
           dock={dockProps(side)}
           showInfoPin={pins.includes('info')}
           showDiffPin={pins.includes('diff') && Boolean(environmentId)}
@@ -848,7 +866,7 @@ function ThreadDetailBody({
           <BrowserTabDeck
             browserTabs={panel.state.tabs.filter((tab) => tab.kind === 'browser')}
             activeBrowserTabId={closable?.kind === 'browser' ? closable.id : null}
-            canShowNativeBrowserView={state.isOpen && !(side === 'bottom' && (toolDock.dock.collapsed || panel.state.isMaximized)) && !draggedTool && (modal || hostedSecondary || pane?.isFocused !== false)}
+            canShowNativeBrowserView={state.isOpen && !basicRouteHidden && !(basic && side === 'bottom') && !(side === 'bottom' && (toolDock.dock.collapsed || panel.state.isMaximized)) && !draggedTool && (modal || hostedSecondary || pane?.isFocused !== false)}
             threadId={threadId}
             onUpdate={({ tabId, url, title: nextTitle }) => {
               const resolvedTitle = nextTitle && nextTitle.length > 0 ? nextTitle : getBrowserUrlHost(url) || 'Browser';
@@ -978,31 +996,34 @@ function ThreadDetailBody({
       ref={viewRef}
       className={viewClass}
       data-testid="thread-detail"
+      data-basic-panel-compact={basicCompact || undefined}
       data-embedded={embedded ? 'true' : undefined}
       style={panelOpen ? { ['--thread-secondary-width' as string]: `${panel.state.widthPx}px` } : undefined}
     >
       <div className="thread-detail-split">
       <div className={dockEnabled ? "thread-tool-main" : "thread-tool-main--legacy"}>
-      <div ref={mainRef} className="thread-detail-main">
+      <div ref={mainRef} className="thread-detail-main"
+        hidden={basic && showSecondaryPanel && panel.state.isOpen && (basicCompact || panel.state.isMaximized)}
+        inert={basic && showSecondaryPanel && panel.state.isOpen && (basicCompact || panel.state.isMaximized) || undefined}>
         <header className="thread-detail-header thread-detail-header--balanced" data-title-in-shell={Boolean(mobileTitleTarget) || undefined} data-controls-in-shell={Boolean(mobileControlsTarget) || undefined}>
           <ThreadDetailHeading
             title={title}
             titleTarget={mobileTitleTarget}
-            draggable={Boolean(pane?.beginPaneDrag)}
+            draggable={!basic && Boolean(pane?.beginPaneDrag)}
             onPointerDown={
-              pane?.beginPaneDrag
+              !basic && pane?.beginPaneDrag
                 ? (event) => pane.beginPaneDrag?.(event, title)
                 : undefined
             }
             status={!mobileControlsTarget ? <ThreadStatusBadge status={status} waitingOnUser={awaitingUser} thinking={thinking} /> : null}
-            metadata={!mobileControlsTarget && <ThreadDetailContext key={threadId} agent={{
+            metadata={!mobileControlsTarget && <><span className="basic-thread-project" hidden={!basic}>{project?.name ?? 'Conversation'}</span><span className="basic-thread-advanced-chrome" hidden={basic} inert={basic || undefined}><ThreadDetailContext key={threadId} agent={{
               providerId: threadProviderId,
               model: threadModel,
               projectName: project?.name ?? null,
               machineName: executionLocation.machineName,
               machineRemote: executionLocation.remote,
               branchName: displayedBranch ?? null
-            }} />}
+            }} /></span></>}
           />
           <ThreadDetailActions target={mobileControlsTarget}>
             {(!mobileControlsTarget || mobileSearchOpen) && <ThreadDetailSearch
@@ -1018,9 +1039,9 @@ function ThreadDetailBody({
               partial={searchActive && search.partial}
             />}
             {mobileControlsTarget && <ThreadStatusBadge status={status} waitingOnUser={awaitingUser} thinking={thinking} />}
-            {!mobileControlsTarget && <PluginThreadHeaderActions threadId={threadId} projectId={projectId} />}
-            <SplitPaneHeaderActions />
-            {dockEnabled ? <button type="button" className="icon-btn"
+            {!mobileControlsTarget && <span className="basic-thread-advanced-chrome" hidden={basic} inert={basic || undefined}><PluginThreadHeaderActions threadId={threadId} projectId={projectId} /></span>}
+            <span className="basic-thread-advanced-chrome" hidden={basic} inert={basic || undefined}><SplitPaneHeaderActions /></span>
+            {dockEnabled ? <button type="button" className="icon-btn basic-thread-advanced-chrome" hidden={basic}
               aria-label={dockPanels.bottom.isOpen && !toolDock.dock.collapsed ? 'Hide bottom panel' : 'Show bottom panel'}
               title={dockPanels.bottom.isOpen && !toolDock.dock.collapsed ? 'Hide bottom panel' : 'Show bottom panel'}
               aria-pressed={dockPanels.bottom.isOpen && !toolDock.dock.collapsed}
@@ -1038,7 +1059,7 @@ function ThreadDetailBody({
                 <PanelRight size={14} />
               </button>
             ) : null}
-            {overflow}
+            <span className="basic-thread-advanced-chrome" hidden={basic} inert={basic || undefined}>{overflow}</span>
           </ThreadDetailActions>
         </header>
         <div className="thread-detail-body">

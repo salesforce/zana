@@ -4,8 +4,10 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 
-const h = vi.hoisted(() => ({ compact: false, classic: true, focused: true, create: vi.fn(), close: vi.fn(), register: vi.fn(), file: vi.fn() }));
+const h = vi.hoisted(() => ({ compact: false, basicCompact: false, classic: true, focused: true, pathname: '/projects/p/threads/new', panelProps: null as any, create: vi.fn(), close: vi.fn(), register: vi.fn(), file: vi.fn() }));
+vi.mock('react-router-dom', async original => ({ ...await original<any>(), useLocation: () => ({ pathname: h.pathname }) }));
 vi.mock('../../store.js', () => ({ useData: Object.assign(() => undefined, { getState: () => ({ classicSessionViewEnabled: h.classic }) }) }));
+vi.mock('../../hooks/useBasicPanelLayout.js', () => ({ useBasicPanelLayout: (_ref: unknown, basic: boolean) => basic && h.basicCompact }));
 vi.mock('../../hooks/useCompactLayout.js', () => ({ useCompactLayout: () => h.compact }));
 vi.mock('../thread-detail/PaneContext.js', () => ({ useOptionalPaneContext: () => ({ isFocused: h.focused }) }));
 vi.mock('../../lib/product-client.js', () => ({ product: { terminals: { create: h.create, close: h.close } } }));
@@ -14,12 +16,12 @@ vi.mock('../../components/thread/secondary-panel/useThreadOpenFileSignal.js', ()
 vi.mock('../../components/thread/secondary-panel/useThreadOpenTerminalSignal.js', () => ({ forgetAgentTerminal: () => undefined }));
 vi.mock('../../components/thread/secondary-panel/browserViewVisibilityCoordinator.js', () => ({ registerBrowserView: h.register }));
 vi.mock('../../components/thread/secondary-panel/ThreadSecondaryPanel.js', () => ({
-  ThreadSecondaryPanel: (p: ComponentProps<typeof import('../../components/thread/secondary-panel/ThreadSecondaryPanel.js').ThreadSecondaryPanel>) => <aside>
+  ThreadSecondaryPanel: (p: ComponentProps<typeof import('../../components/thread/secondary-panel/ThreadSecondaryPanel.js').ThreadSecondaryPanel>) => { h.panelProps = p; return <aside>
     <button onClick={p.onNewTab}>New tab</button><button onClick={p.onHide}>Hide</button>
     <button onClick={() => p.onResize(530, 1200)}>Resize</button><button onClick={p.onToggleMaximized}>Maximize</button>
     <button onClick={() => p.onAddTool?.('explorer')}>Quick files</button><button onClick={() => p.onAddTool?.('terminal')}>Quick terminal</button>
     {p.state.tabs.map(tab => <button key={tab.id} onClick={() => p.onActivateTab(tab.id)}>{tab.title}</button>)}{p.children}
-  </aside>
+  </aside>; }
 }));
 vi.mock('../../components/thread/secondary-panel/ThreadNewTabPage.js', () => ({
   ThreadNewTabPage: (p: ComponentProps<typeof import('../../components/thread/secondary-panel/ThreadNewTabPage.js').ThreadNewTabPage>) => <div data-testid="tools" data-terminals={String(p.allowSidecarTerminal)}>
@@ -45,6 +47,7 @@ vi.mock('../../components/thread/secondary-panel/BrowserTabDeck.js', () => ({
 
 import { NewChatPanelLayout } from './NewChatPanelLayout.js';
 import { emptySecondaryPanelState, loadSecondaryPanelState, persistSecondaryPanelState } from '../../components/thread/secondary-panel/threadSecondaryPanelState.js';
+import { getBasicUiMode, setBasicUiMode } from '../../lib/basic-ui.js';
 
 const project = { id: 'p', path: '/p' } as Project;
 const buttons = ({ onCreated, onAgentCreated }: ComponentProps<typeof NewChatPanelLayout>['children'] extends (p: infer P) => ReactNode ? P : never) => <>
@@ -56,12 +59,65 @@ const click = (name: string) => fireEvent.click(screen.getByRole('button', { nam
 const renderDraft = (scopeId = 'p', selected: Project | undefined = project) => render(<NewChatPanelLayout key={scopeId} scopeId={scopeId} project={selected} hostId="host">{buttons}</NewChatPanelLayout>);
 
 beforeEach(() => {
-  localStorage.clear(); h.compact = false; h.classic = true; h.focused = true; vi.clearAllMocks();
+  localStorage.clear(); h.compact = false; h.basicCompact = false; h.classic = true; h.focused = true; h.pathname = '/projects/p/threads/new'; h.panelProps = null; setBasicUiMode('advanced'); vi.clearAllMocks();
   h.create.mockResolvedValue({ ok: true, value: { id: 'shell', title: 'Terminal' } }); h.close.mockResolvedValue(true);
 });
-afterEach(cleanup);
+afterEach(() => { cleanup(); setBasicUiMode('advanced'); });
 
 describe('New chat side panels', () => {
+  it('passes Basic chrome policy while retaining the draft and selected document', () => {
+    renderDraft(); show(); click('Open file');
+    const preview = screen.getByText('File: /p/README.md');
+    const launch = screen.getByRole('button', { name: 'Launch Modern' });
+    const saved = loadSecondaryPanelState('new-chat:p');
+    act(() => setBasicUiMode('basic'));
+    expect(h.panelProps.basic).toBe(true);
+    expect(screen.getByText('File: /p/README.md')).toBe(preview);
+    expect(screen.getByRole('button', { name: 'Launch Modern' })).toBe(launch);
+    expect(loadSecondaryPanelState('new-chat:p')).toEqual(saved);
+    act(() => h.panelProps.onOpenAdvanced());
+    expect(getBasicUiMode()).toBe('advanced');
+    expect(h.panelProps.basic).toBe(false);
+    expect(screen.getByText('File: /p/README.md')).toBe(preview);
+    expect(loadSecondaryPanelState('new-chat:p')).toEqual(saved);
+  });
+
+  it('focuses a narrow Basic result while retaining the inaccessible composer until returning to chat', () => {
+    h.basicCompact = true;
+    setBasicUiMode('basic');
+    renderDraft();
+    const launch = screen.getByRole('button', { name: 'Launch Modern' });
+    show();
+    expect(h.panelProps.basicCompact).toBe(true);
+    const main = launch.closest<HTMLElement>('.new-chat-panel-main')!;
+    expect(main.hidden).toBe(true);
+    expect(main.hasAttribute('inert')).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Launch Modern' })).toBeNull();
+    click('Hide');
+    expect(main.hidden).toBe(false);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Show right panel' }));
+    expect(main.hasAttribute('inert')).toBe(false);
+    expect(screen.getByRole('button', { name: 'Launch Modern' })).toBe(launch);
+    act(() => setBasicUiMode('advanced'));
+    expect(screen.getByTestId('new-chat-panel-layout').hasAttribute('data-basic-panel-compact')).toBe(false);
+  });
+
+  it('suppresses native browser views when a retained Basic draft is behind an unsupported route', () => {
+    renderDraft(); show(); click('Open browser');
+    const browser = screen.getByTestId('browser');
+    const saved = loadSecondaryPanelState('new-chat:p');
+    act(() => setBasicUiMode('basic'));
+    expect(browser.getAttribute('data-visible')).toBe('true');
+    h.pathname = '/scheduler';
+    act(() => setBasicUiMode('advanced'));
+    act(() => setBasicUiMode('basic'));
+    expect(screen.getByTestId('browser')).toBe(browser);
+    expect(browser.getAttribute('data-visible')).toBe('false');
+    expect(loadSecondaryPanelState('new-chat:p')).toEqual(saved);
+    act(() => setBasicUiMode('advanced'));
+    expect(browser.getAttribute('data-visible')).toBe('true');
+  });
+
   it('hands off the latest layout when an asynchronous launch completes', () => {
     let launch!: () => void;
     render(<NewChatPanelLayout scopeId="p" project={project}>{handlers => {

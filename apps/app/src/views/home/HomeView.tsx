@@ -3,10 +3,13 @@ import { useLocation, useSearchParams } from 'react-router-dom';
 import { AuroraGrid } from '@/components/AuroraGrid';
 import { HomeAgentComposer } from '@/components/HomeAgentComposer';
 import { HomeLauncherTips } from '@/components/HomeLauncherTips';
+import { ZanaIcon } from '@/components/icons/ZanaIcon';
 import { PluginNewThreadActions } from '@/plugins/PluginNewThreadActions';
 import { listHomepageSections, subscribePluginSlots } from '@/plugins/plugin-slots';
 import { PluginSlotBoundary } from '@/plugins/PluginSlotBoundary';
 import { composePromptSeedFrom } from '@/lib/compose-prompt-seed';
+import { useBasicUi } from '@/lib/basic-ui';
+import '../../components/basic/basic-conversation.css';
 
 /**
  * New Chat compose surface at `/`. ListPane returns null for `nav === 'home'`,
@@ -15,6 +18,7 @@ import { composePromptSeedFrom } from '@/lib/compose-prompt-seed';
  * AuroraGrid fills the pane behind the composer (same host as Plugins).
  */
 export function HomeView() {
+  const basic = useBasicUi();
   const location = useLocation();
   const [search] = useSearchParams();
   const seed = composePromptSeedFrom({ searchParams: search, state: location.state });
@@ -28,16 +32,23 @@ export function HomeView() {
     <div className="settings-panel home-panel aurora-host">
       <AuroraGrid />
       <div className="settings-inner">
+        <div className="basic-home-welcome" hidden={!basic}>
+          <ZanaIcon size={48} />
+          <h1>What shall we work on today?</h1>
+          <p>Bring a question, a rough idea, or something to get done.</p>
+        </div>
         <HomeLauncherTips>
           <HomeAgentComposer
             allowLegacyAgent
             initialText={seed.initialText}
             autoFocus={seed.focusPrompt}
           />
-          <PluginNewThreadActions projectId={null} />
+          <div hidden={basic} inert={basic || undefined}>
+            <PluginNewThreadActions projectId={null} />
+          </div>
         </HomeLauncherTips>
         {pluginHomepage.length > 0 && (
-          <div className="home-plugin-sections">
+          <div className="home-plugin-sections" hidden={basic} inert={basic || undefined}>
             {pluginHomepage.map((section) => {
               const Section = section.component;
               return (

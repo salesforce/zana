@@ -62,8 +62,16 @@ const defaultModelList = {
       description: "Fake model for integration and runtime tests",
       supportedReasoningEfforts: [
         {
+          reasoningEffort: "low",
+          description: "Low",
+        },
+        {
           reasoningEffort: "medium",
           description: "Medium",
+        },
+        {
+          reasoningEffort: "high",
+          description: "High",
         },
       ],
       defaultReasoningEffort: "medium",
