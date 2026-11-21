@@ -1047,12 +1047,30 @@ export function ThreadWireframe(): ReactNode {
               <Mark id="threadPanelAction" label="Thread side-panel tabs" chip="outside-above" className="plugin-guide-side-tab is-active">
                 <Plug /> Tasks
               </Mark>
-              <span className="plugin-guide-side-tab">Files</span>
+              <span className="plugin-guide-side-tab">Browser</span>
             </header>
             <div className="plugin-guide-side-body">
               <strong>Open tasks</strong>
               <div className="plugin-guide-skel" />
               <div className="plugin-guide-skel is-short" />
+            </div>
+            <div className="plugin-guide-browser" aria-label="Thread browser">
+              <div className="plugin-guide-browser-bar">
+                <span className="plugin-guide-browser-url">localhost:5173/checkout</span>
+                <Mark
+                  id="experimental_browserToolbarAction"
+                  label="Browser toolbar action"
+                  chip="side"
+                  className="plugin-guide-browser-action"
+                  title="Browser toolbar action"
+                >
+                  <Plug />
+                </Mark>
+              </div>
+              <div className="plugin-guide-browser-page">
+                <div className="plugin-guide-skel" />
+                <div className="plugin-guide-skel is-short" />
+              </div>
             </div>
           </aside>
         </div>

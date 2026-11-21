@@ -1278,6 +1278,53 @@
   color: var(--text-primary);
 }
 
+.plugin-guide-browser {
+  display: flex;
+  flex-direction: column;
+  margin: auto 10px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+
+.plugin-guide-browser-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.plugin-guide-browser-url {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-base);
+  color: var(--text-dim);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-guide-mark.plugin-guide-browser-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+}
+
+.plugin-guide-browser-page {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+
 .plugin-guide-palette-stage {
   position: relative;
   min-height: 500px;
