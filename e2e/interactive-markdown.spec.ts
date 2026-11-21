@@ -124,10 +124,10 @@ for (const theme of ['light', 'dark'] as const) {
     writeFileSync(join(root, 'release-plan.md'), original);
     writeFileSync(join(root, 'image.md'), '# Image\n\n![Local image](pixel.png)');
     const page = app.window;
-    await page.evaluate(async ({ root, theme }) => {
+    const projectId = await page.evaluate(async ({ root, theme }) => {
       await window.cc.config.set({ theme });
       const result = await window.cc.projects.add(root); if (!result.ok) throw new Error(result.message);
-      history.pushState({}, '', `/projects/${result.value.id}/explorer`); dispatchEvent(new PopStateEvent('popstate'));
+      history.pushState({}, '', `/projects/${result.value.id}/explorer`); dispatchEvent(new PopStateEvent('popstate')); return result.value.id;
     }, { root, theme });
     await page.locator('.tree-row.file').filter({ hasText: 'release-plan.md' }).click();
     const document = page.locator('.explorer-viewer .md-document');
@@ -154,7 +154,9 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(document.getByRole('button', { name: 'Save', exact: true })).toBeVisible();
     await captureElectronScreenshot(app.electron, page, info.outputPath(`markdown-${theme}-narrow.png`), document);
     expect(readFileSync(join(root, 'release-plan.md'), 'utf8')).toBe(original);
+    const imageRequest = page.waitForRequest(request => request.url().endsWith('/api/v1/fs/image') && request.method() === 'POST');
     await page.locator('.tree-row.file').filter({ hasText: 'image.md' }).click();
+    expect((await imageRequest).postDataJSON()).toMatchObject({ scope: { projectId, hostId: expect.any(String) } });
     await expect(document.getByRole('img', { name: 'Local image' })).toBeVisible();
     expect(await document.getByRole('img', { name: 'Local image' }).evaluate(image => (image as HTMLImageElement).naturalWidth)).toBe(1);
   });

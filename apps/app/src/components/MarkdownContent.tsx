@@ -1,5 +1,6 @@
 import { Children, createContext, isValidElement, memo, useCallback, useContext, useMemo, useState, type ComponentPropsWithoutRef, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type ExtraProps } from 'react-markdown';
+import type { ProjectFileScope } from '@zana-ai/zcc-desktop-contract';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -264,7 +265,8 @@ export const MarkdownContent = memo(function MarkdownContent({
   fileLinksAsAnchors = false,
   onTaskChange,
   documentLinks = false,
-  localDocumentImages = true
+  localDocumentImages = true,
+  fileScope
 }: {
   text: string;
   mermaidTheme?: 'dark' | 'default';
@@ -285,6 +287,7 @@ export const MarkdownContent = memo(function MarkdownContent({
   documentLinks?: boolean;
   /** Legacy remote previews must never resolve relative images on this desktop. */
   localDocumentImages?: boolean;
+  fileScope?: ProjectFileScope;
 }) {
   const preview = boundedText(text);
   const body = documentPath !== undefined ? preview : unwrapBareFence(preview);
@@ -338,7 +341,7 @@ export const MarkdownContent = memo(function MarkdownContent({
     const alt = props.alt || 'Image';
     if (documentPath !== undefined && !/^(https:|data:image\/|blob:)/iu.test(raw)) {
       if (/^(http:|\/\/)/iu.test(raw) || !localDocumentImages) return <span title={raw}>{alt}</span>;
-      return <DocumentImage documentPath={documentPath} src={raw} alt={alt} title={props.title} threadId={threadId} storage={storage} />;
+      return <DocumentImage documentPath={documentPath} src={raw} alt={alt} title={props.title} threadId={threadId} storage={storage} fileScope={fileScope} />;
     }
     const src = threadId ? raw : conversationImageSrc(projectId, raw);
     if (!src) return null;
@@ -346,7 +349,7 @@ export const MarkdownContent = memo(function MarkdownContent({
       <ThreadDisplayedImage path={src} threadId={threadId} alt={alt} title={props.title} variant="markdown"
         onOpen={exportable ? undefined : () => setLightbox({ src, alt })} />
     );
-  }, [documentPath, threadId, storage, projectId, exportable, localDocumentImages]);
+  }, [documentPath, threadId, storage, projectId, exportable, localDocumentImages, fileScope]);
   if (preview.length < text.length) return <LargeTextPreview text={text} />;
   return (
     <>

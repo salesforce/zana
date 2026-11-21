@@ -1042,6 +1042,7 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
         onDoubleClick={onResizeDoubleClick}
       />
       <FileViewer
+        fileScope={scope}
         sourceKey={JSON.stringify([project.id, scope, isRemote])}
         saveRecovery={saveFailure && saveFailure.path === explorerFile && isMarkdown && !isRemote ? <MarkdownSaveRecovery key={saveFailure.attempt}
           message={saveFailure.message} read={() => product.fs.readFile(explorerFile!, scope)}

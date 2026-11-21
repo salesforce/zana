@@ -1,6 +1,7 @@
 import React, { lazy } from 'react';
 import { FileText, Save, GitCompare } from 'lucide-react';
 import type { OnMount } from '@monaco-editor/react';
+import type { ProjectFileScope } from '@zana-ai/zcc-desktop-contract';
 import type { FsReadResult, GitShowResult, Project } from '@zana-ai/zcc-domain/product';
 import { ViewerBoundary } from './ViewerBoundary.js';
 import { OpenerButtons } from '../OpenerButtons.js';
@@ -46,6 +47,7 @@ interface FileViewerProps {
   fragment?: string;
   sourceKey?: string;
   saveRecovery?: React.ReactNode;
+  fileScope?: ProjectFileScope;
 }
 
 function formatBytes(n: number) {
@@ -98,7 +100,8 @@ export function FileViewer({
   onOpenDocument,
   fragment,
   sourceKey = '',
-  saveRecovery
+  saveRecovery,
+  fileScope
 }: FileViewerProps) {
   const {
     minimap,
@@ -240,7 +243,7 @@ export function FileViewer({
         <ViewerBoundary key={isMarkdown && !showDiff ? 'markdown' : showDiff ? 'diff' : 'editor'} resetKey={explorerFile}>
           {isMarkdown && !showDiff ? (
             <MarkdownDocument key={`${sourceKey}:${explorerFile}`} value={editedContent ?? fileResult.content ?? ''} savedValue={fileResult.content ?? ''}
-              documentPath={explorerFile} localImages={!isRemote} fragment={fragment} onOpenDocument={onOpenDocument} saving={saving}
+              documentPath={explorerFile} localImages={!isRemote} fileScope={fileScope} fragment={fragment} onOpenDocument={onOpenDocument} saving={saving}
               readOnlyReason={fileResult.truncated ? 'This preview is truncated. Open the complete file to edit it.' : isRemote ? 'Editing Markdown on this legacy remote connection is unavailable. Use a registered checkout.' : undefined}
               onChange={value => onContentChange(value === fileResult.content ? null : value)} onSave={onSave} onSourceMount={handleEditorMount} />
           ) : showDiff ? (

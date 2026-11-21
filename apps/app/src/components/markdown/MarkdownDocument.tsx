@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefCallback } from 'react';
 import type { OnMount } from '@monaco-editor/react';
+import type { ProjectFileScope } from '@zana-ai/zcc-desktop-contract';
 import { MarkdownContent } from '../MarkdownContent.js';
 import { DocumentLinkBoundary } from '../DocumentLinkBoundary.js';
 import type { DocumentLink } from '../document-links.js';
@@ -31,10 +32,11 @@ export interface MarkdownDocumentProps {
   onSourceMount?: OnMount;
   previewRef?: RefCallback<HTMLDivElement>;
   localImages?: boolean;
+  fileScope?: ProjectFileScope;
 }
 
 /** One source buffer. Preview operations patch source; mode changes never save or discard. */
-export default function MarkdownDocument({ value, savedValue, documentPath, onChange, onSave, saving = false, readOnlyReason, initialMode = 'read', threadId, projectId, storage, fragment, onOpenDocument, onSourceMount, previewRef, localImages = true }: MarkdownDocumentProps) {
+export default function MarkdownDocument({ value, savedValue, documentPath, onChange, onSave, saving = false, readOnlyReason, initialMode = 'read', threadId, projectId, storage, fragment, onOpenDocument, onSourceMount, previewRef, localImages = true, fileScope }: MarkdownDocumentProps) {
   const [mode, setMode] = useState<MarkdownMode>(initialMode);
   const [find, setFind] = useState(false);
   const [query, setQuery] = useState('');
@@ -123,7 +125,7 @@ export default function MarkdownDocument({ value, savedValue, documentPath, onCh
     setFind(true);
     requestAnimationFrame(() => { inputRef.current?.focus(); inputRef.current?.select(); });
   };
-  const preview = (text: string, tasks = true) => <MarkdownContent text={text} documentLinks={!threadId} localDocumentImages={localImages} documentPath={documentPath} threadId={threadId} projectId={projectId} storage={storage} exportable
+  const preview = (text: string, tasks = true) => <MarkdownContent text={text} documentLinks={!threadId} localDocumentImages={localImages} fileScope={fileScope} documentPath={documentPath} threadId={threadId} projectId={projectId} storage={storage} exportable
     onTaskChange={tasks && writable ? (start, checked) => change(toggleMarkdownTask(valueRef.current, start, checked)) : undefined} />;
   const selectMode = (next: MarkdownMode) => {
     if (next === mode) return;
