@@ -807,7 +807,10 @@ test('Basic reuses the merged composer and keeps drafts and attachments usable a
   await basic(page).click();
   await expect(input).toHaveAttribute('data-light-composer-owner', 'retained');
   await expect(image).toBeVisible();
-  await input.fill('');
+  // Use the editor's deletion transaction; an empty fill can bypass it on Linux.
+  await input.press('ControlOrMeta+A');
+  await input.press('Backspace');
+  await expect(input).toHaveText('');
   await expect(send).toBeEnabled();
   await page.getByRole('button', { name: 'Remove keep-this.png', exact: true }).click();
   await expect(image).toHaveCount(0);
