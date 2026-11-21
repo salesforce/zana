@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures/app.js';
+import { expectComposerSetting, pickComposerSetting } from './fixtures/composer-settings.js';
 import { waitForThreadProvider } from './fixtures/thread-providers.js';
 
 test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { sponsorPromptDismissed: true } });
@@ -27,9 +28,8 @@ for (const initial of [{ mode: 'auto', label: 'Auto' }, { mode: 'full', label: '
     await window.getByTestId('nav-home').click();
     const home = window.locator('.thread-command-composer').first();
     await expect(home.getByTestId('thread-command-send')).toBeEnabled({ timeout: 30_000 });
-    await home.getByLabel('Permission mode', { exact: true }).click();
-    await window.getByRole('option', { name: initial.mode === 'full' ? /^Full Access/ : /^Approve for me/ }).click();
-    await expect(home.getByLabel('Permission mode', { exact: true })).toContainText(initial.label);
+    await pickComposerSetting(window, home, 'permission', initial.label);
+    await expectComposerSetting(window, home, 'permission', initial.label);
     await home.getByTestId('thread-command-input').fill(`First message with ${initial.label}`);
     const createdResponse = window.waitForResponse((r) => r.url().endsWith('/api/v1/threads') && r.request().method() === 'POST');
     await home.getByTestId('thread-command-send').click();
@@ -41,8 +41,7 @@ for (const initial of [{ mode: 'auto', label: 'Auto' }, { mode: 'full', label: '
     const id = (created.value ?? created.thread).id as string;
     const detail = window.getByTestId('thread-detail');
     const composer = detail.locator('.thread-command-composer');
-    const picker = composer.getByLabel('Permission mode', { exact: true });
-    await expect(picker).toContainText(initial.label);
+    await expectComposerSetting(window, composer, 'permission', initial.label);
     await expect(detail.getByTestId('thread-timeline')).toContainText(`Response to: First message with ${initial.label}`);
 
     const send = async (text: string, permissionMode: string) => {
@@ -57,16 +56,15 @@ for (const initial of [{ mode: 'auto', label: 'Auto' }, { mode: 'full', label: '
       }, id)).toBe(permissionMode);
     };
     await send(`Second message keeps ${initial.label}`, initial.mode);
-    await expect(picker).toContainText(initial.label);
+    await expectComposerSetting(window, composer, 'permission', initial.label);
     await window.reload();
-    await expect(picker).toContainText(initial.label);
+    await expectComposerSetting(window, composer, 'permission', initial.label);
     await send('Third message after reopening', initial.mode);
 
-    await picker.click();
-    await window.getByRole('option', { name: /^Accept Edits/ }).click();
+    await pickComposerSetting(window, composer, 'permission', 'Edits');
     await send('Explicitly switch to Edits', 'accept-edits');
     await window.reload();
-    await expect(picker).toContainText('Edits');
+    await expectComposerSetting(window, composer, 'permission', 'Edits');
     await expect(window.locator('.thread-status-badge.is-error')).toHaveCount(0);
     await window.unrouteAll({ behavior: 'ignoreErrors' });
   });

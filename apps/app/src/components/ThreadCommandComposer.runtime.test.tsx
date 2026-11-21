@@ -136,6 +136,16 @@ vi.mock('./thread/pickers/ComposerModePicker.js', () => ({ ComposerModePicker: (
 vi.mock('./thread/pickers/ModelReasoningPicker.js', () => ({ ModelReasoningPicker: ({ onReloadModels }: { onReloadModels: () => void }) =>
   <button onClick={onReloadModels}>Reload models</button> }));
 vi.mock('./thread/pickers/ReasoningEffortPicker.js', () => ({ ReasoningEffortPicker: () => null }));
+// Desktop renders mode and send mode inside the settings pill; expose the
+// same controls the compact pickers provide so both layouts share assertions.
+vi.mock('./composer/ComposerSettingsPill.js', () => ({ ComposerSettingsPill: ({ groups }: { groups: Array<{ id: string; value: string; onChange: (v: string) => void }> }) => {
+  const mode = groups.find((g) => g.id === 'mode')!;
+  const send = groups.find((g) => g.id === 'send-mode')!;
+  return <>
+    <button data-mode={mode.value} onClick={() => mode.onChange('plan')}>Plan mode</button>
+    <button data-send-mode={send.value} onClick={() => send.onChange('steer')}>Send mode</button>
+  </>;
+} }));
 vi.mock('./thread/pickers/ComposerSendModePicker.js', () => ({ ComposerSendModePicker: ({ onChange, value }: { onChange: (mode: string) => void; value: string }) =>
   <button data-send-mode={value} onClick={() => onChange('steer')}>Send mode</button> }));
 

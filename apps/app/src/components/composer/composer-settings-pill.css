@@ -1,0 +1,147 @@
+/* Settings pill: mode · thinking · permission warning, with one popover for all
+   four less-often-changed composer settings. */
+.composer-settings-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  height: 28px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--border-soft, var(--border));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted, var(--ink-muted));
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.composer-settings-pill:hover:not(:disabled),
+.composer-settings-pill:focus-visible,
+.composer-settings-pill[aria-expanded='true'] {
+  border-color: var(--border-strong, var(--border));
+  background: color-mix(in srgb, var(--bg-hover, var(--bg-2)) 80%, transparent);
+  color: var(--text-primary);
+  outline: none;
+}
+.composer-settings-pill:disabled {
+  cursor: default;
+}
+.composer-settings-pill-icon,
+.composer-settings-pill-part {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.composer-settings-pill-sep {
+  color: var(--text-dim, var(--text-muted));
+}
+.composer-settings-pill-warning {
+  flex: none;
+  color: var(--warn, #c27803);
+}
+
+.composer-settings-menu {
+  position: fixed;
+  z-index: 400;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: calc(100vw - 16px);
+  padding: 6px;
+  overflow: auto;
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 12px;
+  background: var(--bg-elevated, var(--bg-panel));
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+  font-size: 12px;
+}
+.composer-settings-section {
+  padding: 2px 0 4px;
+}
+.composer-settings-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 6px 4px;
+  color: var(--text-dim, var(--text-muted));
+  font-size: 11px;
+  font-weight: 600;
+}
+.composer-settings-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted, var(--ink-muted));
+  font: inherit;
+  font-weight: 400;
+  cursor: pointer;
+}
+.composer-settings-action:hover,
+.composer-settings-action:focus-visible {
+  background: var(--bg-hover, var(--bg-2));
+  color: var(--text-primary);
+  outline: none;
+}
+.composer-settings-segment {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--bg-hover, var(--bg-2)) 70%, transparent);
+}
+.composer-settings-segment.is-wrapping {
+  flex-wrap: wrap;
+}
+.composer-settings-choice {
+  display: inline-flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted, var(--ink-muted));
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.composer-settings-segment.is-wrapping .composer-settings-choice {
+  flex: 1 1 auto;
+}
+.composer-settings-choice:hover,
+.composer-settings-choice:focus-visible {
+  color: var(--text-primary);
+  outline: none;
+}
+.composer-settings-choice:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-blue, var(--accent)) 45%, transparent);
+}
+.composer-settings-choice.is-selected {
+  background: var(--bg-panel, var(--bg-base));
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+.composer-settings-choice.is-selected.is-warning {
+  color: var(--warn, #c27803);
+}
+.composer-settings-note {
+  margin: 4px 6px 0;
+  color: var(--text-dim, var(--text-muted));
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+.composer-settings-note.is-warning {
+  color: var(--warn, #c27803);
+}

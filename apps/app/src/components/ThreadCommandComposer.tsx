@@ -39,6 +39,10 @@ import { ComposerModePicker } from './thread/pickers/ComposerModePicker.js';
 import { ModelReasoningPicker } from './thread/pickers/ModelReasoningPicker.js';
 import { ReasoningEffortPicker } from './thread/pickers/ReasoningEffortPicker.js';
 import { ComposerSendModePicker } from './thread/pickers/ComposerSendModePicker.js';
+import { COMPOSER_SEND_MODE_OPTIONS } from './thread/pickers/composer-send-mode-options.js';
+import { ComposerSettingsPill, type SettingsGroup } from './composer/ComposerSettingsPill.js';
+import { ComposerModeIcon } from './thread/pickers/composer-mode-icon.js';
+import { isComposerHiddenReasoningLevel, REASONING_LABELS } from './thread/pickers/reasoning-labels.js';
 import { permissionModeOptionsFor } from './thread/pickers/permission-mode-options.js';
 import { useThreadPermissionMode } from './thread/pickers/useThreadPermissionMode.js';
 import {
@@ -915,6 +919,58 @@ function ThreadComposerContent({
       minWidth={280}
     />
   ) : null;
+  const showPermission = permissionOptions.length > 1 || (permissionOptions.length > 0 && Boolean(permissionSelectionError));
+  const visibleReasoning = options.reasoningOptions.filter((row) => !isComposerHiddenReasoningLevel(row.value));
+  const reasoningValue = isComposerHiddenReasoningLevel(options.reasoningLevel)
+    ? (visibleReasoning.at(-1)?.value ?? options.reasoningLevel)
+    : options.reasoningLevel;
+  const settingsGroups: SettingsGroup[] = [
+    {
+      id: 'mode',
+      label: 'Composer mode',
+      title: 'Mode',
+      value: selectedComposerMode?.id ?? composerMode,
+      choices: composerModeEntriesForProvider.map((entry) => ({
+        value: entry.id,
+        label: entry.label,
+        icon: <ComposerModeIcon mode={entry.kind === 'plan' ? 'plan' : 'agent'} />
+      })),
+      onChange: setComposerWorkMode,
+      hint: 'Shift+Tab cycles modes',
+      hideWhenSingle: true,
+      ...(nativeAgentDiscoveryEnabled ? { action: { label: 'Refresh roles', onClick: () => options.refreshAcpModeOptions() } } : {})
+    },
+    {
+      id: 'reasoning',
+      label: 'Thinking effort',
+      title: 'Thinking',
+      value: reasoningValue,
+      choices: visibleReasoning.map((row) => ({ value: row.value, label: REASONING_LABELS[row.value] ?? row.label })),
+      onChange: (value) => options.setReasoningLevel(value as typeof options.reasoningLevel)
+    },
+    {
+      id: 'permission',
+      label: 'Permission mode',
+      title: 'Permissions',
+      value: permissionMode,
+      choices: showPermission ? permissionOptions.map((row) => ({
+        value: row.value,
+        label: row.compactLabel,
+        description: row.description,
+        ...(row.tone ? { tone: row.tone } : {})
+      })) : [],
+      onChange: (value) => setPermissionMode(value as typeof permissionMode)
+    },
+    {
+      id: 'send-mode',
+      label: 'Send mode',
+      title: 'Enter while running',
+      value: composerSendMode,
+      choices: COMPOSER_SEND_MODE_OPTIONS,
+      onChange: (value) => { void setComposerSendMode(value as typeof composerSendMode); },
+      hint: COMPOSER_SEND_MODE_OPTIONS.find((row) => row.value === composerSendMode)?.description
+    }
+  ];
   const runMachine = hosts.find((host) => host.id === (selectedProject?.remote ? selectedProject.hostId : hostId));
   const runSettings = !threadId && !fixedRunTarget ? (
     <ComposerRunSettings summary={composerRunSummary({
@@ -1142,6 +1198,7 @@ function ThreadComposerContent({
               )
             }
             send={sendButton}
+            settings={compact ? undefined : <ComposerSettingsPill groups={settingsGroups} />}
           />
         )}
 
@@ -1202,7 +1259,6 @@ function ThreadComposerContent({
           )}
         </div>
         <div className="thread-command-composer-meta-end">
-          {!compact && permissionPicker}
           <PluginComposerMeta
             scope={threadId ? { kind: 'thread', threadId } : { kind: 'new-thread', projectId: projectId ?? null }}
           />
