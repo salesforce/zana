@@ -710,6 +710,25 @@ test('file previews and a real native browser keep their tabs and page state acr
   }
 });
 
+test('entering Basic opens New chat from a workspace page and keeps an open thread', async ({ app }) => {
+  const page = app.window;
+  await dismissConsentOverlays(page);
+  const { ids } = await projectAndThreads(app, ['Conversation to keep']);
+  await navigate(page, '/scheduler');
+  await basic(page).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId('thread-command-input')).toBeVisible();
+  await expect(page.getByTestId('basic-ui-unsupported')).toHaveCount(0);
+
+  await advanced(page).click();
+  await navigate(page, `/threads/${ids[0]}`);
+  const input = page.getByTestId('thread-command-input');
+  await input.fill('Keep this unsent reply');
+  await basic(page).click();
+  await expect(page).toHaveURL(new RegExp(`/threads/${ids[0]}$`));
+  await expect(input).toHaveText('Keep this unsent reply');
+});
+
 test('Basic hands unsupported routes and an existing CLI launch draft back to Advanced', async ({ app }) => {
   const page = app.window;
   await dismissConsentOverlays(page);

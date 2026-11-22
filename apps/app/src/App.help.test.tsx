@@ -145,18 +145,15 @@ it('switches to Basic and collapses its sidebar without changing the Advanced ra
   }
 });
 
-it('hands an unsupported Basic destination back to Advanced at the same route', () => {
+it('opens New chat when switching to Basic from Settings', () => {
   fixtures.compact = false; fixtures.nav = 'settings';
   function RouteProbe() { return <output data-testid="basic-handoff-route">{useLocation().pathname}</output>; }
   const view = render(<MemoryRouter initialEntries={['/settings']}><App /><RouteProbe /></MemoryRouter>);
   try {
     fireEvent.click(screen.getByRole('button', { name: 'Basic view' }));
-    expect(screen.getByTestId('basic-ui-unsupported')).toBeTruthy();
-    expect(view.container.querySelector('.shell-main')!.hasAttribute('inert')).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Open in Advanced' }));
     expect(screen.queryByTestId('basic-ui-unsupported')).toBeNull();
     expect(view.container.querySelector('.shell-main')!.hasAttribute('inert')).toBe(false);
-    expect(screen.getByTestId('basic-handoff-route').textContent).toBe('/settings');
+    expect(screen.getByTestId('basic-handoff-route').textContent).toBe('/');
   } finally {
     view.unmount(); fixtures.nav = 'home';
   }
