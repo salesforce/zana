@@ -73,3 +73,12 @@ it('keeps the menu anchored when the surrounding panel scrolls or the viewport r
   fireEvent.resize(window);
   expect(menu.style.bottom).toBe('44px');
 });
+
+it('anchors the menu to its parent when the trigger is narrower than the control', () => {
+  render(<div data-testid="anchor"><PopoverPicklist anchorToParent ariaLabel="Project" value="beta" options={options} onChange={vi.fn()} /></div>);
+  const parent = screen.getByTestId('anchor');
+  vi.spyOn(parent, 'getBoundingClientRect').mockReturnValue(new DOMRect(50, 80, 250, 32));
+  fireEvent.click(screen.getByRole('button', { name: 'Project' }));
+  expect(screen.getByRole('listbox').style.top).toBe('116px');
+  expect(screen.getByRole('listbox').style.left).toBe('50px');
+});

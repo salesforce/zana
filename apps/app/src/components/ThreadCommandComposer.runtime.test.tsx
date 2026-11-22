@@ -71,7 +71,7 @@ const h = vi.hoisted(() => {
 
 vi.mock('../store.js', () => ({
   useData: (select: (state: unknown) => unknown) => select({ projects: [h.project, ...h.extraProjects], lastProjectId: 'p1',
-    loadProjects: h.loadProjects, defaultHarness: 'codex', composerSendMode: 'queue-if-active',
+    loadProjects: h.loadProjects, defaultHarness: 'codex', defaultThreadProviderId: 'codex', composerSendMode: 'queue-if-active',
     setComposerSendMode: h.rememberSendMode, nativeAgentDiscoveryEnabled: h.nativeDiscovery }),
   useUi: Object.assign((select: (state: unknown) => unknown) => select({ selectedProjectId: 'p1' }),
     { getState: () => ({ appendHostInstallLogs: h.appendLogs, setHostInstallDrawerOpen: h.setDrawerOpen }) })
@@ -139,8 +139,8 @@ vi.mock('./thread/ThreadContextMeter.js', () => ({ ThreadContextMeter: () => nul
 vi.mock('./ui/PopoverPicklist.js', () => ({ PopoverPicklist: () => null }));
 vi.mock('./thread/pickers/ComposerModePicker.js', () => ({ ComposerModePicker: ({ onChange, value }: { onChange: (mode: string) => void; value: string }) =>
   <button data-mode={value} onClick={() => onChange('plan')}>Plan mode</button> }));
-vi.mock('./thread/pickers/ModelReasoningPicker.js', () => ({ ModelReasoningPicker: ({ onReloadModels }: { onReloadModels: () => void }) =>
-  <button onClick={onReloadModels}>Reload models</button> }));
+vi.mock('./thread/pickers/ModelReasoningPicker.js', () => ({ ModelReasoningPicker: ({ onReloadModels, onUseDefaultProvider }: { onReloadModels: () => void; onUseDefaultProvider?: () => void }) =>
+  <><button onClick={onReloadModels}>Reload models</button>{onUseDefaultProvider && <button onClick={onUseDefaultProvider}>Use default harness</button>}</> }));
 vi.mock('./thread/pickers/ReasoningEffortPicker.js', () => ({ ReasoningEffortPicker: () => null }));
 // Desktop renders mode and send mode inside the settings pill; expose the
 // same controls the compact pickers provide so both layouts share assertions.
@@ -179,6 +179,7 @@ beforeEach(() => {
   h.voice.state = 'idle'; h.voice.canRetry = false; h.frozenSend = null;
   h.options.provider = { id: 'codex', displayName: 'Codex', permissionModes: ['full'], composerActions: ['plan'] };
   h.options.providerId = 'codex';
+  h.options.providerSelectionSource = 'default';
   h.options.providers = [h.options.provider];
   h.permissionError = undefined; h.options.selectionError = undefined; h.options.catalogSettled = true;
   h.options.rosterReady = true; h.options.serviceTierOptions = undefined; h.options.registeredProviderIds = ['codex'];
@@ -1045,4 +1046,13 @@ describe('context snapshot history and submission', () => {
     fireEvent.click(screen.getByRole('button', {name: 'Send'}));
     await waitFor(() => expect(h.create).toHaveBeenCalledWith(expect.objectContaining({input: [expect.objectContaining({text, references: input[0].references})]})));
   });
+});
+
+it('can restore the default harness on a new chat after a manual selection', () => {
+  h.options.providerSelectionSource = 'choice';
+  const view = render(composer({ threadId: undefined }));
+  fireEvent.click(screen.getByRole('button', { name: 'Use default harness' }));
+  expect(h.options.useDefaultProvider).toHaveBeenCalledOnce();
+  view.rerender(composer({ threadId: 'existing' }));
+  expect(screen.queryByRole('button', { name: 'Use default harness' })).toBeNull();
 });

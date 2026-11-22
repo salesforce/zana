@@ -59,6 +59,16 @@ beforeEach(() => {
 afterEach(() => { unregister(); db.close(); rmSync(dir, { recursive: true, force: true }); });
 
 describe('prepared plugin conversations', () => {
+  it.each([undefined, 'planning'])('retains the requested mode for an empty conversation (%s)', async acpMode => {
+    const thread = await createConversationFromRequest(ctx, {
+      id: threadId, projectId: 'p', providerId: 'test-provider', input: [], deferFirstTurn: true,
+      originPluginId: 'test-plugin', title: 'Helper', acpMode
+    });
+    expect(thread.providerThreadId).toBeNull();
+    expect(getThreadExecutionState(db, threadId)?.requestedMode).toBe(acpMode ?? 'agent');
+    expect(commands).not.toContain('thread.start');
+  });
+
   it.each([true, false])('waits for the first real turn before starting the provider (reuse=%s)', async reuse => {
     const environment = reuse ? createEnvironment(db, { projectId: 'p', hostId, path: dir, status: 'ready', workspaceProvisionType: 'unmanaged' }) : null;
     const thread = await createConversationFromRequest(ctx, {
