@@ -55,8 +55,8 @@
   position: relative;
   inset: auto;
   width: auto;
-  max-width: 45%;
-  flex-basis: min(var(--thread-secondary-width, 22rem), 45%);
+  max-width: 70%;
+  flex-basis: var(--thread-secondary-width, 22rem);
   z-index: auto;
   box-shadow: none;
 }

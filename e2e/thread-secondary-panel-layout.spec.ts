@@ -10,10 +10,11 @@ test.use({ initialConfig: { sponsorPromptDismissed: true } });
 test.describe('document panel resizing', () => {
   test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { dockableThreadToolsEnabled: true, sponsorPromptDismissed: true } });
 
-  for (const width of [1440, 1000]) {
-    test(`document preview follows the divider at ${width}px`, async ({ app }, testInfo) => {
+  for (const [mode, width] of [['Advanced', 1440], ['Advanced', 1000], ['Basic', 1440]] as const) {
+    test(`document preview follows the divider at ${width}px in ${mode}`, async ({ app }, testInfo) => {
       const page = app.window;
       await page.setViewportSize({ width, height: 800 });
+      if (mode === 'Basic') await page.getByRole('button', { name: 'Basic view', exact: true }).click();
       const root = join(app.home, 'resize-project');
       mkdirSync(root, { recursive: true });
       writeFileSync(join(root, 'notes.md'), '# Resizable document\n\nA document opened in the thread panel.');

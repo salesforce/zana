@@ -30,6 +30,7 @@ describe('ThreadSecondaryPanel chrome', () => {
     const input = view.getByRole('textbox');fireEvent.change(input, { target: { value: 'Unsent' } });
     view.rerender(ui(true));
     expect(screen.getByText('Available in Advanced')).toBeTruthy();
+    expect(screen.getByRole('separator', { name: 'Resize right panel' })).toBeTruthy();
     expect(screen.queryByRole('textbox')).toBeNull();
     expect(view.container.querySelector('input')).toBe(input);
     expect(screen.queryByRole('button', { name: 'New tab' })).toBeNull();
@@ -60,6 +61,7 @@ describe('ThreadSecondaryPanel chrome', () => {
       onSelectInfo={noop} onSelectDiff={noop} onNewTab={noop} onCloseTab={noop} onActivateTab={noop}
       onToggleMaximized={noop} onHide={onHide} onResize={noop}><textarea aria-label="Result notes" /></ThreadSecondaryPanel>);
     expect(screen.getByTestId('thread-secondary-panel').getAttribute('data-basic-panel-compact')).toBe('true');
+    expect(screen.queryByRole('separator')).toBeNull();
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Result notes' }), { key: 'Escape' });
     expect(onHide).not.toHaveBeenCalled();
     fireEvent.keyDown(screen.getByRole('button', { name: 'Back to chat' }), { key: 'Escape' });
