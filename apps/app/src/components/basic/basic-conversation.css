@@ -7,11 +7,6 @@
 .basic-new-thread-actions[hidden],
 .thread-secondary-retained-content[hidden] { display: none; }
 
-.basic-home-welcome[hidden] { display: none; }
-.basic-ui .basic-home-welcome { text-align: center; padding: 0 12px 28px; }
-.basic-ui .basic-home-welcome .zana-brand-icon { margin: 0 auto 28px; color: var(--accent-blue); }
-.basic-ui .basic-home-welcome h1 { font-size: clamp(26px, 3vw, 40px); font-weight: 450; letter-spacing: -1.4px; line-height: 1.2; margin: 0 0 16px; }
-.basic-ui .basic-home-welcome p { font-size: 14px; color: var(--text-muted); line-height: 1.7; margin: 0; }
 .basic-ui .home-plugin-sections[hidden],
 .basic-ui .home-launcher-tips [data-contextual-help-ui],
 .basic-ui .home-agent-composer > .launch-segmented { display: none; }
@@ -49,9 +44,6 @@
 .basic-panel-handoff { margin: 20px; }
 @media (max-width: 700px) {
   .basic-ui .home-panel { padding: 24px 18px; }
-  .basic-ui .basic-home-welcome { padding-bottom: 25px; }
-  .basic-ui .basic-home-welcome p { font-size: 13px; }
-  .basic-ui .basic-home-welcome .zana-brand-icon { margin-bottom: 23px; }
   .basic-ui .basic-secondary-chrome .thread-secondary-controls button { min-width: 36px; min-height: 36px; }
   .basic-ui .thread-detail-header { padding: 10px 14px; }
 }

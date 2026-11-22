@@ -1095,6 +1095,7 @@ function ThreadDetailBody({
               thinking={thinking}
               goal={goal}
               loading={timelineLoading}
+              archived={Boolean(archivedAt)}
               hasOlder={olderCursor !== null}
               loadingOlder={loadingOlder}
               onLoadOlder={loadOlderHistory}

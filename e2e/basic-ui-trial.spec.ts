@@ -140,7 +140,7 @@ test('theme icon sits between the bell and view switch in both desktop views', a
           expect(help.x + help.width).toBeLessThan(star.x);
         } else {
           await expect(page.locator('.basic-ui-sidebar-brand')).toHaveCount(0);
-          await expect(page.locator('.basic-home-welcome > .zana-brand-icon')).toBeVisible();
+          await expect(page.locator('.conversation-welcome > .zana-brand-icon')).toBeVisible();
           await expect(basic(page).locator('.zana-brand-icon')).toBeVisible();
           expect(await basic(page).locator('.zana-brand-icon').evaluate(node => getComputedStyle(node).maskImage)).not.toBe('none');
         }
