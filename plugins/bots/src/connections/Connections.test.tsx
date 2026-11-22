@@ -20,7 +20,7 @@ it('connects a bot identity and disconnects, with a write-only consumer secret',
     connected = action === 'connect';
     return { state: 'connected' };
   });
-  render(<Connections bot="scout" token="owner" />);
+  render(<Connections bot="scout" />);
   await click('Connect Salesforce');
   await click('Cancel');
   await click('Connect Salesforce');
@@ -30,15 +30,21 @@ it('connects a bot identity and disconnects, with a write-only consumer secret',
   expect((screen.getByLabelText('Consumer secret') as HTMLInputElement).type).toBe('password');
   await click('Connect');
   await screen.findByText('Salesforce · Bot service account');
-  expect(rpc.call).toHaveBeenCalledWith('botConnection', {
+  expect(rpc.call).toHaveBeenCalledWith('desktop.botConnection', {
     action: 'connect',
     mode: 'service',
     origin: 'test.my.salesforce.com',
     clientId: 'client',
     clientSecret: 'test-secret',
-    bot: 'scout',
-    token: 'owner'
+    bot: 'scout'
   });
+  await click('Replace consumer secret');
+  const replacement = screen.getByLabelText('New consumer secret') as HTMLInputElement;
+  expect(replacement.type).toBe('password');
+  expect(replacement.value).toBe('');
+  fill('New consumer secret','replacement');
+  await click('Save secret');
+  expect(rpc.call).toHaveBeenCalledWith('desktop.botConnection',{action:'replaceSecret',bot:'scout',clientSecret:'replacement'});
   await click('Disconnect');
   await screen.findByRole('button', { name: 'Connect Salesforce' });
 });
@@ -61,7 +67,7 @@ it('handles a delegated consent, pending polling, and the saved account', async 
       interval: 0.05
     };
   });
-  render(<Connections bot="scout" token="owner" />);
+  render(<Connections bot="scout" />);
   await click('Connect Salesforce');
   fill('Salesforce identity', 'delegated');
   fill('My Domain URL', 'sample.my.salesforce.com');
@@ -78,7 +84,7 @@ it('recovers from status and authorization failures', async () => {
     .mockRejectedValueOnce(new Error('Offline'))
     .mockResolvedValueOnce(null)
     .mockRejectedValueOnce(new Error('Authorization declined'));
-  render(<Connections bot="scout" token="owner" />);
+  render(<Connections bot="scout" />);
   await click('Retry');
   await click('Connect Salesforce');
   fill('My Domain URL', 'sample.my.salesforce.com');

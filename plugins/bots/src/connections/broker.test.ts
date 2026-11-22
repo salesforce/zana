@@ -33,7 +33,7 @@ function fixture() {
   const broker = new BotConnections(kv, provider, () => time);
   const vault = new BotVault(
     kv,
-    () => time,
+    async () => Buffer.alloc(32, 5),
     () => {},
     broker
   );
@@ -53,16 +53,15 @@ function fixture() {
 const role = () => true;
 const owner = () => {};
 describe('bot connections', () => {
-  it('authorizes an unattended read after the owner session expires, pauses on explicit lock/restart, and disconnects', async () => {
+  it('authorizes unattended reads, rotates a write-only secret and disconnects', async () => {
     const { vault, broker, http, reply, tick, map } = fixture();
-    const { token: first } = await vault.unlock('unit test passphrase', true);
+    await vault.ensureReady();
     reply(token);
-    expect(await broker.connect('one', settings, () => vault.requireOwner(first))).toEqual({ state: 'connected' });
+    expect(await broker.connect('one', settings, owner)).toEqual({ state: 'connected' });
     expect(await broker.status('one', owner)).toEqual({ mode: 'service', origin });
     expect(await broker.status('other', owner)).toBeNull();
     expect(JSON.stringify([...map])).not.toContain(settings.clientSecret);
     tick(31 * 60_000);
-    expect(() => vault.requireOwner(first)).toThrow('Unlock');
     reply({ ...token, instance_url: 'https://na123.salesforce.com/' });
     reply({ records: [{ ...record, secret: 'test-only-hidden' }] });
     const data = await broker.assignedCases('one', role);
@@ -76,20 +75,24 @@ describe('bot connections', () => {
     });
     await expect(broker.assignedCases('one', () => false)).rejects.toThrow('main thread');
     await expect(broker.assignedCases('other', role)).rejects.toThrow('Connect');
-    const second = await vault.unlock('unit test passphrase', false);
-    await vault.lock(second.token);
-    await expect(broker.assignedCases('one', role)).rejects.toThrow('resume');
-    await vault.unlock('unit test passphrase', false);
-    expect(await broker.status('one', owner)).toEqual({ origin, mode: 'service' });
+    await expect(broker.replaceSecret('other','new-secret',owner)).rejects.toThrow('Connect');
+    reply({ error:'invalid_client' }, 401);
+    await expect(broker.replaceSecret('one','invalid-secret',owner)).rejects.toThrow();
+    reply(token);
+    await broker.replaceSecret('one','new-secret',owner);
+    expect(JSON.stringify(await broker.status('one',owner))).not.toContain('secret');
+    reply(token); reply({records:[]});
+    await broker.assignedCases('one',role);
+    expect(http.mock.calls.at(-2)?.[1]?.body?.toString()).toContain('client_secret=new-secret');
     await broker.disconnect('one', owner);
     expect(await broker.status('one', owner)).toBeNull();
     vault.dispose();
-    await expect(broker.assignedCases('one', role)).rejects.toThrow('resume');
+    await expect(broker.assignedCases('one', role)).rejects.toThrow('unavailable');
   });
 
   it('binds one-time device authorization, respects polling and commits a rotated token before returning data', async () => {
     const { vault, broker, http, reply, tick, map } = fixture();
-    await vault.unlock('unit test passphrase', true);
+    await vault.ensureReady();
     reply(device);
     const pending = await broker.connect('one', { ...settings, clientSecret: '', mode: 'delegated' }, owner);
     if (pending.state !== 'waiting') throw Error('Expected sign-in');
@@ -122,7 +125,7 @@ describe('bot connections', () => {
 
   it('rejects untrusted destinations, changed identities, malformed replies and upstream diagnostics', async () => {
     const { broker, reply, vault, http } = fixture();
-    await vault.unlock('unit test passphrase', true);
+    await vault.ensureReady();
     for (const value of [
       null,
       'ftp://acme.my.salesforce.com',
@@ -157,7 +160,7 @@ describe('bot connections', () => {
   });
   it('cancels or expires authorization and suppresses results after losing the thread', async () => {
     const { broker, reply, vault, tick } = fixture();
-    await vault.unlock('unit test passphrase', true);
+    await vault.ensureReady();
     reply(device);
     const attempt = await broker.connect('one', { ...settings, mode: 'delegated' }, owner);
     if (attempt.state !== 'waiting') throw Error();

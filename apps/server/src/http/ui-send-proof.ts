@@ -1,8 +1,11 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 const MAX_AGE_MS = 30_000;
 const MAX_USED = 1024;
-export type UiSendCaller = 'desktop-ui' | 'mobile-ui';
+export type UiSendCaller = 'desktop-ui' | 'mobile-ui' | 'plugin-desktop';
+export function desktopRpcDigest(method: string, args: unknown): string {
+  return createHash('sha256').update(JSON.stringify([method, args ?? null])).digest('hex');
+}
 
 function signature(secret: string, threadId: string, itemId: string, stamp: string, nonce: string, caller: UiSendCaller): string {
   return createHmac('sha256', secret).update(JSON.stringify([threadId, itemId, stamp, nonce, caller])).digest('hex');

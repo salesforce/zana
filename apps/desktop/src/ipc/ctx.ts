@@ -124,6 +124,7 @@ export interface IpcCtx {
   restoreSquadWorktreeFollowUpClaim: any;
   restorePrincipal: any;
   runDiskSync: any;
+  productServerCredential: () => string;
   runtimeSupervisor: any;
   safeHandle: SafeHandle;
   safeHandleFromWindow: SafeHandleFromWindow;

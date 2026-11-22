@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -9,7 +10,7 @@ import { makeFakeAgentBinary } from './sdk/harness.js';
 const exec = promisify(execFile);
 const harness = makeFakeAgentBinary({ profile: 'claude', sequence: 'work-then-idle' });
 test.afterAll(() => harness.cleanup());
-test.use({ initialConfig: { sponsorPromptDismissed: true, claudeBinary: harness.path, defaultHarness: 'claude', defaultThreadProviderId: 'fake' }, launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
+test.use({ initialConfig: { sponsorPromptDismissed: true, claudeBinary: harness.path, defaultHarness: 'claude', defaultThreadProviderId: 'fake' }, launchEnv: { ZCC_FAKE_PROVIDER: '1', ZCC_E2E_PEER_BOOT_KEY_HEX: randomBytes(32).toString('hex') } });
 
 async function route(page: Page, path: string) {
   await page.evaluate(path => {
@@ -68,10 +69,7 @@ test('Bots shows routines, tagged memory, and host settings controls in the inst
   await expect(panel.getByText('Next run')).toBeVisible();
   await panel.getByRole('tab', { name: 'Vault' }).click();
   const vault = panel.getByRole('region', { name: 'Vault' });
-  const phrase = 'isolated desktop test phrase';
-  await vault.getByLabel('Vault passphrase').fill(phrase);
-  await vault.getByLabel('Confirm passphrase').fill(phrase);
-  await vault.getByRole('button', { name: 'Create Vault' }).click();
+  await expect(vault.getByLabel(/passphrase/i)).toHaveCount(0);
   const connections = vault.getByRole('region', { name: 'Connections' });
   await connections.getByRole('button', { name: 'Connect Salesforce' }).click();
   await expect(connections.getByLabel('Consumer secret', {exact:true})).toHaveAttribute('type', 'password');
@@ -89,13 +87,17 @@ test('Bots shows routines, tagged memory, and host settings controls in the inst
   await expect(vault.getByLabel('Release Scout', { exact: true })).toBeChecked();
   await vault.getByRole('button', { name: 'Save item' }).click();
   await expect(vault.getByRole('button', { name: /accounts.example.test/ })).toBeVisible();
-  await vault.getByRole('button', { name: 'Lock Vault' }).click();
-  await expect(vault.getByLabel('Vault passphrase')).toBeVisible();
-  await vault.getByLabel('Vault passphrase').fill(phrase);
-  await vault.getByRole('button', { name: 'Unlock', exact: true }).click();
   await vault.getByRole('button', { name: /accounts.example.test/ }).click();
   await expect(vault.getByRole('button', { name: 'Replace Password' })).toBeVisible();
   await expect(vault.locator('input[type=password]')).toHaveCount(0);
+  await vault.getByRole('button', {name:'Replace Password'}).click();
+  const replacement = vault.getByLabel('Password', {exact:true});
+  await expect(replacement).toHaveAttribute('type','password');
+  await expect(replacement).toHaveValue('');
+  await replacement.fill('replacement-test-password');
+  await vault.getByRole('button', {name:'Save item'}).click();
+  await vault.getByRole('button', {name:/accounts.example.test/}).click();
+  await expect(vault.getByRole('button', {name:'Replace Password'})).toBeVisible();
   await vault.getByRole('button', { name: 'Cancel' }).click();
   await vault.screenshot({ path: testInfo.outputPath('vault.png') });
   await panel.getByRole('tab', { name: 'Overview' }).click();

@@ -338,6 +338,7 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
     disposeHooks.push(hook);
   });
 
+  const deviceKey = crypto.getRandomValues(new Uint8Array(32));
   const api: ZccPluginApi = {
     sshConnections: { register(provider) {
       assertLive();
@@ -370,6 +371,7 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
       }
     },
     storage: {
+      async deviceKey() { assertLive(); return deviceKey.slice(); },
       kv: {
         async get<T>(key: string) {
           return kv.get(key) as T | undefined;

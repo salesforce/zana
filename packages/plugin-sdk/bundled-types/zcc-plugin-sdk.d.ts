@@ -606,6 +606,8 @@ export type PluginSdkInbox = PluginSdk['inbox'];
       ): void;
     };
     readonly storage: {
+      /** Server-only, scoped to this plugin and protected by this device. */
+      deviceKey(): Promise<Uint8Array>;
       kv: {
         get<T>(key: string): Promise<T | undefined>;
         set(key: string, value: unknown): Promise<void>;

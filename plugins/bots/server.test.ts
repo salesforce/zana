@@ -116,18 +116,15 @@ describe('bots plugin', () => {
     expect(spawns[0].prompt).toBe('[From the user (Bots panel)]\nhello');
   });
 
-  it('only shares Vault items with the bound main bot thread and revokes access when locked', async () => {
+  it('only shares Vault items with the bound main bot thread without an unlock step', async () => {
     const { harness, call } = await load();
-    await harness.callRpc('create', { name:'Scout' });
+    await harness.callRpc('create', { name:'Scout', projectId:'proj-a' });
     const main = await harness.callRpc('openThread', { bot:'Scout' }) as { threadId:string };
-    const owner = await harness.callRpc('vaultUnlock', { passphrase:'a disposable test vault', create:true }) as { token:string };
     const input = { kind:'contact', fullName:'Example Contact', email:'contact@example.test', scope:'all' };
-    await harness.callRpc('vaultSave', { ...owner, item: input });
+    await harness.callRpc('desktop.vaultSave', { item: input });
     await expect(call('bot_vault_list', { threadId:main.threadId }, 'other')).rejects.toThrow('main thread');
     expect(await call('bot_vault_list', {}, main.threadId)).toMatchObject([{ contact:{email:input.email} }]);
-    await expect(harness.callRpc('vaultList', {})).rejects.toThrow('Unlock');
-    await harness.callRpc('vaultLock', owner);
-    await expect(call('bot_vault_list', {}, main.threadId)).rejects.toThrow('Unlock');
+    await expect(call('bot_vault_list', {}, main.threadId, 'other-project')).rejects.toThrow('main thread');
   });
 
   it('allows an account grant only from its bot and scheduled main thread, with no credential in the result', async () => {
@@ -138,9 +135,7 @@ describe('bots plugin', () => {
       const tokens = { id: org + '/id/00D000000000001/005000000000001', instance_url: org, access_token: 'test-access-only' };
       await harness.callRpc('create', { name:'Scout', projectId:'proj-a' });
       const main = await harness.callRpc('openThread', {bot:'scout'}) as {threadId:string};
-      const {token} = await harness.callRpc('vaultUnlock',{passphrase:'test owner passphrase',create:true}) as {token:string};
-      const manage = (args: Record<string,unknown>) => harness.callRpc('botConnection',{bot:'scout',token,...args});
-      await expect(manage({action:'status',token:'wrong'})).rejects.toThrow('Unlock');
+      const manage = (args: Record<string,unknown>) => harness.callRpc('desktop.botConnection',{bot:'scout',...args});
       await expect(manage({action:'status',bot:null})).rejects.toThrow('Choose a bot');
       await expect(manage({action:'other'})).rejects.toThrow('Unknown');
       await expect(manage({action:'finish',ticket:'stale'})).rejects.toThrow('expired');

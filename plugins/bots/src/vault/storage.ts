@@ -7,80 +7,100 @@ import { open, seal, type Envelope } from './encryption.js';
 const derive = promisify(scrypt);
 const STORE_KEY = 'vault.encrypted.v1';
 const AAD = Buffer.from('zana-bot-vault/v1');
-const SESSION_MS = 30 * 60_000;
+const WRAP_AAD = Buffer.from('zana-bot-vault/device-key/v1');
 interface Kv { get<T>(key: string): Promise<T | undefined>; set(key: string, value: unknown): Promise<void> }
-interface Session { key: Buffer; salt: string; token: string; expires: number }
+interface DeviceEnvelope extends Envelope { wrappedKey: Envelope }
+interface Session { key: Buffer; wrappedKey: Envelope }
 
 export class BotVault {
   private chain: Promise<unknown> = Promise.resolve();
   private session?: Session;
-  private expiry?: ReturnType<typeof setTimeout>;
-  private unlocking = false;
-  private unlockAfter = 0;
+  private retryAfter = 0;
   private disposed = false;
-  constructor(private kv: Kv, private now = Date.now, private changed = () => {},
+  constructor(private kv: Kv, private deviceKey: () => Promise<Uint8Array>, private changed = () => {},
     private connections?: { resume(key: Buffer): void; pause(): void }) {}
   private serial<T>(fn: () => Promise<T>) {
     const p = this.chain.then(fn);
     this.chain = p.catch(() => {});
     return p;
   }
-  requireOwner(token: unknown) { this.active(token, true); }
-  async status() { return { configured: Boolean(await this.kv.get(STORE_KEY)) }; }
-  private active(token?: unknown, owner = false): Session {
-    if (this.session && this.now() >= this.session.expires) this.close();
-    if (!this.session || (owner && token !== this.session.token)) throw new Error('Unlock the Vault to continue.');
-    return this.session;
+  private assertLive() {
+    if (this.disposed) throw new Error('Vault is unavailable.');
   }
-  dispose() { this.disposed = true; this.close(); this.connections?.pause(); }
-  private close() {
-    clearTimeout(this.expiry);
+  dispose() {
+    this.disposed = true;
     this.session?.key.fill(0);
     this.session = undefined;
+    this.connections?.pause();
   }
-  lock(token: unknown) { return this.serial(async () => { this.active(token, true); this.close(); this.connections?.pause(); this.changed(); }); }
-  async unlock(passphrase: unknown, create: boolean) {
-    if (typeof passphrase !== 'string' || passphrase.length < 12 || passphrase.length > 512) throw new Error('Use a passphrase of 12 to 512 characters.');
-    if (this.unlocking || this.now() < this.unlockAfter) throw new Error('Wait a moment before trying again.');
-    this.unlocking = true;
+  // Rewrap the original data key so saved items and independently encrypted OAuth grants move together.
+  private async prepare(legacyPassphrase?: unknown): Promise<Session | null> {
+    this.assertLive();
+    if (this.session) return this.session;
+    const envelope = await this.kv.get<Envelope | DeviceEnvelope>(STORE_KEY);
+    const legacy = envelope && !('wrappedKey' in envelope);
+    if (legacy && legacyPassphrase === undefined) return null;
+    if (legacy && (typeof legacyPassphrase !== 'string' || legacyPassphrase.length < 12 || legacyPassphrase.length > 512))
+      throw new Error('Enter the previous Vault passphrase.');
+    if (legacy && Date.now() < this.retryAfter) throw new Error('Wait a moment before trying again.');
+    const device = await this.deviceKey();
+    const wrappingKey = Buffer.from(device);
+    device.fill(0);
+    let key: Buffer | undefined;
     try {
-      return await this.serial(async () => {
-        if (this.disposed) throw new Error('Vault is unavailable.');
-        const envelope = await this.kv.get<Envelope>(STORE_KEY);
-        if (Boolean(envelope) === create) throw new Error(create ? 'A Vault already exists.' : 'Create a Vault first.');
-        const salt = envelope?.salt ?? randomBytes(16).toString('base64');
-        const key = (await derive(passphrase, Buffer.from(salt, 'base64'), 32)) as Buffer;
-        try {
-          if (this.disposed) throw new Error('Vault is unavailable.');
-          if (envelope) open(envelope, key, AAD);
-          else await this.kv.set(STORE_KEY, seal([], key, salt, AAD));
-        } catch (error) { key.fill(0); this.unlockAfter = this.now() + 1_000; throw error; }
-        if (this.disposed) { key.fill(0); throw new Error('Vault is unavailable.'); }
-        this.close();
-        const token = randomBytes(32).toString('hex');
-        this.connections?.resume(createHmac('sha256', key).update('zana-bot-connections/v1').digest());
-        this.session = { key, salt, token, expires: this.now() + SESSION_MS };
-        this.expiry = setTimeout(() => {
-          void this.serial(async () => {
-            if (this.session?.token === token) { this.close(); this.changed(); }
-          });
-        }, SESSION_MS);
-        this.expiry.unref?.();
-        return { token };
-      });
-    } finally { this.unlocking = false; }
+      this.assertLive();
+      let wrappedKey: Envelope;
+      if (envelope && 'wrappedKey' in envelope) {
+        wrappedKey = envelope.wrappedKey;
+        const [encoded] = open<string>(wrappedKey, wrappingKey, WRAP_AAD);
+        key = Buffer.from(encoded, 'base64');
+        open(envelope, key, AAD);
+      } else {
+        if (envelope) {
+          key = await derive(legacyPassphrase as string, Buffer.from(envelope.salt, 'base64'), 32) as Buffer;
+          try { open(envelope, key, AAD); }
+          catch { this.retryAfter = Date.now() + 1000; throw new Error('Check the previous Vault passphrase and try again.'); }
+        } else key = randomBytes(32);
+        wrappedKey = seal([key.toString('base64')], wrappingKey, '', WRAP_AAD);
+        this.assertLive();
+        await this.kv.set(STORE_KEY, { ...(envelope ?? seal([], key, '', AAD)), salt: '', wrappedKey });
+      }
+      this.assertLive();
+      this.connections?.resume(createHmac('sha256', key).update('zana-bot-connections/v1').digest());
+      this.session = { key, wrappedKey };
+      key = undefined;
+      return this.session;
+    } finally { key?.fill(0); wrappingKey.fill(0); }
   }
+  status() { return this.serial(async () => ({ migrationRequired: !(await this.prepare()) })); }
+  migrate(passphrase: unknown) {
+    return this.serial(async () => {
+      if (!await this.prepare(passphrase)) throw new Error('Enter the previous Vault passphrase.');
+      this.changed();
+    });
+  }
+  private async ready() {
+    const session = await this.prepare();
+    if (!session) throw new Error('Open the Vault in Zana to migrate existing items.');
+    return session;
+  }
+  ensureReady() { return this.serial(async () => { await this.ready(); }); }
   private async read(session: Session) {
-    const envelope = await this.kv.get<Envelope>(STORE_KEY);
+    const envelope = await this.kv.get<DeviceEnvelope>(STORE_KEY);
+    this.assertLive();
     if (!envelope) throw new Error('Vault storage is unavailable.');
     return open<SavedItem>(envelope, session.key, AAD);
   }
-  list(token: unknown): Promise<VaultItem[]> {
-    return this.serial(async () => (await this.read(this.active(token, true))).map(row => row.item));
+  private write(rows: SavedItem[], session: Session) {
+    this.assertLive();
+    return this.kv.set(STORE_KEY, { ...seal(rows, session.key, '', AAD), wrappedKey: session.wrappedKey });
+  }
+  list(): Promise<VaultItem[]> {
+    return this.serial(async () => (await this.read(await this.ready())).map(row => row.item));
   }
   shared(bot: BotIdentity): Promise<VaultItem[]> {
     return this.serial(async () => {
-      const shared = (await this.read(this.active())).map(row => row.item).filter(item => isShared(item, bot));
+      const shared = (await this.read(await this.ready())).map(row => row.item).filter(item => isShared(item, bot));
       const ids = new Set(shared.map(item => item.id));
       for (const item of shared) {
         if (item.billingContactId && !ids.has(item.billingContactId)) delete item.billingContactId;
@@ -88,11 +108,10 @@ export class BotVault {
       return shared;
     });
   }
-  save(token: unknown, raw: Record<string, unknown>, bots: BotIdentity[]) {
+  save(raw: Record<string, unknown>, bots: BotIdentity[]) {
     return this.serial(async () => {
-      const session = this.active(token, true);
+      const session = await this.ready();
       const rows = await this.read(session);
-      this.active(token, true);
       const prior = raw.id === undefined ? undefined : rows.find(row => row.item.id === raw.id);
       if (raw.id !== undefined && (!prior || prior.item.revision !== raw.revision)) throw new Error('This item changed. Reopen it to edit.');
       if (!prior && rows.length >= 200) throw new Error('The Vault holds up to 200 items.');
@@ -100,16 +119,15 @@ export class BotVault {
       if (entry.item.billingContactId && !rows.some(row => row.item.id === entry.item.billingContactId && row.item.kind === 'contact')) {
         throw new Error('Choose a saved billing contact.');
       }
-      await this.kv.set(STORE_KEY, seal([entry, ...rows.filter(row => row !== prior)], session.key, session.salt, AAD));
+      await this.write([entry, ...rows.filter(row => row !== prior)], session);
       this.changed();
       return entry.item;
     });
   }
-  remove(token: unknown, id: unknown, revision: unknown) {
+  remove(id: unknown, revision: unknown) {
     return this.serial(async () => {
-      const session = this.active(token, true);
+      const session = await this.ready();
       const rows = await this.read(session);
-      this.active(token, true);
       const prior = rows.find(row => row.item.id === id);
       if (!prior || prior.item.revision !== revision) throw new Error('This item changed. Reopen it to delete.');
       const remaining = rows.filter(row => row !== prior);
@@ -119,7 +137,7 @@ export class BotVault {
           row.item.revision = randomUUID();
         }
       }
-      await this.kv.set(STORE_KEY, seal(remaining, session.key, session.salt, AAD));
+      await this.write(remaining, session);
       this.changed();
     });
   }

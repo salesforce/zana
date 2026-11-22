@@ -13,7 +13,7 @@ Turn on **Bots** in **Settings → Experimental** to get started. New installati
 
 ## Vault
 
-Open **Settings → Plugins → Bots → Vault** to manage the whole Vault, or open **Vault** in a bot’s profile to see items shared with that bot. Create a passphrase to encrypt the Vault on this Zana instance. Unlocking lasts 30 minutes. Restarting or disabling the plugin locks it sooner.
+Open **Settings → Plugins → Bots → Vault** to manage the whole Vault, or open **Vault** in a bot’s profile to see items shared with that bot. Zana uses this device’s protected key storage. If you created a Vault with a passphrase, enter it once in the desktop app to migrate your existing items and grants.
 
 Save a login, card or contact and choose the bots that may use it. Select **All current and future bots** to share an item with every bot. Editing a saved login or card lets you replace its secret fields. A bot’s main thread can use `bot_vault_list` to read its shared contacts and identify masked logins and cards. Passwords, card numbers, expiry dates and security codes are write-only.
 
@@ -25,8 +25,8 @@ Click a bot in the Basic sidebar to open its main thread. The first click create
 
 ## Salesforce connections
 
-In the bot profile, open **Vault**, unlock it, and choose **Connect Salesforce**. Use the Salesforce My Domain URL and your external client app’s consumer key. Choose **Bot service account** for the client credentials flow with a designated integration user, or **My account** to authorize at Salesforce with the device flow. For delegated access, configure a local external client app dedicated to the device flow, with the callback URL `https://localhost` and the API and refresh-token scopes. [Salesforce device flow requirements](https://help.salesforce.com/s/articleView?id=005461280&language=en_US&type=1). For a service account, enable client credentials and assign a run-as user with Case read access.
+In the bot profile, open **Vault** and choose **Connect Salesforce**. Use the Salesforce My Domain URL and your external client app’s consumer key. Choose **Bot service account** for the client credentials flow with a designated integration user, or **My account** to authorize at Salesforce with the device flow. For delegated access, configure a local external client app dedicated to the device flow, with the callback URL `https://localhost` and the API and refresh-token scopes. [Salesforce device flow requirements](https://help.salesforce.com/s/articleView?id=005461280&language=en_US&type=1). For a service account, enable client credentials and assign a run-as user with Case read access.
 
 Ask the bot to check its assigned cases, or use the same instruction in a routine. This reads the 20 most recently modified open cases assigned to the connected identity. The bot receives the case ID, number, subject and status. It has no tool for retrieving credentials or running arbitrary queries.
 
-Each grant belongs to one bot. Its credentials are encrypted on disk. The Vault editor times out after 30 minutes while approved routines can keep using their connections. Explicitly locking the Vault, disabling Bots or restarting Zana pauses connections. Unlock once to resume them. **Disconnect** removes the bot’s local grant. To revoke the external app’s authorization as well, use Salesforce’s connected app settings.
+Each grant belongs to one bot. Its credentials are encrypted on disk. Authorized routines can use their connections after a restart. To rotate an OAuth client secret, select **Replace consumer secret** and enter its replacement. **Disconnect** removes the bot’s local grant. To revoke the external app’s authorization as well, use Salesforce’s connected app settings.

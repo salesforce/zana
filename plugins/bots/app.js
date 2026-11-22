@@ -321,21 +321,8 @@ var __iconData5 = {
 __iconData5.node;
 var KeyRound = createLucideIcon(__iconData5);
 
-// ../../node_modules/.pnpm/lucide-react@1.47.0_react@19.3.0/node_modules/lucide-react/dist/esm/icons/lock-keyhole.mjs
-var __iconData6 = {
-  name: "lock-keyhole",
-  size: 24,
-  node: [
-    ["circle", { cx: "12", cy: "16", r: "1", key: "1au0dj" }],
-    ["rect", { x: "3", y: "10", width: "18", height: "12", rx: "2", key: "6s8ecr" }],
-    ["path", { d: "M7 10V7a5 5 0 0 1 10 0v3", key: "1pqi11" }]
-  ]
-};
-__iconData6.node;
-var LockKeyhole = createLucideIcon(__iconData6);
-
 // ../../node_modules/.pnpm/lucide-react@1.47.0_react@19.3.0/node_modules/lucide-react/dist/esm/icons/pin.mjs
-var __iconData7 = {
+var __iconData6 = {
   name: "pin",
   size: 24,
   node: [
@@ -349,11 +336,11 @@ var __iconData7 = {
     ]
   ]
 };
-__iconData7.node;
-var Pin = createLucideIcon(__iconData7);
+__iconData6.node;
+var Pin = createLucideIcon(__iconData6);
 
 // ../../node_modules/.pnpm/lucide-react@1.47.0_react@19.3.0/node_modules/lucide-react/dist/esm/icons/search.mjs
-var __iconData8 = {
+var __iconData7 = {
   name: "search",
   size: 24,
   node: [
@@ -361,8 +348,8 @@ var __iconData8 = {
     ["circle", { cx: "11", cy: "11", r: "8", key: "4ej97u" }]
   ]
 };
-__iconData8.node;
-var Search = createLucideIcon(__iconData8);
+__iconData7.node;
+var Search = createLucideIcon(__iconData7);
 
 // ../../packages/ui/src/use-exclusive-popover.ts
 var activeId = null;
@@ -797,13 +784,14 @@ function Markdown(props) {
 }
 
 // src/connections/Connections.tsx
-function Connections({ bot, token, picker }) {
+function Connections({ bot, picker }) {
   const rpc = useRpc();
   const call = useCallback(
-    (action, args = {}) => rpc.call("botConnection", { action, bot, token, ...args }),
-    [rpc, bot, token]
+    (action, args = {}) => rpc.call("desktop.botConnection", { action, bot, ...args }),
+    [rpc, bot]
   );
   const [account, setAccount] = useState();
+  const [replacing, setReplacing] = useState(false);
   const [edit, setEdit] = useState(false);
   const [mode, setMode] = useState("service");
   const [pending, setPending] = useState();
@@ -860,6 +848,22 @@ function Connections({ bot, token, picker }) {
       setEdit(false);
       if (reply.state === "waiting") setPending(reply);
       else setReload((n) => n + 1);
+    } catch (e2) {
+      setError(message2(e2));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function replaceSecret(e) {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const clientSecret = new FormData(form).get("clientSecret");
+    form.reset();
+    setBusy(true);
+    setError("");
+    try {
+      await call("replaceSecret", { clientSecret });
+      setReplacing(false);
     } catch (e2) {
       setError(message2(e2));
     } finally {
@@ -947,7 +951,25 @@ function Connections({ bot, token, picker }) {
         new URL(account.origin).host,
         " \xB7 Read assigned cases"
       ] }),
-      /* @__PURE__ */ jsx("div", { children: /* @__PURE__ */ jsx("button", { type: "button", disabled: busy, onClick: disconnect, children: "Disconnect" }) })
+      replacing ? /* @__PURE__ */ jsxs("form", { onSubmit: replaceSecret, children: [
+        /* @__PURE__ */ jsxs("label", { children: [
+          "New consumer secret",
+          /* @__PURE__ */ jsx("input", { type: "password", name: "clientSecret", required: true, maxLength: 2048, autoComplete: "new-password" })
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "bv-actions", children: [
+          /* @__PURE__ */ jsx("button", { className: "bv-primary", disabled: busy, children: "Save secret" }),
+          /* @__PURE__ */ jsx("button", { type: "button", disabled: busy, onClick: () => {
+            setReplacing(false);
+            setError("");
+          }, children: "Cancel" })
+        ] })
+      ] }) : /* @__PURE__ */ jsxs("div", { className: "bv-actions", children: [
+        /* @__PURE__ */ jsx("button", { type: "button", onClick: () => {
+          setReplacing(true);
+          setError("");
+        }, children: "Replace consumer secret" }),
+        /* @__PURE__ */ jsx("button", { type: "button", disabled: busy, onClick: disconnect, children: "Disconnect" })
+      ] })
     ] }) : account === null ? /* @__PURE__ */ jsxs(Fragment2, { children: [
       /* @__PURE__ */ jsx("p", { children: "Let this bot read its assigned Salesforce cases in chat and scheduled routines." }),
       /* @__PURE__ */ jsx("div", { children: /* @__PURE__ */ jsx(
@@ -975,8 +997,7 @@ function Connections({ bot, token, picker }) {
           children: "Retry"
         }
       )
-    ] }),
-    (edit || account) && /* @__PURE__ */ jsx("small", { children: "Connections keep running when the editor times out. Locking the Vault or restarting Zana pauses them until you unlock it." })
+    ] })
   ] });
 }
 
@@ -1007,7 +1028,6 @@ var styles = `
 .bv fieldset{border:0;margin:0;padding:0;display:grid;gap:6px}.bv legend{margin-bottom:4px}.bv .bv-check{display:flex;gap:7px;align-items:center}.bv .bv-row{display:flex;align-items:center;gap:12px;text-align:left;width:100%;background:transparent;border:0;padding:8px}
 .bv .bv-row small,.bv .bv-row strong{display:block;overflow-wrap:anywhere}.bv .bv-row:hover{background:var(--bg-hover)}.bv .bv-danger,.bv [role=alert]{color:var(--danger,#db6a70)}.bv .bv-stack{display:grid;gap:12px}.bv .bv-mask{color:var(--text-muted)}
 `;
-var ownerToken = "";
 function errorText(reason) {
   return reason instanceof Error ? reason.message : "Vault request failed.";
 }
@@ -1111,7 +1131,7 @@ function ItemEditor({ editor, bots, contacts, bot, busy, save, close: close2, re
 function VaultPanel({ bot }) {
   const rpc = useRpc();
   const titleId = useId();
-  const [configured, setConfigured] = useState();
+  const [migrationRequired, setMigrationRequired] = useState();
   const [items, setItems] = useState(null);
   const [bots, setBots] = useState([]);
   const [error, setError] = useState("");
@@ -1124,27 +1144,20 @@ function VaultPanel({ bot }) {
   const loadId = useRef(0);
   const load = useCallback(async () => {
     const id = ++loadId.current;
-    const status = await rpc.call("vaultStatus");
+    const status = await rpc.call("desktop.vaultStatus");
     if (id !== loadId.current) return;
-    setConfigured(status.configured);
-    if (!ownerToken) {
+    setMigrationRequired(status.migrationRequired);
+    if (status.migrationRequired) {
       setItems(null);
       return;
     }
-    try {
-      const [result, choices] = await Promise.all([rpc.call("vaultList", { token: ownerToken }), rpc.call("list")]);
-      if (id !== loadId.current) return;
-      setItems(result);
-      setBots(choices);
-    } catch (e) {
-      if (id !== loadId.current) return;
-      if (!errorText(e).includes("Unlock the Vault")) throw e;
-      ownerToken = "";
-      setItems(null);
-      setEditor(void 0);
-    }
+    const [result, choices] = await Promise.all([rpc.call("desktop.vaultList"), rpc.call("list")]);
+    if (id !== loadId.current) return;
+    setItems(result);
+    setBots(choices);
   }, [rpc]);
   const refresh = useCallback(() => {
+    setError("");
     void load().catch((e) => setError(errorText(e)));
   }, [load]);
   useEffect(() => {
@@ -1162,27 +1175,16 @@ function VaultPanel({ bot }) {
       await load();
     } catch (e) {
       setError(errorText(e));
-      if (errorText(e).includes("Unlock the Vault")) {
-        ownerToken = "";
-        setEditor(void 0);
-        setItems(null);
-      }
     } finally {
       setBusy(false);
     }
   }
-  function unlock(e) {
+  function migrate(e) {
     e.preventDefault();
-    const form = e.currentTarget;
-    const fd = new FormData(form);
-    if (!configured && fd.get("confirm") !== fd.get("passphrase")) {
-      setError("The passphrases must match.");
-      return;
-    }
-    const passphrase = fd.get("passphrase");
-    form.reset();
+    const passphrase = new FormData(e.currentTarget).get("passphrase");
+    e.currentTarget.reset();
     void action(async () => {
-      ownerToken = (await rpc.call("vaultUnlock", { passphrase, create: !configured })).token;
+      await rpc.call("desktop.vaultMigrate", { passphrase });
     });
   }
   const shared = items?.filter((item) => !bot || isShared(item, bot)) ?? [];
@@ -1190,37 +1192,24 @@ function VaultPanel({ bot }) {
   const shown = shared.filter((item) => (filter === "all" || item.kind === filter) && [item.label, item.username, item.last4, ...item.sites, item.contact?.email].some((value) => value?.toLowerCase().includes(search.toLowerCase())));
   return /* @__PURE__ */ jsxs("section", { className: "bv", "aria-labelledby": titleId, children: [
     /* @__PURE__ */ jsx("style", { children: styles }),
-    /* @__PURE__ */ jsxs("header", { children: [
-      /* @__PURE__ */ jsxs("div", { children: [
-        /* @__PURE__ */ jsx("h3", { id: titleId, children: "Vault" }),
-        /* @__PURE__ */ jsx("p", { children: bot ? "Items shared with " + bot.name : "Logins, cards, and contacts for your bots." })
-      ] }),
-      items && /* @__PURE__ */ jsx("button", { type: "button", disabled: busy, onClick: () => void action(async () => {
-        await rpc.call("vaultLock", { token: ownerToken });
-        ownerToken = "";
-        setItems(null);
-        setEditor(void 0);
-      }), children: "Lock Vault" })
-    ] }),
+    /* @__PURE__ */ jsx("header", { children: /* @__PURE__ */ jsxs("div", { children: [
+      /* @__PURE__ */ jsx("h3", { id: titleId, children: "Vault" }),
+      /* @__PURE__ */ jsx("p", { children: bot ? "Items shared with " + bot.name : "Logins, cards, and contacts for your bots." })
+    ] }) }),
     error && /* @__PURE__ */ jsxs("p", { role: "alert", children: [
       error,
       " ",
-      configured === void 0 && /* @__PURE__ */ jsx("button", { type: "button", onClick: refresh, children: "Retry" })
+      !items && !migrationRequired && /* @__PURE__ */ jsx("button", { type: "button", onClick: refresh, children: "Retry" })
     ] }),
-    configured === void 0 ? /* @__PURE__ */ jsx("p", { role: "status", children: "Loading Vault\u2026" }) : !items ? /* @__PURE__ */ jsxs("form", { className: "bv-editor", onSubmit: unlock, children: [
-      /* @__PURE__ */ jsx(LockKeyhole, { size: 20 }),
-      /* @__PURE__ */ jsx("h4", { children: configured ? "Unlock your Vault" : "Create your encrypted Vault" }),
-      /* @__PURE__ */ jsx("p", { children: configured ? "Unlock for 30 minutes." : "Choose a passphrase of at least 12 characters. Keep a copy somewhere safe. You\u2019ll need it to unlock your saved items." }),
+    migrationRequired ? /* @__PURE__ */ jsxs("form", { className: "bv-editor", onSubmit: migrate, children: [
+      /* @__PURE__ */ jsx("h4", { children: "Move your existing Vault to this device" }),
+      /* @__PURE__ */ jsx("p", { children: "Enter your previous passphrase once to keep your saved items and bot connections." }),
       /* @__PURE__ */ jsxs("label", { children: [
-        "Vault passphrase",
-        /* @__PURE__ */ jsx("input", { name: "passphrase", required: true, type: "password", minLength: 12, maxLength: 512, autoComplete: configured ? "current-password" : "new-password" })
+        "Previous Vault passphrase",
+        /* @__PURE__ */ jsx("input", { name: "passphrase", required: true, type: "password", maxLength: 512, autoComplete: "current-password" })
       ] }),
-      !configured && /* @__PURE__ */ jsxs("label", { children: [
-        "Confirm passphrase",
-        /* @__PURE__ */ jsx("input", { name: "confirm", required: true, type: "password", autoComplete: "new-password" })
-      ] }),
-      /* @__PURE__ */ jsx("div", { children: /* @__PURE__ */ jsx("button", { className: "bv-primary", disabled: busy, children: configured ? "Unlock" : "Create Vault" }) })
-    ] }) : editor ? /* @__PURE__ */ jsx(
+      /* @__PURE__ */ jsx("div", { children: /* @__PURE__ */ jsx("button", { className: "bv-primary", disabled: busy, children: "Migrate Vault" }) })
+    ] }) : !items ? !error && /* @__PURE__ */ jsx("p", { role: "status", children: "Loading Vault\u2026" }) : editor ? /* @__PURE__ */ jsx(
       ItemEditor,
       {
         editor,
@@ -1233,11 +1222,11 @@ function VaultPanel({ bot }) {
           setError("");
         },
         save: (item) => void action(async () => {
-          await rpc.call("vaultSave", { token: ownerToken, item });
+          await rpc.call("desktop.vaultSave", { item });
           setEditor(void 0);
         }),
         remove: () => void action(async () => {
-          await rpc.call("vaultRemove", { token: ownerToken, id: editor.item?.id, revision: editor.item?.revision });
+          await rpc.call("desktop.vaultRemove", { id: editor.item?.id, revision: editor.item?.revision });
           setEditor(void 0);
         })
       },
@@ -1247,7 +1236,6 @@ function VaultPanel({ bot }) {
         Connections,
         {
           bot: connectionBot.id,
-          token: ownerToken,
           picker: !bot && /* @__PURE__ */ jsxs("label", { children: [
             "Bot account access",
             /* @__PURE__ */ jsx("select", { value: connectionBot.id, onChange: (e) => setConnectionBotId(e.target.value), children: bots.map((b) => /* @__PURE__ */ jsx("option", { value: b.id, children: b.name }, b.id)) })
@@ -2724,7 +2712,6 @@ lucide-react/dist/esm/icons/chevron-down.mjs:
 lucide-react/dist/esm/icons/contact-round.mjs:
 lucide-react/dist/esm/icons/credit-card.mjs:
 lucide-react/dist/esm/icons/key-round.mjs:
-lucide-react/dist/esm/icons/lock-keyhole.mjs:
 lucide-react/dist/esm/icons/pin.mjs:
 lucide-react/dist/esm/icons/search.mjs:
 lucide-react/dist/esm/lucide-react.mjs:

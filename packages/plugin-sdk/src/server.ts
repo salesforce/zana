@@ -117,6 +117,8 @@ export interface PluginDatabase {
 }
 
 export interface PluginStorage {
+  /** Server-only device key, scoped to this installed plugin. Throws if protected storage is unavailable. */
+  deviceKey(): Promise<Uint8Array>;
   kv: PluginKvStorage;
   database(): PluginDatabase;
   /**
@@ -130,6 +132,7 @@ export interface PluginStorage {
 }
 
 export interface PluginRpc {
+  /** Methods prefixed with desktop. require a trusted desktop window. */
   method(name: string, handler: (args: unknown) => unknown | Promise<unknown>): void;
   /** Typed-contract twin of `method`. Handlers are registered by name; schema is advisory. */
   register(

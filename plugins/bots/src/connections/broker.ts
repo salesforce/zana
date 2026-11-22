@@ -31,7 +31,6 @@ export class BotConnections {
     private botExists: (key: string) => boolean = () => true
   ) {}
   resume(key: Buffer) {
-    // An automatic editor timeout closes owner access. Explicit lock or shutdown also stops unattended work.
     if (this.session?.key.equals(key)) {
       key.fill(0);
       return;
@@ -50,7 +49,7 @@ export class BotConnections {
     owner?: () => void
   ) {
     const session = this.session;
-    if (!session) return Promise.reject(new Error('Unlock the Vault to resume bot connections.'));
+    if (!session) return Promise.reject(new Error('Bot connections are unavailable.'));
     if (this.queued >= 24) return Promise.reject(new Error('Connections are busy. Try again.'));
     this.queued++;
     const check = () => {
@@ -152,6 +151,17 @@ export class BotConnections {
         attempt.nextPoll = this.now() + attempt.interval * 1000;
         return { state: 'waiting', interval: attempt.interval };
       }
+    }, owner);
+  }
+  replaceSecret(bot: string, secret: unknown, owner: () => void) {
+    return this.run(async (rows, signal, save) => {
+      const index = rows.findIndex(row => row.bot === bot);
+      if (index < 0) throw new Error('Connect a Salesforce account first.');
+      const updated = { ...rows[index], clientSecret: appSecret(secret) };
+      const { grant } = await this.provider.authorize(updated, signal);
+      rows[index] = grant;
+      await save();
+      return { state: 'connected' as const };
     }, owner);
   }
   disconnect(bot: string, owner: () => void) {

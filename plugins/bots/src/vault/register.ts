@@ -12,36 +12,29 @@ function record(value: unknown): Record<string, unknown> {
 export function registerVault(zcc: ZccPluginApi, bots: BotService) {
   const botExists = (key: string) => bots.store.snapshot().some(bot => botScopeKey(bot) === key);
   const connections = new BotConnections(zcc.storage.kv, undefined, Date.now, botExists);
-  const vault = new BotVault(zcc.storage.kv, Date.now, () => zcc.realtime.publish('bots:vault-changed', {}), connections);
+  const vault = new BotVault(zcc.storage.kv, () => zcc.storage.deviceKey(), () => zcc.realtime.publish('bots:vault-changed', {}), connections);
   zcc.background.service('vault-session', () => () => vault.dispose());
-  zcc.rpc.method('vaultStatus', () => vault.status());
-  zcc.rpc.method('vaultUnlock', input => {
+  zcc.rpc.method('desktop.vaultStatus', () => vault.status());
+  zcc.rpc.method('desktop.vaultMigrate', input => vault.migrate(record(input).passphrase));
+  zcc.rpc.method('desktop.vaultList', () => vault.list());
+  zcc.rpc.method('desktop.vaultSave', async input => vault.save(record(record(input).item), await bots.store.list()));
+  zcc.rpc.method('desktop.vaultRemove', input => {
     const args = record(input);
-    return vault.unlock(args.passphrase, args.create === true);
+    return vault.remove(args.id, args.revision);
   });
-  zcc.rpc.method('vaultLock', input => vault.lock(record(input).token));
-  zcc.rpc.method('vaultList', input => vault.list(record(input).token));
-  zcc.rpc.method('vaultSave', async input => {
+  zcc.rpc.method('desktop.botConnection', async input => {
     const args = record(input);
-    return vault.save(args.token, record(args.item), await bots.store.list());
-  });
-  zcc.rpc.method('vaultRemove', input => {
-    const args = record(input);
-    return vault.remove(args.token, args.id, args.revision);
-  });
-  zcc.rpc.method('botConnection', async input => {
-    const args = record(input);
-    vault.requireOwner(args.token);
+    await vault.ensureReady();
     if (typeof args.bot !== 'string') throw new Error('Choose a bot.');
     const bot = await bots.requireBot(args.bot);
     const key = botScopeKey(bot);
     const owner = () => {
-      vault.requireOwner(args.token);
       if (!botExists(key)) throw new Error('The bot was removed.');
     };
     switch (args.action) {
       case 'status': return connections.status(key, owner);
       case 'connect': return connections.connect(key, args, owner);
+      case 'replaceSecret': return connections.replaceSecret(key, args.clientSecret, owner);
       case 'finish': return connections.finish(key, args.ticket, owner);
       case 'disconnect': return connections.disconnect(key, owner);
       default: throw new Error('Unknown connection action.');
@@ -59,6 +52,7 @@ export function registerVault(zcc: ZccPluginApi, bots: BotService) {
         return botScopeKey(bot);
       };
       const identity = key();
+      await vault.ensureReady();
       return connections.assignedCases(identity, () => key() === identity, ctx.signal);
     }
   });
@@ -68,7 +62,7 @@ export function registerVault(zcc: ZccPluginApi, bots: BotService) {
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     execute: async (_input, ctx) => {
       const bot = bots.botForMainThread(ctx.threadId);
-      if (!bot) throw new Error('Only a bot’s main thread can use its Vault.');
+      if (!bot || bot.projectId !== ctx.projectId) throw new Error('Only a bot’s main thread can use its Vault.');
       return (await vault.shared(bot)).map(({ scope: _scope, revision: _revision, ...item }) => item);
     }
   });

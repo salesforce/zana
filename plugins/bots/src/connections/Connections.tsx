@@ -6,14 +6,15 @@ type Account = { mode: Mode; origin: string };
 type Waiting = { state: 'waiting'; ticket: string; code: string; url: string; interval: number };
 type Reply = Waiting | { state: 'connected' };
 
-export function Connections({ bot, token, picker }: { bot: string; token: string; picker?: ReactNode }) {
+export function Connections({ bot, picker }: { bot: string; picker?: ReactNode }) {
   const rpc = useRpc();
   const call = useCallback(
     (action: string, args: Record<string, unknown> = {}) =>
-      rpc.call('botConnection', { action, bot, token, ...args }),
-    [rpc, bot, token]
+      rpc.call('desktop.botConnection', { action, bot, ...args }),
+    [rpc, bot]
   );
   const [account, setAccount] = useState<Account | null>();
+  const [replacing, setReplacing] = useState(false);
   const [edit, setEdit] = useState(false);
   const [mode, setMode] = useState<Mode>('service');
   const [pending, setPending] = useState<Waiting>();
@@ -79,6 +80,18 @@ export function Connections({ bot, token, picker }: { bot: string; token: string
     } finally {
       setBusy(false);
     }
+  }
+  async function replaceSecret(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const clientSecret = new FormData(form).get('clientSecret');
+    form.reset();
+    setBusy(true); setError('');
+    try {
+      await call('replaceSecret', { clientSecret });
+      setReplacing(false);
+    } catch (e) { setError(message(e)); }
+    finally { setBusy(false); }
   }
   async function disconnect() {
     setBusy(true);
@@ -164,11 +177,16 @@ export function Connections({ bot, token, picker }: { bot: string; token: string
         <>
           <strong>Salesforce · {account.mode === 'service' ? 'Bot service account' : 'My account'}</strong>
           <small>{new URL(account.origin).host} · Read assigned cases</small>
-          <div>
+          {replacing ? <form onSubmit={replaceSecret}>
+            <label>New consumer secret<input type="password" name="clientSecret" required maxLength={2048} autoComplete="new-password" /></label>
+            <div className="bv-actions"><button className="bv-primary" disabled={busy}>Save secret</button>
+              <button type="button" disabled={busy} onClick={() => { setReplacing(false); setError(''); }}>Cancel</button></div>
+          </form> : <div className="bv-actions">
+            <button type="button" onClick={() => { setReplacing(true); setError(''); }}>Replace consumer secret</button>
             <button type="button" disabled={busy} onClick={disconnect}>
               Disconnect
             </button>
-          </div>
+          </div>}
         </>
       ) : account === null ? (
         <>
@@ -202,12 +220,6 @@ export function Connections({ bot, token, picker }: { bot: string; token: string
             </button>
           )}
         </p>
-      )}
-      {(edit || account) && (
-        <small>
-          Connections keep running when the editor times out. Locking the Vault or restarting Zana pauses them
-          until you unlock it.
-        </small>
       )}
     </section>
   );

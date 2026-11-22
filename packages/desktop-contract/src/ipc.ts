@@ -408,6 +408,7 @@ export const IPC = {
     onChanged: 'pluginApps:onChanged',
     setEnabled: 'pluginApps:setEnabled',
     callRpc: 'pluginApps:callRpc',
+    callDesktopRpc: 'pluginApps:callDesktopRpc',
     getSettings: 'pluginApps:getSettings',
     setSettings: 'pluginApps:setSettings',
     checkUpdates: 'pluginApps:checkUpdates',

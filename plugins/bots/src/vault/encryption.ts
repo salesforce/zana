@@ -40,6 +40,6 @@ export function open<T>(e: Envelope, key: Buffer, aad: Buffer): T[] {
       bytes.fill(0);
     }
   } catch {
-    throw new Error('Could not unlock this Vault. Check your passphrase.');
+    throw new Error('Could not decrypt the saved Vault data on this device.');
   }
 }

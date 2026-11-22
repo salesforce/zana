@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { useRealtime, useRpc } from '@zana-ai/zcc-plugin-sdk/app';
 import { Connections } from '../connections/Connections.js';
-import { CreditCard, KeyRound, LockKeyhole, ContactRound } from 'lucide-react';
+import { CreditCard, KeyRound, ContactRound } from 'lucide-react';
 import { botScopeKey, contactFields, isShared, type BotIdentity, type VaultItem, type VaultKind } from './items.js';
 
 const kinds = { login: 'Login', card: 'Card', contact: 'Contact info' } as const;
@@ -15,8 +15,6 @@ const styles = `
 .bv fieldset{border:0;margin:0;padding:0;display:grid;gap:6px}.bv legend{margin-bottom:4px}.bv .bv-check{display:flex;gap:7px;align-items:center}.bv .bv-row{display:flex;align-items:center;gap:12px;text-align:left;width:100%;background:transparent;border:0;padding:8px}
 .bv .bv-row small,.bv .bv-row strong{display:block;overflow-wrap:anywhere}.bv .bv-row:hover{background:var(--bg-hover)}.bv .bv-danger,.bv [role=alert]{color:var(--danger,#db6a70)}.bv .bv-stack{display:grid;gap:12px}.bv .bv-mask{color:var(--text-muted)}
 `;
-// An owner capability lives only in this renderer's memory. The server expires it after unlock.
-let ownerToken = '';
 type Editor = { kind: VaultKind; item?: VaultItem };
 function errorText(reason: unknown) { return reason instanceof Error ? reason.message : 'Vault request failed.'; }
 function WriteOnly({ name, label, saved }: { name: string; label: string; saved: boolean }) {
@@ -71,7 +69,7 @@ function ItemEditor({ editor, bots, contacts, bot, busy, save, close, remove }: 
 export function VaultPanel({ bot }: { bot?: BotIdentity }) {
   const rpc = useRpc();
   const titleId = useId();
-  const [configured, setConfigured] = useState<boolean>();
+  const [migrationRequired, setMigrationRequired] = useState<boolean>();
   const [items, setItems] = useState<VaultItem[] | null>(null);
   const [bots, setBots] = useState<BotIdentity[]>([]);
   const [error, setError] = useState('');
@@ -84,36 +82,28 @@ export function VaultPanel({ bot }: { bot?: BotIdentity }) {
   const loadId = useRef(0);
   const load = useCallback(async () => {
     const id = ++loadId.current;
-    const status = await rpc.call('vaultStatus') as { configured: boolean };
+    const status = await rpc.call('desktop.vaultStatus') as { migrationRequired: boolean };
     if (id !== loadId.current) return;
-    setConfigured(status.configured);
-    if (!ownerToken) { setItems(null); return; }
-    try {
-      const [result, choices] = await Promise.all([rpc.call('vaultList', { token: ownerToken }), rpc.call('list')]);
-      if (id !== loadId.current) return;
-      setItems(result as VaultItem[]); setBots(choices as BotIdentity[]);
-    } catch (e) {
-      if (id !== loadId.current) return;
-      if (!errorText(e).includes('Unlock the Vault')) throw e;
-      ownerToken = ''; setItems(null); setEditor(undefined);
-    }
+    setMigrationRequired(status.migrationRequired);
+    if (status.migrationRequired) { setItems(null); return; }
+    const [result, choices] = await Promise.all([rpc.call('desktop.vaultList'), rpc.call('list')]);
+    if (id !== loadId.current) return;
+    setItems(result as VaultItem[]); setBots(choices as BotIdentity[]);
   }, [rpc]);
-  const refresh = useCallback(() => { void load().catch(e => setError(errorText(e))); }, [load]);
+  const refresh = useCallback(() => { setError(''); void load().catch(e => setError(errorText(e))); }, [load]);
   useEffect(() => { refresh(); return () => { ++loadId.current; }; }, [refresh]);
   useRealtime('bots:vault-changed', refresh);
   async function action(fn: () => Promise<void>) {
     setBusy(true); setError('');
     try { await fn(); await load(); }
-    catch (e) { setError(errorText(e)); if (errorText(e).includes('Unlock the Vault')) { ownerToken = ''; setEditor(undefined); setItems(null); } }
+    catch (e) { setError(errorText(e)); }
     finally { setBusy(false); }
   }
-  function unlock(e: FormEvent<HTMLFormElement>) {
+  function migrate(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const form = e.currentTarget;
-    const fd = new FormData(form);
-    if (!configured && fd.get('confirm') !== fd.get('passphrase')) { setError('The passphrases must match.'); return; }
-    const passphrase = fd.get('passphrase'); form.reset();
-    void action(async () => { ownerToken = (await rpc.call('vaultUnlock', { passphrase, create: !configured }) as { token: string }).token; });
+    const passphrase = new FormData(e.currentTarget).get('passphrase');
+    e.currentTarget.reset();
+    void action(async () => { await rpc.call('desktop.vaultMigrate', { passphrase }); });
   }
   const shared = items?.filter(item => !bot || isShared(item, bot)) ?? [];
   const connectionBot = bot ?? bots.find(choice => choice.id === connectionBotId) ?? bots[0];
@@ -121,20 +111,18 @@ export function VaultPanel({ bot }: { bot?: BotIdentity }) {
     [item.label, item.username, item.last4, ...item.sites, item.contact?.email].some(value => value?.toLowerCase().includes(search.toLowerCase())));
   return <section className="bv" aria-labelledby={titleId}><style>{styles}</style><header>
     <div><h3 id={titleId}>Vault</h3><p>{bot ? 'Items shared with ' + bot.name : 'Logins, cards, and contacts for your bots.'}</p></div>
-    {items && <button type="button" disabled={busy} onClick={() => void action(async () => { await rpc.call('vaultLock', { token: ownerToken }); ownerToken = ''; setItems(null); setEditor(undefined); })}>Lock Vault</button>}
   </header>
-  {error && <p role="alert">{error} {configured === undefined && <button type="button" onClick={refresh}>Retry</button>}</p>}
-  {configured === undefined ? <p role="status">Loading Vault…</p> : !items ?
-    <form className="bv-editor" onSubmit={unlock}><LockKeyhole size={20} /><h4>{configured ? 'Unlock your Vault' : 'Create your encrypted Vault'}</h4>
-      <p>{configured ? 'Unlock for 30 minutes.' : 'Choose a passphrase of at least 12 characters. Keep a copy somewhere safe. You’ll need it to unlock your saved items.'}</p>
-      <label>Vault passphrase<input name="passphrase" required type="password" minLength={12} maxLength={512} autoComplete={configured ? 'current-password' : 'new-password'} /></label>
-      {!configured && <label>Confirm passphrase<input name="confirm" required type="password" autoComplete="new-password" /></label>}
-      <div><button className="bv-primary" disabled={busy}>{configured ? 'Unlock' : 'Create Vault'}</button></div></form>
+  {error && <p role="alert">{error} {!items && !migrationRequired && <button type="button" onClick={refresh}>Retry</button>}</p>}
+  {migrationRequired ? <form className="bv-editor" onSubmit={migrate}><h4>Move your existing Vault to this device</h4>
+      <p>Enter your previous passphrase once to keep your saved items and bot connections.</p>
+      <label>Previous Vault passphrase<input name="passphrase" required type="password" maxLength={512} autoComplete="current-password" /></label>
+      <div><button className="bv-primary" disabled={busy}>Migrate Vault</button></div></form>
+    : !items ? !error && <p role="status">Loading Vault…</p>
     : editor ? <ItemEditor key={editor.item?.id ?? editor.kind} editor={editor} bot={bot} bots={bots} contacts={items.filter(item => item.kind === 'contact')} busy={busy} close={() => { setEditor(undefined); setError(''); }}
-      save={item => void action(async () => { await rpc.call('vaultSave', { token: ownerToken, item }); setEditor(undefined); })}
-      remove={() => void action(async () => { await rpc.call('vaultRemove', { token: ownerToken, id: editor.item?.id, revision: editor.item?.revision }); setEditor(undefined); })} />
+      save={item => void action(async () => { await rpc.call('desktop.vaultSave', { item }); setEditor(undefined); })}
+      remove={() => void action(async () => { await rpc.call('desktop.vaultRemove', { id: editor.item?.id, revision: editor.item?.revision }); setEditor(undefined); })} />
     : <div className="bv-stack">
-      {connectionBot && <Connections key={botScopeKey(connectionBot)} bot={connectionBot.id} token={ownerToken}
+      {connectionBot && <Connections key={botScopeKey(connectionBot)} bot={connectionBot.id}
         picker={!bot && <label>Bot account access<select value={connectionBot.id} onChange={e => setConnectionBotId(e.target.value)}>
           {bots.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label>} />}
       <div className="bv-bar"><button type="button" aria-expanded={adding} onClick={() => setAdding(!adding)}>New item</button>

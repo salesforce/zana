@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { BotVault } from './storage.js';
 import { VaultPanel } from './VaultPanel.js';
 import { botScopeKey } from './items.js';
@@ -9,30 +9,23 @@ const mocks = vi.hoisted(() => ({ rpc: { call: vi.fn() } }));
 vi.mock('@zana-ai/zcc-plugin-sdk/app', () => ({ useRpc: () => mocks.rpc, useRealtime: vi.fn() }));
 const bot = { id:'scout', name:'Scout', createdAt:4 };
 afterEach(cleanup);
-it('creates, filters, replaces and deletes shared items and locks the owner view', async () => {
+it('creates, filters, replaces and deletes shared items without prompting for a passphrase', async () => {
   const store = new Map<string,unknown>();
-  const vault = new BotVault({get: async <T,>(k: string) => store.get(k) as T|undefined, set: async (k,v) => { store.set(k,v); }});
+  const vault = new BotVault({get: async <T,>(k: string) => store.get(k) as T|undefined, set: async (k,v) => { store.set(k,v); }}, async () => Buffer.alloc(32, 9));
   mocks.rpc.call.mockImplementation(async (method, args) => {
-    if (method === 'botConnection') return null;
-    if (method === 'vaultStatus') return vault.status();
-    if (method === 'vaultUnlock') return vault.unlock(args.passphrase,args.create);
-    if (method === 'vaultList') return vault.list(args.token);
-    if (method === 'vaultSave') return vault.save(args.token,args.item,[bot]);
-    if (method === 'vaultRemove') return vault.remove(args.token,args.id,args.revision);
-    if (method === 'vaultLock') return vault.lock(args.token);
+    if (method === 'desktop.botConnection') return null;
+    if (method === 'desktop.vaultStatus') return vault.status();
+    if (method === 'desktop.vaultList') return vault.list();
+    if (method === 'desktop.vaultSave') return vault.save(args.item,[bot]);
+    if (method === 'desktop.vaultRemove') return vault.remove(args.id,args.revision);
     if (method === 'list') return [bot];
     throw new Error('Unexpected method');
   });
   render(<VaultPanel bot={bot}/>);
   const click = async (name: string|RegExp) => fireEvent.click(await screen.findByRole('button', {name,exact:true}));
   const fill = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label,{exact:true}),{target:{value}});
-  await screen.findByLabelText('Vault passphrase');
-  fill('Vault passphrase','local test only phrase');
-  fill('Confirm passphrase','different test phrase');
-  await click('Create Vault');
-  expect(screen.getByRole('alert').textContent).toMatch(/must match/);
-  fill('Confirm passphrase','local test only phrase');
-  await click('Create Vault');
+  await screen.findByRole('button',{name:'New item'});
+  expect(screen.queryByLabelText(/passphrase/i)).toBeNull();
   await click('New item'); await click('Contact info');
   fill('Full name','Casey Chen'); fill('Email','casey@example.test');
   expect((screen.getByLabelText('Scout') as HTMLInputElement).checked).toBe(true);
@@ -60,11 +53,29 @@ it('creates, filters, replaces and deletes shared items and locks the owner view
   expect(screen.queryByRole('button',{name:card})).toBeNull();
   await click(/Casey Chen/);
   await click('Cancel');
-  await click('Lock Vault');
-  await screen.findByLabelText('Vault passphrase');
-  fill('Vault passphrase','local test only phrase'); await click('Unlock');
-  await screen.findByRole('button',{name:/Casey Chen/});
-  expect(mocks.rpc.call.mock.calls.find(([method])=>method==='vaultSave')?.[1].item.scope).toEqual([botScopeKey(bot)]);
-  await click('Lock Vault'); await waitFor(()=>expect(screen.queryByText('Casey Chen')).toBeNull());
+  expect(mocks.rpc.call.mock.calls.find(([method])=>method==='desktop.vaultSave')?.[1].item.scope).toEqual([botScopeKey(bot)]);
   vault.dispose();
+});
+
+it('requests the previous passphrase only for migration', async () => {
+  let legacy = true;
+  mocks.rpc.call.mockImplementation(async (method, args) => {
+    if (method === 'desktop.vaultStatus') return {migrationRequired:legacy};
+    if (method === 'desktop.vaultMigrate') {
+      if (args.passphrase !== 'previous password') throw Error('Incorrect previous passphrase');
+      legacy = false;
+    }
+    return [];
+  });
+  render(<VaultPanel />);
+  const field = await screen.findByLabelText('Previous Vault passphrase') as HTMLInputElement;
+  expect(field.type).toBe('password');
+  fireEvent.change(field,{target:{value:'incorrect'}});
+  fireEvent.click(screen.getByText('Migrate Vault'));
+  await screen.findByText('Incorrect previous passphrase');
+  expect(field.value).toBe('');
+  fireEvent.change(field,{target:{value:'previous password'}});
+  fireEvent.click(screen.getByText('Migrate Vault'));
+  await screen.findByText('New item');
+  expect(screen.queryByLabelText(/passphrase/i)).toBeNull();
 });

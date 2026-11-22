@@ -758,6 +758,12 @@ export function createPluginApi(
       }
     },
     storage: {
+      deviceKey: async () => {
+        assertLive();
+        const derive = options?.productContext?.pluginDeviceKey;
+        if (!derive) throw new Error('Device secure storage is unavailable.');
+        return derive(pluginId);
+      },
       kv: {
         get: async <T>(key: string) => { assertLive(); return kv.get<T>(key); },
         set: async (key, value) => {
