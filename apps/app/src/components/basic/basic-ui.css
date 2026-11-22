@@ -20,7 +20,8 @@
 .basic-ui-chat-search.list-filter { flex-shrink: 0; min-height: 34px; margin: 14px 0 12px; }
 .basic-ui .basic-ui-chat-search input:focus-visible { outline: none; box-shadow: none; }
 .basic-ui-chat-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
-.basic-ui-conversations { flex: 1; min-height: 0; overflow-y: auto; }
+.basic-ui-conversations { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: none; }
+.basic-ui-conversations::-webkit-scrollbar { display: none; }
 .basic-ui-conversations h2 { margin: 8px 10px 10px; font-size: 10px; font-weight: 500; color: var(--text-muted); }
 .basic-ui-project-group { margin-bottom: 10px; }
 .basic-ui-project-group h3 { margin: 0; }
