@@ -2,7 +2,11 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect, type AppHandle } from './fixtures/app.js';
 
-test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
+test.use({
+  launchEnv: { ZCC_FAKE_PROVIDER: '1' },
+  // The resize and fullscreen cases exercise the inspector opened with thread tabs off.
+  initialConfig: { threadTabsEnabled: false }
+});
 
 async function createThread(app: AppHandle, title: string) {
   const path = join(app.home, 'preview-project');

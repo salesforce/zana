@@ -1,4 +1,5 @@
 import { test, expect, dismissConsentOverlays } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
 test.use({
   launchEnv: { ZCC_FAKE_PROVIDER: '1' },
@@ -41,15 +42,18 @@ test('thread defaults are explicit, independent, persistent, and never silently 
   expect((await page.evaluate(() => window.cc.config.get())).defaultHarness).toBe('claude');
   const defaults = page.getByRole('region', { name: 'New chat defaults' });
   await expect(defaults.getByRole('button', { name: 'Model', exact: true })).toContainText('Fake Model');
-  await defaults.screenshot({ path: info.outputPath('composer-defaults.png') });
+  await defaults.getByRole('button', { name: 'Model', exact: true }).scrollIntoViewIfNeeded();
+  await captureElectronScreenshot(app.electron, page, info.outputPath('composer-defaults.png'));
   await navigate('/settings/harness');
   await page.reload();
   await expect(page.getByRole('button', { name: 'Default for threads', exact: true })).toContainText('Fake');
   const row = page.locator('[data-provider-id="fake"]');
   await row.getByRole('button', { name: 'Configure Fake' }).click();
   await expect(row.getByRole('button', { name: 'Model', exact: true })).toContainText('Fake Model');
-  await row.screenshot({ path: info.outputPath('harness-details.png') });
-  await page.screenshot({ path: info.outputPath('thread-and-cli-defaults.png') });
+  await row.getByRole('button', { name: 'Model', exact: true }).scrollIntoViewIfNeeded();
+  await captureElectronScreenshot(app.electron, page, info.outputPath('harness-details.png'));
+  await page.getByRole('button', { name: 'Default for threads', exact: true }).scrollIntoViewIfNeeded();
+  await captureElectronScreenshot(app.electron, page, info.outputPath('thread-and-cli-defaults.png'));
 
   await navigate('/');
   await home.getByRole('group', { name: 'Launch mode' }).getByRole('button', { name: 'Modern', exact: true }).click();
