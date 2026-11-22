@@ -14,6 +14,9 @@ vi.mock('@zana-ai/zcc-plugin-sdk/app', () => ({
     setup({ slots: { navPanel: (row: unknown) => state.registered.push(row), threadPanelAction: (row: unknown) => state.registered.push(row) } }),
   callPluginRpc: (...args: unknown[]) => memoryRpc(...args),
   useRpc: () => state.rpc,
+  Markdown: ({ content, editor, className }: import('@zana-ai/zcc-plugin-sdk/app').MarkdownProps) => editor
+    ? <textarea aria-label={editor.label} value={content} disabled={editor.disabled} onChange={event => editor.onChange(event.target.value)} />
+    : <div className={className}>{content}</div>,
   useZccNavigate: () => state.navigate,
   useRealtime: (_channel: string, handler: (payload?: unknown) => void) => { state.realtime.push(handler); }
 }));
@@ -73,10 +76,11 @@ it('shows the create form when there are no bots and creates one with a color', 
   expect(screen.queryByLabelText(/emoji/i)).toBeNull();
   expect(screen.queryByText('Cancel')).toBeNull();
   fireEvent.change(screen.getByPlaceholderText('Release Scout'), { target: { value: 'Ada' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Personality and role' }), { target: { value: 'Be **concise**.' } });
   fireEvent.click(screen.getByRole('radio', { name: 'Purple' }));
   fireEvent.click(screen.getByText('Create bot'));
   await screen.findByText(/Ada has no thread yet/);
-  expect(state.rpc.call).toHaveBeenCalledWith('create', { name: 'Ada', color: '#a855f7', personality: '' });
+  expect(state.rpc.call).toHaveBeenCalledWith('create', { name: 'Ada', color: '#a855f7', personality: 'Be **concise**.' });
 });
 
 it('reports create and list errors', async () => {
@@ -97,7 +101,7 @@ it('opens the main thread in the host side panel and starts a fresh bot there', 
   fireEvent.click(await screen.findByRole('button', { name: 'Chat' }));
   expect(state.navigate.openPanelAgent).toHaveBeenCalledWith({ threadId: 't1', title: 'Scout' });
   expect(state.navigate.toThread).not.toHaveBeenCalled();
-  expect(screen.getAllByText('Terse').length).toBeGreaterThan(0);
+  expect(screen.queryByRole('textbox', { name: 'Personality and role' })).toBeNull();
   expect(screen.getAllByText('Asleep').length).toBeGreaterThan(0);
   expect(screen.getByText('Full access')).toBeTruthy();
   expect(screen.queryByLabelText(/^Message /)).toBeNull();
@@ -417,7 +421,9 @@ it('keeps tab panels mounted and supports arrow keys', async () => {
   route({ list: () => [scout], jobs: () => [] });
   render(<BotsPanel />);
   const details = await screen.findByRole('tab', { name: 'Overview' });
-  fireEvent.change(screen.getByDisplayValue('Terse'), { target: { value: 'Draft' } });
+  fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Personality and role' }), { target: { value: 'Draft' } });
+  fireEvent.click(details);
   fireEvent.keyDown(details, { key: 'ArrowRight' });
   const library = screen.getByRole('tab', { name: 'Library' });
   expect(library.getAttribute('aria-selected')).toBe('true');
@@ -679,7 +685,7 @@ it('recovers a failed profile lookup and never shows another thread’s profile'
   unavailable = false;
   fireEvent.click(retry);
   await screen.findByRole('heading', { name: 'Scout' });
-  expect(screen.getByText('Terse', { selector: 'p' })).toBeTruthy();
+  expect(screen.getByText('Terse', { selector: '.bt-personality' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Chat', exact: true })).toBeNull();
   fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
   expect(screen.getByLabelText('Name', { exact: true })).toBeTruthy();

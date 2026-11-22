@@ -51,7 +51,30 @@ test('Bots shows routines, tagged memory, and host settings controls in the inst
     await expect(field).toBeFocused();
     await field.press('Escape');
   }
-  await expect(panel.getByLabel('Personality and role')).toHaveCSS('resize','vertical');
+  const role = panel.getByRole('textbox', { name: 'Personality and role' });
+  const saveRole = panel.getByRole('button', { name: 'Save', exact: true });
+  await expect(role).toContainText('Watch release branches');
+  await expect(saveRole).toHaveCount(0);
+  await role.fill('Triage releases');
+  await role.press('ControlOrMeta+a');
+  await panel.getByRole('button', { name: 'Bold', exact: true }).click();
+  await expect(role.locator('strong')).toHaveText('Triage releases');
+  await saveRole.click();
+  const readPersonality = async () => {
+    const response = await app.window.request.post(new URL('/api/v1/plugin-apps/bots/rpc', app.window.url()).href, {
+      data: { method: 'get', args: { bot: 'release-scout' } }
+    });
+    expect(response.ok()).toBe(true);
+    return (await response.json()).value.bot.personality;
+  };
+  await expect.poll(readPersonality).toBe('**Triage releases**');
+  await panel.getByRole('tab', { name: 'Overview' }).click();
+  await panel.getByRole('tab', { name: 'Settings' }).click();
+  await expect(role.locator('strong')).toHaveText('Triage releases');
+  await role.fill('Unsaved role');
+  await panel.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(role.locator('strong')).toHaveText('Triage releases');
+  await expect(saveRole).toHaveCount(0);
   const picker = panel.getByRole('button', {name: 'Project', exact: true});
   await picker.click();
   const search = app.window.getByRole('textbox', {name: 'Search projects'});

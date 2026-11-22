@@ -26876,6 +26876,50 @@ body.resizing-col .library-resizer:active::after {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
 }
 
+.library-md-editor.is-field {
+  box-sizing: border-box;
+  height: 10rem;
+  min-height: 7rem;
+  padding: 0;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-base);
+}
+
+.library-md-editor.is-field:focus-within {
+  border-color: var(--accent-blue);
+}
+
+.library-md-field-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 4px 6px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.library-md-field-toolbar .library-edit-btn {
+  padding: 5px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+.library-md-field-toolbar .library-edit-btn:is(:hover, [aria-pressed="true"]) {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.library-md-editor.is-field > div:last-child { flex: 1; }
+.library-md-editor.is-field .tiptap { padding: 8px 12px; box-sizing: border-box; overflow-wrap: anywhere; }
+.library-md-editor.is-field .tiptap > :last-child { margin-bottom: 0; }
+
 .library-md-bubble .library-edit-btn {
   padding: 4px 6px;
 }

@@ -2,7 +2,7 @@ import { PopoverPicklist } from '@zana-ai/zcc-ui/popover-picklist';
 import { ChevronDown, Pin } from 'lucide-react';
 import { BotMemory } from './src/BotMemory.js';
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { definePluginApp, useRealtime, useRpc, useZccNavigate, type BasicSidebarSectionProps, type PluginOwnedThreadIconProps, type PluginOwnedThreadTitleProps, type PluginThreadPanelProps } from '@zana-ai/zcc-plugin-sdk/app';
+import { definePluginApp, Markdown, useRealtime, useRpc, useZccNavigate, type BasicSidebarSectionProps, type PluginOwnedThreadIconProps, type PluginOwnedThreadTitleProps, type PluginThreadPanelProps } from '@zana-ai/zcc-plugin-sdk/app';
 import { BOT_COLORS, botMemoryTag, defaultBotColor, defaultBotShape, describeCron, type BotRoutine, type BotShape } from './src/model.js';
 import type { BotJobView, BotView } from './src/service.js';
 
@@ -49,7 +49,7 @@ const CSS = `
 .bt-hero{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
 .bt-hero-text{flex:1;min-width:180px}
 .bt-hero h2{margin:0;font-size:23px;letter-spacing:-.035em;font-weight:600}
-.bt-hero p{margin:2px 0 0;color:var(--text-muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.bt-hero-text > p{margin:2px 0 0;color:var(--text-muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .bt-actions{display:flex;gap:6px}
 .bt-chips{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
 .bt-chip{font-size:11px;padding:2px 8px;border-radius:999px;background:var(--bg-elevated);color:var(--text-muted);border:1px solid var(--border)}
@@ -84,9 +84,10 @@ button.bt-row:hover{background:var(--bg-hover)}
 .bt-sw[aria-checked="true"]{background:var(--accent-blue)}
 .bt-sw[aria-checked="true"]::after{left:14px}
 .bt-sw:disabled{cursor:progress;opacity:.7}
+.bt-personality-field.bt-row,.bt-personality-field.bt-field{display:grid;gap:8px;grid-template-columns:minmax(0,1fr)}
 .bt-field>.bt-picker{width:100%;margin-top:4px}
 .bt-field{display:block;margin-top:10px;color:var(--text-muted);font-size:12px}
-.bt-field input,.bt-field textarea,.bt-field select{display:block;width:100%;margin-top:4px;font-size:13px}
+.bt-field > :is(input,textarea,select){display:block;width:100%;margin-top:4px;font-size:13px}
 .bt-colors{display:flex;gap:6px}
 .bt-colors button{width:16px;height:16px;border-radius:50%;border:0;cursor:pointer;padding:0}
 .bt-colors button[aria-checked="true"]{box-shadow:0 0 0 2px var(--bg-panel),0 0 0 3.5px var(--text-primary)}
@@ -126,7 +127,7 @@ button.bt-row:hover{background:var(--bg-hover)}
 .bt-savebar-message{flex:1 1 120px;min-width:0;font-size:12px;color:var(--text-muted)}
 .bt-savebar-actions{display:flex;gap:6px}
 .bt-settings-panel .bt-sec+.bt-sec{margin-top:20px}
-.bt-settings-panel .bt-row :is(input,select,textarea,.bt-picker){width:min(55%,310px);box-sizing:border-box}
+.bt-settings-panel .bt-row > :is(input,select,textarea,.bt-picker){width:min(55%,310px);box-sizing:border-box}
 .bt-root .bt-field :is(input,select,textarea),.bt-start textarea{box-sizing:border-box}
 .bt-sec .bt-memory{padding:10px 14px}
 .bt-memory+.bt-memory{border-top:1px solid var(--border)}
@@ -135,7 +136,7 @@ button.bt-row:hover{background:var(--bg-hover)}
 .bt-grow,.bt-hero-text,.bt-memory{overflow-wrap:anywhere}
 .bt-root .settings-field{margin-bottom:0}
 @container (max-width:700px){.bt-layout{grid-template-columns:135px minmax(0,1fr)}.bt-list-head{flex-wrap:wrap}.bt-when{text-align:left}.bt-row.is-routine .bt-grow{flex-basis:55%}}
-@container (max-width:520px){.bt-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}.bt-root .bt-list{max-height:110px;flex-direction:row;align-items:center;overflow:auto;border-right:0;border-bottom:1px solid var(--border)}.bt-list .bt-item{width:auto;flex:none}.bt-list-head{flex:none;gap:4px}.bt-inner{padding:16px 12px 32px}.bt-row{flex-wrap:wrap}.bt-settings-panel .bt-row :is(input,select,textarea,.bt-picker){width:100%}.bt-colors{flex-wrap:wrap}}
+@container (max-width:520px){.bt-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}.bt-root .bt-list{max-height:110px;flex-direction:row;align-items:center;overflow:auto;border-right:0;border-bottom:1px solid var(--border)}.bt-list .bt-item{width:auto;flex:none}.bt-list-head{flex:none;gap:4px}.bt-inner{padding:16px 12px 32px}.bt-row{flex-wrap:wrap}.bt-settings-panel .bt-row > :is(input,select,textarea,.bt-picker){width:100%}.bt-colors{flex-wrap:wrap}}
 .bt-root code{font-size:12px}
 `;
 
@@ -474,6 +475,13 @@ function CreateBotDialog(props: CreateBotProps) {
   </dialog>;
 }
 
+function PersonalityEditor({ value, onChange, disabled }: {
+  value: string; onChange(value: string): void; disabled: boolean;
+}) {
+  return <Markdown content={value} editor={{ label: 'Personality and role', onChange, disabled,
+    placeholder: 'Describe this bot’s role and how it should work.' }} />;
+}
+
 function CreateBot(props: CreateBotProps & { canCancel: boolean }) {
   const rpc = useRpc();
   const [name, setName] = useState('');
@@ -510,11 +518,10 @@ function CreateBot(props: CreateBotProps & { canCancel: boolean }) {
       <div className="bt-chips"><span className="bt-chip is-warn" title="Bots run without asking for approval">Full access</span></div>
       <label className="bt-field settings-field">Name<input value={name} onChange={edit(setName)} placeholder="Release Scout" /></label>
       <div className="bt-field settings-field">Color<div style={{ marginTop: 6 }}><ColorPicker value={color} onChange={setColor} large /></div></div>
-      <label className="bt-field settings-field">
-        Personality and role
-        <textarea rows={5} value={personality} onChange={edit(setPersonality)}
-          placeholder="You watch our release branches, summarize what changed each morning, and flag risky merges." />
-      </label>
+      <div className="bt-field bt-personality-field">
+        <span>Personality and role</span>
+        <PersonalityEditor value={personality} disabled={busy} onChange={value => { setPersonality(value); setError(''); }} />
+      </div>
       {error && <p role="alert" className="bt-alert">{error}</p>}
       <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
         <button type="submit" className="bt-btn is-primary" disabled={busy || !name.trim()}>{busy ? 'Creating…' : 'Create bot'}</button>
@@ -606,7 +613,8 @@ const profileCss = `
 .bt-profile .bt-hero{flex-direction:column;text-align:center;gap:10px}
 .bt-profile .bt-hero-text{min-width:0;width:100%}
 .bt-profile .bt-title{justify-content:center}
-.bt-profile .bt-hero .bt-personality{display:block;white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0 0}
+.bt-profile .bt-personality{overflow-wrap:anywhere;margin:6px 0;color:var(--text-muted)}
+.bt-profile .bt-personality :is(ul,ol,blockquote,pre){text-align:start}
 .bt-profile .bt-tabs{justify-content:center}
 .bt-profile .bt-hero.is-editing{flex-direction:row;text-align:left;gap:12px}
 .bt-profile .bt-hero.is-editing .bt-title{justify-content:flex-start}
@@ -668,7 +676,7 @@ function BotPage({ bot, onDeleted, profile = false, active = true }: {
             <span className="bt-chip"><span className="bt-dot" data-state={state} />{STATE_LABEL[state]}
               {bot.activeJobs ? ` · ${bot.activeJobs} background job${bot.activeJobs === 1 ? '' : 's'}` : ''}</span>
           </div>
-          {profile && tab !== 'settings' && bot.personality && <p className="bt-personality">{bot.personality}</p>}
+          {profile && tab !== 'settings' && bot.personality && <Markdown className="bt-personality" content={bot.personality} />}
           <span className="bt-meta">{projectName} · <span className="bt-chip is-warn" title="Bots run without asking for approval">Full access</span></span>
         </div>
         {!profile && <div className="bt-actions">
@@ -700,7 +708,7 @@ function BotPage({ bot, onDeleted, profile = false, active = true }: {
         <Library bot={bot} jobsState={jobs} visible={active && tab === 'library'} />
       </div>
       <div role="tabpanel" id={`${tabsId}-panel-settings`} aria-labelledby={`${tabsId}-tab-settings`} className="bt-settings-panel" hidden={tab !== 'settings'}>
-        <Settings bot={bot} onDeleted={onDeleted} />
+        <Settings bot={bot} onDeleted={onDeleted} visible={active && tab === 'settings'} />
       </div>
     </div></>
   );
@@ -935,7 +943,7 @@ function settingsOf(bot: BotView): SettingsForm {
   return { color: bot.color ?? defaultBotColor(bot.id), name: bot.name, personality: bot.personality, projectId: bot.projectId, providerId: bot.providerId ?? '', model: bot.model ?? '' };
 }
 
-function Settings({ bot, onDeleted }: { bot: BotView; onDeleted(): void }) {
+function Settings({ bot, onDeleted, visible }: { bot: BotView; onDeleted(): void; visible: boolean }) {
   const action = useAction(bot.id);
   const formId = useId();
   const saved = settingsOf(bot);
@@ -1004,9 +1012,9 @@ function Settings({ bot, onDeleted }: { bot: BotView; onDeleted(): void }) {
               <span className="bt-grow">Name</span>
               <input aria-label="Name" value={form.name} onChange={set('name')} />
             </div>
-            <div className="bt-row" style={{ alignItems: 'flex-start' }}>
-              <span className="bt-grow">Personality and role<span className="bt-sub">Applies from the next turn</span></span>
-              <textarea aria-label="Personality and role" rows={4} value={form.personality} onChange={set('personality')} />
+            <div className="bt-row bt-personality-field">
+              <span>Personality and role<span className="bt-sub">Applies from the next turn</span></span>
+              {visible && <PersonalityEditor value={form.personality} disabled={action.busy} onChange={personality => update({ personality })} />}
             </div>
           </Section>
           <Section label="Provider and model">

@@ -21,6 +21,8 @@ import { MarkdownImageContext, type MarkdownImageScope } from '../../../componen
 export interface LibraryMarkdownEditorProps {
   value: string;
   onChange: (markdown: string) => void;
+  /** Use an inline formatting toolbar and label the editor as a form field. */
+  fieldLabel?: string;
   autofocus?: boolean;
   placeholder?: string;
   editable?: boolean;
@@ -117,9 +119,9 @@ export function shouldShowLibraryBubble({
   return state.doc.textBetween(from, to).trim().length > 0;
 }
 
-export function LibraryMarkdownBubbleToolbar({ editor }: { editor: Editor }) {
+export function LibraryMarkdownToolbar({ editor, inline, disabled }: { editor: Editor; inline?: boolean; disabled?: boolean }) {
   return (
-    <div className="library-md-bubble" role="toolbar" aria-label="Formatting">
+    <div className={inline ? 'library-md-field-toolbar' : 'library-md-bubble'} role="toolbar" aria-label="Formatting">
       {BUBBLE_ACTIONS.map((action) => {
         const Icon = action.icon;
         const active = action.isActive(editor);
@@ -130,6 +132,7 @@ export function LibraryMarkdownBubbleToolbar({ editor }: { editor: Editor }) {
             className={`library-edit-btn${active ? ' active' : ''}`}
             aria-label={action.label}
             aria-pressed={active}
+            disabled={disabled}
             title={action.label}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
@@ -146,7 +149,7 @@ export function LibraryMarkdownBubbleToolbar({ editor }: { editor: Editor }) {
 
 /** Continuous Markdown editor adapted from BB Docs' source-preserving architecture. */
 export function LibraryMarkdownEditor({
-  value, onChange, autofocus = false, placeholder = 'Start writing…', editable = true,
+  value, onChange, fieldLabel, autofocus = false, placeholder = 'Start writing…', editable = true,
   imageScope = { documentPath: '', localImages: false }, onEditor
 }: LibraryMarkdownEditorProps) {
   const loaded = useRef<MarkdownBlocks | null>(null);
@@ -166,7 +169,7 @@ export function LibraryMarkdownEditor({
         class: 'library-md-editor-surface',
         'data-testid': 'library-md-editor-surface',
         role: 'textbox',
-        'aria-label': 'Document content',
+        'aria-label': fieldLabel ?? 'Document content',
         'aria-multiline': 'true'
       }
     },
@@ -188,14 +191,16 @@ export function LibraryMarkdownEditor({
   useEffect(() => { onEditor?.(editor); return () => onEditor?.(null); }, [editor, onEditor]);
 
   return <MarkdownImageContext.Provider value={imageScope}>
-    <div className="library-md-editor" data-testid="library-md-editor" onMouseDown={event => {
+    <div className={fieldLabel ? 'library-md-editor is-field' : 'library-md-editor'} data-testid="library-md-editor" onMouseDown={event => {
       if (event.button !== 0 || !editor?.isEditable || event.target !== event.currentTarget) return;
       event.preventDefault(); editor.commands.focus('end');
     }}>
       {editor && <>
-        <BubbleMenu editor={editor} appendTo={appendLibraryBubbleTo} options={BUBBLE_MENU_OPTIONS} shouldShow={shouldShowLibraryBubble}>
-          <LibraryMarkdownBubbleToolbar editor={editor} />
-        </BubbleMenu>
+        {fieldLabel
+          ? <LibraryMarkdownToolbar editor={editor} inline disabled={!editable} />
+          : <BubbleMenu editor={editor} appendTo={appendLibraryBubbleTo} options={BUBBLE_MENU_OPTIONS} shouldShow={shouldShowLibraryBubble}>
+              <LibraryMarkdownToolbar editor={editor} />
+            </BubbleMenu>}
         <EditorContent editor={editor} />
       </>}
     </div>

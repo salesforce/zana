@@ -5,7 +5,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import {
-  LibraryMarkdownBubbleToolbar,
+  LibraryMarkdownToolbar,
   LibraryMarkdownEditor,
   shouldShowLibraryBubble
 } from './LibraryMarkdownEditor.js';
@@ -179,7 +179,7 @@ describe('LibraryMarkdownEditor', () => {
       document.body.appendChild(container);
       root = createRoot(container);
       act(() => {
-        root!.render(<LibraryMarkdownBubbleToolbar editor={editor} />);
+        root!.render(<LibraryMarkdownToolbar editor={editor} />);
       });
       const bold = container.querySelector('[aria-label="Bold"]') as HTMLButtonElement;
       await act(async () => {

@@ -723,6 +723,18 @@ function useRealtime(channel, handler) {
 function useZccNavigate() {
   return pluginRuntime().useZccNavigate?.() ?? missing("useZccNavigate");
 }
+function hostReact() {
+  return globalThis.__ZCC_HOST_REACT__;
+}
+function renderHostComponent(name, props) {
+  const React3 = hostReact();
+  const Impl = pluginRuntime()[name];
+  if (!React3 || !Impl) return null;
+  return React3.createElement(Impl, props);
+}
+function Markdown(props) {
+  return renderHostComponent("Markdown", props);
+}
 
 // src/BotMemory.tsx
 function BotMemory({ tag, projectId }) {
@@ -864,7 +876,7 @@ var CSS2 = `
 .bt-hero{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
 .bt-hero-text{flex:1;min-width:180px}
 .bt-hero h2{margin:0;font-size:23px;letter-spacing:-.035em;font-weight:600}
-.bt-hero p{margin:2px 0 0;color:var(--text-muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.bt-hero-text > p{margin:2px 0 0;color:var(--text-muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .bt-actions{display:flex;gap:6px}
 .bt-chips{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
 .bt-chip{font-size:11px;padding:2px 8px;border-radius:999px;background:var(--bg-elevated);color:var(--text-muted);border:1px solid var(--border)}
@@ -899,9 +911,10 @@ button.bt-row:hover{background:var(--bg-hover)}
 .bt-sw[aria-checked="true"]{background:var(--accent-blue)}
 .bt-sw[aria-checked="true"]::after{left:14px}
 .bt-sw:disabled{cursor:progress;opacity:.7}
+.bt-personality-field.bt-row,.bt-personality-field.bt-field{display:grid;gap:8px;grid-template-columns:minmax(0,1fr)}
 .bt-field>.bt-picker{width:100%;margin-top:4px}
 .bt-field{display:block;margin-top:10px;color:var(--text-muted);font-size:12px}
-.bt-field input,.bt-field textarea,.bt-field select{display:block;width:100%;margin-top:4px;font-size:13px}
+.bt-field > :is(input,textarea,select){display:block;width:100%;margin-top:4px;font-size:13px}
 .bt-colors{display:flex;gap:6px}
 .bt-colors button{width:16px;height:16px;border-radius:50%;border:0;cursor:pointer;padding:0}
 .bt-colors button[aria-checked="true"]{box-shadow:0 0 0 2px var(--bg-panel),0 0 0 3.5px var(--text-primary)}
@@ -941,7 +954,7 @@ button.bt-row:hover{background:var(--bg-hover)}
 .bt-savebar-message{flex:1 1 120px;min-width:0;font-size:12px;color:var(--text-muted)}
 .bt-savebar-actions{display:flex;gap:6px}
 .bt-settings-panel .bt-sec+.bt-sec{margin-top:20px}
-.bt-settings-panel .bt-row :is(input,select,textarea,.bt-picker){width:min(55%,310px);box-sizing:border-box}
+.bt-settings-panel .bt-row > :is(input,select,textarea,.bt-picker){width:min(55%,310px);box-sizing:border-box}
 .bt-root .bt-field :is(input,select,textarea),.bt-start textarea{box-sizing:border-box}
 .bt-sec .bt-memory{padding:10px 14px}
 .bt-memory+.bt-memory{border-top:1px solid var(--border)}
@@ -950,7 +963,7 @@ button.bt-row:hover{background:var(--bg-hover)}
 .bt-grow,.bt-hero-text,.bt-memory{overflow-wrap:anywhere}
 .bt-root .settings-field{margin-bottom:0}
 @container (max-width:700px){.bt-layout{grid-template-columns:135px minmax(0,1fr)}.bt-list-head{flex-wrap:wrap}.bt-when{text-align:left}.bt-row.is-routine .bt-grow{flex-basis:55%}}
-@container (max-width:520px){.bt-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}.bt-root .bt-list{max-height:110px;flex-direction:row;align-items:center;overflow:auto;border-right:0;border-bottom:1px solid var(--border)}.bt-list .bt-item{width:auto;flex:none}.bt-list-head{flex:none;gap:4px}.bt-inner{padding:16px 12px 32px}.bt-row{flex-wrap:wrap}.bt-settings-panel .bt-row :is(input,select,textarea,.bt-picker){width:100%}.bt-colors{flex-wrap:wrap}}
+@container (max-width:520px){.bt-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}.bt-root .bt-list{max-height:110px;flex-direction:row;align-items:center;overflow:auto;border-right:0;border-bottom:1px solid var(--border)}.bt-list .bt-item{width:auto;flex:none}.bt-list-head{flex:none;gap:4px}.bt-inner{padding:16px 12px 32px}.bt-row{flex-wrap:wrap}.bt-settings-panel .bt-row > :is(input,select,textarea,.bt-picker){width:100%}.bt-colors{flex-wrap:wrap}}
 .bt-root code{font-size:12px}
 `;
 var BODY = {
@@ -1312,6 +1325,14 @@ function CreateBotDialog(props) {
     }
   );
 }
+function PersonalityEditor({ value, onChange, disabled }) {
+  return /* @__PURE__ */ jsx(Markdown, { content: value, editor: {
+    label: "Personality and role",
+    onChange,
+    disabled,
+    placeholder: "Describe this bot\u2019s role and how it should work."
+  } });
+}
 function CreateBot(props) {
   const rpc = useRpc();
   const [name, setName] = useState("");
@@ -1354,17 +1375,12 @@ function CreateBot(props) {
       "Color",
       /* @__PURE__ */ jsx("div", { style: { marginTop: 6 }, children: /* @__PURE__ */ jsx(ColorPicker, { value: color, onChange: setColor, large: true }) })
     ] }),
-    /* @__PURE__ */ jsxs("label", { className: "bt-field settings-field", children: [
-      "Personality and role",
-      /* @__PURE__ */ jsx(
-        "textarea",
-        {
-          rows: 5,
-          value: personality,
-          onChange: edit(setPersonality),
-          placeholder: "You watch our release branches, summarize what changed each morning, and flag risky merges."
-        }
-      )
+    /* @__PURE__ */ jsxs("div", { className: "bt-field bt-personality-field", children: [
+      /* @__PURE__ */ jsx("span", { children: "Personality and role" }),
+      /* @__PURE__ */ jsx(PersonalityEditor, { value: personality, disabled: busy, onChange: (value) => {
+        setPersonality(value);
+        setError("");
+      } })
     ] }),
     error && /* @__PURE__ */ jsx("p", { role: "alert", className: "bt-alert", children: error }),
     /* @__PURE__ */ jsxs("div", { style: { display: "flex", gap: 8, marginTop: 14 }, children: [
@@ -1445,7 +1461,8 @@ var profileCss = `
 .bt-profile .bt-hero{flex-direction:column;text-align:center;gap:10px}
 .bt-profile .bt-hero-text{min-width:0;width:100%}
 .bt-profile .bt-title{justify-content:center}
-.bt-profile .bt-hero .bt-personality{display:block;white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0 0}
+.bt-profile .bt-personality{overflow-wrap:anywhere;margin:6px 0;color:var(--text-muted)}
+.bt-profile .bt-personality :is(ul,ol,blockquote,pre){text-align:start}
 .bt-profile .bt-tabs{justify-content:center}
 .bt-profile .bt-hero.is-editing{flex-direction:row;text-align:left;gap:12px}
 .bt-profile .bt-hero.is-editing .bt-title{justify-content:flex-start}
@@ -1526,7 +1543,7 @@ function BotPage({ bot, onDeleted, profile = false, active = true }) {
               bot.activeJobs ? ` \xB7 ${bot.activeJobs} background job${bot.activeJobs === 1 ? "" : "s"}` : ""
             ] })
           ] }),
-          profile && tab !== "settings" && bot.personality && /* @__PURE__ */ jsx("p", { className: "bt-personality", children: bot.personality }),
+          profile && tab !== "settings" && bot.personality && /* @__PURE__ */ jsx(Markdown, { className: "bt-personality", content: bot.personality }),
           /* @__PURE__ */ jsxs("span", { className: "bt-meta", children: [
             projectName,
             " \xB7 ",
@@ -1568,7 +1585,7 @@ function BotPage({ bot, onDeleted, profile = false, active = true }) {
         /* @__PURE__ */ jsx(Details, { bot, jobs, openLibrary: () => setTab("library"), visible: active && tab === "details" })
       ] }),
       /* @__PURE__ */ jsx("div", { role: "tabpanel", id: `${tabsId}-panel-library`, "aria-labelledby": `${tabsId}-tab-library`, hidden: tab !== "library", children: /* @__PURE__ */ jsx(Library, { bot, jobsState: jobs, visible: active && tab === "library" }) }),
-      /* @__PURE__ */ jsx("div", { role: "tabpanel", id: `${tabsId}-panel-settings`, "aria-labelledby": `${tabsId}-tab-settings`, className: "bt-settings-panel", hidden: tab !== "settings", children: /* @__PURE__ */ jsx(Settings, { bot, onDeleted }) })
+      /* @__PURE__ */ jsx("div", { role: "tabpanel", id: `${tabsId}-panel-settings`, "aria-labelledby": `${tabsId}-tab-settings`, className: "bt-settings-panel", hidden: tab !== "settings", children: /* @__PURE__ */ jsx(Settings, { bot, onDeleted, visible: active && tab === "settings" }) })
     ] })
   ] });
 }
@@ -1866,7 +1883,7 @@ function withCurrent(options, current) {
 function settingsOf(bot) {
   return { color: bot.color ?? defaultBotColor(bot.id), name: bot.name, personality: bot.personality, projectId: bot.projectId, providerId: bot.providerId ?? "", model: bot.model ?? "" };
 }
-function Settings({ bot, onDeleted }) {
+function Settings({ bot, onDeleted, visible }) {
   const action = useAction(bot.id);
   const formId = useId();
   const saved = settingsOf(bot);
@@ -1926,12 +1943,12 @@ function Settings({ bot, onDeleted }) {
           /* @__PURE__ */ jsx("span", { className: "bt-grow", children: "Name" }),
           /* @__PURE__ */ jsx("input", { "aria-label": "Name", value: form.name, onChange: set("name") })
         ] }),
-        /* @__PURE__ */ jsxs("div", { className: "bt-row", style: { alignItems: "flex-start" }, children: [
-          /* @__PURE__ */ jsxs("span", { className: "bt-grow", children: [
+        /* @__PURE__ */ jsxs("div", { className: "bt-row bt-personality-field", children: [
+          /* @__PURE__ */ jsxs("span", { children: [
             "Personality and role",
             /* @__PURE__ */ jsx("span", { className: "bt-sub", children: "Applies from the next turn" })
           ] }),
-          /* @__PURE__ */ jsx("textarea", { "aria-label": "Personality and role", rows: 4, value: form.personality, onChange: set("personality") })
+          visible && /* @__PURE__ */ jsx(PersonalityEditor, { value: form.personality, disabled: action.busy, onChange: (personality) => update({ personality }) })
         ] })
       ] }),
       /* @__PURE__ */ jsxs(Section, { label: "Provider and model", children: [

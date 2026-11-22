@@ -136,6 +136,8 @@ into `website/lib/plugin-guide/`; do not hand-edit that folder).
 
 ### App shell
 
+- `Markdown` displays a Markdown string from its `content` prop. For an editable form field, pass `editor={{ label, onChange, disabled, placeholder }}`. The Library formatting toolbar edits the draft and `onChange` returns Markdown. The caller owns saving and cancellation. Only `label` and `onChange` are required inside `editor`.
+
 - `navPanel` — sidebar entry + full view. `placement: "extensions"` lists under Plugins; `placement: "unlisted"` is a full `/plugins/<id>/<path>` page with no rail row (open via `toPluginPanel`)
 - `experimental_projectMenuAction` — project-row overflow, or the Projects Organize menu (`placement: "workspace"` means no project is selected; `projectId` is `null`). `toProject` opens a `projectTab`
 - `experimental_createProjectAction` — Add project (+) menu (`openDialog` mounts an optional create wizard; `addProject` registers the folder)

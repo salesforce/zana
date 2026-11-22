@@ -1198,6 +1198,13 @@ export interface ThreadChatProps {
 export interface MarkdownProps {
   content: string;
   className?: string;
+  /** Show the Library's formatted editor. Changes are returned as Markdown for the caller to save. */
+  editor?: {
+    label: string;
+    onChange: (markdown: string) => void;
+    disabled?: boolean;
+    placeholder?: string;
+  };
 }
 
 export interface NewThreadComposerProps {

@@ -889,6 +889,12 @@ export type PluginSdkInbox = PluginSdk['inbox'];
 }
 
 declare module '@zana-ai/zcc-plugin-sdk/app' {
+  export interface MarkdownProps {
+    content: string;
+    className?: string;
+    editor?: { label: string; onChange(markdown: string): void; disabled?: boolean; placeholder?: string };
+  }
+  export function Markdown(props: MarkdownProps): import('react').ReactElement | null;
   export interface PluginOwnedThreadIconProps {
     threadId: string;
     size: number;
