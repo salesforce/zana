@@ -1,6 +1,7 @@
 import { PopoverPicklist } from '@zana-ai/zcc-ui/popover-picklist';
+import { Pin } from 'lucide-react';
 import { BotMemory } from './src/BotMemory.js';
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { definePluginApp, useRealtime, useRpc, useZccNavigate, type BasicSidebarSectionProps } from '@zana-ai/zcc-plugin-sdk/app';
 import { BOT_COLORS, botMemoryTag, defaultBotColor, defaultBotShape, describeCron, type BotRoutine, type BotShape } from './src/model.js';
 import type { BotJobView, BotView } from './src/service.js';
@@ -268,12 +269,26 @@ function useBotList() {
   return { bots, loaded, error, refresh };
 }
 
+const BASIC_BOT_LIMIT = 5;
+
 const basicListCss = `
 .bt-basic { margin-bottom: 18px; }
-.bt-basic-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 37px;
+.bt-basic-item { position: relative; display: flex; align-items: center; border-radius: 8px; }
+.bt-basic-item:hover, .bt-basic-item:focus-within, .bt-basic-item:has([aria-current="page"], [aria-expanded="true"]) { background: var(--sidebar-hover); }
+.bt-basic-pin { display: grid; place-items: center; flex: 0 0 30px; height: 30px; border-radius: 6px;
+  padding: 0; margin-right: 4px; background: transparent; border: 0; color: var(--text-muted); cursor: pointer; }
+.bt-basic-pin:hover, .bt-basic-pin:focus-visible { color: var(--text-primary); background: var(--bg-hover); }
+.bt-basic-pin svg { transform: rotate(35deg); }
+.bt-basic-pin[aria-pressed="true"] svg { fill: currentColor; }
+@media (hover: hover) and (pointer: fine) {
+  .bt-basic-item:not(:hover):not(:focus-within) .bt-basic-pin[aria-pressed="false"] { position: absolute; right: 0; opacity: 0; }
+}
+.bt-basic-more { display: block; padding: 8px 10px 8px 43px; border: 0; background: transparent;
+  color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.bt-basic-more:hover, .bt-basic-more:focus-visible { color: var(--text-primary); }
+.bt-basic-row { display: flex; flex: 1; min-width: 0; align-items: center; gap: 10px; width: 100%; min-height: 37px;
   padding: 5px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-primary);
   font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
-.bt-basic-row:hover, .bt-basic-row[aria-current="page"], .bt-basic-row[aria-expanded="true"] { background: var(--sidebar-hover); }
 .bt-basic-avatar { flex: 0 0 23px; height: 23px; display: grid; place-items: center; border-radius: 7px;
   background: color-mix(in srgb, var(--bot-color) 55%, white); color: #17212b; font-size: 11px; font-weight: 650; }
 .bt-basic-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -282,8 +297,44 @@ const basicListCss = `
 .bt-basic .bt-note, .bt-basic [role="alert"] { color: var(--text-muted); font-size: 11px; }
 `;
 
+function BasicBotRow({ bot, activeThreadId, starting, setStarting, openThread }: {
+  bot: BotView; activeThreadId: string | null; starting: boolean;
+  setStarting(open: boolean): void; openThread(id: string): void;
+}) {
+  const state = botState(bot);
+  const canOpen = Boolean(bot.mainThreadId && state !== 'missing');
+  const expanded = !canOpen && starting;
+  const pinned = bot.pinnedAt != null;
+  const { busy, feedback, run } = useAction(bot.id);
+  return <>
+    <div className="bt-basic-item">
+      <button type="button" className="bt-basic-row" title={bot.name}
+        aria-current={activeThreadId && bot.mainThreadId === activeThreadId ? 'page' : undefined}
+        aria-expanded={canOpen ? undefined : expanded}
+        onClick={() => {
+          if (canOpen && bot.mainThreadId) { setStarting(false); openThread(bot.mainThreadId); }
+          else setStarting(!expanded);
+        }}>
+        <span aria-hidden="true" className="bt-basic-avatar" style={{ '--bot-color': bot.color ?? defaultBotColor(bot.id) } as CSSProperties}>
+          {Array.from(bot.name.trim())[0]?.toLocaleUpperCase()}
+        </span>
+        <span className="bt-basic-name">{bot.name}</span>
+      </button>
+      <button type="button" className="bt-basic-pin" aria-label={`${pinned ? 'Unpin' : 'Pin'} ${bot.name}`}
+        title={pinned ? 'Unpin bot' : 'Pin bot'} aria-pressed={pinned} disabled={busy}
+        onClick={() => void run('update', { patch: { pinned: !pinned } })}>
+        <Pin size={15} aria-hidden="true" />
+      </button>
+    </div>
+    {feedback}
+    {expanded && <StartConversation bot={bot} state={state} compact onStarted={openThread} />}
+  </>;
+}
+
 export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread, registerThreads }: BasicSidebarSectionProps) {
   const { bots, error, refresh } = useBotList();
+  const [showAll, setShowAll] = useState(false);
+  const listId = useId();
   const [starting, setStarting] = useState<string | null>(null);
   const eligible = useMemo(() => bots.filter(bot => projectIds.includes(bot.projectId)), [bots, projectIds]);
   useEffect(() => {
@@ -291,32 +342,23 @@ export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread,
     if (ids.length) return registerThreads(ids);
   }, [eligible, registerThreads]);
   const query = searchQuery.trim().toLocaleLowerCase();
-  const matches = eligible.filter(bot => bot.name.toLocaleLowerCase().includes(query));
+  const matches = eligible.filter(bot => bot.name.toLocaleLowerCase().includes(query))
+    .sort((a, b) => (b.pinnedAt ?? -1) - (a.pinnedAt ?? -1));
+  // Search the whole roster, including the bots behind Show more.
+  const visible = showAll || query ? matches : matches.slice(0, BASIC_BOT_LIMIT);
   if (!matches.length && !error) return null;
   return <section className="bt-basic" aria-label="Bots">
     <style>{basicListCss}</style>
     <h2>Bots</h2>
     {error && <p role="alert">Couldn’t load bots. <button type="button" onClick={() => void refresh()}>Retry</button></p>}
-    {matches.map(bot => {
-      const state = botState(bot);
-      const canOpen = Boolean(bot.mainThreadId && state !== 'missing');
-      const expanded = !canOpen && starting === bot.id;
-      return <div key={bot.id}>
-        <button type="button" className="bt-basic-row" title={bot.name}
-          aria-current={activeThreadId && bot.mainThreadId === activeThreadId ? 'page' : undefined}
-          aria-expanded={canOpen ? undefined : expanded}
-          onClick={() => {
-            if (canOpen && bot.mainThreadId) { setStarting(null); openThread(bot.mainThreadId); }
-            else setStarting(expanded ? null : bot.id);
-          }}>
-          <span aria-hidden="true" className="bt-basic-avatar" style={{ '--bot-color': bot.color ?? defaultBotColor(bot.id) } as CSSProperties}>
-            {Array.from(bot.name.trim())[0]?.toLocaleUpperCase()}
-          </span>
-          <span className="bt-basic-name">{bot.name}</span>
-        </button>
-        {expanded && <StartConversation bot={bot} state={state} compact onStarted={openThread} />}
-      </div>;
-    })}
+    <div id={listId}>
+      {visible.map(bot => <BasicBotRow key={bot.id} bot={bot} activeThreadId={activeThreadId} openThread={openThread}
+        starting={starting === bot.id} setStarting={open => setStarting(open ? bot.id : null)} />)}
+    </div>
+    {!query && matches.length > BASIC_BOT_LIMIT && <button type="button" className="bt-basic-more"
+      aria-expanded={showAll} aria-controls={listId} onClick={() => setShowAll(!showAll)}>
+      {showAll ? 'Show less' : 'Show more'}
+    </button>}
   </section>;
 }
 

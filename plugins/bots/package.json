@@ -21,6 +21,7 @@
     "app": "./app.tsx"
   },
   "devDependencies": {
-    "@zana-ai/zcc-ui": "workspace:*"
+    "@zana-ai/zcc-ui": "workspace:*",
+    "lucide-react": "^1.35.0"
   }
 }

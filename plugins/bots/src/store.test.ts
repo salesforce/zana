@@ -34,6 +34,21 @@ describe('BotStore', () => {
     expect(store.snapshot()).toHaveLength(1);
   });
 
+  it('persists sidebar pins across reloads and preserves the original pin time on repeated requests', async () => {
+    const { kv } = memoryKv();
+    let now = 1;
+    const store = new BotStore(kv as never, undefined, () => now++);
+    await store.create({ name: 'Scout', projectId: 'p1' });
+    expect((await store.get('scout'))?.pinnedAt).toBeUndefined();
+    const pinned = await store.update('scout', { pinned: true });
+    expect(pinned.pinnedAt).toBe(2);
+    const reopened = new BotStore(kv as never, undefined, () => now++);
+    expect((await reopened.update('scout', { pinned: true })).pinnedAt).toBe(2);
+    await expect(reopened.update('scout', { pinned: 'yes' })).rejects.toThrow('pinned must be a boolean');
+    expect((await reopened.update('scout', { pinned: false })).pinnedAt).toBeUndefined();
+    expect((await new BotStore(kv as never).get('scout'))?.pinnedAt).toBeUndefined();
+  });
+
   it('rejects duplicate names and enforces the bot cap', async () => {
     const { store } = makeStore();
     await store.create({ name: 'Scout', projectId: 'p1' });

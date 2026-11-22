@@ -42,7 +42,7 @@ body:has(.app-shell[data-mobile='true']) :is(.new-thread-view, .home-panel) {
   padding-top: clamp(8px, calc(var(--mobile-viewport-height, 100dvh) - 460px), 24px);
   background: var(--bg-panel);
 }
-body:has(.app-shell[data-mobile='true']) .new-thread-view > .aurora-grid { display: none; }
+.app-shell[data-mobile='true']:not(.basic-ui) .new-thread-view > .aurora-grid { display: none; }
 body:has(.app-shell[data-mobile='true']) .home-panel { justify-content: flex-start; }
 /* Home already has outer gutters; the shared Settings inset doubles them. */
 body:has(.app-shell[data-mobile='true']) .home-panel .settings-inner { padding: 0; }

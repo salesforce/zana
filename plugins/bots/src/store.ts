@@ -11,6 +11,7 @@ import {
   slugify,
   type Bot,
   type BotInput,
+  type BotPatch,
   type BotRoutine,
   type RoutineInput
 } from './model.js';
@@ -136,7 +137,7 @@ export class BotStore {
     });
   }
 
-  update(ref: string, input: BotInput): Promise<Bot> {
+  update(ref: string, input: BotPatch): Promise<Bot> {
     return this.mutate(ref, (bot) => patchBot(bot, input, this.now()));
   }
 

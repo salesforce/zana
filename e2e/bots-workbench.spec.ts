@@ -93,9 +93,32 @@ test('Basic sidebar opens bot conversations and leaves Advanced navigation intac
   expect(create.ok()).toBe(true);
   await page.getByRole('button', { name: 'Basic view', exact: true }).click();
   const sidebar = page.getByTestId('basic-ui-sidebar');
-  const row = sidebar.getByRole('button', { name: 'Demo Coach' });
+  const row = sidebar.getByRole('button', { name: 'Demo Coach', exact: true });
   await expect(row).toBeVisible();
+  await expect(page.locator('.home-panel > .aurora-grid')).toBeVisible();
+  await expect(sidebar.getByRole('button', { name: 'Show more', exact: true })).toHaveCount(0);
+  for (const name of ['Scout', 'Guide', 'Editor', 'Planner', 'Reviewer']) {
+    const created = await page.request.post(new URL('/api/v1/plugin-apps/bots/rpc', page.url()).href, {
+      data: { method: 'create', args: { name, projectId, providerId: 'fake' } }
+    });
+    expect(created.ok()).toBe(true);
+  }
+  const more = sidebar.getByRole('button', { name: 'Show more', exact: true });
+  await expect(more).toBeVisible();
+  await expect(sidebar.locator('.bt-basic-row')).toHaveCount(5);
+  await more.click();
+  const overflow = sidebar.getByRole('button', { name: 'Reviewer', exact: true });
+  await overflow.hover();
+  await sidebar.getByRole('button', { name: 'Pin Reviewer', exact: true }).click();
+  await expect(sidebar.locator('.bt-basic-row').first()).toHaveText(/Reviewer/);
+  await page.reload();
+  await expect(more).toBeVisible();
+  await expect(sidebar.locator('.bt-basic-row').first()).toHaveText(/Reviewer/);
+  await sidebar.getByRole('button', { name: 'Unpin Reviewer', exact: true }).click();
+  await expect(overflow).toHaveCount(0);
   const search = sidebar.getByRole('searchbox');
+  await search.fill('reviewer');
+  await expect(overflow).toBeVisible();
   await search.fill('missing');
   await expect(row).toHaveCount(0);
   await search.fill('coach');
@@ -104,6 +127,7 @@ test('Basic sidebar opens bot conversations and leaves Advanced navigation intac
   await sidebar.getByRole('button', { name: 'Start conversation' }).click();
   await expect(page).toHaveURL(/\/threads\/[^/?#]+/);
   await expect(row).toHaveAttribute('aria-current', 'page');
+  await expect(page.locator('.thread-detail-main > .aurora-grid')).toBeVisible();
   const chat = page.url();
   await search.fill('');
   await expect(sidebar.locator('.basic-ui-chat-row')).toHaveCount(0);

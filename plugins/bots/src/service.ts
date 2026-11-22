@@ -12,6 +12,7 @@ import {
   type Delivery,
   type Bot,
   type BotInput,
+  type BotPatch,
   type BotRoutine,
   type RoutineInput
 } from './model.js';
@@ -115,7 +116,7 @@ export class BotService {
     return bot;
   }
 
-  async update(ref: string, input: BotInput): Promise<Bot> {
+  async update(ref: string, input: BotPatch): Promise<Bot> {
     await this.checkTargets(input);
     const bot = await this.store.update(ref, input);
     this.changed(bot.id);

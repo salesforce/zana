@@ -18,6 +18,8 @@ export interface BotRoutine {
 export interface Bot {
   id: string;
   name: string;
+  /** Most recently pinned bots appear first in the Basic sidebar. */
+  pinnedAt?: number;
   /** Profile color for the bot's avatar blob (#rrggbb). */
   color?: string;
   /** Free-form personality / role description injected into the bot's instructions. */
@@ -40,6 +42,10 @@ export interface BotInput {
   projectId?: unknown;
   providerId?: unknown;
   model?: unknown;
+}
+
+export interface BotPatch extends BotInput {
+  pinned?: unknown;
 }
 
 export interface RoutineInput {
@@ -285,8 +291,13 @@ export function newBot(input: BotInput, id: string, now: number): Bot {
   };
 }
 
-export function patchBot(bot: Bot, input: BotInput, now: number): Bot {
+export function patchBot(bot: Bot, input: BotPatch, now: number): Bot {
   const next: Bot = { ...bot, updatedAt: now };
+  if (input.pinned !== undefined) {
+    if (typeof input.pinned !== 'boolean') throw new BotValidationError('pinned must be a boolean');
+    if (input.pinned) next.pinnedAt ??= now;
+    else delete next.pinnedAt;
+  }
   if (input.name !== undefined) next.name = validateName(input.name);
   if (input.color !== undefined) {
     const color = validateColor(input.color);

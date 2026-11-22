@@ -274,8 +274,26 @@ var __iconData2 = {
 __iconData2.node;
 var ChevronDown = createLucideIcon(__iconData2);
 
-// ../../node_modules/.pnpm/lucide-react@1.47.0_react@19.3.0/node_modules/lucide-react/dist/esm/icons/search.mjs
+// ../../node_modules/.pnpm/lucide-react@1.47.0_react@19.3.0/node_modules/lucide-react/dist/esm/icons/pin.mjs
 var __iconData3 = {
+  name: "pin",
+  size: 24,
+  node: [
+    ["path", { d: "M12 17v5", key: "bb1du9" }],
+    [
+      "path",
+      {
+        d: "M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z",
+        key: "1nkz8b"
+      }
+    ]
+  ]
+};
+__iconData3.node;
+var Pin = createLucideIcon(__iconData3);
+
+// ../../node_modules/.pnpm/lucide-react@1.47.0_react@19.3.0/node_modules/lucide-react/dist/esm/icons/search.mjs
+var __iconData4 = {
   name: "search",
   size: 24,
   node: [
@@ -283,8 +301,8 @@ var __iconData3 = {
     ["circle", { cx: "11", cy: "11", r: "8", key: "4ej97u" }]
   ]
 };
-__iconData3.node;
-var Search = createLucideIcon(__iconData3);
+__iconData4.node;
+var Search = createLucideIcon(__iconData4);
 
 // ../../packages/ui/src/use-exclusive-popover.ts
 var activeId = null;
@@ -1039,12 +1057,25 @@ function useBotList() {
   useRealtime(CHANNEL, () => void refresh());
   return { bots, loaded, error, refresh };
 }
+var BASIC_BOT_LIMIT = 5;
 var basicListCss = `
 .bt-basic { margin-bottom: 18px; }
-.bt-basic-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 37px;
+.bt-basic-item { position: relative; display: flex; align-items: center; border-radius: 8px; }
+.bt-basic-item:hover, .bt-basic-item:focus-within, .bt-basic-item:has([aria-current="page"], [aria-expanded="true"]) { background: var(--sidebar-hover); }
+.bt-basic-pin { display: grid; place-items: center; flex: 0 0 30px; height: 30px; border-radius: 6px;
+  padding: 0; margin-right: 4px; background: transparent; border: 0; color: var(--text-muted); cursor: pointer; }
+.bt-basic-pin:hover, .bt-basic-pin:focus-visible { color: var(--text-primary); background: var(--bg-hover); }
+.bt-basic-pin svg { transform: rotate(35deg); }
+.bt-basic-pin[aria-pressed="true"] svg { fill: currentColor; }
+@media (hover: hover) and (pointer: fine) {
+  .bt-basic-item:not(:hover):not(:focus-within) .bt-basic-pin[aria-pressed="false"] { position: absolute; right: 0; opacity: 0; }
+}
+.bt-basic-more { display: block; padding: 8px 10px 8px 43px; border: 0; background: transparent;
+  color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.bt-basic-more:hover, .bt-basic-more:focus-visible { color: var(--text-primary); }
+.bt-basic-row { display: flex; flex: 1; min-width: 0; align-items: center; gap: 10px; width: 100%; min-height: 37px;
   padding: 5px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-primary);
   font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
-.bt-basic-row:hover, .bt-basic-row[aria-current="page"], .bt-basic-row[aria-expanded="true"] { background: var(--sidebar-hover); }
 .bt-basic-avatar { flex: 0 0 23px; height: 23px; display: grid; place-items: center; border-radius: 7px;
   background: color-mix(in srgb, var(--bot-color) 55%, white); color: #17212b; font-size: 11px; font-weight: 650; }
 .bt-basic-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -1052,8 +1083,56 @@ var basicListCss = `
 .bt-basic .bt-start textarea { width: 100%; box-sizing: border-box; min-height: 64px; resize: vertical; }
 .bt-basic .bt-note, .bt-basic [role="alert"] { color: var(--text-muted); font-size: 11px; }
 `;
+function BasicBotRow({ bot, activeThreadId, starting, setStarting, openThread }) {
+  const state = botState(bot);
+  const canOpen = Boolean(bot.mainThreadId && state !== "missing");
+  const expanded = !canOpen && starting;
+  const pinned = bot.pinnedAt != null;
+  const { busy, feedback, run } = useAction(bot.id);
+  return /* @__PURE__ */ jsxs(Fragment2, { children: [
+    /* @__PURE__ */ jsxs("div", { className: "bt-basic-item", children: [
+      /* @__PURE__ */ jsxs(
+        "button",
+        {
+          type: "button",
+          className: "bt-basic-row",
+          title: bot.name,
+          "aria-current": activeThreadId && bot.mainThreadId === activeThreadId ? "page" : void 0,
+          "aria-expanded": canOpen ? void 0 : expanded,
+          onClick: () => {
+            if (canOpen && bot.mainThreadId) {
+              setStarting(false);
+              openThread(bot.mainThreadId);
+            } else setStarting(!expanded);
+          },
+          children: [
+            /* @__PURE__ */ jsx("span", { "aria-hidden": "true", className: "bt-basic-avatar", style: { "--bot-color": bot.color ?? defaultBotColor(bot.id) }, children: Array.from(bot.name.trim())[0]?.toLocaleUpperCase() }),
+            /* @__PURE__ */ jsx("span", { className: "bt-basic-name", children: bot.name })
+          ]
+        }
+      ),
+      /* @__PURE__ */ jsx(
+        "button",
+        {
+          type: "button",
+          className: "bt-basic-pin",
+          "aria-label": `${pinned ? "Unpin" : "Pin"} ${bot.name}`,
+          title: pinned ? "Unpin bot" : "Pin bot",
+          "aria-pressed": pinned,
+          disabled: busy,
+          onClick: () => void run("update", { patch: { pinned: !pinned } }),
+          children: /* @__PURE__ */ jsx(Pin, { size: 15, "aria-hidden": "true" })
+        }
+      )
+    ] }),
+    feedback,
+    expanded && /* @__PURE__ */ jsx(StartConversation, { bot, state, compact: true, onStarted: openThread })
+  ] });
+}
 function BasicBots({ searchQuery, activeThreadId, projectIds, openThread, registerThreads }) {
   const { bots, error, refresh } = useBotList();
+  const [showAll, setShowAll] = useState(false);
+  const listId = useId();
   const [starting, setStarting] = useState(null);
   const eligible = useMemo(() => bots.filter((bot) => projectIds.includes(bot.projectId)), [bots, projectIds]);
   useEffect(() => {
@@ -1061,7 +1140,8 @@ function BasicBots({ searchQuery, activeThreadId, projectIds, openThread, regist
     if (ids.length) return registerThreads(ids);
   }, [eligible, registerThreads]);
   const query = searchQuery.trim().toLocaleLowerCase();
-  const matches = eligible.filter((bot) => bot.name.toLocaleLowerCase().includes(query));
+  const matches = eligible.filter((bot) => bot.name.toLocaleLowerCase().includes(query)).sort((a, b) => (b.pinnedAt ?? -1) - (a.pinnedAt ?? -1));
+  const visible = showAll || query ? matches : matches.slice(0, BASIC_BOT_LIMIT);
   if (!matches.length && !error) return null;
   return /* @__PURE__ */ jsxs("section", { className: "bt-basic", "aria-label": "Bots", children: [
     /* @__PURE__ */ jsx("style", { children: basicListCss }),
@@ -1070,34 +1150,28 @@ function BasicBots({ searchQuery, activeThreadId, projectIds, openThread, regist
       "Couldn\u2019t load bots. ",
       /* @__PURE__ */ jsx("button", { type: "button", onClick: () => void refresh(), children: "Retry" })
     ] }),
-    matches.map((bot) => {
-      const state = botState(bot);
-      const canOpen = Boolean(bot.mainThreadId && state !== "missing");
-      const expanded = !canOpen && starting === bot.id;
-      return /* @__PURE__ */ jsxs("div", { children: [
-        /* @__PURE__ */ jsxs(
-          "button",
-          {
-            type: "button",
-            className: "bt-basic-row",
-            title: bot.name,
-            "aria-current": activeThreadId && bot.mainThreadId === activeThreadId ? "page" : void 0,
-            "aria-expanded": canOpen ? void 0 : expanded,
-            onClick: () => {
-              if (canOpen && bot.mainThreadId) {
-                setStarting(null);
-                openThread(bot.mainThreadId);
-              } else setStarting(expanded ? null : bot.id);
-            },
-            children: [
-              /* @__PURE__ */ jsx("span", { "aria-hidden": "true", className: "bt-basic-avatar", style: { "--bot-color": bot.color ?? defaultBotColor(bot.id) }, children: Array.from(bot.name.trim())[0]?.toLocaleUpperCase() }),
-              /* @__PURE__ */ jsx("span", { className: "bt-basic-name", children: bot.name })
-            ]
-          }
-        ),
-        expanded && /* @__PURE__ */ jsx(StartConversation, { bot, state, compact: true, onStarted: openThread })
-      ] }, bot.id);
-    })
+    /* @__PURE__ */ jsx("div", { id: listId, children: visible.map((bot) => /* @__PURE__ */ jsx(
+      BasicBotRow,
+      {
+        bot,
+        activeThreadId,
+        openThread,
+        starting: starting === bot.id,
+        setStarting: (open2) => setStarting(open2 ? bot.id : null)
+      },
+      bot.id
+    )) }),
+    !query && matches.length > BASIC_BOT_LIMIT && /* @__PURE__ */ jsx(
+      "button",
+      {
+        type: "button",
+        className: "bt-basic-more",
+        "aria-expanded": showAll,
+        "aria-controls": listId,
+        onClick: () => setShowAll(!showAll),
+        children: showAll ? "Show less" : "Show more"
+      }
+    )
   ] });
 }
 function BotsPanel() {
@@ -1886,6 +1960,7 @@ lucide-react/dist/esm/Icon.mjs:
 lucide-react/dist/esm/createLucideIcon.mjs:
 lucide-react/dist/esm/icons/check.mjs:
 lucide-react/dist/esm/icons/chevron-down.mjs:
+lucide-react/dist/esm/icons/pin.mjs:
 lucide-react/dist/esm/icons/search.mjs:
 lucide-react/dist/esm/lucide-react.mjs:
   (**

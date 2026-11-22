@@ -469,7 +469,7 @@ it('shows scoped initials, opens an existing thread and filters the live list by
   const cleanupIds = vi.fn();
   const props = { searchQuery: '', activeThreadId: 't1', projectIds: ['p1'], openThread: vi.fn(), registerThreads: vi.fn(() => cleanupIds) };
   const view = render(<BasicBots {...props} />);
-  const row = await screen.findByRole('button', { name: 'Scout' });
+  const row = await screen.findByRole('button', { name: 'Scout', exact: true });
   expect(row.getAttribute('aria-current')).toBe('page');
   expect(row.querySelector('[aria-hidden="true"]')?.textContent?.trim()).toBe('S');
   expect(screen.queryByText('Remote')).toBeNull();
@@ -477,8 +477,8 @@ it('shows scoped initials, opens an existing thread and filters the live list by
   fireEvent.click(row);
   expect(props.openThread).toHaveBeenCalledWith('t1');
   view.rerender(<BasicBots {...props} searchQuery="  fre " />);
-  expect(screen.queryByRole('button', { name: 'Scout' })).toBeNull();
-  expect(screen.getByRole('button', { name: 'Fresh' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Scout', exact: true })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Fresh', exact: true })).toBeTruthy();
   rows = [];
   state.realtime.at(-1)?.();
   await waitFor(() => expect(screen.queryByRole('region', { name: 'Bots' })).toBeNull());
@@ -492,7 +492,7 @@ it('retries a failed load and starts a new chat only after the user submits', as
   await screen.findByRole('alert');
   route({ list: () => [fresh], send: () => ({ threadId: 'new-id' }) });
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-  const row = await screen.findByRole('button', { name: 'Fresh' });
+  const row = await screen.findByRole('button', { name: 'Fresh', exact: true });
   fireEvent.click(row);
   expect(row.getAttribute('aria-expanded')).toBe('true');
   fireEvent.click(row);
@@ -502,4 +502,40 @@ it('retries a failed load and starts a new chat only after the user submits', as
   fireEvent.change(screen.getByLabelText('Message Fresh'), { target: { value: 'hello' } });
   fireEvent.click(screen.getByRole('button', { name: 'Start conversation' }));
   await waitFor(() => expect(props.openThread).toHaveBeenCalledWith('new-id'));
+});
+
+it('shows five bots, puts the newest pins first, and searches beyond the collapsed list', async () => {
+  const rows = Array.from({ length: 7 }, (_, i) => ({ ...fresh, id: String(i), name: `Bot ${i}`,
+    pinnedAt: i === 6 ? 20 : i === 5 ? 10 : undefined }));
+  route({ list: () => [...rows] });
+  const props = { searchQuery: '', activeThreadId: null, projectIds: ['p1'], openThread: vi.fn(), registerThreads: vi.fn() };
+  const view = render(<BasicBots {...props} />);
+  const names = () => Array.from(view.container.querySelectorAll('.bt-basic-name'), node => node.textContent);
+  const more = await screen.findByRole('button', { name: 'Show more' });
+  expect(names()).toEqual(['Bot 6', 'Bot 5', 'Bot 0', 'Bot 1', 'Bot 2']);
+  expect(screen.getByRole('button', { name: 'Unpin Bot 6' }).getAttribute('aria-pressed')).toBe('true');
+  fireEvent.click(more);
+  expect(names()).toHaveLength(7);
+  fireEvent.click(screen.getByRole('button', { name: 'Show less' }));
+  expect(names()).toHaveLength(5);
+  view.rerender(<BasicBots {...props} searchQuery="Bot 4" />);
+  expect(names()).toEqual(['Bot 4']);
+  expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull();
+  rows.splice(5);
+  state.realtime.at(-1)?.();
+  view.rerender(<BasicBots {...props} />);
+  await waitFor(() => expect(names()).toEqual(['Bot 0', 'Bot 1', 'Bot 2', 'Bot 3', 'Bot 4']));
+  expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull();
+});
+
+it('reports failed pin updates without opening a chat or changing the pin', async () => {
+  route({ list: () => [scout], update: () => { throw Error('Cannot save pin'); } });
+  const props = { searchQuery: '', activeThreadId: null, projectIds: ['p1'], openThread: vi.fn(), registerThreads: vi.fn() };
+  render(<BasicBots {...props} />);
+  const pin = await screen.findByRole('button', { name: 'Pin Scout' });
+  fireEvent.click(pin);
+  expect((await screen.findByRole('alert')).textContent).toBe('Cannot save pin');
+  expect(state.rpc.call).toHaveBeenCalledWith('update', { bot: 'scout', patch: { pinned: true } });
+  expect(pin.getAttribute('aria-pressed')).toBe('false');
+  expect(props.openThread).not.toHaveBeenCalled();
 });
