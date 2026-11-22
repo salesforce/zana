@@ -592,8 +592,6 @@ const profileCss = `
 .bt-thread-title:focus-visible{outline:2px solid var(--accent-blue);outline-offset:-2px}
 .bt-thread-title>span:not(.bt-av){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bt-thread-title>svg{flex:none;color:var(--text-muted)}
-.basic-ui .thread-detail-title-block:has(.bt-thread-title){align-items:center}
-.basic-ui .thread-detail-title-row:has(.bt-thread-title){max-width:100%}
 .bt-profile .bt-inner{padding:22px clamp(14px,5%,32px) 36px}
 .bt-profile .bt-hero{flex-direction:column;text-align:center;gap:10px}
 .bt-profile .bt-hero-text{min-width:0;width:100%}

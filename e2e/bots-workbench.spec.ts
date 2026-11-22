@@ -171,6 +171,11 @@ test('Basic sidebar opens bot conversations and leaves Advanced navigation intac
   await row.click();
   await expect(page).toHaveURL(chat);
   const botTitle = page.getByRole('heading', { level: 1 }).getByRole('button', { name: 'Open Demo Coach profile' });
+  const headerLeft = await page.locator('.thread-detail-heading').evaluate(el => el.getBoundingClientRect().left);
+  for (const item of [botTitle, page.locator('.basic-thread-project')]) {
+    await expect(item).toBeVisible();
+    await expect.poll(() => item.evaluate(el => el.getBoundingClientRect().left)).toBeCloseTo(headerLeft, 0);
+  }
   await composer.fill('My draft');
   await botTitle.click();
   const profile = page.locator('.bt-profile');
