@@ -9482,7 +9482,11 @@ function buildAppMenu() {
       ]
     },
     {
+      // macOS appends the open-windows list only to the top-level item whose
+      // role is 'window' (NSApp.windowsMenu); a nested { role: 'window' } item
+      // renders nothing, so the role belongs here, not inside the submenu.
       label: 'Window',
+      role: 'window',
       submenu: [
         { role: 'minimize' },
         companionHost.menuItem(),
@@ -9490,9 +9494,7 @@ function buildAppMenu() {
         ...(isMac
           ? ([
               { type: 'separator' as const },
-              { role: 'front' as const },
-              { type: 'separator' as const },
-              { role: 'window' as const }
+              { role: 'front' as const }
             ] satisfies Electron.MenuItemConstructorOptions[])
           : ([{ role: 'close' as const }] satisfies Electron.MenuItemConstructorOptions[]))
       ]
