@@ -13,6 +13,7 @@ it('creates, filters, replaces and deletes shared items and locks the owner view
   const store = new Map<string,unknown>();
   const vault = new BotVault({get: async <T,>(k: string) => store.get(k) as T|undefined, set: async (k,v) => { store.set(k,v); }});
   mocks.rpc.call.mockImplementation(async (method, args) => {
+    if (method === 'botConnection') return null;
     if (method === 'vaultStatus') return vault.status();
     if (method === 'vaultUnlock') return vault.unlock(args.passphrase,args.create);
     if (method === 'vaultList') return vault.list(args.token);

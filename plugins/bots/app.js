@@ -796,6 +796,190 @@ function Markdown(props) {
   return renderHostComponent("Markdown", props);
 }
 
+// src/connections/Connections.tsx
+function Connections({ bot, token, picker }) {
+  const rpc = useRpc();
+  const call = useCallback(
+    (action, args = {}) => rpc.call("botConnection", { action, bot, token, ...args }),
+    [rpc, bot, token]
+  );
+  const [account, setAccount] = useState();
+  const [edit, setEdit] = useState(false);
+  const [mode, setMode] = useState("service");
+  const [pending, setPending] = useState();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
+  const message2 = (e) => e instanceof Error ? e.message : "Could not update this connection.";
+  useEffect(() => {
+    let active = true;
+    void call("status").then((row) => {
+      if (active) setAccount(row);
+    }).catch((e) => {
+      if (active) setError(message2(e));
+    });
+    return () => {
+      active = false;
+    };
+  }, [call, reload]);
+  useEffect(() => {
+    if (!pending) return;
+    let active = true;
+    let timer;
+    const poll = async () => {
+      try {
+        const reply = await call("finish", { ticket: pending.ticket });
+        if (!active) return;
+        if (reply.state === "connected") {
+          setPending(void 0);
+          setEdit(false);
+          setReload((n) => n + 1);
+        } else timer = setTimeout(poll, reply.interval * 1e3);
+      } catch (e) {
+        if (active) {
+          setPending(void 0);
+          setError(message2(e));
+        }
+      }
+    };
+    timer = setTimeout(poll, pending.interval * 1e3);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [call, pending]);
+  async function connect(e) {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const values = Object.fromEntries(new FormData(form).entries());
+    setBusy(true);
+    setError("");
+    try {
+      const reply = await call("connect", { ...values, mode });
+      form.reset();
+      setEdit(false);
+      if (reply.state === "waiting") setPending(reply);
+      else setReload((n) => n + 1);
+    } catch (e2) {
+      setError(message2(e2));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function disconnect() {
+    setBusy(true);
+    setError("");
+    try {
+      await call("disconnect");
+      setPending(void 0);
+      setAccount(null);
+    } catch (e) {
+      setError(message2(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return /* @__PURE__ */ jsxs("section", { className: "bv-list", "aria-label": "Connections", children: [
+    /* @__PURE__ */ jsx("h4", { children: "Connections" }),
+    picker,
+    pending ? /* @__PURE__ */ jsxs(Fragment2, { children: [
+      /* @__PURE__ */ jsxs("p", { children: [
+        "Enter ",
+        /* @__PURE__ */ jsx("strong", { children: pending.code }),
+        " on the Salesforce verification page to authorize this bot."
+      ] }),
+      /* @__PURE__ */ jsxs("div", { className: "bv-actions", children: [
+        /* @__PURE__ */ jsx("a", { href: pending.url, target: "_blank", rel: "noopener noreferrer", children: "Verify with Salesforce" }),
+        /* @__PURE__ */ jsx("button", { type: "button", disabled: busy, onClick: disconnect, children: "Cancel sign-in" })
+      ] })
+    ] }) : edit ? /* @__PURE__ */ jsxs("form", { onSubmit: connect, children: [
+      /* @__PURE__ */ jsxs("label", { children: [
+        "Salesforce identity",
+        /* @__PURE__ */ jsxs("select", { value: mode, onChange: (e) => setMode(e.target.value), children: [
+          /* @__PURE__ */ jsx("option", { value: "service", children: "Bot service account" }),
+          /* @__PURE__ */ jsx("option", { value: "delegated", children: "My account" })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxs("label", { children: [
+        "My Domain URL",
+        /* @__PURE__ */ jsx("input", { name: "origin", required: true, placeholder: "example.my.salesforce.com", autoComplete: "off" })
+      ] }),
+      /* @__PURE__ */ jsxs("label", { children: [
+        "Consumer key",
+        /* @__PURE__ */ jsx("input", { name: "clientId", autoComplete: "off", required: true, maxLength: 512 })
+      ] }),
+      /* @__PURE__ */ jsxs("label", { children: [
+        mode === "service" ? "Consumer secret" : "Consumer secret (if required by your app)",
+        /* @__PURE__ */ jsx(
+          "input",
+          {
+            name: "clientSecret",
+            type: "password",
+            autoComplete: "new-password",
+            required: mode === "service",
+            maxLength: 2048
+          }
+        )
+      ] }),
+      /* @__PURE__ */ jsx("p", { children: mode === "service" ? "Use an app with client credentials enabled and an assigned integration user." : "Use a local Salesforce app dedicated to device flow, with https://localhost as its callback and API and refresh-token access." }),
+      /* @__PURE__ */ jsx("p", { children: "Grants this bot and its routines access to read open cases assigned to the connected account." }),
+      /* @__PURE__ */ jsxs("div", { className: "bv-actions", children: [
+        /* @__PURE__ */ jsx("button", { className: "bv-primary", disabled: busy, children: busy ? "Connecting\u2026" : "Connect" }),
+        /* @__PURE__ */ jsx(
+          "button",
+          {
+            type: "button",
+            disabled: busy,
+            onClick: () => {
+              setEdit(false);
+              setError("");
+            },
+            children: "Cancel"
+          }
+        )
+      ] })
+    ] }) : account ? /* @__PURE__ */ jsxs(Fragment2, { children: [
+      /* @__PURE__ */ jsxs("strong", { children: [
+        "Salesforce \xB7 ",
+        account.mode === "service" ? "Bot service account" : "My account"
+      ] }),
+      /* @__PURE__ */ jsxs("small", { children: [
+        new URL(account.origin).host,
+        " \xB7 Read assigned cases"
+      ] }),
+      /* @__PURE__ */ jsx("div", { children: /* @__PURE__ */ jsx("button", { type: "button", disabled: busy, onClick: disconnect, children: "Disconnect" }) })
+    ] }) : account === null ? /* @__PURE__ */ jsxs(Fragment2, { children: [
+      /* @__PURE__ */ jsx("p", { children: "Let this bot read its assigned Salesforce cases in chat and scheduled routines." }),
+      /* @__PURE__ */ jsx("div", { children: /* @__PURE__ */ jsx(
+        "button",
+        {
+          type: "button",
+          onClick: () => {
+            setEdit(true);
+            setError("");
+          },
+          children: "Connect Salesforce"
+        }
+      ) })
+    ] }) : !error && /* @__PURE__ */ jsx("p", { role: "status", children: "Loading connections\u2026" }),
+    error && /* @__PURE__ */ jsxs("p", { role: "alert", children: [
+      error,
+      " ",
+      account === void 0 && /* @__PURE__ */ jsx(
+        "button",
+        {
+          onClick: () => {
+            setError("");
+            setReload((n) => n + 1);
+          },
+          children: "Retry"
+        }
+      )
+    ] }),
+    (edit || account) && /* @__PURE__ */ jsx("small", { children: "Connections keep running when the editor times out. Locking the Vault or restarting Zana pauses them until you unlock it." })
+  ] });
+}
+
 // src/vault/items.ts
 var contactFields = [
   ["fullName", "Full name"],
@@ -936,6 +1120,7 @@ function VaultPanel({ bot }) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [adding, setAdding] = useState(false);
+  const [connectionBotId, setConnectionBotId] = useState("");
   const loadId = useRef(0);
   const load = useCallback(async () => {
     const id = ++loadId.current;
@@ -1001,6 +1186,7 @@ function VaultPanel({ bot }) {
     });
   }
   const shared = items?.filter((item) => !bot || isShared(item, bot)) ?? [];
+  const connectionBot = bot ?? bots.find((choice) => choice.id === connectionBotId) ?? bots[0];
   const shown = shared.filter((item) => (filter === "all" || item.kind === filter) && [item.label, item.username, item.last4, ...item.sites, item.contact?.email].some((value) => value?.toLowerCase().includes(search.toLowerCase())));
   return /* @__PURE__ */ jsxs("section", { className: "bv", "aria-labelledby": titleId, children: [
     /* @__PURE__ */ jsx("style", { children: styles }),
@@ -1057,6 +1243,18 @@ function VaultPanel({ bot }) {
       },
       editor.item?.id ?? editor.kind
     ) : /* @__PURE__ */ jsxs("div", { className: "bv-stack", children: [
+      connectionBot && /* @__PURE__ */ jsx(
+        Connections,
+        {
+          bot: connectionBot.id,
+          token: ownerToken,
+          picker: !bot && /* @__PURE__ */ jsxs("label", { children: [
+            "Bot account access",
+            /* @__PURE__ */ jsx("select", { value: connectionBot.id, onChange: (e) => setConnectionBotId(e.target.value), children: bots.map((b) => /* @__PURE__ */ jsx("option", { value: b.id, children: b.name }, b.id)) })
+          ] })
+        },
+        botScopeKey(connectionBot)
+      ),
       /* @__PURE__ */ jsxs("div", { className: "bv-bar", children: [
         /* @__PURE__ */ jsx("button", { type: "button", "aria-expanded": adding, onClick: () => setAdding(!adding), children: "New item" }),
         adding && Object.keys(kinds).map((kind) => /* @__PURE__ */ jsx("button", { type: "button", onClick: () => {

@@ -1,36 +1,15 @@
-import { createCipheriv, createDecipheriv, randomBytes, randomUUID, scrypt } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID, scrypt } from 'node:crypto';
 import { promisify } from 'node:util';
 import { isShared, prepareItem, type BotIdentity, type SavedItem, type VaultItem } from './items.js';
+
+import { open, seal, type Envelope } from './encryption.js';
 
 const derive = promisify(scrypt);
 const STORE_KEY = 'vault.encrypted.v1';
 const AAD = Buffer.from('zana-bot-vault/v1');
 const SESSION_MS = 30 * 60_000;
-interface Envelope { v: 1; salt: string; iv: string; tag: string; data: string }
 interface Kv { get<T>(key: string): Promise<T | undefined>; set(key: string, value: unknown): Promise<void> }
 interface Session { key: Buffer; salt: string; token: string; expires: number }
-
-function seal(items: SavedItem[], key: Buffer, salt: string): Envelope {
-  const plaintext = Buffer.from(JSON.stringify(items));
-  try {
-    if (plaintext.length > 2 * 1024 * 1024) throw new Error('The Vault is full.');
-    const iv = randomBytes(12);
-    const cipher = createCipheriv('aes-256-gcm', key, iv);
-    cipher.setAAD(AAD);
-    const data = Buffer.concat([cipher.update(plaintext), cipher.final()]);
-    return { v: 1, salt, iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), data: data.toString('base64') };
-  } finally { plaintext.fill(0); }
-}
-function open(e: Envelope, key: Buffer): SavedItem[] {
-  try {
-    if (e.v !== 1 || e.data.length > 3 * 1024 * 1024) throw new Error();
-    const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(e.iv, 'base64'));
-    decipher.setAAD(AAD);
-    decipher.setAuthTag(Buffer.from(e.tag, 'base64'));
-    const bytes = Buffer.concat([decipher.update(Buffer.from(e.data, 'base64')), decipher.final()]);
-    try { return JSON.parse(bytes.toString('utf8')) as SavedItem[]; } finally { bytes.fill(0); }
-  } catch { throw new Error('Could not unlock this Vault. Check your passphrase.'); }
-}
 
 export class BotVault {
   private chain: Promise<unknown> = Promise.resolve();
@@ -39,25 +18,27 @@ export class BotVault {
   private unlocking = false;
   private unlockAfter = 0;
   private disposed = false;
-  constructor(private kv: Kv, private now = Date.now, private changed = () => {}) {}
+  constructor(private kv: Kv, private now = Date.now, private changed = () => {},
+    private connections?: { resume(key: Buffer): void; pause(): void }) {}
   private serial<T>(fn: () => Promise<T>) {
     const p = this.chain.then(fn);
     this.chain = p.catch(() => {});
     return p;
   }
+  requireOwner(token: unknown) { this.active(token, true); }
   async status() { return { configured: Boolean(await this.kv.get(STORE_KEY)) }; }
   private active(token?: unknown, owner = false): Session {
     if (this.session && this.now() >= this.session.expires) this.close();
     if (!this.session || (owner && token !== this.session.token)) throw new Error('Unlock the Vault to continue.');
     return this.session;
   }
-  dispose() { this.disposed = true; this.close(); }
+  dispose() { this.disposed = true; this.close(); this.connections?.pause(); }
   private close() {
     clearTimeout(this.expiry);
     this.session?.key.fill(0);
     this.session = undefined;
   }
-  lock(token: unknown) { return this.serial(async () => { this.active(token, true); this.close(); this.changed(); }); }
+  lock(token: unknown) { return this.serial(async () => { this.active(token, true); this.close(); this.connections?.pause(); this.changed(); }); }
   async unlock(passphrase: unknown, create: boolean) {
     if (typeof passphrase !== 'string' || passphrase.length < 12 || passphrase.length > 512) throw new Error('Use a passphrase of 12 to 512 characters.');
     if (this.unlocking || this.now() < this.unlockAfter) throw new Error('Wait a moment before trying again.');
@@ -71,12 +52,13 @@ export class BotVault {
         const key = (await derive(passphrase, Buffer.from(salt, 'base64'), 32)) as Buffer;
         try {
           if (this.disposed) throw new Error('Vault is unavailable.');
-          if (envelope) open(envelope, key);
-          else await this.kv.set(STORE_KEY, seal([], key, salt));
+          if (envelope) open(envelope, key, AAD);
+          else await this.kv.set(STORE_KEY, seal([], key, salt, AAD));
         } catch (error) { key.fill(0); this.unlockAfter = this.now() + 1_000; throw error; }
         if (this.disposed) { key.fill(0); throw new Error('Vault is unavailable.'); }
         this.close();
         const token = randomBytes(32).toString('hex');
+        this.connections?.resume(createHmac('sha256', key).update('zana-bot-connections/v1').digest());
         this.session = { key, salt, token, expires: this.now() + SESSION_MS };
         this.expiry = setTimeout(() => {
           void this.serial(async () => {
@@ -91,7 +73,7 @@ export class BotVault {
   private async read(session: Session) {
     const envelope = await this.kv.get<Envelope>(STORE_KEY);
     if (!envelope) throw new Error('Vault storage is unavailable.');
-    return open(envelope, session.key);
+    return open<SavedItem>(envelope, session.key, AAD);
   }
   list(token: unknown): Promise<VaultItem[]> {
     return this.serial(async () => (await this.read(this.active(token, true))).map(row => row.item));
@@ -118,7 +100,7 @@ export class BotVault {
       if (entry.item.billingContactId && !rows.some(row => row.item.id === entry.item.billingContactId && row.item.kind === 'contact')) {
         throw new Error('Choose a saved billing contact.');
       }
-      await this.kv.set(STORE_KEY, seal([entry, ...rows.filter(row => row !== prior)], session.key, session.salt));
+      await this.kv.set(STORE_KEY, seal([entry, ...rows.filter(row => row !== prior)], session.key, session.salt, AAD));
       this.changed();
       return entry.item;
     });
@@ -137,7 +119,7 @@ export class BotVault {
           row.item.revision = randomUUID();
         }
       }
-      await this.kv.set(STORE_KEY, seal(remaining, session.key, session.salt));
+      await this.kv.set(STORE_KEY, seal(remaining, session.key, session.salt, AAD));
       this.changed();
     });
   }

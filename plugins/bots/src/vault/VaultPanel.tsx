@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { useRealtime, useRpc } from '@zana-ai/zcc-plugin-sdk/app';
+import { Connections } from '../connections/Connections.js';
 import { CreditCard, KeyRound, LockKeyhole, ContactRound } from 'lucide-react';
 import { botScopeKey, contactFields, isShared, type BotIdentity, type VaultItem, type VaultKind } from './items.js';
 
@@ -79,6 +80,7 @@ export function VaultPanel({ bot }: { bot?: BotIdentity }) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<VaultKind | 'all'>('all');
   const [adding, setAdding] = useState(false);
+  const [connectionBotId, setConnectionBotId] = useState('');
   const loadId = useRef(0);
   const load = useCallback(async () => {
     const id = ++loadId.current;
@@ -114,6 +116,7 @@ export function VaultPanel({ bot }: { bot?: BotIdentity }) {
     void action(async () => { ownerToken = (await rpc.call('vaultUnlock', { passphrase, create: !configured }) as { token: string }).token; });
   }
   const shared = items?.filter(item => !bot || isShared(item, bot)) ?? [];
+  const connectionBot = bot ?? bots.find(choice => choice.id === connectionBotId) ?? bots[0];
   const shown = shared.filter(item => (filter === 'all' || item.kind === filter) &&
     [item.label, item.username, item.last4, ...item.sites, item.contact?.email].some(value => value?.toLowerCase().includes(search.toLowerCase())));
   return <section className="bv" aria-labelledby={titleId}><style>{styles}</style><header>
@@ -131,6 +134,9 @@ export function VaultPanel({ bot }: { bot?: BotIdentity }) {
       save={item => void action(async () => { await rpc.call('vaultSave', { token: ownerToken, item }); setEditor(undefined); })}
       remove={() => void action(async () => { await rpc.call('vaultRemove', { token: ownerToken, id: editor.item?.id, revision: editor.item?.revision }); setEditor(undefined); })} />
     : <div className="bv-stack">
+      {connectionBot && <Connections key={botScopeKey(connectionBot)} bot={connectionBot.id} token={ownerToken}
+        picker={!bot && <label>Bot account access<select value={connectionBot.id} onChange={e => setConnectionBotId(e.target.value)}>
+          {bots.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label>} />}
       <div className="bv-bar"><button type="button" aria-expanded={adding} onClick={() => setAdding(!adding)}>New item</button>
         {adding && (Object.keys(kinds) as VaultKind[]).map(kind => <button key={kind} type="button" onClick={() => { setEditor({ kind }); setAdding(false); }}>{kinds[kind]}</button>)}
       </div>

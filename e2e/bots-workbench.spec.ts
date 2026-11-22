@@ -72,6 +72,15 @@ test('Bots shows routines, tagged memory, and host settings controls in the inst
   await vault.getByLabel('Vault passphrase').fill(phrase);
   await vault.getByLabel('Confirm passphrase').fill(phrase);
   await vault.getByRole('button', { name: 'Create Vault' }).click();
+  const connections = vault.getByRole('region', { name: 'Connections' });
+  await connections.getByRole('button', { name: 'Connect Salesforce' }).click();
+  await expect(connections.getByLabel('Consumer secret', {exact:true})).toHaveAttribute('type', 'password');
+  await connections.getByLabel('Salesforce identity').selectOption('delegated');
+  await connections.getByLabel('My Domain URL').fill('example.test');
+  await connections.getByLabel('Consumer key').fill('test-client');
+  await connections.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(connections.getByRole('alert')).toContainText('Salesforce My Domain');
+  await connections.getByRole('button', { name: 'Cancel' }).click();
   await vault.getByRole('button', { name: 'New item' }).click();
   await vault.getByRole('button', { name: 'Login', exact: true }).click();
   await vault.getByLabel('Websites').fill('https://accounts.example.test');

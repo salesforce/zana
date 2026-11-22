@@ -130,10 +130,41 @@ describe('bots plugin', () => {
     await expect(call('bot_vault_list', {}, main.threadId)).rejects.toThrow('Unlock');
   });
 
+  it('allows an account grant only from its bot and scheduled main thread, with no credential in the result', async () => {
+    const { harness, call } = await load();
+    const http = vi.spyOn(globalThis, 'fetch');
+    try {
+      const org = 'https://demo.my.salesforce.com';
+      const tokens = { id: org + '/id/00D000000000001/005000000000001', instance_url: org, access_token: 'test-access-only' };
+      await harness.callRpc('create', { name:'Scout', projectId:'proj-a' });
+      const main = await harness.callRpc('openThread', {bot:'scout'}) as {threadId:string};
+      const {token} = await harness.callRpc('vaultUnlock',{passphrase:'test owner passphrase',create:true}) as {token:string};
+      const manage = (args: Record<string,unknown>) => harness.callRpc('botConnection',{bot:'scout',token,...args});
+      await expect(manage({action:'status',token:'wrong'})).rejects.toThrow('Unlock');
+      await expect(manage({action:'status',bot:null})).rejects.toThrow('Choose a bot');
+      await expect(manage({action:'other'})).rejects.toThrow('Unknown');
+      await expect(manage({action:'finish',ticket:'stale'})).rejects.toThrow('expired');
+      expect(await manage({action:'status'})).toBeNull();
+      http.mockResolvedValueOnce(Response.json(tokens));
+      await manage({action:'connect',mode:'service',clientId:'test-app',clientSecret:'test-client-secret',origin:org});
+      await expect(call('bot_assigned_cases',{},'ordinary')).rejects.toThrow('main thread');
+      await expect(call('bot_assigned_cases',{bot:'scout'},main.threadId)).rejects.toThrow('no arguments');
+      await expect(call('bot_assigned_cases',{},main.threadId,'other-project')).rejects.toThrow('main thread');
+      await harness.callRpc('addRoutine',{bot:'scout',routine:{name:'Triage',cron:'0 9 * * *',prompt:'Check my assigned cases.'}});
+      const scout = (await harness.callRpc('get',{bot:'scout'})) as {bot:{routines:{id:string}[]}};
+      const run = await harness.callRpc('runRoutine',{bot:'scout',routineId:scout.bot.routines[0].id}) as {threadId:string};
+      expect(run.threadId).toBe(main.threadId);
+      http.mockResolvedValueOnce(Response.json(tokens)).mockResolvedValueOnce(Response.json({records:[]}));
+      expect(await call('bot_assigned_cases',{},run.threadId)).toEqual({cases:[]});
+      await manage({action:'disconnect'});
+      await expect(call('bot_assigned_cases',{},main.threadId)).rejects.toThrow('Connect a Salesforce account');
+    } finally { http.mockRestore(); }
+  });
+
   it('registers tools, CLI, schedule and instructions', async () => {
     const { harness, instructions } = await load();
     expect(harness.agentTools.map((row) => row.name).sort()).toEqual(
-      ['bot_create', 'bot_job_start', 'bot_list', 'bot_reply', 'bot_routines', 'bot_send', 'bot_vault_list']
+      ['bot_assigned_cases', 'bot_create', 'bot_job_start', 'bot_list', 'bot_reply', 'bot_routines', 'bot_send', 'bot_vault_list']
     );
     expect(harness.schedules).toEqual([expect.objectContaining({ name: 'routines', cron: '* * * * *' })]);
     expect(instructions('')).toBeNull();
@@ -145,7 +176,7 @@ describe('bots plugin', () => {
     const { harness, configure } = await load();
     await harness.callRpc('create', { name: 'Scout', personality: 'Terse.' });
     expect(configure('x').tools).toEqual(['bot_list', 'bot_send', 'bot_routines', 'bot_create']);
-    expect(configure('fresh', { botId: 'scout', botRole: 'main' }).tools).toHaveLength(7);
+    expect(configure('fresh', { botId: 'scout', botRole: 'main' }).tools).toHaveLength(8);
     expect(configure('fresh', { botId: 'scout', botRole: 'job' }).tools).toEqual(['bot_list']);
     expect(configure('fresh', { botId: 'scout', botRole: 'main' }).instructions).toContain('Terse.');
     expect(configure('fresh', { botId: 'scout', botRole: 'job' }).instructions).toContain('background job');
