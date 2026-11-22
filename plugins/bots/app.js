@@ -337,7 +337,7 @@ var MENU_GAP = 4;
 var FLIP_BELOW_PX = 160;
 var MENU_MAX_HEIGHT_PX = 360;
 var MENU_MAX_HEIGHT_VH = 0.55;
-function placePopoverMenu(trigger, viewport, minWidth, contentHeight) {
+function placePopoverMenu(trigger, viewport, minWidth) {
   const width = Math.min(Math.max(trigger.width, minWidth), Math.max(0, viewport.width - 2 * VIEWPORT_PAD));
   let left = trigger.left;
   if (left + width > viewport.width - VIEWPORT_PAD) {
@@ -349,11 +349,12 @@ function placePopoverMenu(trigger, viewport, minWidth, contentHeight) {
   }
   const spaceBelow = viewport.height - trigger.bottom - VIEWPORT_PAD;
   const spaceAbove = trigger.top - VIEWPORT_PAD;
-  const cap = contentHeight === void 0 ? Math.min(MENU_MAX_HEIGHT_PX, Math.floor(viewport.height * MENU_MAX_HEIGHT_VH)) : Math.floor(viewport.height * 0.7);
-  const preferredHeight = contentHeight === void 0 ? FLIP_BELOW_PX : Math.min(cap, contentHeight + MENU_GAP);
-  const openAbove = spaceBelow < preferredHeight && spaceAbove > spaceBelow;
-  const space = openAbove ? spaceAbove : spaceBelow;
-  const available = Math.max(0, space - MENU_GAP);
+  const openAbove = spaceBelow < FLIP_BELOW_PX && spaceAbove > spaceBelow;
+  const available = Math.max(0, (openAbove ? spaceAbove : spaceBelow) - MENU_GAP);
+  const cap = Math.min(
+    MENU_MAX_HEIGHT_PX,
+    Math.floor(viewport.height * MENU_MAX_HEIGHT_VH)
+  );
   const maxHeight = Math.min(available, cap);
   if (openAbove) {
     return {
@@ -677,7 +678,7 @@ function PopoverPicklist({
   ] });
 }
 
-// ../../../../../../Applications/Zana.app/Contents/Resources/zcc-cli/runtime/plugin-sdk-app.js
+// ../../packages/plugin-sdk/src/app.ts
 function pluginHost() {
   const host = globalThis.__ZCC_PLUGIN_HOST__;
   if (!host) throw new Error("plugin host is not available");
@@ -1010,11 +1011,9 @@ function useAction(botId) {
   ] });
   return { run, busy, feedback, clearError: () => setError("") };
 }
-function BotsPanel() {
+function useBotList() {
   const rpc = useRpc();
   const [bots, setBots] = useState([]);
-  const [selected, setSelected] = useState(null);
-  const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
   const seq = useRef(0);
@@ -1024,7 +1023,6 @@ function BotsPanel() {
       const rows = await rpc.call("list");
       if (mine !== seq.current) return;
       setBots(rows);
-      setSelected((current) => current && rows.some((bot2) => bot2.id === current) ? current : rows[0]?.id ?? null);
       setError("");
     } catch (err) {
       if (mine === seq.current) setError(message(err));
@@ -1032,9 +1030,81 @@ function BotsPanel() {
       if (mine === seq.current) setLoaded(true);
     }
   }, [rpc]);
-  useEffect(() => void refresh(), [refresh]);
+  useEffect(() => {
+    void refresh();
+    return () => {
+      seq.current++;
+    };
+  }, [refresh]);
   useRealtime(CHANNEL, () => void refresh());
-  const bot = bots.find((row) => row.id === selected) ?? null;
+  return { bots, loaded, error, refresh };
+}
+var basicListCss = `
+.bt-basic { margin-bottom: 18px; }
+.bt-basic-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 37px;
+  padding: 5px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-primary);
+  font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.bt-basic-row:hover, .bt-basic-row[aria-current="page"], .bt-basic-row[aria-expanded="true"] { background: var(--sidebar-hover); }
+.bt-basic-avatar { flex: 0 0 23px; height: 23px; display: grid; place-items: center; border-radius: 7px;
+  background: color-mix(in srgb, var(--bot-color) 55%, white); color: #17212b; font-size: 11px; font-weight: 650; }
+.bt-basic-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bt-basic .bt-start { display: grid; gap: 7px; margin: 5px 10px 12px; }
+.bt-basic .bt-start textarea { width: 100%; box-sizing: border-box; min-height: 64px; resize: vertical; }
+.bt-basic .bt-note, .bt-basic [role="alert"] { color: var(--text-muted); font-size: 11px; }
+`;
+function BasicBots({ searchQuery, activeThreadId, projectIds, openThread, registerThreads }) {
+  const { bots, error, refresh } = useBotList();
+  const [starting, setStarting] = useState(null);
+  const eligible = useMemo(() => bots.filter((bot) => projectIds.includes(bot.projectId)), [bots, projectIds]);
+  useEffect(() => {
+    const ids = eligible.flatMap((bot) => bot.mainThreadId ? [bot.mainThreadId] : []);
+    if (ids.length) return registerThreads(ids);
+  }, [eligible, registerThreads]);
+  const query = searchQuery.trim().toLocaleLowerCase();
+  const matches = eligible.filter((bot) => bot.name.toLocaleLowerCase().includes(query));
+  if (!matches.length && !error) return null;
+  return /* @__PURE__ */ jsxs("section", { className: "bt-basic", "aria-label": "Bots", children: [
+    /* @__PURE__ */ jsx("style", { children: basicListCss }),
+    /* @__PURE__ */ jsx("h2", { children: "Bots" }),
+    error && /* @__PURE__ */ jsxs("p", { role: "alert", children: [
+      "Couldn\u2019t load bots. ",
+      /* @__PURE__ */ jsx("button", { type: "button", onClick: () => void refresh(), children: "Retry" })
+    ] }),
+    matches.map((bot) => {
+      const state = botState(bot);
+      const canOpen = Boolean(bot.mainThreadId && state !== "missing");
+      const expanded = !canOpen && starting === bot.id;
+      return /* @__PURE__ */ jsxs("div", { children: [
+        /* @__PURE__ */ jsxs(
+          "button",
+          {
+            type: "button",
+            className: "bt-basic-row",
+            title: bot.name,
+            "aria-current": activeThreadId && bot.mainThreadId === activeThreadId ? "page" : void 0,
+            "aria-expanded": canOpen ? void 0 : expanded,
+            onClick: () => {
+              if (canOpen && bot.mainThreadId) {
+                setStarting(null);
+                openThread(bot.mainThreadId);
+              } else setStarting(expanded ? null : bot.id);
+            },
+            children: [
+              /* @__PURE__ */ jsx("span", { "aria-hidden": "true", className: "bt-basic-avatar", style: { "--bot-color": bot.color ?? defaultBotColor(bot.id) }, children: Array.from(bot.name.trim())[0]?.toLocaleUpperCase() }),
+              /* @__PURE__ */ jsx("span", { className: "bt-basic-name", children: bot.name })
+            ]
+          }
+        ),
+        expanded && /* @__PURE__ */ jsx(StartConversation, { bot, state, compact: true, onStarted: openThread })
+      ] }, bot.id);
+    })
+  ] });
+}
+function BotsPanel() {
+  const { bots, loaded, error, refresh } = useBotList();
+  const [selected, setSelected] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const bot = bots.find((row) => row.id === selected) ?? bots[0] ?? null;
   const showCreate = creating || loaded && bots.length === 0;
   return /* @__PURE__ */ jsxs("div", { className: "bt-root", children: [
     /* @__PURE__ */ jsx("style", { children: CSS2 }),
@@ -1046,7 +1116,7 @@ function BotsPanel() {
         ] }),
         error && /* @__PURE__ */ jsx("p", { role: "alert", className: "bt-alert", children: error }),
         bots.map((row) => {
-          const active = row.id === selected && !showCreate;
+          const active = row.id === bot?.id && !showCreate;
           const routines = row.routines.filter((r) => r.enabled).length;
           const state = botState(row);
           return /* @__PURE__ */ jsxs(
@@ -1258,7 +1328,7 @@ function BotPage({ bot, onDeleted }) {
     ] })
   ] });
 }
-function StartConversation({ bot, state, onStarted }) {
+function StartConversation({ bot, state, onStarted, compact = false }) {
   const rpc = useRpc();
   const [text, setText] = useState("");
   const [error, setError] = useState("");
@@ -1285,7 +1355,7 @@ function StartConversation({ bot, state, onStarted }) {
     }
   };
   return /* @__PURE__ */ jsxs("form", { className: "bt-start settings-field", "aria-label": `Start ${bot.name}`, onSubmit: (event) => void start(event), children: [
-    /* @__PURE__ */ jsx("span", { className: "bt-note", style: { margin: 0 }, children: state === "missing" ? `${bot.name}'s main thread was deleted. Your next message starts a fresh main thread; routines and memory are kept.` : `${bot.name} has no thread yet. The first message wakes it up and opens the chat beside this page.` }),
+    /* @__PURE__ */ jsx("span", { className: "bt-note", style: { margin: 0 }, children: compact ? "Send a first message to open this bot\u2019s chat." : state === "missing" ? `${bot.name}'s main thread was deleted. Your next message starts a fresh main thread; routines and memory are kept.` : `${bot.name} has no thread yet. The first message wakes it up and opens the chat beside this page.` }),
     /* @__PURE__ */ jsx(
       "textarea",
       {
@@ -1299,7 +1369,7 @@ function StartConversation({ bot, state, onStarted }) {
       }
     ),
     error && /* @__PURE__ */ jsx("p", { role: "alert", className: "bt-alert", children: error }),
-    /* @__PURE__ */ jsx("button", { type: "submit", className: "bt-btn is-primary", disabled: busy || !text.trim(), style: { marginTop: 8 }, children: busy ? "Starting\u2026" : "Start conversation" })
+    /* @__PURE__ */ jsx("button", { type: "submit", className: compact ? "btn btn-sm" : "bt-btn is-primary", disabled: busy || !text.trim(), style: { marginTop: 8 }, children: busy ? "Starting\u2026" : "Start conversation" })
   ] });
 }
 function Details({ bot, jobs, openLibrary, visible }) {
@@ -1790,9 +1860,10 @@ function Library({ bot, visible, jobsState }) {
 }
 var ACTIVE_JOB = /* @__PURE__ */ new Set(["active", "starting", "stopping"]);
 var app_default = definePluginApp((app) => {
-  app.slots.navPanel({ id: "bots", title: "Bots", icon: "Bot", component: BotsPanel });
+  app.slots.navPanel({ id: "bots", title: "Bots", icon: "Bot", component: BotsPanel, experimental_basicSidebarSection: BasicBots });
 });
 export {
+  BasicBots,
   BotAvatar,
   BotsPanel,
   botState,

@@ -1,5 +1,8 @@
 // @vitest-environment happy-dom
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { useEffect } from 'react';
+import type { BasicSidebarSectionProps } from '@zana-ai/zcc-plugin-sdk/app';
+import type { PluginNavPanelRegistration } from '@zana-ai/zcc-plugin-sdk';
 import { Link, MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ThreadListItem } from '../../thread-store.js';
@@ -8,6 +11,8 @@ import { getBasicUiMode, setBasicUiMode } from '../../lib/basic-ui.js';
 import zanaGlyph from '../../assets/zana-glyph.svg';
 import { MobileNavDismiss } from '../mobile-nav-context.js';
 
+const slots = vi.hoisted(() => ({ panels: [] as PluginNavPanelRegistration[] }));
+vi.mock('../../plugins/plugin-slots.js', () => ({ listNavPanels: () => slots.panels, subscribePluginSlots: () => () => {} }));
 const data = vi.hoisted(() => ({ threads: [] as ThreadListItem[], loading: false, scoped: null as string | null, ensure: vi.fn() }));
 vi.mock('../../store.js', () => ({
   useData: (selector: (state: unknown) => unknown) => selector({ projects: [{ id: 'p1', name: 'Personal' }, { id: 'p2', name: 'Website' }] }),
@@ -28,7 +33,7 @@ function sidebar(path = '/') {
   render(<MemoryRouter initialEntries={[path]}><BasicConversationSidebar onNavigate={onNavigate} /><RouteProbe /></MemoryRouter>);
   return onNavigate;
 }
-afterEach(() => { cleanup(); data.threads = []; data.loading = false; data.scoped = null; data.ensure.mockClear(); setBasicUiMode('advanced'); });
+afterEach(() => { cleanup(); slots.panels = []; data.threads = []; data.loading = false; data.scoped = null; data.ensure.mockClear(); setBasicUiMode('advanced'); });
 
 describe('Basic conversation navigation', () => {
   it('provides the shared desktop resize handle and omits it inside the mobile drawer', () => {
@@ -245,4 +250,24 @@ describe('Basic shell controls', () => {
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
     expect(screen.getByRole('button', { name: 'Personal' }).getAttribute('aria-expanded')).toBe('false');
   });
+});
+
+it('mounts Basic sections above history, deduplicates their threads and closes the drawer on navigation', () => {
+  function Section({ registerThreads, openThread, projectIds, searchQuery }: BasicSidebarSectionProps) {
+    useEffect(() => registerThreads(['one']), [registerThreads]);
+    return <button onClick={() => openThread('one')}>{projectIds.join(',')} {searchQuery} shortcut</button>;
+  }
+  slots.panels = [{ id: 'panel', pluginId: 'sample', title: 'Sample', icon: 'List', generation: 1,
+    component: () => null, experimental_basicSidebarSection: Section }];
+  data.threads = [thread('one'), thread('two')];
+  const onNavigate = sidebar();
+  const shortcut = screen.getByRole('button', { name: /p1,p2 shortcut/ });
+  expect(shortcut.compareDocumentPosition(screen.getByRole('heading', { name: 'Conversations' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.queryByRole('link', { name: 'Chat one' })).toBeNull();
+  expect(screen.getByRole('link', { name: 'Chat two' })).toBeTruthy();
+  fireEvent.click(shortcut);
+  expect(onNavigate).toHaveBeenCalledOnce();
+  expect(screen.getByTestId('route').textContent).toBe('/threads/one');
+  fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Scout' } });
+  expect(screen.getByRole('button', { name: /Scout shortcut/ })).toBeTruthy();
 });

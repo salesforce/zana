@@ -1,7 +1,7 @@
 import { PopoverPicklist } from '@zana-ai/zcc-ui/popover-picklist';
 import { BotMemory } from './src/BotMemory.js';
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { definePluginApp, useRealtime, useRpc, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { definePluginApp, useRealtime, useRpc, useZccNavigate, type BasicSidebarSectionProps } from '@zana-ai/zcc-plugin-sdk/app';
 import { BOT_COLORS, botMemoryTag, defaultBotColor, defaultBotShape, describeCron, type BotRoutine, type BotShape } from './src/model.js';
 import type { BotJobView, BotView } from './src/service.js';
 
@@ -238,11 +238,9 @@ function useAction(botId: string) {
   return { run, busy, feedback, clearError: () => setError('') };
 }
 
-export function BotsPanel() {
+function useBotList() {
   const rpc = useRpc();
   const [bots, setBots] = useState<BotView[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
   const [loaded, setLoaded] = useState(false);
   const seq = useRef(0);
@@ -253,7 +251,6 @@ export function BotsPanel() {
       const rows = (await rpc.call('list')) as BotView[];
       if (mine !== seq.current) return;
       setBots(rows);
-      setSelected((current) => (current && rows.some((bot) => bot.id === current) ? current : rows[0]?.id ?? null));
       setError('');
     } catch (err) {
       if (mine === seq.current) setError(message(err));
@@ -262,10 +259,72 @@ export function BotsPanel() {
     }
   }, [rpc]);
 
-  useEffect(() => void refresh(), [refresh]);
+  useEffect(() => {
+    void refresh();
+    return () => { seq.current++; };
+  }, [refresh]);
   useRealtime(CHANNEL, () => void refresh());
 
-  const bot = bots.find((row) => row.id === selected) ?? null;
+  return { bots, loaded, error, refresh };
+}
+
+const basicListCss = `
+.bt-basic { margin-bottom: 18px; }
+.bt-basic-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 37px;
+  padding: 5px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-primary);
+  font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.bt-basic-row:hover, .bt-basic-row[aria-current="page"], .bt-basic-row[aria-expanded="true"] { background: var(--sidebar-hover); }
+.bt-basic-avatar { flex: 0 0 23px; height: 23px; display: grid; place-items: center; border-radius: 7px;
+  background: color-mix(in srgb, var(--bot-color) 55%, white); color: #17212b; font-size: 11px; font-weight: 650; }
+.bt-basic-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bt-basic .bt-start { display: grid; gap: 7px; margin: 5px 10px 12px; }
+.bt-basic .bt-start textarea { width: 100%; box-sizing: border-box; min-height: 64px; resize: vertical; }
+.bt-basic .bt-note, .bt-basic [role="alert"] { color: var(--text-muted); font-size: 11px; }
+`;
+
+export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread, registerThreads }: BasicSidebarSectionProps) {
+  const { bots, error, refresh } = useBotList();
+  const [starting, setStarting] = useState<string | null>(null);
+  const eligible = useMemo(() => bots.filter(bot => projectIds.includes(bot.projectId)), [bots, projectIds]);
+  useEffect(() => {
+    const ids = eligible.flatMap(bot => bot.mainThreadId ? [bot.mainThreadId] : []);
+    if (ids.length) return registerThreads(ids);
+  }, [eligible, registerThreads]);
+  const query = searchQuery.trim().toLocaleLowerCase();
+  const matches = eligible.filter(bot => bot.name.toLocaleLowerCase().includes(query));
+  if (!matches.length && !error) return null;
+  return <section className="bt-basic" aria-label="Bots">
+    <style>{basicListCss}</style>
+    <h2>Bots</h2>
+    {error && <p role="alert">Couldn’t load bots. <button type="button" onClick={() => void refresh()}>Retry</button></p>}
+    {matches.map(bot => {
+      const state = botState(bot);
+      const canOpen = Boolean(bot.mainThreadId && state !== 'missing');
+      const expanded = !canOpen && starting === bot.id;
+      return <div key={bot.id}>
+        <button type="button" className="bt-basic-row" title={bot.name}
+          aria-current={activeThreadId && bot.mainThreadId === activeThreadId ? 'page' : undefined}
+          aria-expanded={canOpen ? undefined : expanded}
+          onClick={() => {
+            if (canOpen && bot.mainThreadId) { setStarting(null); openThread(bot.mainThreadId); }
+            else setStarting(expanded ? null : bot.id);
+          }}>
+          <span aria-hidden="true" className="bt-basic-avatar" style={{ '--bot-color': bot.color ?? defaultBotColor(bot.id) } as CSSProperties}>
+            {Array.from(bot.name.trim())[0]?.toLocaleUpperCase()}
+          </span>
+          <span className="bt-basic-name">{bot.name}</span>
+        </button>
+        {expanded && <StartConversation bot={bot} state={state} compact onStarted={openThread} />}
+      </div>;
+    })}
+  </section>;
+}
+
+export function BotsPanel() {
+  const { bots, loaded, error, refresh } = useBotList();
+  const [selected, setSelected] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const bot = bots.find((row) => row.id === selected) ?? bots[0] ?? null;
   const showCreate = creating || (loaded && bots.length === 0);
 
   return (
@@ -279,7 +338,7 @@ export function BotsPanel() {
           </div>
           {error && <p role="alert" className="bt-alert">{error}</p>}
           {bots.map((row) => {
-            const active = row.id === selected && !showCreate;
+            const active = row.id === bot?.id && !showCreate;
             const routines = row.routines.filter((r) => r.enabled).length;
             const state = botState(row);
             return (
@@ -459,7 +518,7 @@ function BotPage({ bot, onDeleted }: { bot: BotView; onDeleted(): void }) {
   );
 }
 
-function StartConversation({ bot, state, onStarted }: { bot: BotView; state: BotState; onStarted(threadId: string): void }) {
+function StartConversation({ bot, state, onStarted, compact = false }: { compact?: boolean; bot: BotView; state: BotState; onStarted(threadId: string): void }) {
   const rpc = useRpc();
   const [text, setText] = useState('');
   const [error, setError] = useState('');
@@ -484,14 +543,14 @@ function StartConversation({ bot, state, onStarted }: { bot: BotView; state: Bot
   return (
     <form className="bt-start settings-field" aria-label={`Start ${bot.name}`} onSubmit={(event) => void start(event)}>
       <span className="bt-note" style={{ margin: 0 }}>
-        {state === 'missing'
+        {compact ? 'Send a first message to open this bot’s chat.' : state === 'missing'
           ? `${bot.name}'s main thread was deleted. Your next message starts a fresh main thread; routines and memory are kept.`
           : `${bot.name} has no thread yet. The first message wakes it up and opens the chat beside this page.`}
       </span>
       <textarea aria-label={`Message ${bot.name}`} value={text}
         onChange={(e) => { setText(e.target.value); setError(''); }} placeholder="Introduce yourself and tell me what you can do." />
       {error && <p role="alert" className="bt-alert">{error}</p>}
-      <button type="submit" className="bt-btn is-primary" disabled={busy || !text.trim()} style={{ marginTop: 8 }}>{busy ? 'Starting…' : 'Start conversation'}</button>
+      <button type="submit" className={compact ? "btn btn-sm" : "bt-btn is-primary"} disabled={busy || !text.trim()} style={{ marginTop: 8 }}>{busy ? 'Starting…' : 'Start conversation'}</button>
     </form>
   );
 }
@@ -890,5 +949,5 @@ function Library({ bot, visible, jobsState }: { bot: BotView; visible: boolean; 
 const ACTIVE_JOB = new Set(['active', 'starting', 'stopping']);
 
 export default definePluginApp((app) => {
-  app.slots.navPanel({ id: 'bots', title: 'Bots', icon: 'Bot', component: BotsPanel });
+  app.slots.navPanel({ id: 'bots', title: 'Bots', icon: 'Bot', component: BotsPanel, experimental_basicSidebarSection: BasicBots });
 });

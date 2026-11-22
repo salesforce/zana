@@ -18,7 +18,7 @@ vi.mock('@zana-ai/zcc-plugin-sdk/app', () => ({
   useRealtime: (_channel: string, handler: (payload?: unknown) => void) => { state.realtime.push(handler); }
 }));
 
-import { BotAvatar, BotsPanel, botState, cronFor } from './app.tsx';
+import { BasicBots, BotAvatar, BotsPanel, botState, cronFor } from './app.tsx';
 
 const memoryRpc = vi.fn<(...args: unknown[]) => Promise<unknown>>();
 const scout = {
@@ -461,4 +461,45 @@ it('opens real paged bot memories from Overview and recovers after Memory is una
   expect(memoryRpc).toHaveBeenCalledWith('memory','listTagged',{tag:'bot:scout',projectId:'p1',offset:20});
   fireEvent.click(screen.getByRole('button', {name:'Previous'}));
   await waitFor(() => expect(memoryRpc).toHaveBeenLastCalledWith('memory','listTagged',{tag:'bot:scout',projectId:'p1',offset:0}));
+});
+
+it('shows scoped initials, opens an existing thread and filters the live list by name', async () => {
+  let rows = [scout, fresh, { ...scout, id: 'other', name: 'Remote', projectId: 'p2' }];
+  route({ list: () => rows });
+  const cleanupIds = vi.fn();
+  const props = { searchQuery: '', activeThreadId: 't1', projectIds: ['p1'], openThread: vi.fn(), registerThreads: vi.fn(() => cleanupIds) };
+  const view = render(<BasicBots {...props} />);
+  const row = await screen.findByRole('button', { name: 'Scout' });
+  expect(row.getAttribute('aria-current')).toBe('page');
+  expect(row.querySelector('[aria-hidden="true"]')?.textContent?.trim()).toBe('S');
+  expect(screen.queryByText('Remote')).toBeNull();
+  expect(props.registerThreads).toHaveBeenCalledWith(['t1']);
+  fireEvent.click(row);
+  expect(props.openThread).toHaveBeenCalledWith('t1');
+  view.rerender(<BasicBots {...props} searchQuery="  fre " />);
+  expect(screen.queryByRole('button', { name: 'Scout' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Fresh' })).toBeTruthy();
+  rows = [];
+  state.realtime.at(-1)?.();
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Bots' })).toBeNull());
+  expect(cleanupIds).toHaveBeenCalled();
+});
+
+it('retries a failed load and starts a new chat only after the user submits', async () => {
+  route({ list: () => { throw Error('offline'); } });
+  const props = { searchQuery: '', activeThreadId: null, projectIds: ['p1'], openThread: vi.fn(), registerThreads: vi.fn() };
+  render(<BasicBots {...props} />);
+  await screen.findByRole('alert');
+  route({ list: () => [fresh], send: () => ({ threadId: 'new-id' }) });
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  const row = await screen.findByRole('button', { name: 'Fresh' });
+  fireEvent.click(row);
+  expect(row.getAttribute('aria-expanded')).toBe('true');
+  fireEvent.click(row);
+  expect(screen.queryByLabelText('Message Fresh')).toBeNull();
+  fireEvent.click(row);
+  expect(state.rpc.call.mock.calls.some(([method]) => method === 'send')).toBe(false);
+  fireEvent.change(screen.getByLabelText('Message Fresh'), { target: { value: 'hello' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Start conversation' }));
+  await waitFor(() => expect(props.openThread).toHaveBeenCalledWith('new-id'));
 });

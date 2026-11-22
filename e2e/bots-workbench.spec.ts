@@ -24,6 +24,12 @@ test('Bots shows routines, tagged memory, and host settings controls in the inst
   await expect(app.window.locator('.nav-item').filter({ hasText: /^Bots$/ }).first()).toBeVisible();
   await run(['bots','create','Release Scout','--color','#f97316','--personality','Watch release branches and flag risky merges.','--project',projectId]);
   await run(['bots','routine','add','release-scout','--name','Digest','--cron','0 9 * * 1-5','--prompt','Report changes']);
+  // Bundled plugins finish starting independently during a cold launch.
+  await expect.poll(async () => {
+    const response = await app.window.request.get(new URL('/api/v1/plugins', app.window.url()).href);
+    const { plugins } = await response.json();
+    return plugins.find((plugin: { id: string }) => plugin.id === 'memory')?.status;
+  }, { timeout: 30_000 }).toBe('running');
   await run(['memory','add','--scope','global','--name','release-digest','--summary','Release digest preferences','--details','Include branch names.','--tag','bot:release-scout','--reason','Remember the release format']);
   await app.window.locator('.nav-item').filter({hasText:/^Bots$/}).first().click();
   const panel = app.window.locator('.bt-root');
@@ -72,4 +78,39 @@ test('Bots shows routines, tagged memory, and host settings controls in the inst
   await panel.getByLabel('Name', {exact:true}).fill('Scout II');
   await panel.getByRole('button', {name:'Save',exact:true}).click();
   await expect(panel.getByRole('heading',{name:'Scout II'})).toBeVisible();
+});
+
+test('Basic sidebar opens bot conversations and leaves Advanced navigation intact', async ({ app, home }) => {
+  const page = app.window;
+  const path = join(home, 'sidebar-bot-project');
+  mkdirSync(path);
+  const project = await page.request.post(new URL('/api/v1/projects', page.url()).href, { data: { path } });
+  expect(project.ok()).toBe(true);
+  const projectId = (await project.json()).project.id;
+  const create = await page.request.post(new URL('/api/v1/plugin-apps/bots/rpc', page.url()).href, {
+    data: { method: 'create', args: { name: 'Demo Coach', color: '#9675d1', projectId, providerId: 'fake' } }
+  });
+  expect(create.ok()).toBe(true);
+  await page.getByRole('button', { name: 'Basic view', exact: true }).click();
+  const sidebar = page.getByTestId('basic-ui-sidebar');
+  const row = sidebar.getByRole('button', { name: 'Demo Coach' });
+  await expect(row).toBeVisible();
+  const search = sidebar.getByRole('searchbox');
+  await search.fill('missing');
+  await expect(row).toHaveCount(0);
+  await search.fill('coach');
+  await row.click();
+  await sidebar.getByLabel('Message Demo Coach').fill('Hello from the sidebar test.');
+  await sidebar.getByRole('button', { name: 'Start conversation' }).click();
+  await expect(page).toHaveURL(/\/threads\/[^/?#]+/);
+  await expect(row).toHaveAttribute('aria-current', 'page');
+  const chat = page.url();
+  await search.fill('');
+  await expect(sidebar.locator('.basic-ui-chat-row')).toHaveCount(0);
+  await sidebar.getByRole('link', { name: 'New chat' }).click();
+  await row.click();
+  await expect(page).toHaveURL(chat);
+  await page.getByRole('button', { name: 'Advanced view', exact: true }).click();
+  await expect(page.locator('.bt-basic')).toHaveCount(0);
+  await expect(page.locator('.nav-item').filter({ hasText: /^Bots$/ }).first()).toBeVisible();
 });

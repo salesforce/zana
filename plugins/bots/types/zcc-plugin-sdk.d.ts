@@ -867,6 +867,14 @@ export type PluginSdkInbox = PluginSdk['inbox'];
 }
 
 declare module '@zana-ai/zcc-plugin-sdk/app' {
+  export interface BasicSidebarSectionProps {
+    searchQuery: string;
+    activeThreadId: string | null;
+    projectIds: readonly string[];
+    openThread(threadId: string): void;
+    registerThreads(threadIds: readonly string[]): () => void;
+  }
+
   export function useRpc(): { call<T = unknown>(method: string, input?: unknown): Promise<T> };
   export function useRealtime(channel: string, handler: (payload: unknown) => void): void;
   export interface PluginAgentActivity {

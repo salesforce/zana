@@ -72,6 +72,7 @@ export type {
   PluginMessageDirectiveRegistration,
   PluginNavPanelPlacement,
   PluginNavPanelProps,
+  BasicSidebarSectionProps,
   PluginNavPanelRegistration,
   PluginNewThreadPanelActionRegistration,
   PluginPendingInteractionProps,

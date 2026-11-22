@@ -30,6 +30,15 @@ export function navPanelListsInExtensionsHub(placement?: PluginNavPanelPlacement
   return placement === 'extensions';
 }
 
+export interface BasicSidebarSectionProps {
+  searchQuery: string;
+  activeThreadId: string | null;
+  projectIds: readonly string[];
+  openThread(threadId: string): void;
+  /** Omit these threads from ordinary history while the section represents them. */
+  registerThreads(threadIds: readonly string[]): () => void;
+}
+
 export interface PluginNavPanelRegistration extends PluginSlotBase {
   title: string;
   icon: string;
@@ -43,6 +52,7 @@ export interface PluginNavPanelRegistration extends PluginSlotBase {
   placement?: PluginNavPanelPlacement;
   component: ComponentType<PluginNavPanelProps>;
   experimental_sidebarAccessory?: ComponentType;
+  experimental_basicSidebarSection?: ComponentType<BasicSidebarSectionProps>;
   headerContent?: ComponentType<PluginNavPanelProps>;
 }
 
@@ -1527,6 +1537,12 @@ export function collectPluginApp(
           throw new Error(`${kind}: "experimental_sidebarAccessory" must be a React component function when set`);
         }
         if (
+          registration.experimental_basicSidebarSection !== undefined &&
+          typeof registration.experimental_basicSidebarSection !== 'function'
+        ) {
+          throw new Error(`${kind}: "experimental_basicSidebarSection" must be a React component function when set`);
+        }
+        if (
           registration.placement !== undefined &&
           !PLUGIN_NAV_PANEL_PLACEMENTS.includes(registration.placement)
         ) {
@@ -1540,6 +1556,7 @@ export function collectPluginApp(
             path,
             ...(registration.placement ? { placement: registration.placement } : {}),
             component: requireComponent(kind, 'component', registration.component),
+            ...(registration.experimental_basicSidebarSection ? { experimental_basicSidebarSection: registration.experimental_basicSidebarSection } : {}),
             ...(registration.experimental_sidebarAccessory
               ? { experimental_sidebarAccessory: registration.experimental_sidebarAccessory }
               : {}),

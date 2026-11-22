@@ -571,3 +571,18 @@ describe.each([
     expect(() => collect(definePluginApp(app => app.slots.pendingInteraction({ id: 'questions', ...registration } as never)))).toThrow();
   });
 });
+
+describe.each([
+  ['host', (definition: ReturnType<typeof definePluginApp>) => collectPluginApp('test', 1, definition)],
+  ['test harness', collectPluginAppRegistrations]
+] as const)('%s Basic sidebar registration', (_name, collect) => {
+  const registration = { id: 'sample', path: 'sample', title: 'Sample', icon: 'List', component: () => null };
+  it('retains the optional component and rejects a malformed contribution', () => {
+    const section = () => null;
+    const appWith = (value: unknown) => definePluginApp(app => app.slots.navPanel({
+      ...registration, experimental_basicSidebarSection: value as typeof section
+    }));
+    expect(collect(appWith(section)).navPanels[0]?.experimental_basicSidebarSection).toBe(section);
+    expect(() => collect(appWith(42))).toThrow(/experimental_basicSidebarSection/);
+  });
+});
