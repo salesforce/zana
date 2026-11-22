@@ -12,6 +12,18 @@ import {
 
 // The composer mic only renders once Settings → Experimental → voice input is on (#377).
 test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { voiceInputEnabled: true } });
+test.beforeEach(({ home }) => {
+  const dataDir = join(home, '.zcc');
+  mkdirSync(dataDir, { recursive: true });
+  const projects = Array.from({ length: 18 }, (_, index) => {
+    const name = 'scroll-project-' + String(index + 1).padStart(2, '0');
+    const path = join(home, name);
+    mkdirSync(path);
+    return { id: name, name, path, createdAt: 1, lastActiveAt: 1 };
+  });
+  writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects }));
+});
+
 test('Mobile pairs to built Electron, uses phone navigation, reads and sends a live thread', async ({
   app
 }, testInfo) => {
@@ -27,11 +39,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
   git('add', '.');
   git('commit', '-m', 'Seed mobile diff');
   writeFileSync(join(directory, 'theme-example.ts'), source.replace('value20 = 20', 'value20 = 42'));
-  const scrollProjects = Array.from({ length: 18 }, (_, index) =>
-    join(app.home, `scroll-project-${String(index + 1).padStart(2, '0')}`)
-  );
-  for (const path of scrollProjects) mkdirSync(path);
-  const threadId = await app.window.evaluate(async ({ path, scrollProjects }) => {
+  const threadId = await app.window.evaluate(async path => {
     const projectResponse = await fetch('/api/v1/projects', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -39,14 +47,6 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
     });
     const { project } = await projectResponse.json();
     if (!project?.id) throw new Error('Project creation failed');
-    for (const scrollPath of scrollProjects) {
-      const response = await fetch('/api/v1/projects', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ path: scrollPath })
-      });
-      if (!response.ok) throw new Error('Scroll project creation failed');
-    }
     const response = await fetch('/api/v1/threads', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -60,7 +60,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
     const result = await response.json();
     if (!response.ok) throw new Error(JSON.stringify(result));
     return (result.thread ?? result.value).id as string;
-  }, { path: directory, scrollProjects });
+  }, directory);
   await expect(app.window.locator('.mobile-sticky-search').first()).toHaveCSS('display', 'contents');
   await expect(app.window.locator('.mobile-settings-back')).toHaveCount(0);
   const reservation = createServer();
@@ -260,6 +260,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
       await searchToggle.tap();
       const search = phone.getByRole('searchbox', { name: 'Search in thread', exact: true });
       await expect(search).toBeFocused();
+      await expect(phone.getByRole('group', { name: 'Interface view' })).toBeHidden();
       await expect(searchToggle).toBeHidden();
       await search.fill('desktop');
       await expect(threadHeader).toBeHidden();
@@ -276,6 +277,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
       await phone.getByRole('button', { name: 'Close search', exact: true }).click();
       await expect(shellTitle).toBeVisible();
       await expect(search).toHaveCount(0);
+      await expect(phone.getByRole('group', { name: 'Interface view' })).toBeVisible();
       await expect(phone.getByRole('button', { name: 'Close search', exact: true })).toBeHidden();
       await overflow.click();
       await expect(phone.getByRole('menuitem', { name: 'Rename', exact: true })).toBeVisible();
@@ -800,7 +802,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
     await phone.setViewportSize({ width: 1280, height: 1180 });
     await expect(phone.locator('.app-shell')).toHaveAttribute('data-mobile', 'false');
     await expect(composerOptions).toBeHidden();
-    await expect(phone.getByTestId('composer-mode-picker-trigger')).toBeVisible();
+    await expect(phone.getByRole('button', { name: 'Composer settings', exact: true })).toBeVisible();
     await showPanel.click();
     await expect(sidePanel).toBeVisible();
     await expect(composer).toBeVisible();

@@ -56,6 +56,14 @@
 }
 .app-shell.basic-ui[data-mobile='true'] .basic-ui-mode-switch { right: 12px; }
 .app-shell:not(.basic-ui)[data-mobile='true'] .basic-ui-mode-switch { right: 112px; }
+.app-shell:not(.basic-ui)[data-mobile='true'] .titlebar:has(.mobile-thread-controls-slot > *) .basic-ui-mode-switch {
+  position: static;
+  flex: none;
+  transform: none;
+}
+.app-shell:not(.basic-ui)[data-mobile='true'] .titlebar:has(.mobile-thread-controls-slot .thread-detail-search:is(:focus-within, .has-query)) .basic-ui-mode-switch {
+  display: none;
+}
 
 .titlebar-theme { -webkit-app-region: no-drag; position: absolute; right: calc(74px + var(--windows-caption-reserve, 0px)); top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--text-muted); cursor: pointer; }
 .titlebar-theme:hover { background: var(--bg-hover); color: var(--text-primary); }

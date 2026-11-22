@@ -99,10 +99,11 @@ test('Bots shows routines, tagged memory, and host settings controls in the inst
   await vault.getByRole('button', {name:/accounts.example.test/}).click();
   await expect(vault.getByRole('button', {name:'Replace Password'})).toBeVisible();
   await vault.getByRole('button', { name: 'Cancel' }).click();
-  await vault.screenshot({ path: testInfo.outputPath('vault.png') });
+  await expect(vault.getByRole('button', { name: /accounts.example.test/ })).toBeVisible();
+  await app.window.screenshot({ animations: 'disabled', path: testInfo.outputPath('vault.png') });
   await panel.getByRole('tab', { name: 'Overview' }).click();
   await expect(panel.locator('.bt-item[aria-current="true"] .bt-av')).toHaveClass(/is-live/);
-  await panel.screenshot({ path: testInfo.outputPath('overview.png') });
+  await app.window.screenshot({ animations: 'disabled', path: testInfo.outputPath('overview.png') });
   await panel.getByRole('button', {name:'Open library →'}).click();
   await panel.getByText('release-digest', {exact:true}).click();
   await expect(panel.getByText('Include branch names.')).toBeVisible();
@@ -158,7 +159,7 @@ test('Bots shows routines, tagged memory, and host settings controls in the inst
   await search.press('Enter');
   await expect(options).toBeHidden();
   await expect(picker).toContainText('bot-project');
-  await panel.screenshot({ path: testInfo.outputPath('settings.png') });
+  await app.window.screenshot({ animations: 'disabled', path: testInfo.outputPath('settings.png') });
   // Constrain only this isolated plugin pane, just as a narrow side panel does.
   await panel.evaluate(el => { el.style.width = '360px'; });
   await expect.poll(() => panel.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);

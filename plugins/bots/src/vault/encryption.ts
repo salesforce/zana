@@ -1,5 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
+const AUTH_TAG_BYTES = 16;
+
 export interface Envelope {
   v: 1;
   salt: string;
@@ -13,7 +15,7 @@ export function seal<T>(items: T[], key: Buffer, salt: string, aad: Buffer): Env
   try {
     if (plaintext.length > 2 * 1024 * 1024) throw new Error('The Vault is full.');
     const iv = randomBytes(12);
-    const cipher = createCipheriv('aes-256-gcm', key, iv);
+    const cipher = createCipheriv('aes-256-gcm', key, iv, { authTagLength: AUTH_TAG_BYTES });
     cipher.setAAD(aad);
     const data = Buffer.concat([cipher.update(plaintext), cipher.final()]);
     return {
@@ -30,7 +32,7 @@ export function seal<T>(items: T[], key: Buffer, salt: string, aad: Buffer): Env
 export function open<T>(e: Envelope, key: Buffer, aad: Buffer): T[] {
   try {
     if (e.v !== 1 || e.data.length > 3 * 1024 * 1024) throw new Error();
-    const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(e.iv, 'base64'));
+    const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(e.iv, 'base64'), { authTagLength: AUTH_TAG_BYTES });
     decipher.setAAD(aad);
     decipher.setAuthTag(Buffer.from(e.tag, 'base64'));
     const bytes = Buffer.concat([decipher.update(Buffer.from(e.data, 'base64')), decipher.final()]);
