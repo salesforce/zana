@@ -36289,6 +36289,17 @@ body.split-frame-guard webview {
   width: 100%;
 }
 
+/* Avoid painting a loading screen or its scrollbar for a fast initial read. */
+.basic-thread-loading,
+.thread-detail-timeline[aria-busy='true'] {
+  animation: thread-loading-reveal 0s 300ms backwards;
+}
+
+@keyframes thread-loading-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 .thread-detail-timeline > * + * {
   margin-top: 12px;
 }

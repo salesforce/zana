@@ -52,15 +52,31 @@ test('thread loading is illustrated, motion-aware, and settles on success, failu
     await gate;
     await route.fulfill({ response, json: phase === 'empty' ? { ...body, rows: [], maxSeq: 0 } : body });
   });
-  await window.evaluate((id) => {
-    history.pushState({}, '', `/threads/${id}`);
-    dispatchEvent(new PopStateEvent('popstate'));
-  }, threadId);
-
+  await window.route(url => url.pathname === `/api/v1/threads/${threadId}`, async route => {
+    await gate;
+    await route.continue();
+  });
   const detail = window.getByTestId('thread-detail');
   const timeline = detail.getByTestId('thread-timeline');
   const loading = timeline.getByTestId('thread-loading');
   try {
+    // Capture the first paint directly. A locator that retries can skip the flash.
+    const firstPaint = await window.evaluate(id => new Promise(resolve => {
+      function sample() {
+        const pane = document.querySelector('[data-testid="thread-timeline"][aria-busy="true"]');
+        if (!pane) { requestAnimationFrame(sample); return; }
+        resolve(getComputedStyle(pane).opacity);
+      }
+      history.pushState({}, '', `/threads/${id}`);
+      dispatchEvent(new PopStateEvent('popstate'));
+      requestAnimationFrame(sample);
+    }), threadId);
+    expect(firstPaint).toBe('0');
+    await expect(detail.locator('.thread-detail-heading h1')).toBeEmpty();
+    await expect(detail.getByTestId('thread-detail-status')).toHaveCount(0);
+    await expect(detail.getByTestId('thread-header-meta')).toHaveCount(0);
+    await expect(detail.getByTestId('thread-command-input')).toHaveCount(0);
+    await expect(timeline).toHaveCSS('opacity', '1');
     await expect(loading).toBeVisible();
     await expect(loading).toHaveAttribute('role', 'status');
     await expect(timeline).toHaveAttribute('aria-busy', 'true');
@@ -151,6 +167,7 @@ for (const outcome of ['success', 'failure'] as const) {
       const timeline = window.getByTestId('thread-detail').getByTestId('thread-timeline');
       if (outcome === 'success') {
         await expect(timeline).toContainText('Response to: Hello from the loading test');
+        await expect(window.getByTestId('thread-command-input')).toHaveCount(0);
       } else {
         await expect(window.getByTestId('thread-detail').getByTestId('thread-timeline-load-error')).toBeVisible();
       }
@@ -161,6 +178,7 @@ for (const outcome of ['success', 'failure'] as const) {
       release();
     }
     await expect(window.getByTestId('thread-detail').getByText('Metadata arrived', { exact: true })).toBeVisible();
+    await expect(window.getByTestId('thread-command-input')).toBeVisible();
   });
 }
 

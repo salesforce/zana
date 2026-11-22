@@ -48,14 +48,6 @@ export function resolveThreadDetailStatus(
   return thread?.runtime?.displayStatus || thread?.status || timelineStatus || '';
 }
 
-export function shouldClearPlaceholderStartingStatus(
-  hadThreadRecord: boolean,
-  detailFailed: boolean,
-  timelineFailed: boolean
-): boolean {
-  return !hadThreadRecord && detailFailed && timelineFailed;
-}
-
 export function resolveTimelinePollRows(args: {
   prevRows: readonly TimelineRow[];
   prevMaxSeq: number;

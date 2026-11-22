@@ -112,7 +112,6 @@ import {
   loadThreadDetailProgressively,
   resolveThreadDetailStatus,
   resolveTimelinePollRows,
-  shouldClearPlaceholderStartingStatus,
   threadDetailLoadError
 } from './thread-detail-load.js';
 
@@ -134,7 +133,7 @@ export function ThreadDetail(props: ThreadDetailProps) {
   const detached = useThreadDetached(props.threadId);
   const projectId = useThreads((s) => s.threads.find((row) => row.id === props.threadId)?.projectId ?? null);
   if (detached) return <DetachedThread threadId={props.threadId} projectId={projectId} />;
-  return <ThreadDetailBody {...props} />;
+  return <ThreadDetailBody key={props.threadId} {...props} />;
 }
 
 function ThreadDetailBody({
@@ -247,10 +246,8 @@ function ThreadDetailBody({
     activateTab: activateTool,
     addTab: (tab) => panel.addTab(tab)
   });
-  const [recordTitle, setTitle] = useState<string | null>(null);
-  const [recordStatus, setStatus] = useState<string | null>(null);
-  const title = recordTitle ?? (basic ? '' : 'Agent');
-  const status = recordStatus ?? (basic ? '' : 'starting');
+  const [title, setTitle] = useState('');
+  const [status, setStatus] = useState('');
   const [cwd, setCwd] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
   const project = useData((s) => (projectId ? s.projects.find((row) => row.id === projectId) ?? null : null));
@@ -317,13 +314,11 @@ function ThreadDetailBody({
   const linkDismissed = useRef(false);
   useEffect(() => { linkLoads.current = 0; lastLinkCursor.current = null; linkDismissed.current = false; setSearchHit(null); }, [threadId, linkSequence]);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const openingBasicThread = basic && timelineLoading && !loadError;
   const rowsRef = useRef<TimelineRow[]>([]);
   const maxSeqRef = useRef(0);
   const loadedRef = useRef(false);
   const loadedThreadRef = useRef<string | null>(null);
   const olderLoadRef = useRef<AbortController | null>(null);
-  const hadThreadRecordRef = useRef(false);
   const runLoadRef = useRef<() => void>(() => {});
   useThreadOpenFileSignal({
     threadId,
@@ -349,6 +344,7 @@ function ThreadDetailBody({
     const withOptimistic = mergeOptimisticTimelineRows(rows, optimisticRow);
     return mergePendingStopRow(withOptimistic, { threadId, isStopping, stoppingAnchorAt });
   }, [isStopping, optimisticRow, rows, stoppingAnchorAt, threadId]);
+  const openingThread = timelineLoading && !loadError && displayRows.length === 0;
 
 
   useEffect(() => {
@@ -410,7 +406,6 @@ function ThreadDetailBody({
       olderCursorRef.current = null;
       setOlderCursor(null);
       setLoadingOlder(false);
-      hadThreadRecordRef.current = false;
       setTimelineLoading(true);
       setLoadError(null);
       setArchivedAt(null);
@@ -522,7 +517,6 @@ function ThreadDetailBody({
         : null);
       setParentThreadId(thread.parentThreadId ?? null);
       setOriginKind(typeof thread.originKind === 'string' ? thread.originKind : null);
-      hadThreadRecordRef.current = true;
       if (thread.id) {
         const existing = useThreads.getState().threads.find((row) => row.id === thread.id);
         upsertThread({
@@ -585,9 +579,6 @@ function ThreadDetailBody({
           ? (timelineOutcome as PromiseRejectedResult).reason
           : (detailOutcome as PromiseRejectedResult).reason;
         setLoadError(threadDetailLoadError(reason));
-        if (shouldClearPlaceholderStartingStatus(hadThreadRecordRef.current, detailFailed, timelineFailed)) {
-          setStatus('');
-        }
       } else {
         setLoadError(null);
       }
@@ -1034,7 +1025,7 @@ function ThreadDetailBody({
                 : undefined
             }
             status={!mobileControlsTarget ? <ThreadStatusBadge status={status} waitingOnUser={awaitingUser} thinking={thinking} /> : null}
-            metadata={!mobileControlsTarget && <><span className="basic-thread-project" hidden={!basic}>{project?.name ?? (recordTitle ? 'Conversation' : '')}</span><span className="basic-thread-advanced-chrome" hidden={basic} inert={basic || undefined}><ThreadDetailContext key={threadId} agent={{
+            metadata={!mobileControlsTarget && Boolean(title) && <><span className="basic-thread-project" hidden={!basic}>{project?.name ?? 'Conversation'}</span><span className="basic-thread-advanced-chrome" hidden={basic} inert={basic || undefined}><ThreadDetailContext key={threadId} agent={{
               providerId: threadProviderId,
               model: threadModel,
               projectName: project?.name ?? null,
@@ -1081,7 +1072,7 @@ function ThreadDetailBody({
           </ThreadDetailActions>
         </header>
         <div className="thread-detail-body">
-          {openingBasicThread ? (
+          {basic && openingThread ? (
             <p className="basic-thread-loading" role="status">Loading conversation…</p>
           ) : <div className="thread-detail-column">
             {leadingContent ? (
@@ -1147,7 +1138,7 @@ function ThreadDetailBody({
               messageActions={messageActions}
               includePluginMessageActions={includePluginMessageActions}
             />
-            <div className="thread-composer-dock">
+            {!openingThread && (title || loadError) && <div className="thread-composer-dock">
               {!compact && <PromptContextBanner
                 threadId={threadId}
                 branchName={displayedBranch ?? null}
@@ -1206,7 +1197,7 @@ function ThreadDetailBody({
                 onPlanActionPending={setPlanActionPending}
                 onPlanActionHandled={() => setPlanAction(null)}
               />}
-            </div>
+            </div>}
           </div>}
         </div>
       </div>
