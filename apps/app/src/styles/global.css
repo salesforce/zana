@@ -10647,16 +10647,20 @@ body.resizing-col .ext-hub-resizer:active::before {
   box-shadow: 0 0 6px rgba(47, 129, 247, 0.6);
 }
 
-.tab-profile-icon {
+.tab-profile-icon,
+.thread-identity-icon {
   display: inline-grid;
   place-items: center;
   width: 14px;
   height: 14px;
   flex: 0 0 auto;
+}
+
+.tab-profile-icon {
   color: var(--text-dim);
 }
 
-.project-terminal-row.is-thread .tab-profile-icon {
+.thread-identity-icon {
   grid-template: 100% / 100%;
 }
 

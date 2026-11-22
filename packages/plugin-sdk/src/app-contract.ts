@@ -334,7 +334,7 @@ export interface PluginOwnedThreadIconProps {
 }
 
 export interface PluginThreadPanelActionRegistration extends PluginSlotBase {
-  /** Decorative icon for threads owned by this plugin in the project tree. */
+  /** Decorative icon for threads owned by this plugin in the project tree and on Kanban cards. */
   experimental_ownedThreadIcon?: ComponentType<PluginOwnedThreadIconProps>;
   /** Open from the owning thread's heading instead of the general New Tab catalogue. */
   experimental_ownedThreadTitle?: ComponentType<PluginOwnedThreadTitleProps>;

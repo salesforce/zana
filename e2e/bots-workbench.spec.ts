@@ -248,4 +248,13 @@ test('Basic sidebar opens bot conversations and leaves Advanced navigation intac
   await expect(profile.getByRole('heading', { name: 'Interview Coach' })).toBeVisible();
   await expect(page).toHaveURL(chat);
   await expect(page.locator('.nav-item').filter({ hasText: /^Bots$/ }).first()).toBeVisible();
+
+  await page.getByTestId('nav-agents').click();
+  const cards = page.locator('.agent-card.is-thread');
+  const botCard = cards.filter({ hasText: (await readThread()).title });
+  await expect(botCard.locator('.agent-card-icon .bt-av')).toHaveAttribute('data-shape', shape!);
+  expect(await botCard.locator('.bt-body > g').first().evaluate(avatarColor)).toBe(color);
+  const regularCard = cards.filter({ hasText: 'Ordinary conversation' });
+  await expect(regularCard.locator('.agent-card-icon svg')).toBeVisible();
+  await expect(regularCard.locator('.bt-av')).toHaveCount(0);
 });

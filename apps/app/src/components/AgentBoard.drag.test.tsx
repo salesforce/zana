@@ -1,6 +1,8 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { definePluginApp } from '@zana-ai/zcc-plugin-sdk';
+import { clearPluginSlots, interpretPluginApp } from '../plugins/plugin-slots.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentCard } from './AgentBoard.js';
 import type { ThreadListItem } from '../thread-store.js';
@@ -58,6 +60,22 @@ afterEach(() => {
   cleanup();
   uninstall();
   vi.useRealTimers();
+});
+
+it('shows the owning plugin’s icon on its Kanban card even when another thread has the same title', () => {
+  interpretPluginApp('notes', definePluginApp(app => {
+    app.slots.threadPanelAction({
+      id: 'profile', title: 'Profile', component: () => null,
+      experimental_ownedThreadIcon: ({ threadId }) => <svg data-thread={threadId} />
+    });
+  }));
+  try {
+    setup([threadFleetItem({ ...thread, originPluginId: 'notes' }), threadFleetItem({ ...thread, id: 'ordinary', status: 'idle' })]);
+    expect(lane('working').querySelector('.agent-card-icon svg')?.getAttribute('data-thread')).toBe(thread.id);
+    expect(lane('idle').querySelector('.agent-card-icon svg')?.getAttribute('width')).toBe('14');
+  } finally {
+    act(() => clearPluginSlots('notes'));
+  }
 });
 
 describe('agent board drag/drop', () => {
