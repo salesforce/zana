@@ -50,12 +50,22 @@ test.describe('document panel resizing', () => {
       const expectWidth = async (target: number) => {
         await expect.poll(async () => Math.abs(await panelWidth() - target)).toBeLessThan(2);
       };
+      const handle = panel.getByRole('separator', { name: 'Resize right panel' });
+      const leftHandles = page.locator('.sidebar-resizer:visible, .list-pane-resizer:visible');
+      if (mode === 'Basic') await expect(leftHandles.first()).toBeVisible();
+      const leftColors = () => leftHandles.evaluateAll(nodes => nodes.map(node => getComputedStyle(node, '::after').backgroundColor));
       const dragToWidth = async (target: number) => {
-        const divider = (await panel.getByRole('separator', { name: 'Resize right panel' }).boundingBox())!;
+        const divider = (await handle.boundingBox())!;
         await page.mouse.move(divider.x + divider.width / 2, divider.y + divider.height / 2);
+        const before = await leftColors();
         await page.mouse.down();
-        await page.mouse.move(container.right - target, divider.y + divider.height / 2, { steps: 10 });
-        await page.mouse.up();
+        try {
+          await page.mouse.move(container.right - target, divider.y + divider.height / 2, { steps: 10 });
+          expect(await leftColors()).toEqual(before);
+          expect(await handle.evaluate(node => getComputedStyle(node, '::after').backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
+        } finally {
+          await page.mouse.up();
+        }
       };
       const initialWidth = await panelWidth();
       const expandedWidth = Math.floor(container.width * 0.65);

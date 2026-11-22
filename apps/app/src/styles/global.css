@@ -982,8 +982,8 @@ button.statusbar-update {
   height: 100%;
 }
 
-.sidebar-resizer:hover::after,
-body.resizing-col .sidebar-resizer::after {
+body:not(.resizing-col) .sidebar-resizer:hover::after,
+body.resizing-col .sidebar-resizer:active::after {
   background: var(--accent-blue);
   opacity: 0.5;
 }
@@ -2300,8 +2300,8 @@ body.resizing-sidebar-section .sidebar-agents-resizer::after {
   height: 100%;
 }
 
-.list-pane-resizer:hover::after,
-body.resizing-col .list-pane-resizer::after {
+body:not(.resizing-col) .list-pane-resizer:hover::after,
+body.resizing-col .list-pane-resizer:active::after {
   background: var(--accent-blue);
   opacity: 0.5;
 }
@@ -8037,8 +8037,8 @@ body.resizing-col webview {
   background: transparent;
   transition: background 120ms ease;
 }
-.ext-hub-resizer:hover::before,
-body.resizing-col .ext-hub-resizer::before {
+body:not(.resizing-col) .ext-hub-resizer:hover::before,
+body.resizing-col .ext-hub-resizer:active::before {
   background: var(--accent-blue);
 }
 
@@ -12175,8 +12175,8 @@ button.statusbar-item {
   transition: opacity 0.15s;
 }
 
-.explorer-resizer:hover::after,
-body.resizing-col .explorer-resizer::after {
+body:not(.resizing-col) .explorer-resizer:hover::after,
+body.resizing-col .explorer-resizer:active::after {
   opacity: 0.6;
 }
 
@@ -20593,8 +20593,8 @@ body.resizing-col .explorer-resizer::after {
   opacity: 0;
   transition: opacity 0.15s;
 }
-.gus-rail-resizer:hover::after,
-body.resizing-col .gus-rail-resizer::after {
+body:not(.resizing-col) .gus-rail-resizer:hover::after,
+body.resizing-col .gus-rail-resizer:active::after {
   opacity: 0.6;
 }
 
@@ -26379,8 +26379,8 @@ button.launch-persona {
   transition: opacity 0.15s;
 }
 
-.library-resizer:hover::after,
-body.resizing-col .library-resizer::after {
+body:not(.resizing-col) .library-resizer:hover::after,
+body.resizing-col .library-resizer:active::after {
   opacity: 0.6;
 }
 
@@ -26997,8 +26997,8 @@ body.resizing-col .library-resizer::after {
   transition: opacity 0.15s;
 }
 
-.library-split-resizer:hover::after,
-body.resizing-col .library-split-resizer::after {
+body:not(.resizing-col) .library-split-resizer:hover::after,
+body.resizing-col .library-split-resizer:active::after {
   opacity: 0.6;
 }
 
@@ -38020,6 +38020,19 @@ body.split-frame-guard webview {
   width: 8px;
   cursor: col-resize;
   z-index: 2;
+}
+
+.thread-secondary-resizer::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 2px;
+  width: 3px;
+}
+
+body:not(.resizing-col) .thread-secondary-resizer:hover::after,
+body.resizing-col .thread-secondary-resizer:active::after {
+  background: var(--accent-blue);
+  opacity: 0.5;
 }
 
 .thread-secondary-chrome {
