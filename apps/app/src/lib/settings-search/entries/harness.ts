@@ -23,17 +23,8 @@ export const entries: readonly SettingsSearchEntry[] = [
     section: 'harness',
     anchor: 'harness-registered',
     label: 'Your AI harnesses',
-    help: 'Provided by your installed plugins. Choose a harness in the composer, or set your thread default.',
-    keywords: ['provider plugins', 'registered harnesses', 'models', 'default for new agents'],
-    kind: 'subsection'
-  },
-  {
-    id: 'harness.installed-harnesses',
-    section: 'harness',
-    anchor: 'harness-status',
-    label: 'Installed harnesses',
-    help: 'Choose which coding agents appear when you start a session. Each harness uses its own account and sign-in. Check status refreshes installation, sign-in, and model availability.',
-    keywords: ['coding agents', 'install', 'sign in', 'login', 'claude code', 'cursor', 'codex', 'check status', 'update all'],
+    help: 'Manage installation, sign-in, models, and launch settings for each harness. Default model level: Choose a model for new CLI agents. Levels in brackets match Persona and Agent model settings. Default execution state: Choose how new CLI agents plan, edit files, and ask for approval.',
+    keywords: ['provider plugins', 'installed harnesses', 'models', 'session settings', 'login', 'update all'],
     kind: 'subsection'
   },
   {
@@ -43,15 +34,6 @@ export const entries: readonly SettingsSearchEntry[] = [
     label: 'Model lists',
     help: 'Signed in or changed providers? Refresh model choices for Modern and CLI Agent sessions.',
     keywords: ['recalculate models', 'refresh models', 'reload models'],
-    kind: 'subsection'
-  },
-  {
-    id: 'harness.session-settings',
-    section: 'harness',
-    anchor: 'harness-session',
-    label: 'Session settings',
-    help: 'Browse models for Thread conversations. Choose a model in the conversation composer; open a harness here to search its models or refresh availability. Set defaults for agents running in a terminal. Project, Persona, and Agent settings can override these defaults. Default Provider: choose the provider to use for new CLI agents and the models shown below. Default Model Level: choose a model for new CLI agents. Levels in brackets match Persona and Agent model settings. Default Execution State: choose how new CLI agents plan, edit files, and ask for approval. Launch defaults, Connection, Project agents.',
-    keywords: ['modern', 'cli agent', 'terminal', 'launch defaults', 'priority', 'global', 'project', 'persona'],
     kind: 'subsection'
   },
   {
@@ -86,7 +68,7 @@ export const entries: readonly SettingsSearchEntry[] = [
   {
     id: 'harness.opencode.discover-agents',
     section: 'harness',
-    anchor: 'harness-legacy',
+    anchor: 'harness-registered',
     label: 'Discover project agents',
     help: 'Show additional OpenCode agents in Modern and CLI Agent pickers. Build and Plan stay available when off. Discover additional native agents.',
     keywords: ['opencode', 'native agents', 'roles'],
@@ -96,7 +78,7 @@ export const entries: readonly SettingsSearchEntry[] = [
   {
     id: 'harness.claude.append-system-prompt',
     section: 'harness',
-    anchor: 'harness-legacy',
+    anchor: 'harness-registered',
     label: 'Append system prompt',
     help: 'Add guidance for every Claude Code CLI agent. Additive: this text is appended first. Project, Persona, and Agent prompt text is appended after it.',
     keywords: ['claude code', 'instructions', 'system prompt', 'guidance'],
@@ -105,7 +87,7 @@ export const entries: readonly SettingsSearchEntry[] = [
   {
     id: 'harness.claude.extra-args',
     section: 'harness',
-    anchor: 'harness-legacy',
+    anchor: 'harness-registered',
     label: 'Extra args',
     help: 'Command arguments. Applied first. If a later Project, Persona, or Agent setting uses the same option, the later setting takes priority.',
     keywords: ['claude code', 'flags', 'command line', 'arguments', 'plugin dir'],
@@ -115,7 +97,7 @@ export const entries: readonly SettingsSearchEntry[] = [
   {
     id: 'harness.claude.add-dirs',
     section: 'harness',
-    anchor: 'harness-legacy',
+    anchor: 'harness-registered',
     label: 'Add dirs',
     help: 'Tools & access. Directories and tool rules combine with your Project, Persona, and Agent settings. Combined: directories from Global, Project, Persona, and Agent settings are all included.',
     keywords: ['claude code', 'directories', 'folders', 'access'],
@@ -125,7 +107,7 @@ export const entries: readonly SettingsSearchEntry[] = [
   {
     id: 'harness.claude.allowed-tools',
     section: 'harness',
-    anchor: 'harness-legacy',
+    anchor: 'harness-registered',
     label: 'Allowed tools',
     help: 'Combined and deduplicated across Global, Project, Persona, and Agent settings.',
     keywords: ['claude code', 'allow', 'permissions', 'bash'],
@@ -135,7 +117,7 @@ export const entries: readonly SettingsSearchEntry[] = [
   {
     id: 'harness.claude.denied-tools',
     section: 'harness',
-    anchor: 'harness-legacy',
+    anchor: 'harness-registered',
     label: 'Denied tools',
     help: 'Combined and deduplicated across every level. A denial remains in effect when later levels add more settings.',
     keywords: ['claude code', 'deny', 'block', 'permissions'],
@@ -145,7 +127,7 @@ export const entries: readonly SettingsSearchEntry[] = [
   {
     id: 'harness.pi.provider',
     section: 'harness',
-    anchor: 'harness-legacy',
+    anchor: 'harness-registered',
     label: 'Pi default provider',
     help: 'Provider name, such as anthropic or openai. Leave blank to use Pi’s own default. Provider & reasoning.',
     keywords: ['pi', 'provider'],
@@ -155,7 +137,7 @@ export const entries: readonly SettingsSearchEntry[] = [
   {
     id: 'harness.pi.model',
     section: 'harness',
-    anchor: 'harness-legacy',
+    anchor: 'harness-registered',
     label: 'Pi default model',
     help: 'A model ID or name pattern, such as openai/gpt-5 or sonnet. Leave blank to use the provider’s default. Default model.',
     keywords: ['pi', 'model'],
@@ -165,7 +147,7 @@ export const entries: readonly SettingsSearchEntry[] = [
   {
     id: 'harness.pi.thinking',
     section: 'harness',
-    anchor: 'harness-legacy',
+    anchor: 'harness-registered',
     label: 'Pi default thinking level',
     help: 'Choose how much reasoning Pi uses. Default lets Pi decide. Default thinking level.',
     options: PI_THINKING,
@@ -179,7 +161,7 @@ export const entries: readonly SettingsSearchEntry[] = [
   {
     id: 'harness.codex.sandbox',
     section: 'harness',
-    anchor: 'harness-legacy',
+    anchor: 'harness-registered',
     label: 'Default Sandbox Policy',
     help: 'Permissions & isolation. Choose which files and commands Codex can access.',
     options: ['Use harness default', ...CODEX_UI.sandboxes.map((o) => o.label)],
@@ -190,7 +172,7 @@ export const entries: readonly SettingsSearchEntry[] = [
   {
     id: 'harness.codex.approval',
     section: 'harness',
-    anchor: 'harness-legacy',
+    anchor: 'harness-registered',
     label: 'Default Approval Policy',
     help: 'Choose when Codex asks before taking an action.',
     options: ['Use harness default', ...CODEX_UI.approvals.map((o) => o.label)],

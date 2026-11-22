@@ -64,9 +64,11 @@ test('provider readiness and user-triggered sign-in cross the production Electro
   });
   expect(readiness, JSON.stringify(readiness)).toMatchObject({ status: 200, body: { result: { supported: true, health: { status: 'ready' } } } });
   await win.evaluate(() => { history.pushState({}, '', '/settings/harness'); dispatchEvent(new PopStateEvent('popstate')); });
+  await win.getByRole('button', { name: 'Configure Gateway fixture', exact: true }).click();
   const gateway = win.getByLabel('Gateway fixture authentication', { exact: true });
   await expect(gateway.getByText('Credentials ready')).toBeVisible({ timeout: 30_000 });
   await expect(gateway.getByRole('button', { name: /Sign in/ })).toHaveCount(0);
+  await win.getByRole('button', { name: 'Configure Login fixture', exact: true }).click();
   const signIn = win.getByLabel('Login fixture authentication', { exact: true });
   await expect(signIn.getByText('Sign-in required')).toBeVisible({ timeout: 30_000 });
   await signIn.getByRole('button', { name: 'Sign in to Login fixture' }).click();
@@ -89,6 +91,7 @@ test('provider readiness and user-triggered sign-in cross the production Electro
   // provider child. Only disposable fixture keys are ever entered here.
   const environment = win.getByRole('region', { name: 'API keys and environment' });
   await expect(environment.getByRole('button', { name: 'Save variable', exact: true })).toBeDisabled();
+  await win.getByRole('button', { name: 'Configure Key fixture', exact: true }).click();
   const keyProvider = win.getByLabel('Key fixture authentication', { exact: true });
   await expect(keyProvider.getByText('Sign-in required')).toBeVisible();
   await environment.getByLabel('Environment variable name').fill('FIXTURE_NATIVE_API_KEY');

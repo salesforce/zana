@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
-import { useState, type ReactNode } from 'react';
+import { MemoryRouter } from 'react-router-dom';
+import { useState } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppConfig, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
@@ -8,7 +9,8 @@ import { HarnessView } from './HarnessView.js';
 import { RevealContext, type RevealState } from '../../lib/settings-search/reveal.js';
 import { resetThreadModelCatalog } from '../../components/thread/pickers/thread-model-catalog.js';
 
-vi.mock('./RegisteredHarnesses.js', () => ({ RegisteredHarnesses: ({ cliDefault }: { cliDefault?: ReactNode }) => cliDefault ?? null }));
+vi.mock('./ProviderAuthentication.js', () => ({ ProviderAuthentication: () => null }));
+
 
 const state = vi.hoisted(() => ({
   rows: [] as HarnessVerifyResult[],
@@ -24,6 +26,7 @@ vi.mock('../../hooks/useHosts.js', () => ({
   primaryHost: (hosts: Array<unknown>) => hosts[0]
 }));
 vi.mock('../../lib/product-client.js', () => ({ product: {
+  pluginApps: { list: vi.fn(async () => []), onChanged: vi.fn(() => () => {}) },
   threads: { providers: vi.fn(async () => ({ providers: [{ id: 'codex', displayName: 'Codex', pluginId: 'provider-codex' }] })) },
   harness: { descriptors: state.descriptors },
   hosts: { providerCliStatus: vi.fn(async () => ({})) }
@@ -56,7 +59,7 @@ afterEach(() => { cleanup(); resetThreadModelCatalog(); });
 
 function View({ reveal, initial = {} as AppConfig, update = vi.fn(async () => undefined) }: { reveal?: RevealState; initial?: AppConfig; update?: () => Promise<undefined> }) {
   const [config, setConfig] = useState(initial);
-  const view = <HarnessView config={config} onConfigDraft={setConfig} onUpdate={update} />;
+  const view = <MemoryRouter><HarnessView config={config} onConfigDraft={setConfig} onUpdate={update} /></MemoryRouter>;
   return reveal ? <RevealContext.Provider value={reveal}>{view}</RevealContext.Provider> : view;
 }
 const has = (c: HTMLElement, id: string) => !!c.querySelector(`[data-settings-target="${id}"]`);
@@ -65,7 +68,7 @@ describe('HarnessView settings-search targets', () => {
   it('tags the status rows and keeps collapsed launch-default rows closed without a reveal', async () => {
     const { container } = render(<View />);
     await waitFor(() => expect(state.descriptors).toHaveBeenCalled());
-    for (const id of ['harness.installed-harnesses', 'harness.model-lists', 'harness.session-settings', 'harness.claude.row', 'harness.codex.row', 'harness.codex.enabled', 'harness.default-harness']) {
+    for (const id of ['harness.registered', 'harness.model-lists', 'harness.claude.row', 'harness.codex.row', 'harness.default-harness']) {
       expect(has(container, id), id).toBe(true);
     }
     expect(has(container, 'harness.claude.binary')).toBe(false);

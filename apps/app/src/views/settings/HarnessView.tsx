@@ -1,13 +1,12 @@
-import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { precedenceHelp } from '@zana-ai/zcc-domain/setting-precedence';
 import { product } from '../../lib/product-client.js';
-import { AlertTriangle, Bot, CheckCircle2, ChevronLeft, ChevronRight, Download, Laptop, MessageSquare, RefreshCw, Search, Terminal, XCircle } from 'lucide-react';
-import type { AppConfig, HarnessFamily, HarnessVerifyResult, LaunchProfileId } from '@zana-ai/zcc-domain/product';
+import { AlertTriangle, CheckCircle2, ChevronRight, Download } from 'lucide-react';
+import type { AppConfig, HarnessFamily, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
 import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapter';
 import type { ProviderCliInstallActionKind, ProviderCliKey, ProviderCliStatusResponse } from '@zana-ai/zcc-contracts/host-rpc';
-import { useData, useUi } from '@/store';
-import { profileIcon } from '@/lib/profileIcon';
+import { useData } from '@/store';
 import { sortHarnessDisplayRows } from '@/lib/harness-display-order';
 import { useHosts, primaryHost } from '../../hooks/useHosts.js';
 import { getSettingsRoutePath } from '../../lib/route-paths.js';
@@ -22,20 +21,13 @@ import {
   providerCliStartLog
 } from './machine-provider-clis.js';
 import { ProviderCliUpdateHint } from './ProviderCliUpdateHint.js';
-import { providerIconForId } from '@/components/thread/pickers/provider-icon';
 import { Section, Field, ToggleSwitch, ChipField, TextArgsField } from '@/components/settings/FormFields';
 import { HarnessOptionSelect } from '@/components/HarnessOptionSelect';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
-import { StencilForm, Skeleton } from '@/components/ui/Skeleton';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { providerUiSchema } from '@zana-ai/zcc-domain/launch-provider';
+import type { ThreadModelCatalogSnapshot } from '../../components/thread/pickers/thread-model-catalog.js';
 import {
-  getThreadModelCatalog,
-  reloadThreadProviderModels,
-  subscribeThreadModelCatalog,
-  threadModelCatalogForHost
-} from '../../components/thread/pickers/thread-model-catalog.js';
-import {
-  emptyModelsHint,
   harnessLoginStatus,
   type HarnessLoginStatus
 } from '../../components/thread/pickers/harness-login.js';
@@ -45,16 +37,11 @@ import { RegisteredHarnesses } from './RegisteredHarnesses.js';
 import { MachineEnvironmentSettings } from './MachineEnvironmentSettings.js';
 import { RevealContext } from '@/lib/settings-search/reveal';
 import {
-  BUILTIN_THREAD_PROVIDERS,
   HARNESS_BINARY_KEY,
   HARNESS_BINARY_PLACEHOLDER,
   HARNESS_ENABLE_KEY,
-  HARNESS_FAMILY_BLURB,
   harnessRowPrefix,
-  rememberHarnessDescriptors,
-  threadProviderBlurb,
-  threadProviderSearchId,
-  type ThreadProviderListItem
+  rememberHarnessDescriptors
 } from '@/lib/settings-search/providers/harness';
 import { HarnessModelTiers, usesTierRules } from './HarnessModelTiers.js';
 import './harness-settings.css';
@@ -62,23 +49,6 @@ import './harness-settings.css';
 const USE_HARNESS_DEFAULT = { id: '', label: 'Use harness default' } as const;
 const CODEX_UI = providerUiSchema('codex');
 
-/** Install and sign-in status is shared across launch surfaces. Modern model
- * catalogues and CLI launch defaults live in their respective tabs below. */
-
-/** Map a harness family → the base launch profile whose glyph represents it, so
- *  the row icons match the New Agent modal's picker exactly. */
-const FAMILY_PROFILE: Record<HarnessFamily, LaunchProfileId> = {
-  claude: 'claude',
-  cursor: 'cursor',
-  codex: 'codex',
-  pi: 'pi',
-  opencode: 'opencode',
-  grok: 'grok',
-  mastracode: 'mastracode',
-  afcode: 'afcode'
-};
-
-const FAMILY_BLURB = HARNESS_FAMILY_BLURB;
 const ENABLE_KEY = HARNESS_ENABLE_KEY;
 
 export function familyEnabled(family: HarnessFamily, config: AppConfig, fallback: boolean): boolean {
@@ -113,24 +83,6 @@ export function summarizeHarnessHealth(
 
 const BINARY_KEY = HARNESS_BINARY_KEY;
 const BINARY_PLACEHOLDER = HARNESS_BINARY_PLACEHOLDER;
-
-function StatusBadge({ h, enabled }: { h: HarnessVerifyResult; enabled: boolean }) {
-  // Three honest states: installed → green ✓; enabled-but-missing → amber ✗ (the
-  // actionable case); off (not installed, not enabled) → a muted/dim ✗.
-  const missing = enabled && !h.installed;
-  const state = h.installed ? 'ok' : missing ? 'warn' : 'muted';
-  const title = h.installed
-    ? h.version || 'installed'
-    : enabled
-      ? `not found — install it (${h.installHint})`
-      : 'not installed';
-  return (
-    <span className={`opener-row-status opener-row-status--${state}`} title={title}>
-      {h.installed ? <CheckCircle2 size={13} /> : <XCircle size={13} />}
-      {h.installed ? h.version || 'Installed' : 'Not installed'}
-    </span>
-  );
-}
 
 export function LoginBadge({ login }: { login: HarnessLoginStatus }) {
   if (login.state === 'checking') {
@@ -192,14 +144,14 @@ export function HarnessOptionsGroup({
  * (the verification list). `settings` mode is the CLI Agent advanced
  * disclosure (binary / routing) without a second enable switch.
  */
-function HarnessRow({
+function HarnessCliSettings({
   h,
   config,
   onConfigDraft,
   onUpdate,
   descriptor,
   advanced,
-  mode,
+  loadingOptions,
   login,
   cliAction,
   cliBusy,
@@ -215,7 +167,7 @@ function HarnessRow({
   onUpdate: (patch: Partial<AppConfig>) => Promise<void>;
   descriptor?: HarnessAdapterDescriptor;
   advanced?: React.ReactNode;
-  mode: 'status' | 'settings';
+  loadingOptions: boolean;
   login?: HarnessLoginStatus | null;
   cliAction?: { kind: ProviderCliInstallActionKind; label: string } | null;
   cliBusy?: boolean;
@@ -232,8 +184,9 @@ function HarnessRow({
   const revealTarget = useContext(RevealContext).target;
   // A Settings-search jump to a control inside this collapsed row opens it first.
   useEffect(() => {
-    if (mode === 'settings' && revealTarget?.startsWith(harnessRowPrefix(h.family))) setOpen(true);
-  }, [mode, revealTarget, h.family]);
+    const prefix = harnessRowPrefix(h.family);
+    if (revealTarget?.startsWith(prefix) && revealTarget !== prefix + 'enabled' && revealTarget !== prefix + 'row') setOpen(true);
+  }, [revealTarget, h.family]);
   const enableKey = ENABLE_KEY[h.family];
   const binKey = BINARY_KEY[h.family];
   // Prefer the live config value over the async probe snapshot (`h.enabled`):
@@ -401,50 +354,12 @@ function HarnessRow({
     </Field>
   ) : null;
 
-  const RowHeader = mode === 'settings' ? 'button' : 'div';
-
   return (
-    <div
-      className={`opener-row${shown ? '' : ' opener-row--off'}`}
-      id={mode === 'status' ? `settings-anchor-harness-${h.family}` : undefined}
-      data-settings-target={mode === 'status' ? `${harnessRowPrefix(h.family)}row` : undefined}
-    >
-      <RowHeader
-        className={`opener-row-head${mode === 'settings' ? ' harness-disclosure' : ''}`}
-        {...(mode === 'settings' ? {
-          type: 'button' as const,
-          'aria-expanded': open,
-          'aria-label': `Advanced settings for ${h.label}`,
-          onClick: () => setOpen((value) => !value)
-        } : {})}
-      >
-        {mode === 'settings' ? (
-          <span className="opener-row-expand" aria-hidden>
-            <ChevronRight
-              size={14}
-              className={`opener-row-chevron${open ? ' opener-row-chevron--open' : ''}`}
-              aria-hidden
-            />
-          </span>
-        ) : null}
-
-        <span className="opener-row-glyph" aria-hidden>
-          {profileIcon(FAMILY_PROFILE[h.family], 17)}
-        </span>
-
-        <span className="opener-row-text">
-          <span className="opener-row-name">{h.label}</span>
-          <span className="opener-row-blurb">{FAMILY_BLURB[h.family]}</span>
-        </span>
-
-        {mode === 'status' ? (
-          <span className="opener-row-status-stack">
-            <StatusBadge h={h} enabled={enabled} />
-            {login ? <LoginBadge login={login} /> : null}
-          </span>
-        ) : null}
-
-        {mode === 'status' && cliAction ? (
+    <div className="harness-cli-detail">
+      <div className="harness-cli-status">
+        <strong>CLI agent</strong>
+        {login && <span className="opener-row-status-stack"><LoginBadge login={login} /></span>}
+        {cliAction ? (
           <button
             type="button"
             className="settings-btn"
@@ -456,8 +371,7 @@ function HarnessRow({
           </button>
         ) : null}
 
-        {mode === 'status' ? (
-          enableKey ? (
+        {enableKey ? (
             <ToggleSwitch
               searchId={`${harnessRowPrefix(h.family)}enabled`}
               checked={enabled}
@@ -472,26 +386,29 @@ function HarnessRow({
             <span className="opener-row-always" title="Always available">
               Always on
             </span>
-          )
-        ) : null}
-        {mode === 'settings' ? <span className="harness-configure-label">Configure</span> : null}
-      </RowHeader>
-      {mode === 'status' && cliError ? (
+          )}
+      </div>
+      {cliError ? (
         <p className="machine-cli-row-error" role="alert" data-testid={`harness-cli-error-${h.family}`}>
           {cliError}
         </p>
-      ) : mode === 'status' && cliLog ? (
+      ) : cliLog ? (
         <p className="machine-cli-row-progress" data-testid={`harness-cli-progress-${h.family}`}>
           {cliLog}
         </p>
-      ) : mode === 'status' && cliHint ? (
+      ) : cliHint ? (
         <ProviderCliUpdateHint
           reason={cliHint}
           testId={`harness-cli-hint-${h.family}`}
         />
       ) : null}
 
-      {mode === 'settings' && open ? (
+      <button type="button" className="harness-cli-disclosure" aria-label={`Advanced settings for ${h.label}`}
+        aria-expanded={open} onClick={() => setOpen(value => !value)}>
+        <ChevronRight size={14} aria-hidden /> CLI launch settings
+      </button>
+      {open && loadingOptions && <Skeleton width="100%" height="48px" />}
+      {open && !loadingOptions ? (
         <div className="opener-row-advanced harness-cli-options">
           {!shown || !h.installed ? (
             <p className="harness-option-notice" role="status">
@@ -533,228 +450,6 @@ function HarnessRow({
   );
 }
 
-export function mergeBuiltinThreadProviders(rows: ThreadProviderListItem[]): ThreadProviderListItem[] {
-  const seen = new Set(rows.map((row) => row.id));
-  const missing = BUILTIN_THREAD_PROVIDERS.filter((row) => !seen.has(row.id));
-  return missing.length === 0 ? rows : [...rows, ...missing];
-}
-
-const THREAD_PROVIDER_PROFILE: Record<string, LaunchProfileId> = {
-  'claude-code': 'claude',
-  'acp-cursor': 'cursor',
-  cursor: 'cursor',
-  'acp-opencode': 'opencode',
-  opencode: 'opencode',
-  'acp-grok': 'grok',
-  grok: 'grok',
-  'acp-mastracode': 'mastracode',
-  mastracode: 'mastracode',
-  'acp-afcode': 'afcode',
-  afcode: 'afcode',
-  codex: 'codex',
-  pi: 'pi'
-};
-
-function threadProviderGlyph(providerId: string) {
-  const Brand = providerIconForId(providerId);
-  if (Brand) return <Brand size={17} />;
-  const profile = THREAD_PROVIDER_PROFILE[providerId];
-  return profile ? profileIcon(profile, 17) : <Bot size={17} />;
-}
-
-const THREAD_PROVIDER_MODEL_CAP = 12;
-
-function threadProviderModelsStatus(
-  providerId: string,
-  loading: boolean,
-  entry: { models: { length: number }; modelLoadError: string | null } | undefined
-): string {
-  if (loading) return 'Loading…';
-  if (!entry) return 'Not loaded';
-  if (entry.models.length > 0) {
-    return `${entry.models.length} model${entry.models.length === 1 ? '' : 's'}${entry.modelLoadError ? ' · Refresh failed' : ''}`;
-  }
-  const hint = emptyModelsHint(providerId, entry.modelLoadError);
-  if (entry.modelLoadError && entry.modelLoadError !== 'auth_required') {
-    return `${hint} (${entry.modelLoadError})`;
-  }
-  return hint;
-}
-
-function ThreadProviderRow({
-  provider,
-  entry,
-  loading
-}: {
-  provider: ThreadProviderListItem;
-  entry: ReturnType<typeof getThreadModelCatalog>['byProvider'][string] | undefined;
-  loading: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const [page, setPage] = useState(0);
-  const models = entry?.models ?? [];
-  const search = query.trim().toLocaleLowerCase();
-  const matching = models.filter((model) => !search || `${model.displayName} ${model.id}`.toLocaleLowerCase().includes(search));
-  const pageCount = Math.ceil(matching.length / THREAD_PROVIDER_MODEL_CAP);
-  const currentPage = Math.min(page, Math.max(0, pageCount - 1));
-  const first = currentPage * THREAD_PROVIDER_MODEL_CAP;
-  const visible = matching.slice(first, first + THREAD_PROVIDER_MODEL_CAP);
-  const status = threadProviderModelsStatus(provider.id, loading, entry);
-  return (
-    <li className="opener-row" data-settings-target={threadProviderSearchId(provider.id)}>
-      <button
-        type="button"
-        className="opener-row-head harness-disclosure"
-        aria-expanded={open}
-        aria-label={`Models for ${provider.displayName}`}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <span className="opener-row-expand" aria-hidden>
-          <ChevronRight
-            size={14}
-            className={`opener-row-chevron${open ? ' opener-row-chevron--open' : ''}`}
-            aria-hidden
-          />
-        </span>
-        <span className="opener-row-glyph" aria-hidden>
-          {threadProviderGlyph(provider.id)}
-        </span>
-        <span className="opener-row-text">
-          <span className="opener-row-name">{provider.displayName}</span>
-          <span className="opener-row-blurb">{threadProviderBlurb(provider.id)}</span>
-        </span>
-        <span className="thread-provider-model-status">{status}</span>
-      </button>
-      {open ? (
-        <div className="opener-row-advanced harness-thread-options">
-          <div className="thread-provider-model-actions">
-            <h4>Available models</h4>
-            <button
-              type="button"
-              className="cred-btn"
-              disabled={loading}
-              onClick={() => {
-                void reloadThreadProviderModels(provider.id);
-              }}
-            >
-              <RefreshCw size={13} aria-hidden className={loading ? 'harness-recheck-spin' : undefined} />
-              {models.length > 0 ? 'Reload' : 'Load'}
-            </button>
-          </div>
-          {models.length > 0 ? (
-            <label className="harness-model-search">
-              <Search size={14} aria-hidden />
-              <input
-                type="search"
-                aria-label={`Search ${provider.displayName} models`}
-                placeholder="Search models…"
-                value={query}
-                onChange={(event) => { setQuery(event.target.value); setPage(0); }}
-              />
-            </label>
-          ) : null}
-          {visible.length > 0 ? (
-            <ul className="thread-provider-models">
-              {visible.map((model) => (
-                <li key={model.id}>
-                  <span className="harness-model-copy">
-                    <span className="harness-model-name">{model.displayName}</span>
-                    <code>{model.id}</code>
-                  </span>
-                  {model.isDefault ? <span className="harness-model-default">Provider default</span> : null}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="settings-help" role="status">{search && models.length > 0 ? 'No models match your search.' : status}</p>
-          )}
-          {matching.length > 0 ? (
-            <div className="harness-model-pagination">
-              <span>{first + 1}–{first + visible.length} of {matching.length} {matching.length === 1 ? 'model' : 'models'}</span>
-              {pageCount > 1 ? (
-                <div>
-                  <button type="button" className="settings-btn" disabled={currentPage === 0}
-                    aria-label={`Previous ${provider.displayName} models`} onClick={() => setPage(currentPage - 1)}>
-                    <ChevronLeft size={14} aria-hidden /> Previous
-                  </button>
-                  <button type="button" className="settings-btn" disabled={currentPage >= pageCount - 1}
-                    aria-label={`Next ${provider.displayName} models`} onClick={() => setPage(currentPage + 1)}>
-                    Next <ChevronRight size={14} aria-hidden />
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          {entry?.modelLoadError && models.length > 0 ? (
-            <p role="status" className="settings-help">Showing previously loaded models. {emptyModelsHint(provider.id, entry.modelLoadError, entry.modelLoadErrorDetail)}</p>
-          ) : null}
-          <div className="harness-model-meta">
-            {entry?.lastSuccessAt != null ? <span>Last loaded: {new Date(entry.lastSuccessAt).toLocaleString()}</span> : null}
-            <code className="thread-provider-id" title={provider.pluginId}>{provider.pluginId}</code>
-          </div>
-        </div>
-      ) : null}
-    </li>
-  );
-}
-
-export function ThreadProviderCatalog({
-  providers
-}: {
-  providers: ThreadProviderListItem[];
-}) {
-  const catalog = useSyncExternalStore(
-    subscribeThreadModelCatalog,
-    getThreadModelCatalog,
-    getThreadModelCatalog
-  );
-  const sortedProviders = sortHarnessDisplayRows(providers, (provider) => provider.displayName, (provider) => provider.id);
-  if (providers.length === 0) {
-    return <p className="settings-help">No Modern providers registered.</p>;
-  }
-  return (
-    <>
-    {catalog.rosterError ? <p role="status" className="settings-help">Could not refresh providers. {catalog.rosterError}</p> : null}
-    <ul className="opener-list thread-provider-list" data-testid="thread-provider-catalog">
-      {sortedProviders.map((provider) => (
-        <ThreadProviderRow
-          key={provider.id}
-          provider={provider}
-          entry={catalog.byProvider[provider.id]}
-          loading={catalog.inflight.has(provider.id)}
-        />
-      ))}
-    </ul>
-    </>
-  );
-}
-
-function ThreadProvidersPanel() {
-  const [providers, setProviders] = useState<ThreadProviderListItem[] | null>(null);
-  useEffect(() => {
-    // Reuse a fresh catalog; it only refetches when stale or never loaded.
-    void threadModelCatalogForHost().ensure();
-  }, []);
-  useEffect(() => {
-    let cancelled = false;
-    void product.threads.providers()
-      .then((body) => {
-        if (!cancelled) setProviders(mergeBuiltinThreadProviders(body.providers));
-      })
-      .catch(() => {
-        if (!cancelled) setProviders([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  if (providers === null) {
-    return <StencilForm label="Loading Modern providers" />;
-  }
-  return <ThreadProviderCatalog providers={providers} />;
-}
-
 export function HarnessView({
   config,
   onConfigDraft,
@@ -766,17 +461,10 @@ export function HarnessView({
 }) {
   const status = useData((s) => s.harnessStatus);
   const refresh = useData((s) => s.refreshHarnessStatus);
-  const modelCatalog = useSyncExternalStore(
-    subscribeThreadModelCatalog,
-    getThreadModelCatalog,
-    getThreadModelCatalog
-  );
   // Track the in-flight probe so the button can show it's actively re-checking —
   // the row list stays populated during a re-check (each probe runs `--version`).
   const [checking, setChecking] = useState(false);
-  const [pane, setPane] = useState<'thread' | 'legacy'>('thread');
   const [descriptors, setDescriptors] = useState<HarnessAdapterDescriptor[] | null>(null);
-  const settingsAnchor = useUi((s) => s.settingsAnchor);
   const hosts = useHosts();
   const thisMachine = primaryHost(hosts);
   const thisMachineId = thisMachine?.status === 'connected' ? thisMachine.id : undefined;
@@ -784,11 +472,6 @@ export function HarnessView({
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [installErrors, setInstallErrors] = useState<Record<string, string>>({});
   const [installLogs, setInstallLogs] = useState<Record<string, string>>({});
-
-  useLayoutEffect(() => {
-    if (settingsAnchor === 'harness-legacy') setPane('legacy');
-    if (settingsAnchor === 'harness-thread') setPane('thread');
-  }, [settingsAnchor]);
 
   const runCheck = (refreshModels = true) => {
     setChecking(true);
@@ -807,8 +490,7 @@ export function HarnessView({
     }
   }, [thisMachineId]);
 
-  // The store probes at boot; reopening the tab reuses that result. Only probe
-  // here when nothing is loaded yet — Check status is the explicit re-probe.
+  // Reuse the boot probe until the user requests a fresh status check.
   useEffect(() => {
     if (status.length === 0) runCheck(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1005,7 +687,6 @@ export function HarnessView({
     (descriptor) => descriptor.label,
     (descriptor) => descriptor.id
   );
-  const sortedStatus = sortHarnessDisplayRows(status, (row) => row.label, (row) => row.family);
   const selectedDefaultEnableKey = config.defaultHarness ? ENABLE_KEY[config.defaultHarness] : undefined;
   const selectedDefaultStatus = config.defaultHarness
     ? status.find((entry) => entry.family === config.defaultHarness)
@@ -1061,41 +742,70 @@ export function HarnessView({
     }
   }
 
-  const settingsRows = status.length === 0 ? (
-    <p className="settings-help">Checking…</p>
-  ) : (
-    sortedStatus.map((h) => {
-      const descriptor = descriptorsById.get(h.family);
-      const contributionIds = descriptor?.settingsContributionIds ?? (descriptors === null
-        ? h.family === 'claude'
-          ? ['claude-global-defaults']
-          : h.family === 'pi'
-            ? ['pi-global-defaults']
-            : []
-        : []);
-      const advanced = contributionIds
-        .map((id) => contributionNodes[id])
-        .filter(Boolean);
-      return (
-        <HarnessRow
-          key={h.family}
-          h={h}
-          config={config}
-          onConfigDraft={onConfigDraft}
-          onUpdate={onUpdate}
-          descriptor={descriptor}
-          advanced={advanced.length ? <>{advanced}</> : undefined}
-          mode="settings"
-        />
-      );
-    })
-  );
+  function renderCliSettings(h: HarnessVerifyResult, modelCatalog: ThreadModelCatalogSnapshot) {
+    const descriptor = descriptorsById.get(h.family);
+    const ids = descriptor?.settingsContributionIds ?? (descriptors === null && (h.family === 'claude' || h.family === 'pi') ? [`${h.family}-global-defaults`] : []);
+    const advanced = ids.map(id => contributionNodes[id]).filter(Boolean);
+    const provider = providerCliKeyForFamily(h.family);
+    const row = provider
+      ? orderedProviderCliRows(cliStatus).find((entry) => entry.provider === provider)
+      : undefined;
+    const key = thisMachineId && provider ? `${thisMachineId}:${provider}` : null;
+    return (
+      <HarnessCliSettings
+        key={h.family}
+        h={h}
+        config={config}
+        onConfigDraft={onConfigDraft}
+        onUpdate={onUpdate}
+        descriptor={descriptor}
+        advanced={advanced}
+        loadingOptions={descriptors === null && hasDesktopBridge() && typeof product.harness.descriptors === 'function'}
+        login={harnessLoginStatus(h.family, modelCatalog, h.installed)}
+        cliAction={row?.status.installAction ?? null}
+        cliBusy={key !== null && busyKey === key}
+        cliDisabled={busyKey !== null || !thisMachineId}
+        cliLog={key ? installLogs[key] : undefined}
+        cliError={key ? installErrors[key] : undefined}
+        cliHint={row?.status.updateUnavailableReason ?? undefined}
+        onCliInstall={
+          row?.status.installAction && provider
+            ? () => void runInstall(
+              provider,
+              row.status.installAction!.kind,
+              row.status.installAction!.command
+            )
+            : undefined
+        }
+      />
+    );
+  }
 
   return (
     <div className="harness-settings">
-    <MachineEnvironmentSettings />
-    <RegisteredHarnesses config={config} status={status} hostId={thisMachineId} hostName={thisMachine?.name} onUpdate={onUpdate} onRefreshStatus={() => runCheck(false)} checkingStatus={checking} cliDefault={<>
-        <Field
+    <RegisteredHarnesses config={config} status={status} hostId={thisMachineId} hostName={thisMachine?.name} onUpdate={onUpdate} onRefreshStatus={() => { runCheck(false); void refreshCliStatus(); }}
+      renderCliSettings={renderCliSettings} machineSummary={checking ? 'Checking installation and sign-in…' : health.message}
+      machineActions={actionable.length > 0 && (
+        <button
+          type="button"
+          className="settings-btn primary"
+          disabled={busyKey !== null}
+          data-testid="harness-update-all"
+          onClick={() => {
+            void (async () => {
+              for (const item of actionable) {
+                await runInstall(item.provider, item.action.kind, item.action.command);
+              }
+            })();
+          }}
+        >
+          <Download size={13} aria-hidden="true" />
+          Update all ({actionable.length})
+        </button>
+      )}
+      machinesLink={<a href={getSettingsRoutePath('machines')} data-testid="harness-machines-link">Manage machines</a>} checkingStatus={checking} cliDefault={<>
+        <div className="harness-default-card">
+          <Field
             searchId="harness.default-harness"
             label="Default for CLI agents"
             layout="row"
@@ -1120,7 +830,8 @@ export function HarnessView({
                 }))}
               />
             )}
-        </Field>
+          </Field>
+        </div>
         {defaultUnavailable && (
           <p className="settings-help" role="alert">
             {unavailableDefaultMessage(config.defaultHarness!)}
@@ -1138,170 +849,12 @@ export function HarnessView({
           </p>
         )}
     </>} />
-    <Section
-      searchId="harness.installed-harnesses"
-      anchorId="harness-status"
-      title="Installed harnesses"
-      help="Choose which coding agents appear when you start a session. Each harness uses its own account and sign-in."
-      flush
-    >
-      <div className={`harness-health harness-health--${health.ok ? 'ok' : 'warn'}`} role="status">
-        <span className="harness-machine-icon" aria-hidden><Laptop size={20} /></span>
-        <div className="harness-health-copy">
-          <span className="harness-machine-name">This machine{thisMachine?.name ? ` · ${thisMachine.name}` : ''}</span>
-          <span className="harness-health-msg">{checking ? 'Checking installation and sign-in…' : health.message}</span>
-        </div>
-        <div className="harness-health-actions">
-          {actionable.length > 0 ? (
-            <button
-              type="button"
-              className="settings-btn primary"
-              disabled={busyKey !== null}
-              data-testid="harness-update-all"
-              onClick={() => {
-                void (async () => {
-                  for (const item of actionable) {
-                    await runInstall(item.provider, item.action.kind, item.action.command);
-                  }
-                })();
-              }}
-            >
-              <Download size={13} aria-hidden="true" />
-              Update all ({actionable.length})
-            </button>
-          ) : null}
-          <button type="button" className="cred-btn" onClick={() => runCheck()} disabled={checking}>
-            <RefreshCw size={14} className={checking ? 'harness-recheck-spin' : undefined} aria-hidden />
-            {checking ? 'Checking…' : 'Check status'}
-          </button>
-        </div>
-      </div>
-      <div className="opener-list" data-testid="harness-status-list">
-        {status.length === 0 ? (
-          <p className="settings-help">Checking…</p>
-        ) : (
-          sortedStatus.map((h) => {
-            const provider = providerCliKeyForFamily(h.family);
-            const row = provider
-              ? orderedProviderCliRows(cliStatus).find((entry) => entry.provider === provider)
-              : undefined;
-            const key = thisMachineId && provider ? `${thisMachineId}:${provider}` : null;
-            return (
-              <HarnessRow
-                key={h.family}
-                h={h}
-                config={config}
-                onConfigDraft={onConfigDraft}
-                onUpdate={onUpdate}
-                mode="status"
-                login={harnessLoginStatus(h.family, modelCatalog, h.installed)}
-                cliAction={row?.status.installAction ?? null}
-                cliBusy={key !== null && busyKey === key}
-                cliDisabled={busyKey !== null || !thisMachineId}
-                cliLog={key ? installLogs[key] : undefined}
-                cliError={key ? installErrors[key] : undefined}
-                cliHint={row?.status.updateUnavailableReason ?? undefined}
-                onCliInstall={
-                  row?.status.installAction && provider
-                    ? () => void runInstall(
-                      provider,
-                      row.status.installAction!.kind,
-                      row.status.installAction!.command
-                    )
-                    : undefined
-                }
-              />
-            );
-          })
-        )}
-      </div>
-      <div className="harness-setup-footer">
-        <span>Check status refreshes installation, sign-in, and model availability.</span>
-        <a href={getSettingsRoutePath('machines')} data-testid="harness-machines-link">
-          Manage machines <ChevronRight size={13} aria-hidden />
-        </a>
-      </div>
-    </Section>
-
     <Section searchId="harness.model-lists" anchorId="harness-models" title="Model lists" flush>
       <ModelRefreshControl />
     </Section>
 
-    <Section searchId="harness.session-settings" anchorId="harness-session" title="Session settings" flush>
-      <HarnessSettingsTabs pane={pane} onPaneChange={setPane} />
-      <div
-        role="tabpanel"
-        id="settings-anchor-harness-thread"
-        aria-labelledby="harness-tab-thread"
-        hidden={pane !== 'thread'}
-        data-testid="harness-thread-pane"
-      >
-        <p className="settings-help settings-section-help">
-          Browse models for Thread conversations. Choose a model in the conversation
-          composer; open a harness here to search its models or refresh availability.
-        </p>
-        <ThreadProvidersPanel />
-      </div>
-      <div
-        role="tabpanel"
-        id="settings-anchor-harness-legacy"
-        aria-labelledby="harness-tab-legacy"
-        hidden={pane !== 'legacy'}
-        data-testid="harness-legacy-pane"
-      >
-        <p className="settings-help settings-section-help">
-          Set defaults for agents running in a terminal. Project, Persona, and
-          Agent settings can override these defaults.
-        </p>
-        <div className="opener-list" data-testid="harness-legacy-list">
-          {settingsRows}
-        </div>
-        <RemoteMachineDefaultsList />
-      </div>
-    </Section>
-    </div>
-  );
-}
-
-export function HarnessSettingsTabs({
-  pane,
-  onPaneChange
-}: {
-  pane: 'thread' | 'legacy';
-  onPaneChange: (next: 'thread' | 'legacy') => void;
-}) {
-  const tabs = [
-    { id: 'thread', anchorId: 'harness-thread', label: 'Modern', description: 'Conversations & models', Icon: MessageSquare },
-    { id: 'legacy', anchorId: 'harness-legacy', label: 'CLI Agent', description: 'Terminal launch defaults', Icon: Terminal }
-  ] as const;
-  return (
-    <div className="harness-session-tabs" role="tablist" aria-label="Harness settings">
-      {tabs.map(({ id, anchorId, label, description, Icon }, index) => (
-        <button
-          key={id}
-          type="button"
-          role="tab"
-          id={`harness-tab-${id}`}
-          aria-label={label}
-          aria-controls={`settings-anchor-${anchorId}`}
-          aria-selected={pane === id}
-          tabIndex={pane === id ? 0 : -1}
-          className={`harness-session-tab${pane === id ? ' is-active' : ''}`}
-          onClick={() => onPaneChange(id)}
-          onKeyDown={(event) => {
-            const next = event.key === 'Home' ? 0 : event.key === 'End' ? 1
-              : event.key === 'ArrowRight' || event.key === 'ArrowLeft' ? 1 - index : null;
-            if (next === null) return;
-            event.preventDefault();
-            onPaneChange(tabs[next].id);
-            (event.currentTarget.parentElement?.children[next] as HTMLElement | undefined)?.focus();
-          }}
-        >
-          <Icon size={18} aria-hidden />
-          <span><span className="harness-session-tab-label">{label}</span>
-            <span className="harness-session-tab-description">{description}</span></span>
-        </button>
-      ))}
+    <MachineEnvironmentSettings />
+    <RemoteMachineDefaultsList />
     </div>
   );
 }

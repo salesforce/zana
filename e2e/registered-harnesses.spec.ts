@@ -17,24 +17,26 @@ test('registered harnesses use the real provider registry and link to their owni
         return response.json();
       });
       expect(registered.providers.length).toBeGreaterThan(0);
-      await expect(list.locator(':scope > .registered-harness')).toHaveCount(registered.providers.length, { timeout: 1_000 });
-      const names = [...registered.providers].sort((a, b) => a.displayName.localeCompare(b.displayName) || a.id.localeCompare(b.id)).map(provider => provider.displayName);
-      await expect(list.locator('h4')).toHaveText(names, { timeout: 1_000 });
+      for (const provider of registered.providers) {
+        const row = list.locator(`[data-provider-id="${provider.id}"]`);
+        await expect(row).toHaveCount(1, { timeout: 1_000 });
+        await expect(row.locator('h4')).toHaveText(provider.displayName);
+      }
     }).toPass({ timeout: 60_000 });
     return registered!;
   };
   const registered = await expectLiveRegistry();
   const first = [...registered.providers].sort((a, b) => a.displayName.localeCompare(b.displayName))[0];
   const row = list.locator(`[data-provider-id="${first.id}"]`);
-  await row.getByRole('button', { name: `Browse ${first.displayName} models` }).click();
+  await row.getByRole('button', { name: `Configure ${first.displayName}` }).click();
   await expect(row.getByText(`${first.displayName} models`, { exact: true })).toBeVisible();
   await expect(row.getByRole('button', { name: 'Reload models' })).toBeVisible();
-  await row.getByRole('button', { name: `Browse ${first.displayName} models` }).click();
-  await win.getByRole('searchbox', { name: 'Search installed harnesses' }).fill('no-matching-provider');
+  await row.getByRole('button', { name: `Configure ${first.displayName}` }).click();
+  await win.getByRole('searchbox', { name: 'Search harnesses' }).fill('no-matching-provider');
   await expect(list).toContainText('No harnesses match your search.');
-  await win.getByRole('searchbox', { name: 'Search installed harnesses' }).fill('');
+  await win.getByRole('searchbox', { name: 'Search harnesses' }).fill('');
   await expectLiveRegistry();
-  await win.getByRole('searchbox', { name: 'Search installed harnesses' }).blur();
+  await win.getByRole('searchbox', { name: 'Search harnesses' }).blur();
   // Hidden Electron windows throttle animation frames. Wake the native compositor
   // before capturing the reset search state.
   await captureElectronScreenshot(app.electron, win, testInfo.outputPath('reset-search.png'));

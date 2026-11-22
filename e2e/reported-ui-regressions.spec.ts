@@ -1,8 +1,13 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect, type AppHandle } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
-test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
+test.use({
+  launchEnv: { ZCC_FAKE_PROVIDER: '1' },
+  // The resize and fullscreen cases exercise the inspector opened with thread tabs off.
+  initialConfig: { threadTabsEnabled: false }
+});
 
 async function createThread(app: AppHandle, title: string) {
   const path = join(app.home, 'preview-project');
@@ -190,12 +195,12 @@ test('expanded model catalogs scroll without clipping rows (#183)', async ({ app
   });
   await window.getByRole('link', { name: 'Settings' }).click();
   await window.locator('.settings-section-item').filter({ hasText: 'AI Harness' }).click();
-  const row = window.getByTestId('thread-provider-catalog').locator('.opener-row').filter({ hasText: 'Cursor' });
-  await row.getByRole('button', { name: 'Models for Cursor' }).click();
-  await row.getByRole('button', { name: /Load|Reload/, exact: true }).click();
+  const row = window.getByTestId('registered-harness-list').locator('[data-provider-id="acp-cursor"]');
+  await row.getByRole('button', { name: 'Configure Cursor' }).click();
+  await row.getByRole('button', { name: 'Reload models', exact: true }).click();
   await expect(row).toContainText('125 models');
-  const list = row.locator('.thread-provider-models');
-  await expect(list.locator('li')).toHaveCount(13);
+  const list = row.locator('.registered-harness-models ul');
+  await expect(list.locator('li')).toHaveCount(12);
   for (const width of [1280, 900]) {
     await window.setViewportSize({ width, height: 900 });
     const dimensions = await list.evaluate((node) => ({
@@ -205,11 +210,11 @@ test('expanded model catalogs scroll without clipping rows (#183)', async ({ app
         lineHeight: Number.parseFloat(getComputedStyle(child).lineHeight)
       }))
     }));
-    expect(dimensions.height).toBeLessThanOrEqual(168);
+    expect(dimensions.height).toBeLessThanOrEqual(280);
     expect(dimensions.scrollHeight).toBeGreaterThan(dimensions.height);
     for (const row of dimensions.rows) expect(row.height).toBeGreaterThanOrEqual(row.lineHeight - 0.1);
     await list.locator('li').last().scrollIntoViewIfNeeded();
     await expect(list.locator('li').last()).toBeInViewport();
   }
-  await window.screenshot({ path: testInfo.outputPath('model-list.png') });
+  await captureElectronScreenshot(app.electron, window, testInfo.outputPath('model-list.png'));
 });
