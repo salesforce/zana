@@ -68,6 +68,20 @@ describe('plugin settings provider', () => {
     expect(entries.find((e) => e.id === 'plugin.p1.empty')!.value).toBeUndefined();
   });
 
+  it('finds an experimental switch even while the plugin is off', async () => {
+    const plugin = { ...app('sample', 'Sample', false), experimental: true as const };
+    const a = api([plugin]);
+    await prefetchPluginSettings(a);
+    const toggle = () => pluginSettingsSearchProvider(config).find(entry => entry.id === 'experimental.plugin.sample');
+    expect(toggle()).toMatchObject({ section: 'experimental', anchor: 'experimental-features', label: 'Sample' });
+    expect(toggle()?.value?.(config)).toBe('Off');
+    expect(a.getSettings).not.toHaveBeenCalled();
+    await prefetchPluginSettings(api([{ ...plugin, enabled: true }]));
+    expect(toggle()?.value?.(config)).toBe('On');
+    await prefetchPluginSettings(api([]));
+    expect(toggle()).toBeUndefined();
+  });
+
   it('never reads or stores a secret descriptor value', async () => {
     await prefetchPluginSettings(api());
     const entries = pluginSettingsSearchProvider(config);

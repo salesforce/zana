@@ -167,12 +167,15 @@ describe('bundled plugin registry invariants', () => {
     }
   });
 
-  it('installs Bots and Design Docs enabled by default and leaves independent plugins optional', () => {
+  it('offers Bots as an opt-in experiment and keeps Design Docs enabled', () => {
     expect(BUILTIN_PLUGINS.some(plugin => plugin.pluginId === 'salesforce')).toBe(false);
+    expect(BUILTIN_PLUGINS.find(plugin => plugin.pluginId === 'bots')).toMatchObject({
+      autoInstall: true, defaultEnabled: false, experimental: true
+    });
+    expect(BUILTIN_PLUGINS.find(plugin => plugin.pluginId === 'design-docs')).toMatchObject({
+      autoInstall: true, defaultEnabled: true
+    });
     for (const pluginId of ['bots', 'design-docs']) {
-      expect(BUILTIN_PLUGINS.find(plugin => plugin.pluginId === pluginId)).toMatchObject({
-        autoInstall: true, defaultEnabled: true
-      });
       expect(OFFICIAL_PLUGINS.some(plugin => plugin.pluginId === pluginId)).toBe(false);
     }
   });

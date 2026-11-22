@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures/app.js';
 import { makeFakeAgentBinary } from './sdk/harness.js';
 
@@ -9,6 +10,33 @@ const exec = promisify(execFile);
 const harness = makeFakeAgentBinary({ profile: 'claude', sequence: 'work-then-idle' });
 test.afterAll(() => harness.cleanup());
 test.use({ initialConfig: { sponsorPromptDismissed: true, claudeBinary: harness.path, defaultHarness: 'claude', defaultThreadProviderId: 'fake' }, launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
+
+async function route(page: Page, path: string) {
+  await page.evaluate(path => {
+    history.pushState({}, '', path);
+    dispatchEvent(new PopStateEvent('popstate'));
+  }, path);
+}
+
+async function openBotsSwitch(page: Page) {
+  await route(page, '/settings/experimental');
+  return page.getByRole('switch', { name: 'Bots', exact: true });
+}
+
+test.beforeEach(async ({ app }) => {
+  const page = app.window;
+  const nav = page.locator('.nav-item').filter({ hasText: /^Bots$/ }).first();
+  const toggle = await openBotsSwitch(page);
+  await expect(toggle).toHaveAttribute('aria-checked', 'false');
+  await page.getByRole('link', { name: 'Back to app' }).click();
+  await expect(nav).toHaveCount(0);
+  await openBotsSwitch(page);
+  await toggle.click();
+  await expect(toggle).toBeEnabled();
+  await expect(toggle).toHaveAttribute('aria-checked', 'true');
+  await page.getByRole('link', { name: 'Back to app' }).click();
+  await expect(nav).toBeVisible();
+});
 
 test('Bots shows routines, tagged memory, and host settings controls in the installed panel', async ({ app, home }, testInfo) => {
   test.setTimeout(180_000);
@@ -104,6 +132,25 @@ test('Bots shows routines, tagged memory, and host settings controls in the inst
   await panel.getByLabel('Name', {exact:true}).fill('Scout II');
   await panel.getByRole('button', {name:'Save',exact:true}).click();
   await expect(panel.getByRole('heading',{name:'Scout II'})).toBeVisible();
+
+  const toggle = await openBotsSwitch(app.window);
+  await expect(toggle).toHaveAttribute('aria-checked', 'true');
+  await toggle.click();
+  const nav = app.window.locator('.nav-item').filter({ hasText: /^Bots$/ }).first();
+  await expect(toggle).toBeEnabled();
+  await app.window.reload();
+  await expect(toggle).toHaveAttribute('aria-checked', 'false');
+  await app.window.getByRole('link', { name: 'Back to app' }).click();
+  await expect(nav).toHaveCount(0);
+  await openBotsSwitch(app.window);
+  await toggle.click();
+  await expect(toggle).toBeEnabled();
+  await app.window.getByRole('link', { name: 'Back to app' }).click();
+  await expect(nav).toBeVisible();
+  await nav.click();
+  await expect(panel.getByRole('heading', { name: 'Scout II' })).toBeVisible();
+  await expect.poll(readPersonality).toBe('**Triage releases**');
+  await expect(panel.getByText('Digest', { exact: true }).first()).toBeVisible();
 });
 
 test('Basic sidebar opens bot conversations and leaves Advanced navigation intact', async ({ app, home }) => {

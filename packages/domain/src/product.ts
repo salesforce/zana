@@ -6439,6 +6439,8 @@ export interface PluginAppEntry {
   sourceKind?: 'path' | 'git' | 'npm' | 'builtin';
   /** Display grouping derived from declared plugin capabilities, including disabled installs. */
   collection?: 'coding-agents';
+  /** Offer this plugin’s enable switch in Experimental settings. */
+  experimental?: true;
   status: 'running' | 'disabled' | 'degraded' | 'needs-configuration';
   statusDetail?: string | null;
   /** Host-derived recovery choices; local paths and replacement sources remain private. */

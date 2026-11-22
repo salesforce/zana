@@ -362,6 +362,8 @@ describe('PluginAppSnapshotSchema peers flag', () => {
 
 it('keeps optional settings discovery metadata across the strict runtime boundary', () => {
   const row = { id: 'sample', name: 'Sample', description: '', icon: 'Puzzle', enabled: true, provenance: 'direct', status: 'running', appUrl: null };
+  expect(PluginAppSnapshotSchema.parse({ ...row, experimental: true })).toHaveProperty('experimental', true);
+  expect(PluginAppSnapshotSchema.safeParse({ ...row, experimental: 'yes' }).success).toBe(false);
   expect(PluginAppSnapshotSchema.parse(row)).not.toHaveProperty('hasSettings');
   for (const hasSettings of [true, false]) expect(PluginAppSnapshotSchema.parse({ ...row, hasSettings })).toHaveProperty('hasSettings', hasSettings);
   expect(PluginAppSnapshotSchema.safeParse({ ...row, hasSettings: 'yes' }).success).toBe(false);

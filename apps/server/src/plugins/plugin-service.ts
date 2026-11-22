@@ -363,6 +363,7 @@ export function toPluginAppSnapshot(row: PluginUiSnapshot) {
     description: row.description,
     icon: row.icon,
     enabled: row.enabled,
+    ...(bundledPluginById(row.id)?.experimental ? { experimental: true as const } : {}),
     provenance: row.provenance,
     sourceKind: row.sourceKind,
     ...(row.extra.threadProvider === true || row.extra.ptyHarness === true

@@ -150,6 +150,8 @@ describe('PluginService', () => {
     await service.disable('custom-agent');
     const snapshot = service.snapshot()[0]!;
     expect(toPluginAppSnapshot(snapshot)).toMatchObject({ enabled: false, collection: 'coding-agents' });
+    expect(toPluginAppSnapshot(snapshot)).not.toHaveProperty('experimental');
+    expect(toPluginAppSnapshot({ ...snapshot, id: 'bots', enabled: false })).toHaveProperty('experimental', true);
     expect(toPluginAppSnapshot(snapshot)).not.toHaveProperty('extra');
     expect(toPluginAppSnapshot({ ...snapshot, extra: { ptyHarness: true } })).toHaveProperty('collection', 'coding-agents');
     expect(toPluginAppSnapshot({ ...snapshot, extra: { threadProvider: false, ptyHarness: 'true' } })).not.toHaveProperty('collection');

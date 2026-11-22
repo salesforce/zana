@@ -39,11 +39,13 @@ interface CachedPlugin {
 }
 
 let cache = new Map<string, CachedPlugin>();
+let experimentalPlugins: Pick<PluginAppEntry, 'id' | 'name' | 'description' | 'enabled'>[] = [];
 let inflight: Promise<void> | null = null;
 
 /** Test hook: forget everything fetched this session. */
 export function resetPluginSettingsCache(): void {
   cache = new Map();
+  experimentalPlugins = [];
   inflight = null;
 }
 
@@ -86,20 +88,23 @@ export function prefetchPluginSettings(
   inflight = (async () => {
     let apps: PluginAppEntry[];
     try {
-      apps = (await api.list()).filter((app) => app.enabled);
+      apps = await api.list();
     } catch (error) {
       warnSettingsSearchOnce('plugins:list', 'listing plugins failed; plugin settings stay as last fetched', error);
       return;
     }
-    let changed = false;
-    const enabled = new Set(apps.map((app) => app.id));
+    const experiments = apps.filter(app => app.experimental).map(({ id, name, description, enabled }) => ({ id, name, description, enabled }));
+    let changed = JSON.stringify(experiments) !== JSON.stringify(experimentalPlugins);
+    experimentalPlugins = experiments;
+    const active = apps.filter(app => app.enabled);
+    const enabled = new Set(active.map((app) => app.id));
     for (const id of [...cache.keys()]) {
       if (!enabled.has(id)) {
         cache.delete(id);
         changed = true;
       }
     }
-    await inBatches(apps, async (app) => {
+    await inBatches(active, async (app) => {
       const prior = cache.get(app.id);
       if (prior && now() - prior.fetchedAt < PLUGIN_VALUES_TTL_MS) return;
       try {
@@ -137,7 +142,16 @@ function sectionLabel(name: string): string {
 
 /** Runtime provider: cached descriptors plus live `settingsSection` slot registrations. */
 export const pluginSettingsSearchProvider: SettingsSearchProvider = () => {
-  const out: DeepLinkedSettingsEntry[] = [];
+  const out: SettingsSearchEntry[] = experimentalPlugins.map(plugin => ({
+    id: `experimental.plugin.${plugin.id}`,
+    section: 'experimental',
+    anchor: 'experimental-features',
+    label: plugin.name,
+    help: plugin.description,
+    kind: 'setting',
+    keywords: ['experimental', 'plugin'],
+    value: () => plugin.enabled ? 'On' : 'Off'
+  }));
   for (const [pluginId, plugin] of cache) {
     for (const [key, descriptor] of Object.entries(plugin.descriptors)) {
       const entry: DeepLinkedSettingsEntry = {
