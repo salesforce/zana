@@ -152,7 +152,40 @@ it('wakes the bot and recolors it from settings', async () => {
   fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
   expect(screen.queryByLabelText(/emoji/i)).toBeNull();
   fireEvent.click(screen.getByRole('radio', { name: 'Red' }));
+  expect(state.rpc.call).not.toHaveBeenCalledWith('update', expect.anything());
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel', exact: true }));
+  expect(screen.getByRole('radio', { name: 'Green' }).getAttribute('aria-checked')).toBe('true');
+  expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+  fireEvent.click(screen.getByRole('radio', { name: 'Red' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   await waitFor(() => expect(state.rpc.call).toHaveBeenCalledWith('update', { bot: 'scout', patch: { color: '#ef4444' } }));
+});
+
+it('restores the latest saved settings on cancel and retains edits during a failed save', async () => {
+  let bot = { ...scout, color: '#328f7e' };
+  let fail: (error: Error) => void = () => {};
+  route({ list: () => [bot], update: () => new Promise((_resolve, reject) => { fail = reject; }) });
+  render(<BotsPanel />);
+  fireEvent.click(await screen.findByRole('tab', { name: 'Settings' }));
+  const name = screen.getByLabelText('Name', { exact: true });
+  expect(screen.getByRole('radio', { name: 'Saved color #328f7e' }).getAttribute('aria-checked')).toBe('true');
+  expect(screen.queryByText('No changes')).toBeNull();
+  fireEvent.change(name, { target: { value: '   ' } });
+  expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.change(name, { target: { value: 'Edited' } });
+  bot = { ...bot, name: 'Renamed in chat' };
+  state.realtime[0]!();
+  await screen.findByRole('heading', { name: 'Renamed in chat' });
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  expect((screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(true);
+  expect(name.closest('fieldset')?.disabled).toBe(true);
+  fail(new Error('Could not save'));
+  expect(await screen.findByRole('alert')).toBeTruthy();
+  expect((name as HTMLInputElement).value).toBe('Edited');
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect((name as HTMLInputElement).value).toBe('Renamed in chat');
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
 });
 
 it('hides wake while working and names provider and project in the chips', async () => {
@@ -280,7 +313,7 @@ it('saves only changed settings, resyncs untouched fields and deletes the bot', 
   fireEvent.click(await screen.findByRole('tab', { name: 'Settings' }));
   const save = () => screen.getByText('Save') as HTMLButtonElement;
   await screen.findByDisplayValue('Terse');
-  expect(save().disabled).toBe(true);
+  expect(screen.queryByRole('button', { name: 'Save', exact: true })).toBeNull();
   fireEvent.change(screen.getByDisplayValue('Terse'), { target: { value: 'Chatty' } });
   // Someone renames the bot elsewhere: the untouched name field follows, the edited personality is kept.
   bots = [{ ...scout, name: 'Scout II', personality: 'Remote edit' }, bots[1]];
@@ -295,7 +328,7 @@ it('saves only changed settings, resyncs untouched fields and deletes the bot', 
   fireEvent.click(save());
   expect((await screen.findByRole('alert')).textContent).toBe('nope');
   fireEvent.change(screen.getByDisplayValue('Calm'), { target: { value: 'Remote edit' } });
-  expect(save().disabled).toBe(true);
+  expect(screen.queryByRole('button', { name: 'Save', exact: true })).toBeNull();
 
   fireEvent.click(screen.getByText('Delete bot…'));
   fireEvent.click(within(screen.getByRole('group', { name: 'Confirm delete' })).getByText('Cancel'));

@@ -933,8 +933,14 @@ button.bt-row:hover{background:var(--bg-hover)}
 .bt-topline{border-bottom:1px solid var(--border);padding:9px 24px;color:var(--text-muted);font-size:12px}
 .bt-meta{font-size:12px;color:var(--text-muted)}
 .bt-settings-panel{max-width:720px}
-.bt-settings-panel .bt-card{border:0}
-.bt-settings-panel .bt-row{padding:12px 0}
+.bt-settings-panel .bt-row{padding:10px 12px}
+.bt-settings-panel fieldset{border:0;min-width:0;padding:0;margin:0}
+.bt-savebar{position:sticky;bottom:0;z-index:2;display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;
+  margin-top:16px;padding:10px 12px;border:1px solid var(--border);border-radius:9px;background:var(--bg-panel);box-shadow:0 2px 12px rgb(0 0 0 / .12)}
+.bt-savebar .bt-note,.bt-savebar .bt-alert{margin:0}
+.bt-savebar-message{flex:1 1 120px;min-width:0;font-size:12px;color:var(--text-muted)}
+.bt-savebar-actions{display:flex;gap:6px}
+.bt-settings-panel .bt-sec+.bt-sec{margin-top:20px}
 .bt-settings-panel .bt-row :is(input,select,textarea,.bt-picker){width:min(55%,310px);box-sizing:border-box}
 .bt-root .bt-field :is(input,select,textarea),.bt-start textarea{box-sizing:border-box}
 .bt-sec .bt-memory{padding:10px 14px}
@@ -1037,11 +1043,14 @@ function useAction(botId) {
       setBusy(false);
     }
   }, [rpc, botId]);
-  const feedback = /* @__PURE__ */ jsxs(Fragment2, { children: [
+  const feedback = error || notice ? /* @__PURE__ */ jsxs(Fragment2, { children: [
     error && /* @__PURE__ */ jsx("span", { role: "alert", className: "bt-alert", style: { display: "block" }, children: error }),
     notice && /* @__PURE__ */ jsx("span", { role: "status", className: "bt-note", style: { display: "block" }, children: notice })
-  ] });
-  return { run, busy, feedback, clearError: () => setError("") };
+  ] }) : null;
+  return { run, busy, feedback, clearFeedback: () => {
+    setError("");
+    setNotice("");
+  } };
 }
 function useBotList() {
   const rpc = useRpc();
@@ -1364,9 +1373,10 @@ function CreateBot(props) {
     ] })
   ] });
 }
-function ColorPicker({ value, disabled, large, onChange }) {
-  const current = BOT_COLORS.indexOf(value);
-  return /* @__PURE__ */ jsx("div", { role: "radiogroup", "aria-label": "Color", className: large ? "bt-colors is-lg" : "bt-colors", children: BOT_COLORS.map((color, index) => {
+function ColorPicker({ value, disabled, large, savedColor, onChange }) {
+  const colors = savedColor && !BOT_COLORS.some((color) => color === savedColor) ? [...BOT_COLORS, savedColor] : BOT_COLORS;
+  const current = colors.indexOf(value);
+  return /* @__PURE__ */ jsx("div", { role: "radiogroup", "aria-label": "Color", className: large ? "bt-colors is-lg" : "bt-colors", children: colors.map((color, index) => {
     const checked = color === value;
     return /* @__PURE__ */ jsx(
       "button",
@@ -1374,11 +1384,11 @@ function ColorPicker({ value, disabled, large, onChange }) {
         type: "button",
         role: "radio",
         "aria-checked": checked,
-        "aria-label": COLOR_NAMES[index],
+        "aria-label": COLOR_NAMES[index] ?? `Saved color ${color}`,
         disabled,
         tabIndex: checked || current < 0 && index === 0 ? 0 : -1,
         onClick: () => onChange(color),
-        onKeyDown: (event) => arrowNav(event, BOT_COLORS.length, index, (next) => onChange(BOT_COLORS[next])),
+        onKeyDown: (event) => arrowNav(event, colors.length, index, (next) => onChange(colors[next])),
         style: { background: color }
       },
       color
@@ -1437,6 +1447,10 @@ var profileCss = `
 .bt-profile .bt-title{justify-content:center}
 .bt-profile .bt-hero .bt-personality{display:block;white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0 0}
 .bt-profile .bt-tabs{justify-content:center}
+.bt-profile .bt-hero.is-editing{flex-direction:row;text-align:left;gap:12px}
+.bt-profile .bt-hero.is-editing .bt-title{justify-content:flex-start}
+.bt-profile .bt-hero.is-editing h2{font-size:18px}
+.bt-profile .bt-settings-panel{margin-inline:auto}
 `;
 function BotThreadTitle({ threadId, title, openPanel }) {
   const { bot } = useThreadBot(threadId, false);
@@ -1495,8 +1509,8 @@ function BotPage({ bot, onDeleted, profile = false, active = true }) {
       bot.name
     ] }),
     /* @__PURE__ */ jsxs("div", { className: "bt-inner", children: [
-      /* @__PURE__ */ jsxs("header", { className: "bt-hero", children: [
-        /* @__PURE__ */ jsx(BotAvatar, { bot, size: profile ? 58 : 44, live: active }),
+      /* @__PURE__ */ jsxs("header", { className: profile && tab === "settings" ? "bt-hero is-editing" : "bt-hero", children: [
+        /* @__PURE__ */ jsx(BotAvatar, { bot, size: profile && tab !== "settings" ? 58 : 44, live: active }),
         /* @__PURE__ */ jsxs("div", { className: "bt-hero-text", children: [
           /* @__PURE__ */ jsxs("div", { className: "bt-title", children: [
             /* @__PURE__ */ jsx("h2", { children: bot.name }),
@@ -1506,7 +1520,7 @@ function BotPage({ bot, onDeleted, profile = false, active = true }) {
               bot.activeJobs ? ` \xB7 ${bot.activeJobs} background job${bot.activeJobs === 1 ? "" : "s"}` : ""
             ] })
           ] }),
-          profile && bot.personality && /* @__PURE__ */ jsx("p", { className: "bt-personality", children: bot.personality }),
+          profile && tab !== "settings" && bot.personality && /* @__PURE__ */ jsx("p", { className: "bt-personality", children: bot.personality }),
           /* @__PURE__ */ jsxs("span", { className: "bt-meta", children: [
             projectName,
             " \xB7 ",
@@ -1739,7 +1753,7 @@ function AddRoutine({ bot, onDone }) {
   const cron = cronFor(freq, time, day, custom, minute);
   const edit = (setter) => (e) => {
     setter(e.target.value);
-    action.clearError();
+    action.clearFeedback();
   };
   const submit = async (event) => {
     event.preventDefault();
@@ -1844,11 +1858,11 @@ function withCurrent(options, current) {
   return current && !options.some((row) => row.id === current) ? [...options, { id: current, name: `${current} (unavailable)` }] : options;
 }
 function settingsOf(bot) {
-  return { name: bot.name, personality: bot.personality, projectId: bot.projectId, providerId: bot.providerId ?? "", model: bot.model ?? "" };
+  return { color: bot.color ?? defaultBotColor(bot.id), name: bot.name, personality: bot.personality, projectId: bot.projectId, providerId: bot.providerId ?? "", model: bot.model ?? "" };
 }
 function Settings({ bot, onDeleted }) {
   const action = useAction(bot.id);
-  const color = useAction(bot.id);
+  const formId = useId();
   const saved = settingsOf(bot);
   const [form, setForm] = useState(saved);
   const [dirty, setDirty] = useState(/* @__PURE__ */ new Set());
@@ -1865,17 +1879,30 @@ function Settings({ bot, onDeleted }) {
   }, [savedKey]);
   const update = (patch) => {
     setForm((current) => ({ ...current, ...patch }));
-    setDirty((current) => /* @__PURE__ */ new Set([...current, ...Object.keys(patch)]));
-    action.clearError();
+    setDirty((current) => {
+      const next = new Set(current);
+      for (const key of Object.keys(patch)) {
+        if (patch[key] === saved[key]) next.delete(key);
+        else next.add(key);
+      }
+      return next;
+    });
+    action.clearFeedback();
   };
   const set = (key) => (e) => update({ [key]: e.target.value });
   const changed = [...dirty].filter((key) => form[key] !== saved[key]);
+  const cancel = () => {
+    setForm(saved);
+    setDirty(/* @__PURE__ */ new Set());
+    setEditingModel(false);
+    action.clearFeedback();
+  };
   const save = async (event) => {
     event.preventDefault();
-    if (changed.length === 0) return;
+    if (action.busy || changed.length === 0 || !form.name.trim()) return;
     const patch = Object.fromEntries(changed.map((key) => [key, form[key]]));
     const runtime = changed.some((key) => key === "providerId" || key === "model" || key === "projectId");
-    const done = runtime ? "Saved. Personality applies from the next turn; provider, model and project apply when a new main thread is created." : "Saved. Applies from the next turn.";
+    const done = runtime ? "Saved. Runtime settings apply when a new main thread is created." : changed.includes("personality") ? "Saved. Applies from the next turn." : "Changes saved.";
     if (await action.run("update", { patch }, done)) setDirty(/* @__PURE__ */ new Set());
   };
   const data = catalog.data;
@@ -1883,21 +1910,11 @@ function Settings({ bot, onDeleted }) {
   const models = withCurrent((data?.models ?? []).map((id) => ({ id, name: id })), form.model);
   const projects = withCurrent(data?.projects ?? [], form.projectId);
   return /* @__PURE__ */ jsxs(Fragment2, { children: [
-    /* @__PURE__ */ jsxs("form", { className: "settings-field", onSubmit: (event) => void save(event), "aria-label": "Bot settings", children: [
+    /* @__PURE__ */ jsx("form", { id: formId, className: "settings-field", onSubmit: (event) => void save(event), "aria-label": "Bot settings", children: /* @__PURE__ */ jsxs("fieldset", { disabled: action.busy, children: [
       /* @__PURE__ */ jsxs(Section, { label: "Identity", children: [
         /* @__PURE__ */ jsxs("div", { className: "bt-row", children: [
-          /* @__PURE__ */ jsxs("span", { className: "bt-grow", children: [
-            "Color",
-            color.feedback
-          ] }),
-          /* @__PURE__ */ jsx(
-            ColorPicker,
-            {
-              value: bot.color ?? defaultBotColor(bot.id),
-              disabled: color.busy,
-              onChange: (next) => void color.run("update", { patch: { color: next } })
-            }
-          )
+          /* @__PURE__ */ jsx("span", { className: "bt-grow", children: "Color" }),
+          /* @__PURE__ */ jsx(ColorPicker, { value: form.color, savedColor: saved.color, onChange: (color) => update({ color }) })
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "bt-row", children: [
           /* @__PURE__ */ jsx("span", { className: "bt-grow", children: "Name" }),
@@ -1989,14 +2006,16 @@ function Settings({ bot, onDeleted }) {
           /* @__PURE__ */ jsx("span", { className: "bt-grow", children: "Access" }),
           /* @__PURE__ */ jsx("span", { className: "bt-chip is-warn", children: "Full \xB7 runs without asking" })
         ] })
-      ] }),
-      action.feedback,
-      /* @__PURE__ */ jsxs("div", { style: { display: "flex", gap: 8, marginTop: 14, alignItems: "center" }, children: [
-        /* @__PURE__ */ jsx("button", { type: "submit", className: "bt-btn is-primary", disabled: action.busy || changed.length === 0, children: action.busy ? "Saving\u2026" : "Save" }),
-        changed.length === 0 && /* @__PURE__ */ jsx("span", { className: "bt-note", style: { margin: 0 }, children: "No changes" })
       ] })
-    ] }),
-    /* @__PURE__ */ jsx(DeleteBot, { bot, onDeleted })
+    ] }) }),
+    /* @__PURE__ */ jsx(DeleteBot, { bot, onDeleted }),
+    (changed.length > 0 || action.busy || action.feedback) && /* @__PURE__ */ jsxs("div", { className: "bt-savebar", children: [
+      /* @__PURE__ */ jsx("div", { className: "bt-savebar-message", children: action.feedback ?? (action.busy ? "Saving changes\u2026" : "Unsaved changes") }),
+      (changed.length > 0 || action.busy) && /* @__PURE__ */ jsxs("div", { className: "bt-savebar-actions", children: [
+        /* @__PURE__ */ jsx("button", { type: "button", className: "bt-btn is-ghost", disabled: action.busy, onClick: cancel, children: "Cancel" }),
+        /* @__PURE__ */ jsx("button", { type: "submit", form: formId, className: "bt-btn is-primary", disabled: action.busy || !form.name.trim(), children: "Save" })
+      ] })
+    ] })
   ] });
 }
 function DeleteBot({ bot, onDeleted }) {

@@ -118,8 +118,14 @@ button.bt-row:hover{background:var(--bg-hover)}
 .bt-topline{border-bottom:1px solid var(--border);padding:9px 24px;color:var(--text-muted);font-size:12px}
 .bt-meta{font-size:12px;color:var(--text-muted)}
 .bt-settings-panel{max-width:720px}
-.bt-settings-panel .bt-card{border:0}
-.bt-settings-panel .bt-row{padding:12px 0}
+.bt-settings-panel .bt-row{padding:10px 12px}
+.bt-settings-panel fieldset{border:0;min-width:0;padding:0;margin:0}
+.bt-savebar{position:sticky;bottom:0;z-index:2;display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;
+  margin-top:16px;padding:10px 12px;border:1px solid var(--border);border-radius:9px;background:var(--bg-panel);box-shadow:0 2px 12px rgb(0 0 0 / .12)}
+.bt-savebar .bt-note,.bt-savebar .bt-alert{margin:0}
+.bt-savebar-message{flex:1 1 120px;min-width:0;font-size:12px;color:var(--text-muted)}
+.bt-savebar-actions{display:flex;gap:6px}
+.bt-settings-panel .bt-sec+.bt-sec{margin-top:20px}
 .bt-settings-panel .bt-row :is(input,select,textarea,.bt-picker){width:min(55%,310px);box-sizing:border-box}
 .bt-root .bt-field :is(input,select,textarea),.bt-start textarea{box-sizing:border-box}
 .bt-sec .bt-memory{padding:10px 14px}
@@ -243,13 +249,13 @@ function useAction(botId: string) {
       setBusy(false);
     }
   }, [rpc, botId]);
-  const feedback = (
+  const feedback = (error || notice) ? (
     <>
       {error && <span role="alert" className="bt-alert" style={{ display: 'block' }}>{error}</span>}
       {notice && <span role="status" className="bt-note" style={{ display: 'block' }}>{notice}</span>}
     </>
-  );
-  return { run, busy, feedback, clearError: () => setError('') };
+  ) : null;
+  return { run, busy, feedback, clearFeedback: () => { setError(''); setNotice(''); } };
 }
 
 function useBotList() {
@@ -518,17 +524,21 @@ function CreateBot(props: CreateBotProps & { canCancel: boolean }) {
   );
 }
 
-function ColorPicker({ value, disabled, large, onChange }: { value: string; disabled?: boolean; large?: boolean; onChange(color: string): void }) {
-  const current = BOT_COLORS.indexOf(value as (typeof BOT_COLORS)[number]);
+function ColorPicker({ value, disabled, large, savedColor, onChange }: {
+  value: string; disabled?: boolean; large?: boolean; savedColor?: string; onChange(color: string): void;
+}) {
+  const colors: readonly string[] = savedColor && !BOT_COLORS.some(color => color === savedColor)
+    ? [...BOT_COLORS, savedColor] : BOT_COLORS;
+  const current = colors.indexOf(value);
   return (
     <div role="radiogroup" aria-label="Color" className={large ? 'bt-colors is-lg' : 'bt-colors'}>
-      {BOT_COLORS.map((color, index) => {
+      {colors.map((color, index) => {
         const checked = color === value;
         return (
-          <button key={color} type="button" role="radio" aria-checked={checked} aria-label={COLOR_NAMES[index]} disabled={disabled}
+          <button key={color} type="button" role="radio" aria-checked={checked} aria-label={COLOR_NAMES[index] ?? `Saved color ${color}`} disabled={disabled}
             tabIndex={checked || (current < 0 && index === 0) ? 0 : -1}
             onClick={() => onChange(color)}
-            onKeyDown={(event) => arrowNav(event, BOT_COLORS.length, index, (next) => onChange(BOT_COLORS[next]!))}
+            onKeyDown={(event) => arrowNav(event, colors.length, index, (next) => onChange(colors[next]!))}
             style={{ background: color }} />
         );
       })}
@@ -598,6 +608,10 @@ const profileCss = `
 .bt-profile .bt-title{justify-content:center}
 .bt-profile .bt-hero .bt-personality{display:block;white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0 0}
 .bt-profile .bt-tabs{justify-content:center}
+.bt-profile .bt-hero.is-editing{flex-direction:row;text-align:left;gap:12px}
+.bt-profile .bt-hero.is-editing .bt-title{justify-content:flex-start}
+.bt-profile .bt-hero.is-editing h2{font-size:18px}
+.bt-profile .bt-settings-panel{margin-inline:auto}
 `;
 
 export function BotThreadTitle({ threadId, title, openPanel }: PluginOwnedThreadTitleProps) {
@@ -640,14 +654,14 @@ function BotPage({ bot, onDeleted, profile = false, active = true }: {
     <>
       {!profile && <div className="bt-topline">Bots <span aria-hidden="true">/</span> {bot.name}</div>}
       <div className="bt-inner">
-      <header className="bt-hero">
-        <BotAvatar bot={bot} size={profile ? 58 : 44} live={active} />
+      <header className={profile && tab === 'settings' ? 'bt-hero is-editing' : 'bt-hero'}>
+        <BotAvatar bot={bot} size={profile && tab !== 'settings' ? 58 : 44} live={active} />
         <div className="bt-hero-text">
           <div className="bt-title"><h2>{bot.name}</h2>
             <span className="bt-chip"><span className="bt-dot" data-state={state} />{STATE_LABEL[state]}
               {bot.activeJobs ? ` · ${bot.activeJobs} background job${bot.activeJobs === 1 ? '' : 's'}` : ''}</span>
           </div>
-          {profile && bot.personality && <p className="bt-personality">{bot.personality}</p>}
+          {profile && tab !== 'settings' && bot.personality && <p className="bt-personality">{bot.personality}</p>}
           <span className="bt-meta">{projectName} · <span className="bt-chip is-warn" title="Bots run without asking for approval">Full access</span></span>
         </div>
         {!profile && <div className="bt-actions">
@@ -832,7 +846,7 @@ function AddRoutine({ bot, onDone }: { bot: BotView; onDone(): void }) {
   const [day, setDay] = useState('1');
   const [custom, setCustom] = useState('0 9 * * 1-5');
   const cron = cronFor(freq, time, day, custom, minute);
-  const edit = (setter: (value: string) => void) => (e: { target: { value: string } }) => { setter(e.target.value); action.clearError(); };
+  const edit = (setter: (value: string) => void) => (e: { target: { value: string } }) => { setter(e.target.value); action.clearFeedback(); };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -908,15 +922,15 @@ function withCurrent(options: Array<{ id: string; name: string }>, current: stri
   return current && !options.some((row) => row.id === current) ? [...options, { id: current, name: `${current} (unavailable)` }] : options;
 }
 
-type SettingsForm = { name: string; personality: string; projectId: string; providerId: string; model: string };
+type SettingsForm = { color: string; name: string; personality: string; projectId: string; providerId: string; model: string };
 
 function settingsOf(bot: BotView): SettingsForm {
-  return { name: bot.name, personality: bot.personality, projectId: bot.projectId, providerId: bot.providerId ?? '', model: bot.model ?? '' };
+  return { color: bot.color ?? defaultBotColor(bot.id), name: bot.name, personality: bot.personality, projectId: bot.projectId, providerId: bot.providerId ?? '', model: bot.model ?? '' };
 }
 
 function Settings({ bot, onDeleted }: { bot: BotView; onDeleted(): void }) {
   const action = useAction(bot.id);
-  const color = useAction(bot.id);
+  const formId = useId();
   const saved = settingsOf(bot);
   const [form, setForm] = useState<SettingsForm>(saved);
   const [dirty, setDirty] = useState<ReadonlySet<keyof SettingsForm>>(new Set());
@@ -936,20 +950,33 @@ function Settings({ bot, onDeleted }: { bot: BotView; onDeleted(): void }) {
 
   const update = (patch: Partial<SettingsForm>) => {
     setForm((current) => ({ ...current, ...patch }));
-    setDirty((current) => new Set([...current, ...(Object.keys(patch) as Array<keyof SettingsForm>)]));
-    action.clearError();
+    setDirty((current) => {
+      const next = new Set(current);
+      for (const key of Object.keys(patch) as Array<keyof SettingsForm>) {
+        if (patch[key] === saved[key]) next.delete(key);
+        else next.add(key);
+      }
+      return next;
+    });
+    action.clearFeedback();
   };
   const set = (key: keyof SettingsForm) => (e: { target: { value: string } }) => update({ [key]: e.target.value });
   const changed = [...dirty].filter((key) => form[key] !== saved[key]);
 
+  const cancel = () => {
+    setForm(saved);
+    setDirty(new Set());
+    setEditingModel(false);
+    action.clearFeedback();
+  };
   const save = async (event: FormEvent) => {
     event.preventDefault();
-    if (changed.length === 0) return;
+    if (action.busy || changed.length === 0 || !form.name.trim()) return;
     const patch = Object.fromEntries(changed.map((key) => [key, form[key]]));
     const runtime = changed.some((key) => key === 'providerId' || key === 'model' || key === 'projectId');
     const done = runtime
-      ? 'Saved. Personality applies from the next turn; provider, model and project apply when a new main thread is created.'
-      : 'Saved. Applies from the next turn.';
+      ? 'Saved. Runtime settings apply when a new main thread is created.'
+      : changed.includes('personality') ? 'Saved. Applies from the next turn.' : 'Changes saved.';
     if (await action.run('update', { patch }, done)) setDirty(new Set());
   };
 
@@ -959,73 +986,78 @@ function Settings({ bot, onDeleted }: { bot: BotView; onDeleted(): void }) {
   const projects = withCurrent(data?.projects ?? [], form.projectId);
   return (
     <>
-      <form className="settings-field" onSubmit={(event) => void save(event)} aria-label="Bot settings">
-        <Section label="Identity">
-          <div className="bt-row">
-            <span className="bt-grow">Color{color.feedback}</span>
-            <ColorPicker value={bot.color ?? defaultBotColor(bot.id)} disabled={color.busy}
-              onChange={(next) => void color.run('update', { patch: { color: next } })} />
-          </div>
-          <div className="bt-row">
-            <span className="bt-grow">Name</span>
-            <input aria-label="Name" value={form.name} onChange={set('name')} />
-          </div>
-          <div className="bt-row" style={{ alignItems: 'flex-start' }}>
-            <span className="bt-grow">Personality and role<span className="bt-sub">Applies from the next turn</span></span>
-            <textarea aria-label="Personality and role" rows={4} value={form.personality} onChange={set('personality')} />
-          </div>
-        </Section>
-        <Section label="Provider and model">
-          {catalog.error && <p role="alert" className="bt-alert" style={{ padding: '8px 12px 0', margin: 0 }}>Couldn&apos;t load providers: {catalog.error}</p>}
-          <div className="bt-row">
-            <span className="bt-grow">Provider<span className="bt-sub">Applies when a new main thread starts</span></span>
-            <PopoverPicklist ariaLabel="Provider" className="bt-picker" value={form.providerId}
-              options={[{ value: '', label: 'Project default' }, ...providers.map(row => ({ value: row.id, label: row.name }))]}
-              onChange={providerId => { setEditingModel(false); update({ providerId, model: '' }); }}
-              searchPlaceholder="Search providers" />
-          </div>
-          <div className="bt-row">
-            <span className="bt-grow">
-              Model
-              {data?.modelError && <span className="bt-sub">Models unavailable: {data.modelError}</span>}
-            </span>
-            <PopoverPicklist ariaLabel="Model" className="bt-picker" value={editingModel ? 'custom' : form.model ? 'model:' + form.model : ''}
-              options={[{ value: '', label: 'Default' }, ...models.map(row => ({ value: 'model:' + row.id, label: row.name })),
-                { value: 'custom', label: 'Custom model…' }]}
-              onChange={choice => {
-                setEditingModel(choice === 'custom');
-                if (choice !== 'custom') update({ model: choice.slice('model:'.length) });
-              }}
-              searchPlaceholder="Search models" />
-          </div>
-          {editingModel && <div className="bt-row">
-            <span className="bt-grow">Model ID</span>
-            <input aria-label="Model ID" value={form.model} onChange={set('model')} autoFocus />
-          </div>}
-        </Section>
-        <Section label="Project and access">
-          <div className="bt-row">
-            <span className="bt-grow">Project</span>
-            <PopoverPicklist
-              ariaLabel="Project"
-              className="bt-picker"
-              value={form.projectId}
-              options={projects.map(project => ({ value: project.id, label: project.name }))}
-              onChange={projectId => update({ projectId })}
-              searchable
-              searchPlaceholder="Search projects"
-              emptyHint="No matching projects"
-            />
-          </div>
-          <div className="bt-row"><span className="bt-grow">Access</span><span className="bt-chip is-warn">Full · runs without asking</span></div>
-        </Section>
-        {action.feedback}
-        <div style={{ display: 'flex', gap: 8, marginTop: 14, alignItems: 'center' }}>
-          <button type="submit" className="bt-btn is-primary" disabled={action.busy || changed.length === 0}>{action.busy ? 'Saving…' : 'Save'}</button>
-          {changed.length === 0 && <span className="bt-note" style={{ margin: 0 }}>No changes</span>}
-        </div>
+      <form id={formId} className="settings-field" onSubmit={(event) => void save(event)} aria-label="Bot settings">
+        <fieldset disabled={action.busy}>
+          <Section label="Identity">
+            <div className="bt-row">
+              <span className="bt-grow">Color</span>
+              <ColorPicker value={form.color} savedColor={saved.color} onChange={color => update({ color })} />
+            </div>
+            <div className="bt-row">
+              <span className="bt-grow">Name</span>
+              <input aria-label="Name" value={form.name} onChange={set('name')} />
+            </div>
+            <div className="bt-row" style={{ alignItems: 'flex-start' }}>
+              <span className="bt-grow">Personality and role<span className="bt-sub">Applies from the next turn</span></span>
+              <textarea aria-label="Personality and role" rows={4} value={form.personality} onChange={set('personality')} />
+            </div>
+          </Section>
+          <Section label="Provider and model">
+            {catalog.error && <p role="alert" className="bt-alert" style={{ padding: '8px 12px 0', margin: 0 }}>Couldn&apos;t load providers: {catalog.error}</p>}
+            <div className="bt-row">
+              <span className="bt-grow">Provider<span className="bt-sub">Applies when a new main thread starts</span></span>
+              <PopoverPicklist ariaLabel="Provider" className="bt-picker" value={form.providerId}
+                options={[{ value: '', label: 'Project default' }, ...providers.map(row => ({ value: row.id, label: row.name }))]}
+                onChange={providerId => { setEditingModel(false); update({ providerId, model: '' }); }}
+                searchPlaceholder="Search providers" />
+            </div>
+            <div className="bt-row">
+              <span className="bt-grow">
+                Model
+                {data?.modelError && <span className="bt-sub">Models unavailable: {data.modelError}</span>}
+              </span>
+              <PopoverPicklist ariaLabel="Model" className="bt-picker" value={editingModel ? 'custom' : form.model ? 'model:' + form.model : ''}
+                options={[{ value: '', label: 'Default' }, ...models.map(row => ({ value: 'model:' + row.id, label: row.name })),
+                  { value: 'custom', label: 'Custom model…' }]}
+                onChange={choice => {
+                  setEditingModel(choice === 'custom');
+                  if (choice !== 'custom') update({ model: choice.slice('model:'.length) });
+                }}
+                searchPlaceholder="Search models" />
+            </div>
+            {editingModel && <div className="bt-row">
+              <span className="bt-grow">Model ID</span>
+              <input aria-label="Model ID" value={form.model} onChange={set('model')} autoFocus />
+            </div>}
+          </Section>
+          <Section label="Project and access">
+            <div className="bt-row">
+              <span className="bt-grow">Project</span>
+              <PopoverPicklist
+                ariaLabel="Project"
+                className="bt-picker"
+                value={form.projectId}
+                options={projects.map(project => ({ value: project.id, label: project.name }))}
+                onChange={projectId => update({ projectId })}
+                searchable
+                searchPlaceholder="Search projects"
+                emptyHint="No matching projects"
+              />
+            </div>
+            <div className="bt-row"><span className="bt-grow">Access</span><span className="bt-chip is-warn">Full · runs without asking</span></div>
+          </Section>
+        </fieldset>
       </form>
       <DeleteBot bot={bot} onDeleted={onDeleted} />
+      {(changed.length > 0 || action.busy || action.feedback) && (
+        <div className="bt-savebar">
+          <div className="bt-savebar-message">{action.feedback ?? (action.busy ? 'Saving changes…' : 'Unsaved changes')}</div>
+          {(changed.length > 0 || action.busy) && <div className="bt-savebar-actions">
+            <button type="button" className="bt-btn is-ghost" disabled={action.busy} onClick={cancel}>Cancel</button>
+            <button type="submit" form={formId} className="bt-btn is-primary" disabled={action.busy || !form.name.trim()}>Save</button>
+          </div>}
+        </div>
+      )}
     </>
   );
 }
