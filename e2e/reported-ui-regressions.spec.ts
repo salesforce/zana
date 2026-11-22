@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect, type AppHandle } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
 test.use({
   launchEnv: { ZCC_FAKE_PROVIDER: '1' },
@@ -215,5 +216,5 @@ test('expanded model catalogs scroll without clipping rows (#183)', async ({ app
     await list.locator('li').last().scrollIntoViewIfNeeded();
     await expect(list.locator('li').last()).toBeInViewport();
   }
-  await window.screenshot({ path: testInfo.outputPath('model-list.png') });
+  await captureElectronScreenshot(app.electron, window, testInfo.outputPath('model-list.png'));
 });
