@@ -94,15 +94,29 @@ test('Basic sidebar opens bot conversations and leaves Advanced navigation intac
   await page.getByRole('button', { name: 'Basic view', exact: true }).click();
   const sidebar = page.getByTestId('basic-ui-sidebar');
   const row = sidebar.getByRole('button', { name: 'Demo Coach', exact: true });
-  await expect(row).toBeVisible();
+  await expect(row.locator('.bt-av svg')).toBeVisible();
+  await expect(row).toHaveAccessibleDescription('Not started');
   await expect(page.locator('.home-panel > .aurora-grid')).toBeVisible();
   await expect(sidebar.getByRole('button', { name: 'Show more', exact: true })).toHaveCount(0);
-  for (const name of ['Scout', 'Guide', 'Editor', 'Planner', 'Reviewer']) {
+  for (const name of ['Scout', 'Guide', 'Editor', 'Planner']) {
     const created = await page.request.post(new URL('/api/v1/plugin-apps/bots/rpc', page.url()).href, {
       data: { method: 'create', args: { name, projectId, providerId: 'fake' } }
     });
     expect(created.ok()).toBe(true);
   }
+  const add = sidebar.getByRole('button', { name: /New bot/ });
+  await add.click();
+  const dialog = page.getByRole('dialog', { name: 'New bot' });
+  await expect(dialog.getByRole('textbox', { name: 'Name' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(add).toBeFocused();
+  await add.click();
+  await dialog.getByRole('textbox', { name: 'Name' }).fill('Reviewer');
+  await dialog.getByRole('button', { name: 'Create bot' }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(sidebar.getByLabel('Message Reviewer')).toBeVisible();
+  await sidebar.getByRole('button', { name: 'Show less', exact: true }).click();
   const more = sidebar.getByRole('button', { name: 'Show more', exact: true });
   await expect(more).toBeVisible();
   await expect(sidebar.locator('.bt-basic-row')).toHaveCount(5);

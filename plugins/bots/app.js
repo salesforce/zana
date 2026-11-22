@@ -973,6 +973,20 @@ function BotAvatar({ bot, size = 40, live = false }) {
     ] }) })
   ] }) }) });
 }
+function BotListIdentity({ bot, live, statusId, children }) {
+  const state = botState(bot);
+  return /* @__PURE__ */ jsxs(Fragment2, { children: [
+    /* @__PURE__ */ jsx(BotAvatar, { bot, size: 30, live }),
+    /* @__PURE__ */ jsxs("span", { style: { minWidth: 0 }, children: [
+      /* @__PURE__ */ jsx("span", { className: "bt-name", children: bot.name }),
+      /* @__PURE__ */ jsxs("small", { id: statusId, children: [
+        /* @__PURE__ */ jsx("span", { className: "bt-dot", "data-state": state }),
+        STATE_LABEL[state],
+        children
+      ] })
+    ] })
+  ] });
+}
 function Section({ label, children, action }) {
   return /* @__PURE__ */ jsxs("section", { className: "bt-sec", "aria-label": label, children: [
     /* @__PURE__ */ jsxs("div", { className: "bt-section-head", children: [
@@ -1059,9 +1073,13 @@ function useBotList() {
 }
 var BASIC_BOT_LIMIT = 5;
 var basicListCss = `
-.bt-basic { margin-bottom: 18px; }
+.bt-basic { margin-bottom: 18px; font-size: 13px; line-height: 1.5; color: var(--text-primary); }
+.bt-basic .bt-list-head h2 { margin: 0; font-size: 13px; font-weight: 600; color: inherit; }
+.bt-basic .bt-list-head button { color: inherit; font-family: inherit; }
+.bt-basic-list { display: grid; gap: 2px; }
 .bt-basic-item { position: relative; display: flex; align-items: center; border-radius: 8px; }
-.bt-basic-item:hover, .bt-basic-item:focus-within, .bt-basic-item:has([aria-current="page"], [aria-expanded="true"]) { background: var(--sidebar-hover); }
+.bt-basic-item:is(:hover, :focus-within) { background: var(--bg-hover); }
+.bt-basic-item:has([aria-current="page"], [aria-expanded="true"]) { background: var(--bg-elevated); }
 .bt-basic-pin { display: grid; place-items: center; flex: 0 0 30px; height: 30px; border-radius: 6px;
   padding: 0; margin-right: 4px; background: transparent; border: 0; color: var(--text-muted); cursor: pointer; }
 .bt-basic-pin:hover, .bt-basic-pin:focus-visible { color: var(--text-primary); background: var(--bg-hover); }
@@ -1070,15 +1088,15 @@ var basicListCss = `
 @media (hover: hover) and (pointer: fine) {
   .bt-basic-item:not(:hover):not(:focus-within) .bt-basic-pin[aria-pressed="false"] { position: absolute; right: 0; opacity: 0; }
 }
-.bt-basic-more { display: block; padding: 8px 10px 8px 43px; border: 0; background: transparent;
+.bt-basic-more { display: block; padding: 8px 10px 8px 48px; border: 0; background: transparent;
   color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer; }
 .bt-basic-more:hover, .bt-basic-more:focus-visible { color: var(--text-primary); }
-.bt-basic-row { display: flex; flex: 1; min-width: 0; align-items: center; gap: 10px; width: 100%; min-height: 37px;
-  padding: 5px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-primary);
-  font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
-.bt-basic-avatar { flex: 0 0 23px; height: 23px; display: grid; place-items: center; border-radius: 7px;
-  background: color-mix(in srgb, var(--bot-color) 55%, white); color: #17212b; font-size: 11px; font-weight: 650; }
-.bt-basic-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bt-basic .bt-basic-row { flex: 1; min-width: 0; font: inherit; color: inherit; background: transparent; }
+.bt-basic-dialog { box-sizing: border-box; width: min(500px, calc(100vw - 32px)); max-height: calc(100dvh - 32px);
+  padding: 0; margin: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-panel); }
+.bt-basic-dialog::backdrop { background: rgb(0 0 0 / 45%); }
+.bt-basic-dialog .bt-root { height: auto; }
+.bt-basic-dialog .bt-create { min-width: 0; }
 .bt-basic .bt-start { display: grid; gap: 7px; margin: 5px 10px 12px; }
 .bt-basic .bt-start textarea { width: 100%; box-sizing: border-box; min-height: 64px; resize: vertical; }
 .bt-basic .bt-note, .bt-basic [role="alert"] { color: var(--text-muted); font-size: 11px; }
@@ -1087,17 +1105,21 @@ function BasicBotRow({ bot, activeThreadId, starting, setStarting, openThread })
   const state = botState(bot);
   const canOpen = Boolean(bot.mainThreadId && state !== "missing");
   const expanded = !canOpen && starting;
+  const current = Boolean(activeThreadId && bot.mainThreadId === activeThreadId);
+  const statusId = useId();
   const pinned = bot.pinnedAt != null;
   const { busy, feedback, run } = useAction(bot.id);
   return /* @__PURE__ */ jsxs(Fragment2, { children: [
     /* @__PURE__ */ jsxs("div", { className: "bt-basic-item", children: [
-      /* @__PURE__ */ jsxs(
+      /* @__PURE__ */ jsx(
         "button",
         {
           type: "button",
-          className: "bt-basic-row",
+          className: "bt-item bt-basic-row",
           title: bot.name,
-          "aria-current": activeThreadId && bot.mainThreadId === activeThreadId ? "page" : void 0,
+          "aria-label": bot.name,
+          "aria-describedby": statusId,
+          "aria-current": current ? "page" : void 0,
           "aria-expanded": canOpen ? void 0 : expanded,
           onClick: () => {
             if (canOpen && bot.mainThreadId) {
@@ -1105,10 +1127,7 @@ function BasicBotRow({ bot, activeThreadId, starting, setStarting, openThread })
               openThread(bot.mainThreadId);
             } else setStarting(!expanded);
           },
-          children: [
-            /* @__PURE__ */ jsx("span", { "aria-hidden": "true", className: "bt-basic-avatar", style: { "--bot-color": bot.color ?? defaultBotColor(bot.id) }, children: Array.from(bot.name.trim())[0]?.toLocaleUpperCase() }),
-            /* @__PURE__ */ jsx("span", { className: "bt-basic-name", children: bot.name })
-          ]
+          children: /* @__PURE__ */ jsx(BotListIdentity, { bot, live: current || expanded, statusId })
         }
       ),
       /* @__PURE__ */ jsx(
@@ -1130,7 +1149,8 @@ function BasicBotRow({ bot, activeThreadId, starting, setStarting, openThread })
   ] });
 }
 function BasicBots({ searchQuery, activeThreadId, projectIds, openThread, registerThreads }) {
-  const { bots, error, refresh } = useBotList();
+  const { bots, loaded, error, refresh } = useBotList();
+  const [creating, setCreating] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const listId = useId();
   const [starting, setStarting] = useState(null);
@@ -1142,15 +1162,31 @@ function BasicBots({ searchQuery, activeThreadId, projectIds, openThread, regist
   const query = searchQuery.trim().toLocaleLowerCase();
   const matches = eligible.filter((bot) => bot.name.toLocaleLowerCase().includes(query)).sort((a, b) => (b.pinnedAt ?? -1) - (a.pinnedAt ?? -1));
   const visible = showAll || query ? matches : matches.slice(0, BASIC_BOT_LIMIT);
-  if (!matches.length && !error) return null;
+  if (!matches.length && !error && (!loaded || query || !projectIds.length)) return null;
   return /* @__PURE__ */ jsxs("section", { className: "bt-basic", "aria-label": "Bots", children: [
-    /* @__PURE__ */ jsx("style", { children: basicListCss }),
-    /* @__PURE__ */ jsx("h2", { children: "Bots" }),
+    /* @__PURE__ */ jsx("style", { children: CSS2 + basicListCss }),
+    /* @__PURE__ */ jsxs("div", { className: "bt-list-head", children: [
+      /* @__PURE__ */ jsx("h2", { children: "Bots" }),
+      /* @__PURE__ */ jsx("button", { type: "button", className: "bt-btn is-ghost is-sm", "aria-haspopup": "dialog", onClick: () => setCreating(true), children: "\uFF0B New bot" })
+    ] }),
+    creating && /* @__PURE__ */ jsx(
+      CreateBotDialog,
+      {
+        projectId: projectIds.length === 1 ? projectIds[0] : void 0,
+        onCancel: () => setCreating(false),
+        onCreated: (id) => {
+          setCreating(false);
+          setShowAll(true);
+          setStarting(id);
+          void refresh();
+        }
+      }
+    ),
     error && /* @__PURE__ */ jsxs("p", { role: "alert", children: [
       "Couldn\u2019t load bots. ",
       /* @__PURE__ */ jsx("button", { type: "button", onClick: () => void refresh(), children: "Retry" })
     ] }),
-    /* @__PURE__ */ jsx("div", { id: listId, children: visible.map((bot) => /* @__PURE__ */ jsx(
+    /* @__PURE__ */ jsx("div", { id: listId, className: "bt-basic-list", children: visible.map((bot) => /* @__PURE__ */ jsx(
       BasicBotRow,
       {
         bot,
@@ -1192,8 +1228,7 @@ function BotsPanel() {
         bots.map((row) => {
           const active = row.id === bot?.id && !showCreate;
           const routines = row.routines.filter((r) => r.enabled).length;
-          const state = botState(row);
-          return /* @__PURE__ */ jsxs(
+          return /* @__PURE__ */ jsx(
             "button",
             {
               type: "button",
@@ -1203,18 +1238,10 @@ function BotsPanel() {
                 setSelected(row.id);
                 setCreating(false);
               },
-              children: [
-                /* @__PURE__ */ jsx(BotAvatar, { bot: row, size: 30, live: active }),
-                /* @__PURE__ */ jsxs("span", { style: { minWidth: 0 }, children: [
-                  /* @__PURE__ */ jsx("span", { className: "bt-name", children: row.name }),
-                  /* @__PURE__ */ jsxs("small", { children: [
-                    /* @__PURE__ */ jsx("span", { className: "bt-dot", "data-state": state }),
-                    STATE_LABEL[state],
-                    routines ? ` \xB7 ${routines} routine${routines === 1 ? "" : "s"}` : "",
-                    row.activeJobs ? ` \xB7 ${row.activeJobs} job${row.activeJobs === 1 ? "" : "s"}` : ""
-                  ] })
-                ] })
-              ]
+              children: /* @__PURE__ */ jsxs(BotListIdentity, { bot: row, live: active, children: [
+                routines ? ` \xB7 ${routines} routine${routines === 1 ? "" : "s"}` : "",
+                row.activeJobs ? ` \xB7 ${row.activeJobs} job${row.activeJobs === 1 ? "" : "s"}` : ""
+              ] })
             },
             row.id
           );
@@ -1238,6 +1265,31 @@ function BotsPanel() {
     ] })
   ] });
 }
+function CreateBotDialog(props) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const dialog = ref.current;
+    const opener = document.activeElement;
+    dialog.showModal();
+    return () => {
+      dialog.close();
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+    };
+  }, []);
+  return /* @__PURE__ */ jsx(
+    "dialog",
+    {
+      ref,
+      className: "bt-basic-dialog",
+      "aria-label": "New bot",
+      onCancel: (event) => {
+        event.preventDefault();
+        props.onCancel();
+      },
+      children: /* @__PURE__ */ jsx("div", { className: "bt-root", children: /* @__PURE__ */ jsx(CreateBot, { ...props, canCancel: true }) })
+    }
+  );
+}
 function CreateBot(props) {
   const rpc = useRpc();
   const [name, setName] = useState("");
@@ -1254,7 +1306,7 @@ function CreateBot(props) {
     if (busy) return;
     setBusy(true);
     try {
-      const bot = await rpc.call("create", { name, color, personality });
+      const bot = await rpc.call("create", { name, color, personality, ...props.projectId && { projectId: props.projectId } });
       props.onCreated(bot.id);
     } catch (err) {
       setError(message(err));

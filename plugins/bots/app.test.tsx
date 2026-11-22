@@ -463,7 +463,7 @@ it('opens real paged bot memories from Overview and recovers after Memory is una
   await waitFor(() => expect(memoryRpc).toHaveBeenLastCalledWith('memory','listTagged',{tag:'bot:scout',projectId:'p1',offset:0}));
 });
 
-it('shows scoped initials, opens an existing thread and filters the live list by name', async () => {
+it('shows each scoped bot’s avatar and live status, opens its thread and filters by name', async () => {
   let rows = [scout, fresh, { ...scout, id: 'other', name: 'Remote', projectId: 'p2' }];
   route({ list: () => rows });
   const cleanupIds = vi.fn();
@@ -471,7 +471,14 @@ it('shows scoped initials, opens an existing thread and filters the live list by
   const view = render(<BasicBots {...props} />);
   const row = await screen.findByRole('button', { name: 'Scout', exact: true });
   expect(row.getAttribute('aria-current')).toBe('page');
-  expect(row.querySelector('[aria-hidden="true"]')?.textContent?.trim()).toBe('S');
+  expect(row.querySelector('.bt-av[data-state="asleep"] svg')).toBeTruthy();
+  const status = within(row).getByText('Asleep');
+  expect(row.getAttribute('aria-describedby')).toBe(status.id);
+  expect(within(screen.getByRole('button', { name: 'Fresh', exact: true })).getByText('Not started')).toBeTruthy();
+  rows = [{ ...scout, mainThreadStatus: 'active' }, ...rows.slice(1)];
+  state.realtime.at(-1)?.();
+  await within(row).findByText('Working');
+  expect(row.querySelector('.bt-av[data-state="working"]')).toBeTruthy();
   expect(screen.queryByText('Remote')).toBeNull();
   expect(props.registerThreads).toHaveBeenCalledWith(['t1']);
   fireEvent.click(row);
@@ -510,7 +517,7 @@ it('shows five bots, puts the newest pins first, and searches beyond the collaps
   route({ list: () => [...rows] });
   const props = { searchQuery: '', activeThreadId: null, projectIds: ['p1'], openThread: vi.fn(), registerThreads: vi.fn() };
   const view = render(<BasicBots {...props} />);
-  const names = () => Array.from(view.container.querySelectorAll('.bt-basic-name'), node => node.textContent);
+  const names = () => Array.from(view.container.querySelectorAll('.bt-basic-row .bt-name'), node => node.textContent);
   const more = await screen.findByRole('button', { name: 'Show more' });
   expect(names()).toEqual(['Bot 6', 'Bot 5', 'Bot 0', 'Bot 1', 'Bot 2']);
   expect(screen.getByRole('button', { name: 'Unpin Bot 6' }).getAttribute('aria-pressed')).toBe('true');
@@ -537,5 +544,32 @@ it('reports failed pin updates without opening a chat or changing the pin', asyn
   expect((await screen.findByRole('alert')).textContent).toBe('Cannot save pin');
   expect(state.rpc.call).toHaveBeenCalledWith('update', { bot: 'scout', patch: { pinned: true } });
   expect(pin.getAttribute('aria-pressed')).toBe('false');
+  expect(props.openThread).not.toHaveBeenCalled();
+});
+
+
+it('creates the first bot from the Basic header within the current project', async () => {
+  let bots: typeof fresh[] = [];
+  route({ list: () => bots, create: ({ name }) => {
+    const bot = { ...fresh, id: 'new-bot', name };
+    bots = [bot];
+    return bot;
+  } });
+  const props = { searchQuery: '', activeThreadId: null, projectIds: ['p1'], openThread: vi.fn(), registerThreads: vi.fn() };
+  render(<BasicBots {...props} />);
+  const add = await screen.findByRole('button', { name: /New bot/ });
+  fireEvent.click(add);
+  const first = screen.getByRole('dialog', { name: 'New bot' });
+  fireEvent(first, new Event('cancel', { cancelable: true }));
+  expect(screen.queryByRole('dialog')).toBeNull();
+  fireEvent.click(add);
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(screen.queryByRole('dialog')).toBeNull();
+  fireEvent.click(add);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Guide' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Create bot' }));
+  expect(await screen.findByLabelText('Message Guide')).toBeTruthy();
+  expect(state.rpc.call).toHaveBeenCalledWith('create', expect.objectContaining({ name: 'Guide', projectId: 'p1' }));
+  expect(screen.queryByRole('dialog')).toBeNull();
   expect(props.openThread).not.toHaveBeenCalled();
 });
