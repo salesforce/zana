@@ -3,7 +3,7 @@ import { useLocation, useSearchParams } from 'react-router-dom';
 import { AuroraGrid } from '@/components/AuroraGrid';
 import { HomeAgentComposer } from '@/components/HomeAgentComposer';
 import { HomeLauncherTips } from '@/components/HomeLauncherTips';
-import { ZanaIcon } from '@/components/icons/ZanaIcon';
+import { ConversationWelcome } from '@/components/ConversationWelcome';
 import { PluginNewThreadActions } from '@/plugins/PluginNewThreadActions';
 import { listHomepageSections, subscribePluginSlots } from '@/plugins/plugin-slots';
 import { PluginSlotBoundary } from '@/plugins/PluginSlotBoundary';
@@ -15,7 +15,7 @@ import '../../components/basic/basic-conversation.css';
  * New Chat compose surface at `/`. ListPane returns null for `nav === 'home'`,
  * so this panel spans the remaining shell track. Submit already opens
  * `/threads/:id`. Plugin CTAs and homepage sections sit under the prompt.
- * AuroraGrid fills the pane behind the composer (same host as Plugins).
+ * Advanced shows the ambient background behind the composer.
  */
 export function HomeView() {
   const basic = useBasicUi();
@@ -30,13 +30,9 @@ export function HomeView() {
 
   return (
     <div className="settings-panel home-panel aurora-host">
-      <AuroraGrid />
+      {!basic && <AuroraGrid />}
       <div className="settings-inner">
-        <div className="basic-home-welcome" hidden={!basic}>
-          <ZanaIcon size={48} />
-          <h1>What shall we work on today?</h1>
-          <p>Bring a question, a rough idea, or something to get done.</p>
-        </div>
+        {basic && <ConversationWelcome heading="h1" />}
         <HomeLauncherTips>
           <HomeAgentComposer
             allowLegacyAgent

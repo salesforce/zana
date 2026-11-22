@@ -1,10 +1,11 @@
 import { useSidebarThreads, useSidebarThreadActions, useSidebarThreadSplit } from './sidebar-thread-hooks.js';
 import { useProjects } from './project-hooks.js';
 import { useProjectAppearanceMenu } from './project-appearance-menu.js';
-import { lazy, Suspense, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType } from 'react';
+import { lazy, Suspense, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type {
   HarnessRoutingEditorProps as PluginHarnessRoutingEditorProps,
+  MarkdownProps,
   PluginComposerApi,
   PluginSdkApp,
   PluginSettingsState,
@@ -324,10 +325,18 @@ function ThreadChatImpl(props: ThreadChatProps) {
   );
 }
 
-function MarkdownImpl({ content, className }: { content: string; className?: string }) {
+const MarkdownFieldEditor = lazy(() => import('../views/library/library/LibraryMarkdownEditor.js')
+  .then(module => ({ default: module.LibraryMarkdownEditor })));
+
+function MarkdownImpl({ content, className, editor }: MarkdownProps) {
   return (
     <div className={className}>
-      <MarkdownContent text={content} fileLinksAsAnchors />
+      {editor ? (
+        <Suspense fallback={<span role="status">Loading editor…</span>}>
+          <MarkdownFieldEditor value={content} onChange={editor.onChange} fieldLabel={editor.label}
+            placeholder={editor.placeholder} editable={!editor.disabled} />
+        </Suspense>
+      ) : <MarkdownContent text={content} fileLinksAsAnchors />}
     </div>
   );
 }
@@ -394,7 +403,7 @@ export function installPluginRuntime(): void {
     experimental_useSidebarThreadPullRequest: () => ({ isLoading: false, pullRequest: null }),
     experimental_useSidebarThreadSplit: useSidebarThreadSplit,
     ThreadChat: ThreadChatImpl,
-    Markdown: MarkdownImpl as ComponentType<{ content: string; className?: string }>,
+    Markdown: MarkdownImpl,
     experimental_NewThreadComposer: NewThreadComposerImpl as never,
     experimental_HarnessRoutingEditor: HarnessRoutingEditorImpl,
     toast: (message, kind = 'info') => {

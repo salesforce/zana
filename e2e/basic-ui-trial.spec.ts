@@ -140,7 +140,7 @@ test('theme icon sits between the bell and view switch in both desktop views', a
           expect(help.x + help.width).toBeLessThan(star.x);
         } else {
           await expect(page.locator('.basic-ui-sidebar-brand')).toHaveCount(0);
-          await expect(page.locator('.basic-home-welcome > .zana-brand-icon')).toBeVisible();
+          await expect(page.locator('.conversation-welcome > .zana-brand-icon')).toBeVisible();
           await expect(basic(page).locator('.zana-brand-icon')).toBeVisible();
           expect(await basic(page).locator('.zana-brand-icon').evaluate(node => getComputedStyle(node).maskImage)).not.toBe('none');
         }
@@ -388,6 +388,14 @@ test('Basic groups conversations by project with collapse, search and older hist
   await expect(websiteToggle).toHaveAttribute('aria-expanded', 'true');
   await expect(releaseGroup.getByRole('link')).toHaveCount(2);
   await expect(websiteGroup.getByRole('link')).toHaveCount(10);
+  await resize(app, 1440, 500);
+  const roster = sidebar(page).getByRole('navigation', { name: 'Recent conversations' });
+  await expect(roster).toHaveCSS('scrollbar-width', 'none');
+  const initialScroll = await roster.evaluate(node => node.scrollTop);
+  await roster.hover();
+  await page.mouse.wheel(0, 250);
+  await expect.poll(() => roster.evaluate(node => node.scrollTop)).toBeGreaterThan(initialScroll);
+  await resize(app, 1440, 900);
   await websiteGroup.getByRole('button', { name: 'Show more conversations in Website' }).click();
   await expect(websiteGroup.getByRole('link')).toHaveCount(12);
   await websiteToggle.click();

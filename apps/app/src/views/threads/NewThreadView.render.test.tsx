@@ -9,7 +9,6 @@ const composer = vi.hoisted(() => ({ props: null as null | Record<string, unknow
 const store = vi.hoisted(() => ({ projects: [{ id: 'p1', name: 'One' }, { id: 'p2', name: 'Two' }] }));
 
 vi.mock('@/store', () => ({ useData: (selector: (s: typeof store) => unknown) => selector(store) }));
-vi.mock('@/components/AuroraGrid', () => ({ AuroraGrid: () => null }));
 vi.mock('./NewChatPanelLayout.js', () => ({ NewChatPanelLayout: ({ children }: { children: (handlers: object) => ReactNode }) => children({ onCreated: () => undefined, onAgentCreated: () => undefined }) }));
 vi.mock('@/components/HomeAgentComposer', () => ({
   HomeAgentComposer: (props: Record<string, unknown>) => { composer.props = props; return <div data-testid="composer" />; }
@@ -40,7 +39,9 @@ describe('NewThreadView', () => {
     const input = screen.getByTestId('composer');
     const actions = screen.getByTestId('actions');
     const selectedProject = composer.props?.project;
+    expect(document.querySelector('.aurora-grid')).toBeTruthy();
     act(() => setBasicUiMode('basic'));
+    expect(document.querySelector('.aurora-grid')).toBeNull();
     expect(screen.getByTestId('composer')).toBe(input);
     expect(screen.getByTestId('actions')).toBe(actions);
     expect(actions.parentElement?.hidden).toBe(true);
@@ -48,6 +49,7 @@ describe('NewThreadView', () => {
     expect(composer.props?.project).toBe(selectedProject);
     expect(composer.props).toMatchObject({ allowLegacyAgent: true, draftScope: 'new-thread', composerProjectId: undefined, initialHostId: undefined });
     act(() => setBasicUiMode('advanced'));
+    expect(document.querySelector('.aurora-grid')).toBeTruthy();
     expect(actions.parentElement?.hidden).toBe(false);
     expect(screen.getByTestId('composer')).toBe(input);
     expect(composer.props?.project).toMatchObject({ id: 'p2' });

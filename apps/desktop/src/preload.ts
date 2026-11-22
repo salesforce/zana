@@ -1092,7 +1092,8 @@ const api: CcApi = {
     list: () => ipcRenderer.invoke(IPC.pluginApps.list),
     setEnabled: (id, enabled) => ipcRenderer.invoke(IPC.pluginApps.setEnabled, id, enabled),
     callRpc: async (pluginId, method, args) => {
-      const result = await ipcRenderer.invoke(IPC.pluginApps.callRpc, pluginId, method, args);
+      const channel = method.startsWith('desktop.') ? IPC.pluginApps.callDesktopRpc : IPC.pluginApps.callRpc;
+      const result = await ipcRenderer.invoke(channel, pluginId, method, args);
       // Main resolves expected domain errors as an envelope (no main-process error log); surface
       // them as a plain rejection with the bare message and optional `code`.
       const expected = parseRpcErrorEnvelope(result);

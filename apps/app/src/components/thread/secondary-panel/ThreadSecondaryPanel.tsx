@@ -213,13 +213,20 @@ export function ThreadSecondaryPanel({
       }}
       style={{ ['--thread-secondary-width' as string]: `${Math.max(SECONDARY_PANEL_MIN_WIDTH_PX, state.widthPx)}px`, ...(dock?.side === 'bottom' ? { ['--thread-tool-bottom-height' as string]: `${dock.heightPx ?? 240}px` } : {}) }}
     >
+      {!compact && !basicCompact && !state.isMaximized && dock?.side !== 'bottom' && <div
+        className="thread-secondary-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize right panel"
+        onMouseDown={onResizeMouseDown}
+      />}
       {basic ? <BasicPanelChrome compact={basicCompact} state={state} showInfo={showInfoPin} showPlan={Boolean(showPlanPin)}
         onSelectInfo={onSelectInfo} onSelectPlan={onSelectPlan} onActivateTab={onActivateTab} onCloseTab={onCloseTab}
         onToggleMaximized={onToggleMaximized} onHide={onHide} /> : compact ? <MobilePanelNavigation state={state} open={viewsOpen} toggleRef={viewToggleRef} onToggle={toggleViews}
         showInfoPin={showInfoPin} showDiffPin={showDiffPin} showPlanPin={showPlanPin}
         onSelectInfo={onSelectInfo} onSelectDiff={onSelectDiff} onSelectPlan={onSelectPlan}
         onActivateTab={onActivateTab} onCloseTab={onCloseTab} onNewTab={onNewTab} onHide={onHide} /> : <>
-      {dock?.side === 'bottom' ? <div
+      {dock?.side === 'bottom' && <div
         className="thread-tool-bottom-resizer"
         role="separator" tabIndex={0} aria-orientation="horizontal" aria-label="Resize bottom panel"
         aria-valuemin={120} aria-valuemax={480} aria-valuenow={dock.heightPx ?? 240}
@@ -236,12 +243,6 @@ export function ThreadSecondaryPanel({
           const stop = () => { target.onpointermove = null; target.onpointerup = null; target.onpointercancel = null; target.onlostpointercapture = null; };
           target.onpointerup = target.onpointercancel = target.onlostpointercapture = stop;
         }}
-      /> : <div
-        className="thread-secondary-resizer"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize right panel"
-        onMouseDown={onResizeMouseDown}
       />}
       <div className="thread-secondary-chrome" data-testid="thread-secondary-chrome">
         {!dock ? <div className="thread-secondary-pins">{pinnedTabs.map(tab => <button

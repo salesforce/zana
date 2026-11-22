@@ -228,24 +228,24 @@ export function registerPluginsIpc(): void {
       message: err instanceof Error ? err.message : String(err)
     })
   );
-  ctx.safeHandle(
-    IPC.pluginApps.callRpc,
-    async (pluginId: string, method: string, args?: unknown) => {
-      try {
-        if (ctx.runtimeSupervisor) return await ctx.runtimeSupervisor.callPluginRpc(pluginId, method, args);
-        return await callPluginRpcOnProductServer(pluginId, method, args);
-      } catch (err) {
-        // Expected domain errors (validation guards etc.) resolve as an envelope so ipcMain does not
-        // log them as main-process failures; preload turns the envelope back into a clean rejection.
-        const expected = classifyExpectedRpcError(err);
-        if (expected) return toRpcErrorEnvelope(expected);
-        throw err;
-      }
-    },
-    (err) => {
+  async function callRpc(pluginId: string, method: string, args?: unknown) {
+    try {
+      if (ctx.runtimeSupervisor) return await ctx.runtimeSupervisor.callPluginRpc(pluginId, method, args);
+      return await callPluginRpcOnProductServer(pluginId, method, args, undefined, ctx.productServerCredential);
+    } catch (err) {
+      const expected = classifyExpectedRpcError(err);
+      if (expected) return toRpcErrorEnvelope(expected);
       throw err;
     }
-  );
+  }
+  ctx.safeHandle(IPC.pluginApps.callRpc, (pluginId: string, method: string, args?: unknown) => {
+    if (method.startsWith('desktop.')) throw new Error('This action requires the owner desktop window.');
+    return callRpc(pluginId, method, args);
+  }, err => { throw err; });
+  ctx.safeHandleFromWindow(IPC.pluginApps.callDesktopRpc, (_window, pluginId: string, method: string, args?: unknown) => {
+    if (!method.startsWith('desktop.')) throw new Error('Expected a desktop RPC method.');
+    return callRpc(pluginId, method, args);
+  }, err => { throw err; });
   ctx.safeHandle(
     IPC.pluginApps.getSettings,
     async (pluginId: string, options?: unknown) => {

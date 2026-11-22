@@ -1,3 +1,4 @@
+import { desktopRpcDigest, signUiSend } from '@zana-ai/zcc-server/http/ui-send-proof';
 import { PluginAppSnapshotSchema } from '@zana-ai/zcc-contracts/runtime';
 import { rpcErrorFrom } from '@zana-ai/zcc-contracts/rpc-error';
 import type { PluginAppEntry, Result } from '@zana-ai/zcc-domain/product';
@@ -173,14 +174,19 @@ export async function callPluginRpcOnProductServer(
   pluginId: string,
   method: string,
   args?: unknown,
-  baseUrl = loopbackProductServerUrl()
+  baseUrl = loopbackProductServerUrl(),
+  credential?: () => string
 ): Promise<unknown> {
   if (!baseUrl) throw new Error('plugin host is unavailable');
   const response = await fetch(
     new URL(`api/v1/plugin-apps/${encodeURIComponent(pluginId)}/rpc`, baseUrl),
     {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json',
+        ...(method.startsWith('desktop.') && credential
+          ? { 'x-zcc-desktop-rpc': signUiSend(credential(), pluginId, desktopRpcDigest(method, args), Date.now(), 'plugin-desktop') }
+          : {}) },
+      redirect: 'error',
       body: JSON.stringify({ method, args })
     }
   );

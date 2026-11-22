@@ -56,7 +56,6 @@ import {
 import { fallbackProviderOption, isOfferedModernProvider } from './thread/pickers/fallback-models.js';
 import { useThreadComposerOptions } from './thread/pickers/useThreadComposerOptions.js';
 import { resolveThreadProviderDefault } from '@zana-ai/zcc-domain/launch-provider';
-import { ThreadDefaultHint } from './thread/ThreadDefaultHint.js';
 import { VoiceRecordingBar } from './thread/voice/VoiceRecordingBar.js';
 import { useVoiceInput } from './thread/voice/useVoiceInput.js';
 import { VoiceMicButton } from './thread/voice/VoiceMicButton.js';
@@ -990,6 +989,9 @@ function ThreadComposerContent({
       providerOptions={options.providerOptions}
       selectedProviderId={resolvedProviderId ?? options.providerId}
       onSelectedProviderChange={threadId ? undefined : options.setProviderId}
+      onUseDefaultProvider={!basic && !threadId && !lockedProviderId && threadDefault.providerId && options.providerSelectionSource !== 'default'
+        ? options.useDefaultProvider
+        : undefined}
       modelValue={options.model}
       modelOptions={options.modelOptions}
       moreModelOptions={options.moreModelOptions}
@@ -1070,14 +1072,6 @@ function ThreadComposerContent({
         </div>
       ) : null}
       {options.selectionError && !error ? <p className="thread-command-error" role="status">{options.selectionError}</p> : null}
-      {!basic && !threadId && !lockedProviderId ? <ThreadDefaultHint
-        providerId={options.providerId}
-        defaultProviderId={threadDefault.providerId}
-        source={threadDefault.source}
-        selectionSource={options.providerSelectionSource}
-        onUseDefault={options.useDefaultProvider}
-        unavailable={Boolean(options.selectionError) || !options.registeredProviderIds.includes(options.providerId)}
-      /> : null}
       {permissionSelectionError && !error ? <p className="thread-command-error" role="status">{permissionSelectionError}</p> : null}
       {composerModeError && !error ? <p className="thread-command-error" role="status">{composerModeError}</p> : null}
       {providerCli.error ? (

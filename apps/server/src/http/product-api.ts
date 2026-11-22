@@ -1,4 +1,5 @@
 import { handleThreadPeerReviewApi } from './thread-peer-review-api.js';
+import { desktopRpcDigest } from './ui-send-proof.js';
 import { handlePeerToolsApi } from './peer-tools-api.js';
 import { listNativeCapabilities } from "../services/skills/native-capabilities.js";
 import { handleHelpVideosApi } from './help-videos-api.js';
@@ -300,6 +301,12 @@ async function handlePluginAppRpc(
   const body = (await readJsonBody(request, 3 * 1024 * 1024)) as { method?: unknown; args?: unknown };
   if (typeof body.method !== 'string' || body.method.trim().length === 0) {
     sendJson(response, 400, { error: 'method required' });
+    return;
+  }
+  if (body.method.startsWith('desktop.') && !ctx.verifyUiSend(
+    headerValue(request.headers, 'x-zcc-desktop-rpc'), id, desktopRpcDigest(body.method, body.args), 'plugin-desktop'
+  )) {
+    sendJson(response, 403, { error: 'Open the Zana desktop app to manage these settings.' });
     return;
   }
   try {

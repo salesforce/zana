@@ -29,6 +29,7 @@ it('accepts the engine requirements of every automatically installed bundled plu
 
 const EXPECTED_CATEGORIES: Record<string, (typeof PLUGIN_CATALOG_CATEGORIES)[number]> = {
   'provider-usage': 'Agent interaction',
+  bots: 'Agent interaction',
   'slack-bridge-2ff2': 'Agent interaction',
   'ask-user-question': 'Agent interaction',
   'agent-city': 'Interface',
@@ -71,6 +72,7 @@ const EXPECTED_CATEGORIES: Record<string, (typeof PLUGIN_CATALOG_CATEGORIES)[num
 
 const EXPECTED_ICONS: Record<string, string> = {
   'provider-usage': 'Gauge',
+  bots: 'Bot',
   'slack-bridge-2ff2': './icons/slack.png',
   'ask-user-question': 'CircleHelp',
   'agent-city': 'Building2',
@@ -165,12 +167,15 @@ describe('bundled plugin registry invariants', () => {
     }
   });
 
-  it('installs Design Docs enabled by default and leaves independent plugins optional', () => {
+  it('offers Bots as an opt-in experiment and keeps Design Docs enabled', () => {
     expect(BUILTIN_PLUGINS.some(plugin => plugin.pluginId === 'salesforce')).toBe(false);
-    for (const pluginId of ['design-docs']) {
-      expect(BUILTIN_PLUGINS.find(plugin => plugin.pluginId === pluginId)).toMatchObject({
-        autoInstall: true, defaultEnabled: true
-      });
+    expect(BUILTIN_PLUGINS.find(plugin => plugin.pluginId === 'bots')).toMatchObject({
+      autoInstall: true, defaultEnabled: false, experimental: true
+    });
+    expect(BUILTIN_PLUGINS.find(plugin => plugin.pluginId === 'design-docs')).toMatchObject({
+      autoInstall: true, defaultEnabled: true
+    });
+    for (const pluginId of ['bots', 'design-docs']) {
       expect(OFFICIAL_PLUGINS.some(plugin => plugin.pluginId === pluginId)).toBe(false);
     }
   });

@@ -63,6 +63,8 @@ database, logs or spawn-plan dumps, they are cleared when the daemon disconnects
 or the plugin is disposed, and a variable the user already set on the machine is
 never overridden.
 
+Pass `deferFirstTurn: true` and omit `prompt` to create an empty thread. The first message starts its provider session.
+
 `sdk.threads.spawn` accepts `hostId`, `serviceTier: "default" | "fast"` and
 `environment: { kind: "unmanaged" | "personal" | "worktree" | "reuse", ... }`.
 The server validates environment choices and authorizes host/project access.
@@ -134,6 +136,8 @@ into `website/lib/plugin-guide/`; do not hand-edit that folder).
 
 ### App shell
 
+- `Markdown` displays a Markdown string from its `content` prop. For an editable form field, pass `editor={{ label, onChange, disabled, placeholder }}`. The Library formatting toolbar edits the draft and `onChange` returns Markdown. The caller owns saving and cancellation. Only `label` and `onChange` are required inside `editor`.
+
 - `navPanel` — sidebar entry + full view. `placement: "extensions"` lists under Plugins; `placement: "unlisted"` is a full `/plugins/<id>/<path>` page with no rail row (open via `toPluginPanel`)
 - `experimental_projectMenuAction` — project-row overflow, or the Projects Organize menu (`placement: "workspace"` means no project is selected; `projectId` is `null`). `toProject` opens a `projectTab`
 - `experimental_createProjectAction` — Add project (+) menu (`openDialog` mounts an optional create wizard; `addProject` registers the folder)
@@ -185,6 +189,7 @@ into `website/lib/plugin-guide/`; do not hand-edit that folder).
 
 - `threadPanelAction` — side-panel tabs. `scopes` default to `["thread"]`; add `"agent-session"` for the CLI-agent inspector and `"plugin-page"` for the side panel beside this plugin's own pages. With `"plugin-page"`, optional `pages` (the `navPanel` / `projectTab` ids) narrows which pages list it. The component's `surface` prop says which panel shows it (absent on older hosts: treat as `"thread"`); `threadId` is empty beside a plugin page. `tabId` names the tab showing it: the same across tab switches, new when a closed tab is opened again, so a component can keep state while switched away and start fresh in a reopened tab. Both this slot and `experimental_newThreadPanelAction` accept an optional `category` label for the New Tab launcher. Omit it to group under the installed plugin’s display name. Categories are collapsible; search matches tool titles and category names across all groups. The optional `icon` is shown beside the tool.
 - `pendingInteraction` — custom in-thread prompt UI (`id` must match `zcc.ui.requestInput` `rendererId`)
+- A `threadPanelAction` may register `experimental_ownedThreadTitle`, a component receiving `{ threadId, title, openPanel }`. It appears in the heading of threads created by that plugin and opens its panel with `openPanel()`. The host omits this action from the general New Tab catalogue. Render `title` when the record no longer exists. The same action can provide `experimental_ownedThreadIcon({ threadId, size, fallback })` for the Advanced project tree and Kanban cards. Render a decorative icon at the requested size, or return the provider icon supplied as `fallback`.
 - `experimental_threadHeaderAction` — action in the thread detail header
 - `experimental_threadList` — replace the thread list in the global and project sidebars (exclusive); projects and CLI Agents remain host-owned
 - `experimental_timelineRenderer` — custom body for a timeline row kind

@@ -18,6 +18,7 @@ const emitMcpChanged = vi.fn();
 beforeEach(() => {
   vi.clearAllMocks(); handlers.clear();
   bindIpcCtx({
+    safeHandleFromWindow: vi.fn(),
     safeHandle: (channel: string, handler: (...args: any[]) => any) => handlers.set(channel, handler),
     localProjects: () => localMetadataProjects(projects, 'primary'),
     projectPathToOptions: (path?: string) => localProjectPathOptions(projects, 'primary', path),

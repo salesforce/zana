@@ -606,6 +606,8 @@ export type PluginSdkInbox = PluginSdk['inbox'];
       ): void;
     };
     readonly storage: {
+      /** Server-only, scoped to this plugin and protected by this device. */
+      deviceKey(): Promise<Uint8Array>;
       kv: {
         get<T>(key: string): Promise<T | undefined>;
         set(key: string, value: unknown): Promise<void>;
@@ -762,7 +764,9 @@ export type PluginSdkInbox = PluginSdk['inbox'];
         search(args: { query: string; archived?: boolean; limit?: number }): Promise<Array<NonNullable<Awaited<ReturnType<ZccPluginApi['sdk']['threads']['get']>>>>>;
         spawn(args: {
           projectId: string;
-          prompt: string;
+          /** Required unless deferFirstTurn creates an empty conversation. */
+          prompt?: string;
+          deferFirstTurn?: boolean;
           /** Exact thread provider id; wins over `harness`. With neither, the host's first provider is used (legacy). */
           providerId?: string;
           /**
@@ -887,6 +891,30 @@ export type PluginSdkInbox = PluginSdk['inbox'];
 }
 
 declare module '@zana-ai/zcc-plugin-sdk/app' {
+  export interface MarkdownProps {
+    content: string;
+    className?: string;
+    editor?: { label: string; onChange(markdown: string): void; disabled?: boolean; placeholder?: string };
+  }
+  export function Markdown(props: MarkdownProps): import('react').ReactElement | null;
+  export interface PluginOwnedThreadIconProps {
+    threadId: string;
+    size: number;
+    fallback: import('react').ReactNode;
+  }
+  export interface PluginOwnedThreadTitleProps {
+    threadId: string;
+    title: string;
+    openPanel(): void;
+  }
+  export interface BasicSidebarSectionProps {
+    searchQuery: string;
+    activeThreadId: string | null;
+    projectIds: readonly string[];
+    openThread(threadId: string): void;
+    registerThreads(threadIds: readonly string[]): () => void;
+  }
+
   export function useRpc(): { call<T = unknown>(method: string, input?: unknown): Promise<T> };
   export function useRealtime(channel: string, handler: (payload: unknown) => void): void;
   export interface PluginAgentActivity {

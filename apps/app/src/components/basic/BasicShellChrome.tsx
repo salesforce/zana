@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, ChevronDown, ChevronRight, Folder, Menu, PanelLeft, PanelLeftClose, PanelsTopLeft, Plus, Search, X } from 'lucide-react';
 import { ZanaIcon } from '../icons/ZanaIcon.js';
@@ -13,6 +13,8 @@ import { getNewThreadRoutePath, getRootRoutePath, getThreadRoutePath, threadIdFr
 import { isBasicUiRouteSupported, setBasicUiMode, useBasicUi } from '../../lib/basic-ui.js';
 import { threadRailStatus } from '../fleet-item.js';
 import { basicConversationGroups, type BasicConversationGroup } from './basic-conversation-groups.js';
+import { listNavPanels, subscribePluginSlots } from '../../plugins/plugin-slots.js';
+import { PluginSlotBoundary } from '../../plugins/PluginSlotBoundary.js';
 import './basic-ui.css';
 
 function newChatPath(scopedProjectId: string | null) {
@@ -96,6 +98,25 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
   const activeId = threadIdFromPath(location.pathname) ?? null;
   const scopedProjectId = getScopedProjectId();
   const [query, setQuery] = useState('');
+  const navigate = useNavigate();
+  const panels = useSyncExternalStore(subscribePluginSlots, listNavPanels, listNavPanels);
+  const eligibleProjectIds = useMemo(() => projects.filter(project =>
+    !project.remote && (!project.hostId || project.hostId === primaryHostId)
+    && (!scopedProjectId || project.id === scopedProjectId)).map(project => project.id),
+  [projects, primaryHostId, scopedProjectId]);
+  const [sectionThreads, setSectionThreads] = useState<ReadonlySet<readonly string[]>>(() => new Set());
+  const registerThreads = useCallback((ids: readonly string[]) => {
+    setSectionThreads(previous => new Set(previous).add(ids));
+    return () => setSectionThreads(previous => {
+      const next = new Set(previous);
+      next.delete(ids);
+      return next;
+    });
+  }, []);
+  const openThread = (id: string) => {
+    navigate(getThreadRoutePath(id, scopedProjectId));
+    onNavigate();
+  };
   const searchRef = useRef<HTMLInputElement>(null);
   const [limit, setLimit] = useState(50);
   const [collapsedProjects, setCollapsedProjects] = useState(() => new Set<string>());
@@ -116,7 +137,10 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
     });
   }, [activeId, activeProjectId]);
   useEnsureThreads();
-  const groups = useMemo(() => basicConversationGroups(threads, projects, primaryHostId, query, scopedProjectId), [threads, projects, primaryHostId, query, scopedProjectId]);
+  const groups = useMemo(() => {
+    const represented = new Set([...sectionThreads].flat());
+    return basicConversationGroups(threads.filter(thread => !represented.has(thread.id)), projects, primaryHostId, query, scopedProjectId);
+  }, [threads, projects, primaryHostId, query, scopedProjectId, sectionThreads]);
   const visibleGroups = groups.slice(0, limit);
   const activeGroup = groups.find(group => group.threads.some(thread => thread.id === activeId));
   if (activeGroup && !visibleGroups.includes(activeGroup)) visibleGroups.push(activeGroup);
@@ -131,6 +155,14 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
         onClick={() => { updateQuery(''); searchRef.current?.focus(); }}><X size={12} aria-hidden="true" /></button>}
     </div>
     <nav className="basic-ui-conversations" aria-label="Recent conversations" aria-busy={loading}>
+      {panels.map(panel => {
+        const Section = panel.experimental_basicSidebarSection;
+        return Section && <PluginSlotBoundary key={`${panel.pluginId}:${panel.id}:${panel.generation}`}
+          pluginId={panel.pluginId} generation={panel.generation}>
+          <Section searchQuery={query} activeThreadId={activeId} projectIds={eligibleProjectIds}
+            openThread={openThread} registerThreads={registerThreads} />
+        </PluginSlotBoundary>;
+      })}
       <h2>Conversations</h2>
       {visibleGroups.map(group => <BasicProjectConversations key={group.projectId} group={group} activeId={activeId}
         collapsed={(searching ? collapsedSearchProjects : collapsedProjects).has(group.projectId)} onToggle={() => (searching ? setCollapsedSearchProjects : setCollapsedProjects)(previous => {

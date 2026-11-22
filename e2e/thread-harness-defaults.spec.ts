@@ -17,13 +17,15 @@ test('thread defaults are explicit, independent, persistent, and never silently 
   const home = page.locator('.home-agent-composer');
   await home.getByRole('group', { name: 'Launch mode' }).getByRole('button', { name: 'Modern', exact: true }).click();
   const input = home.getByTestId('thread-command-input');
+  const picker = home.getByRole('button', { name: 'Provider and model' });
   await expect(home.getByText(/selected harness is unavailable/)).toBeVisible();
   await input.fill('Keep this draft and harness');
   await expect(home.getByTestId('thread-command-send')).toBeDisabled();
   await home.getByTestId('model-reasoning-picker-trigger').click();
   await page.getByTestId('model-reasoning-provider-fake').click();
   await page.keyboard.press('Escape');
-  await expect(home.getByTestId('thread-default-hint')).toContainText('This thread only');
+  await expect(picker).toHaveAttribute('title', /^Fake:/);
+  await expect(home.getByTestId('thread-default-hint')).toHaveCount(0);
   expect((await page.evaluate(() => window.cc.config.get())).defaultThreadProviderId).toBe('removed-provider');
 
   // A separate new-thread surface still starts from the configured default.
@@ -31,7 +33,14 @@ test('thread defaults are explicit, independent, persistent, and never silently 
   await expect(page.getByTestId('new-thread-view').getByText(/selected harness is unavailable/)).toBeVisible();
   await page.getByTestId('nav-home').click();
   await expect(input).toHaveText('Keep this draft and harness');
-  await expect(home.getByTestId('thread-default-hint')).toContainText('This thread only');
+  await expect(picker).toHaveAttribute('title', /^Fake:/);
+  await picker.click();
+  await page.getByRole('button', { name: 'Use default', exact: true }).click();
+  await expect(picker).toHaveAttribute('title', /^removed-provider/);
+  await expect(input).toHaveText('Keep this draft and harness');
+  await picker.click();
+  await page.getByTestId('model-reasoning-provider-fake').click();
+  await page.keyboard.press('Escape');
 
   // Both settings pages share the same default while CLI agents keep their own.
   await navigate('/settings/composer');
@@ -57,7 +66,8 @@ test('thread defaults are explicit, independent, persistent, and never silently 
 
   await navigate('/');
   await home.getByRole('group', { name: 'Launch mode' }).getByRole('button', { name: 'Modern', exact: true }).click();
-  await expect(home.getByTestId('thread-default-hint')).toContainText('Global thread default');
+  await expect(picker).toHaveAttribute('title', /^Fake:/);
+  await expect(home.getByText('Global thread default', { exact: true })).toHaveCount(0);
   const projectId = await page.evaluate(async () => (await window.cc.projects.list()).find(project => project.quickAgent)?.id);
   expect(projectId).toBeTruthy();
   const overridden = await page.evaluate(async id => {
@@ -66,19 +76,19 @@ test('thread defaults are explicit, independent, persistent, and never silently 
     return (await response.json()).project;
   }, projectId);
   expect(overridden.defaultThreadProviderId).toBe('removed-project-provider');
-  await expect(home.getByTestId('thread-default-hint')).toContainText('Project default');
+  await expect(picker).toHaveAttribute('title', /^removed-project-provider/);
   await expect(home.getByText(/selected harness is unavailable/)).toBeVisible();
   await page.evaluate(async id => {
     const response = await fetch(`/api/v1/projects/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ defaultThreadProviderId: null }) });
     if (!response.ok) throw new Error(await response.text());
   }, projectId);
-  await expect(home.getByTestId('thread-default-hint')).toContainText('Global thread default');
+  await expect(picker).toHaveAttribute('title', /^Fake:/);
   await input.fill('A thread created using the explicit default');
   await page.evaluate(async () => {
     const response = await fetch('/api/v1/config', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ defaultThreadProviderId: 'next-thread-default' }) });
     if (!response.ok) throw new Error(await response.text());
   });
-  await expect(home.getByTestId('thread-default-hint')).toContainText('Draft harness');
+  await expect(picker).toHaveAttribute('title', /^Fake:/);
   await expect(home.getByTestId('thread-command-send')).toBeEnabled();
   await home.getByTestId('thread-command-send').click();
   await expect.poll(() => page.evaluate(async () => {
@@ -88,7 +98,6 @@ test('thread defaults are explicit, independent, persistent, and never silently 
   await expect(page.getByTestId('thread-detail')).toBeVisible();
   await page.getByTestId('nav-home').click();
   await expect(input).toHaveText('');
-  await expect(home.getByTestId('thread-default-hint')).toContainText('Global thread default');
   await expect(home.getByTestId('model-reasoning-picker-trigger')).toHaveAttribute('title', /^next-thread-default/);
   await expect(home.getByTestId('thread-command-send')).toBeDisabled();
 });

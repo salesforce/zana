@@ -278,7 +278,7 @@ export function ThreadNewTabPage({
     listNewThreadPanelActions
   );
   const actions = [
-    ...threadActions.filter((action) => threadPanelActionMatchesScope(action, panelScope, page)),
+    ...threadActions.filter((action) => !action.experimental_ownedThreadTitle && threadPanelActionMatchesScope(action, panelScope, page)),
     ...(panelScope === 'thread' ? composeActions : [])
   ];
   const [query, setQuery] = useState('');

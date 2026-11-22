@@ -29,10 +29,10 @@ it('presents Basic welcome without remounting its native draft or plugin surface
   fireEvent.change(draft, { target: { value: 'Keep this thought' } });
   act(() => setBasicUiMode('basic'));
   expect(screen.getByRole('heading', { name: 'What shall we work on today?' })).toBeTruthy();
-  const mark = document.querySelector('.basic-home-welcome > .zana-brand-icon') as HTMLElement;
+  const mark = document.querySelector('.conversation-welcome > .zana-brand-icon') as HTMLElement;
   expect(mark.style.mask).toContain(zanaGlyph);
   expect(mark.getAttribute('aria-hidden')).toBe('true');
-  expect(document.querySelector('.basic-home-welcome svg')).toBeNull();
+  expect(document.querySelector('.conversation-welcome svg')).toBeNull();
   expect(screen.getByRole('textbox', { name: 'Launcher draft' })).toBe(draft);
   expect(screen.queryByRole('button', { name: 'Homepage tool' })).toBeNull();
   expect(document.querySelector('.home-plugin-section button')).toBe(plugin);

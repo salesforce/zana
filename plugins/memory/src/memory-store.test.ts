@@ -12,7 +12,8 @@ import {
   readScope,
   renderCatalog,
   searchExpression,
-  unsafeMemoryReason
+  unsafeMemoryReason,
+  validateTags
 } from './memory-store.js';
 import { createMemorySqlite, createMemoryTestDatabase } from './test-db.js';
 
@@ -218,4 +219,11 @@ describe('memory store', () => {
     expect(searchExpression('Turbo typecheck')).toContain('OR');
     expect(() => searchExpression('???')).toThrow(/no searchable terms/);
   });
+});
+
+it('accepts a namespaced bot tag and rejects empty or nested tag segments', () => {
+  expect(validateTags(['bot:scout'])).toEqual(['bot:scout']);
+  for (const tag of ['bot:', ':scout', 'bot:scout:other']) {
+    expect(() => validateTags([tag])).toThrow(/invalid tag/);
+  }
 });

@@ -20,6 +20,7 @@ const supervisor = { getPluginSettings: vi.fn() };
 function bind(withSupervisor: boolean) {
   handlers.clear();
   bindIpcCtx({
+    safeHandleFromWindow: vi.fn(),
     safeHandle: (channel: string, handler: (...args: any[]) => any) => handlers.set(channel, handler),
     runtimeSupervisor: withSupervisor ? supervisor : undefined
   } as any);

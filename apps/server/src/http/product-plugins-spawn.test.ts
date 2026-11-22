@@ -129,6 +129,12 @@ describe('attached plugin service: threads.spawn provider resolution', () => {
     expect(harnessEffectiveDefault).not.toHaveBeenCalled();
   });
 
+  it('prepares an empty thread without sending a prompt or changing execution mode', async () => {
+    await attach().spawnThread({ projectId: 'p1', providerId: 'codex', deferFirstTurn: true });
+    expect(lastRequest()).toMatchObject({ providerId: 'codex', deferFirstTurn: true, input: [], promptInput: [] });
+    expect(lastRequest()).not.toHaveProperty('acpMode');
+  });
+
   it('reports provider availability from the host probe', async () => {
     harnessVerifyBundle.mockResolvedValue({
       availability: [{ family: 'claude', label: 'Claude', binary: 'claude', enabled: true, installed: false, installHint: '' }],
@@ -255,6 +261,8 @@ describe('attached plugin service: threads.spawn provider resolution', () => {
 
       providers[1]!.composerActions = ['plan'];
       try {
+        await attach(plan).spawnThread({ projectId: 'p1', deferFirstTurn: true, harness: 'project-default' });
+        expect(lastRequest()).toMatchObject({ deferFirstTurn: 'slash-plan', input: [], promptInput: [] });
         await attach(plan).spawnThread({ projectId: 'p1', prompt: 'go', harness: 'project-default' });
       } finally {
         delete providers[1]!.composerActions;

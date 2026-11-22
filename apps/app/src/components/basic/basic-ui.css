@@ -20,7 +20,8 @@
 .basic-ui-chat-search.list-filter { flex-shrink: 0; min-height: 34px; margin: 14px 0 12px; }
 .basic-ui .basic-ui-chat-search input:focus-visible { outline: none; box-shadow: none; }
 .basic-ui-chat-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
-.basic-ui-conversations { flex: 1; min-height: 0; overflow-y: auto; }
+.basic-ui-conversations { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: none; }
+.basic-ui-conversations::-webkit-scrollbar { display: none; }
 .basic-ui-conversations h2 { margin: 8px 10px 10px; font-size: 10px; font-weight: 500; color: var(--text-muted); }
 .basic-ui-project-group { margin-bottom: 10px; }
 .basic-ui-project-group h3 { margin: 0; }
@@ -55,6 +56,14 @@
 }
 .app-shell.basic-ui[data-mobile='true'] .basic-ui-mode-switch { right: 12px; }
 .app-shell:not(.basic-ui)[data-mobile='true'] .basic-ui-mode-switch { right: 112px; }
+.app-shell:not(.basic-ui)[data-mobile='true'] .titlebar:has(.mobile-thread-controls-slot > *) .basic-ui-mode-switch {
+  position: static;
+  flex: none;
+  transform: none;
+}
+.app-shell:not(.basic-ui)[data-mobile='true'] .titlebar:has(.mobile-thread-controls-slot .thread-detail-search:is(:focus-within, .has-query)) .basic-ui-mode-switch {
+  display: none;
+}
 
 .titlebar-theme { -webkit-app-region: no-drag; position: absolute; right: calc(74px + var(--windows-caption-reserve, 0px)); top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--text-muted); cursor: pointer; }
 .titlebar-theme:hover { background: var(--bg-hover); color: var(--text-primary); }

@@ -9344,6 +9344,7 @@ function registerIpc() {
     get restoreSquadWorktreeFollowUpClaim() { return squadFollowUpClaims.restoreClaim; },
     get restorePrincipal() { return restorePrincipal; },
     get runDiskSync() { return runDiskSync; },
+    productServerCredential: ensureProductServerCredential,
     get runtimeSupervisor() { return runtimeSupervisor; },
     ensureMainWindowReady,
     get safeHandle() { return safeHandle; },

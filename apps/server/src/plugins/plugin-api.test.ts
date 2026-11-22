@@ -403,6 +403,21 @@ describe('plugin realtime', () => {
 });
 
 describe('plugin storage and settings', () => {
+  it('only asks for the active plugin’s device key', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-device-key-'));
+    try {
+      const key = new Uint8Array(32);
+      const pluginDeviceKey = vi.fn(async () => key);
+      const handle = createPluginApi('demo',dir,{ productContext:{pluginDeviceKey} as never });
+      expect(await handle.api.storage.deviceKey()).toBe(key);
+      expect(pluginDeviceKey).toHaveBeenCalledWith('demo');
+      await handle.dispose();
+      await expect(handle.api.storage.deviceKey()).rejects.toThrow();
+      const other = createPluginApi('other',dir);
+      await expect(other.api.storage.deviceKey()).rejects.toThrow('secure storage');
+      await other.dispose();
+    } finally { rmSync(dir,{recursive:true,force:true}); }
+  });
   it('persists kv across api instances', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-kv-'));
     try {
@@ -510,6 +525,10 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
         id: 'thr-spawned'
       });
       expect(spawnThread).toHaveBeenCalledWith({ pluginId: 'demo', projectId: 'p', prompt: 'hi' });
+      await handle.api.sdk.threads.spawn({ projectId: 'p', deferFirstTurn: true });
+      expect(spawnThread).toHaveBeenLastCalledWith({ pluginId: 'demo', projectId: 'p', deferFirstTurn: true });
+      await expect(handle.api.sdk.threads.spawn({ projectId: 'p' })).rejects.toThrow('prompt is required');
+      await expect(handle.api.sdk.threads.spawn({ projectId: 'p', prompt: 'hi', deferFirstTurn: true })).rejects.toThrow('omit prompt');
       await expect(handle.api.sdk.threads.spawn({
         projectId: 'p',
         prompt: 'seeded',

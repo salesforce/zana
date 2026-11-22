@@ -14,7 +14,7 @@ import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from './threadCa
 import { FavoriteStar } from './FavoriteStar.js';
 import { PromptModal } from './PromptModal.js';
 import { FleetKindChip } from './FleetKindChip.js';
-import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
+import { ThreadIdentityIcon } from './thread/ThreadIdentityIcon.js';
 import { shortRunId } from '../lib/executionIdentity.js';
 import { boardDropAction, boardItemKey, canSwipeClose } from '../lib/agent-board-moves.js';
 import { agentBoardMoves, closeBoardItem, useAgentBoardMoves } from '../stores/agent-board-moves.js';
@@ -1284,9 +1284,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
           </span>
         )}
         <span className="agent-card-head">
-          <span className="agent-card-icon">
-            <ProviderIcon providerId={item.thread.providerId} size={14} />
-          </span>
+          <ThreadIdentityIcon thread={item.thread} className="agent-card-icon" />
           <span className="agent-card-title">{item.title}</span>
           <FleetKindChip kind="thread" />
            {unread ? <span className="thread-unread-dot" data-testid="thread-unread-indicator" title="New activity" role="img" aria-label="New activity" /> : null}
