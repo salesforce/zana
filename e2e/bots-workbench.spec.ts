@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 import { makeFakeAgentBinary } from './sdk/harness.js';
 
 const exec = promisify(execFile);
@@ -100,10 +101,10 @@ test('Bots shows routines, tagged memory, and host settings controls in the inst
   await expect(vault.getByRole('button', {name:'Replace Password'})).toBeVisible();
   await vault.getByRole('button', { name: 'Cancel' }).click();
   await expect(vault.getByRole('button', { name: /accounts.example.test/ })).toBeVisible();
-  await app.window.screenshot({ animations: 'disabled', path: testInfo.outputPath('vault.png') });
+  await captureElectronScreenshot(app.electron, app.window, testInfo.outputPath('vault.png'));
   await panel.getByRole('tab', { name: 'Overview' }).click();
   await expect(panel.locator('.bt-item[aria-current="true"] .bt-av')).toHaveClass(/is-live/);
-  await app.window.screenshot({ animations: 'disabled', path: testInfo.outputPath('overview.png') });
+  await captureElectronScreenshot(app.electron, app.window, testInfo.outputPath('overview.png'));
   await panel.getByRole('button', {name:'Open library →'}).click();
   await panel.getByText('release-digest', {exact:true}).click();
   await expect(panel.getByText('Include branch names.')).toBeVisible();
@@ -159,7 +160,7 @@ test('Bots shows routines, tagged memory, and host settings controls in the inst
   await search.press('Enter');
   await expect(options).toBeHidden();
   await expect(picker).toContainText('bot-project');
-  await app.window.screenshot({ animations: 'disabled', path: testInfo.outputPath('settings.png') });
+  await captureElectronScreenshot(app.electron, app.window, testInfo.outputPath('settings.png'));
   // Constrain only this isolated plugin pane, just as a narrow side panel does.
   await panel.evaluate(el => { el.style.width = '360px'; });
   await expect.poll(() => panel.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
