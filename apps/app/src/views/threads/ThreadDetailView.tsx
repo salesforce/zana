@@ -1,4 +1,3 @@
-import { AuroraGrid } from '../../components/AuroraGrid.js';
 import { PeerMessageReviews } from '../../components/thread/timeline/PeerMessageReviews.js';
 import { subscribeProductReconnect } from '../../lib/product-ws.js';
 import { ArchivedThreadBanner } from '../../components/history/ArchivedThreadBanner.js';
@@ -168,7 +167,6 @@ function ThreadDetailBody({
 }) {
   const navigate = useNavigate();
   const basic = useBasicUi();
-  const basicChatBackground = basic && !embedded;
   const location = useLocation();
   const basicRouteHidden = basic && !isBasicUiRouteSupported(location.pathname);
   const route = useRouteState();
@@ -249,8 +247,10 @@ function ThreadDetailBody({
     activateTab: activateTool,
     addTab: (tab) => panel.addTab(tab)
   });
-  const [title, setTitle] = useState('Agent');
-  const [status, setStatus] = useState('starting');
+  const [recordTitle, setTitle] = useState<string | null>(null);
+  const [recordStatus, setStatus] = useState<string | null>(null);
+  const title = recordTitle ?? (basic ? '' : 'Agent');
+  const status = recordStatus ?? (basic ? '' : 'starting');
   const [cwd, setCwd] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
   const project = useData((s) => (projectId ? s.projects.find((row) => row.id === projectId) ?? null : null));
@@ -317,6 +317,7 @@ function ThreadDetailBody({
   const linkDismissed = useRef(false);
   useEffect(() => { linkLoads.current = 0; lastLinkCursor.current = null; linkDismissed.current = false; setSearchHit(null); }, [threadId, linkSequence]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const openingBasicThread = basic && timelineLoading && !loadError;
   const rowsRef = useRef<TimelineRow[]>([]);
   const maxSeqRef = useRef(0);
   const loadedRef = useRef(false);
@@ -1011,10 +1012,9 @@ function ThreadDetailBody({
     >
       <div className="thread-detail-split">
       <div className={dockEnabled ? "thread-tool-main" : "thread-tool-main--legacy"}>
-      <div ref={mainRef} className={basicChatBackground ? 'thread-detail-main aurora-host' : 'thread-detail-main'}
+      <div ref={mainRef} className="thread-detail-main"
         hidden={basic && showSecondaryPanel && panel.state.isOpen && (basicCompact || panel.state.isMaximized)}
         inert={basic && showSecondaryPanel && panel.state.isOpen && (basicCompact || panel.state.isMaximized) || undefined}>
-        {basicChatBackground && <AuroraGrid />}
         <header className="thread-detail-header thread-detail-header--balanced" data-title-in-shell={Boolean(mobileTitleTarget) || undefined} data-controls-in-shell={Boolean(mobileControlsTarget) || undefined}>
           <ThreadDetailHeading
             title={title}
@@ -1034,7 +1034,7 @@ function ThreadDetailBody({
                 : undefined
             }
             status={!mobileControlsTarget ? <ThreadStatusBadge status={status} waitingOnUser={awaitingUser} thinking={thinking} /> : null}
-            metadata={!mobileControlsTarget && <><span className="basic-thread-project" hidden={!basic}>{project?.name ?? 'Conversation'}</span><span className="basic-thread-advanced-chrome" hidden={basic} inert={basic || undefined}><ThreadDetailContext key={threadId} agent={{
+            metadata={!mobileControlsTarget && <><span className="basic-thread-project" hidden={!basic}>{project?.name ?? (recordTitle ? 'Conversation' : '')}</span><span className="basic-thread-advanced-chrome" hidden={basic} inert={basic || undefined}><ThreadDetailContext key={threadId} agent={{
               providerId: threadProviderId,
               model: threadModel,
               projectName: project?.name ?? null,
@@ -1081,7 +1081,9 @@ function ThreadDetailBody({
           </ThreadDetailActions>
         </header>
         <div className="thread-detail-body">
-          <div className="thread-detail-column">
+          {openingBasicThread ? (
+            <p className="basic-thread-loading" role="status">Loading conversation…</p>
+          ) : <div className="thread-detail-column">
             {leadingContent ? (
               <div className="thread-chat-leading" data-testid="thread-chat-leading-content">
                 {leadingContent}
@@ -1205,7 +1207,7 @@ function ThreadDetailBody({
                 onPlanActionHandled={() => setPlanAction(null)}
               />}
             </div>
-          </div>
+          </div>}
         </div>
       </div>
       {dockEnabled ? (dockPanels.bottom.isOpen ? renderToolPanel(dockPanels.bottom, 'bottom') : draggedTool ? <div

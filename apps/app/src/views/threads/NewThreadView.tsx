@@ -39,7 +39,7 @@ export function NewThreadView({ project: projectProp }: { project?: Project } = 
     <NewChatPanelLayout key={panelScope} scopeId={panelScope} project={project} hostId={initialHostId}>
       {({ onCreated, onAgentCreated }) => (
         <section className="new-thread-view aurora-host" data-testid="new-thread-view">
-          <AuroraGrid />
+          {!basic && <AuroraGrid />}
           <div className="new-thread-view-inner">
             <h1 className="new-thread-view-heading">New Chat</h1>
             <HomeAgentComposer

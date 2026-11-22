@@ -627,6 +627,7 @@ it('uses the current bot identity in the thread heading and falls back when the 
   route({ threadBot: ({ threadId }) => threadId === 't1' ? bot : null });
   const openPanel = vi.fn();
   render(<BotThreadTitle threadId="t1" title="Old chat title" openPanel={openPanel} />);
+  expect(screen.queryByText('Old chat title')).toBeNull();
   fireEvent.click(await screen.findByRole('button', { name: 'Open Scout profile' }));
   expect(openPanel).toHaveBeenCalledOnce();
   bot = null;
@@ -635,6 +636,12 @@ it('uses the current bot identity in the thread heading and falls back when the 
   state.realtime.at(-1)!({ botId: 'scout' });
   await screen.findByText('Old chat title');
   expect(screen.queryByRole('button')).toBeNull();
+});
+
+it('keeps the thread title accessible when its bot identity cannot be read', async () => {
+  route({ threadBot: () => { throw Error('Offline'); } });
+  render(<BotThreadTitle threadId="t1" title="Stored title" openPanel={vi.fn()} />);
+  await screen.findByText('Stored title');
 });
 
 it('recovers a failed profile lookup and never shows another thread’s profile', async () => {

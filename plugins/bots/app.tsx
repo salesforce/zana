@@ -615,7 +615,8 @@ const profileCss = `
 `;
 
 export function BotThreadTitle({ threadId, title, openPanel }: PluginOwnedThreadTitleProps) {
-  const { bot } = useThreadBot(threadId, false);
+  const { bot, error } = useThreadBot(threadId, false);
+  if (bot === undefined && !error) return null;
   if (!bot) return <>{title}</>;
   return <><style>{profileCss}</style>
     <button type="button" className="bt-thread-title" aria-label={`Open ${bot.name} profile`}

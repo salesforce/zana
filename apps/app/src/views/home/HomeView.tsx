@@ -15,7 +15,7 @@ import '../../components/basic/basic-conversation.css';
  * New Chat compose surface at `/`. ListPane returns null for `nav === 'home'`,
  * so this panel spans the remaining shell track. Submit already opens
  * `/threads/:id`. Plugin CTAs and homepage sections sit under the prompt.
- * AuroraGrid fills the pane behind the composer (same host as Plugins).
+ * Advanced shows the ambient background behind the composer.
  */
 export function HomeView() {
   const basic = useBasicUi();
@@ -30,7 +30,7 @@ export function HomeView() {
 
   return (
     <div className="settings-panel home-panel aurora-host">
-      <AuroraGrid />
+      {!basic && <AuroraGrid />}
       <div className="settings-inner">
         {basic && <ConversationWelcome heading="h1" />}
         <HomeLauncherTips>

@@ -94,12 +94,13 @@ test('Basic sidebar opens bot conversations and leaves Advanced navigation intac
     data: { method: 'create', args: { name: 'Demo Coach', color: '#9675d1', projectId, providerId: 'fake' } }
   });
   expect(create.ok()).toBe(true);
+  await expect(page.locator('.home-panel > .aurora-grid')).toBeVisible();
   await page.getByRole('button', { name: 'Basic view', exact: true }).click();
   const sidebar = page.getByTestId('basic-ui-sidebar');
   const row = sidebar.getByRole('button', { name: 'Demo Coach', exact: true });
   await expect(row.locator('.bt-av svg')).toBeVisible();
   await expect(row).toHaveAccessibleDescription('Not started');
-  await expect(page.locator('.home-panel > .aurora-grid')).toBeVisible();
+  await expect(page.locator('.home-panel > .aurora-grid')).toHaveCount(0);
   await expect(sidebar.getByRole('button', { name: 'Show more', exact: true })).toHaveCount(0);
   for (const name of ['Scout', 'Guide', 'Editor', 'Planner']) {
     const created = await page.request.post(new URL('/api/v1/plugin-apps/bots/rpc', page.url()).href, {
@@ -142,7 +143,7 @@ test('Basic sidebar opens bot conversations and leaves Advanced navigation intac
   await row.click();
   await expect(page).toHaveURL(/\/threads\/[^/?#]+/);
   await expect(row).toHaveAttribute('aria-current', 'page');
-  await expect(page.locator('.thread-detail-main > .aurora-grid')).toBeVisible();
+  await expect(page.locator('.thread-detail-main > .aurora-grid')).toHaveCount(0);
   const chat = page.url();
   const api = new URL('/api/v1' + new URL(chat).pathname, chat).href;
   const readThread = async () => (await (await page.request.get(api)).json()).thread;
@@ -168,14 +169,39 @@ test('Basic sidebar opens bot conversations and leaves Advanced navigation intac
   await search.fill('');
   await expect(sidebar.locator('.basic-ui-chat-row')).toHaveCount(0);
   await sidebar.getByRole('link', { name: 'New chat' }).click();
-  await row.click();
+  // Hold both reads so the short-lived opening frame can be asserted reliably.
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const threadRead = (url: URL) => url.href === api || url.href.split('?')[0] === api + '/timeline';
+  await page.route(threadRead, async route => { await gate; await route.continue(); });
+  try {
+    await row.click();
+    const detail = page.getByTestId('thread-detail');
+    await expect(detail.getByRole('status').filter({ hasText: 'Loading conversation' })).toBeVisible();
+    await expect(detail.locator('h1')).toHaveText('');
+    await expect(detail.getByTestId('thread-detail-status')).toHaveCount(0);
+    await expect(detail.getByTestId('thread-loading')).toHaveCount(0);
+    await expect(welcome).toHaveCount(0);
+    await expect(composer).toHaveCount(0);
+  } finally {
+    release();
+  }
   await expect(page).toHaveURL(chat);
+  const transcript = page.getByTestId('thread-timeline');
+  await expect(transcript).toContainText('Hello from the thread composer.');
+  const message = transcript.locator('.thread-timeline-row.is-user').first();
+  const scrollGap = () => message.evaluate(el => {
+    const pane = el.closest('.thread-detail-timeline')!;
+    return pane.getBoundingClientRect().right - el.getBoundingClientRect().right;
+  });
+  await expect.poll(scrollGap).toBeGreaterThanOrEqual(10);
   const botTitle = page.getByRole('heading', { level: 1 }).getByRole('button', { name: 'Open Demo Coach profile' });
   const headerLeft = await page.locator('.thread-detail-heading').evaluate(el => el.getBoundingClientRect().left);
   for (const item of [botTitle, page.locator('.basic-thread-project')]) {
     await expect(item).toBeVisible();
     await expect.poll(() => item.evaluate(el => el.getBoundingClientRect().left)).toBeCloseTo(headerLeft, 0);
   }
+  await page.unroute(threadRead);
   await composer.fill('My draft');
   await botTitle.click();
   const profile = page.locator('.bt-profile');

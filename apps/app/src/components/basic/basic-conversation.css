@@ -14,8 +14,24 @@
 .basic-ui .home-panel { padding: 34px 32px; }
 .basic-ui .home-panel .contextual-help-surface { width: 100%; }
 .basic-ui .home-panel .thread-command-card { border-radius: 20px; }
-.basic-ui .thread-detail-main.aurora-host > .aurora-grid { z-index: -1; }
-.basic-ui .thread-detail-column { max-width: 800px; }
+/* Let the transcript scroll at the pane edge while messages and composer share a reading width. */
+.basic-ui .thread-detail-column { --basic-chat-width: 800px; max-width: none; }
+.basic-ui .thread-detail-column > :not(.thread-detail-timeline-shell),
+.basic-ui .thread-detail-column .thread-banner-stack {
+  align-self: center;
+  width: min(100%, var(--basic-chat-width));
+}
+.basic-ui .thread-detail-column .thread-detail-timeline {
+  padding-inline: max(var(--thread-scroll-gap), calc((100% - var(--basic-chat-width)) / 2));
+}
+.basic-thread-loading {
+  place-self: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  /* A fast read never paints an intermediate screen. Slow reads get a quiet status. */
+  animation: basic-thread-loading-reveal 0s 300ms backwards;
+}
+@keyframes basic-thread-loading-reveal { from { opacity: 0; } to { opacity: 1; } }
 .basic-ui .thread-detail-header { padding-top: 15px; padding-bottom: 15px; }
 .basic-ui .thread-detail-heading { min-width: 0; }
 .basic-ui .thread-detail-title { font-size: 14px; font-weight: 500; }

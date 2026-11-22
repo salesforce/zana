@@ -1453,7 +1453,8 @@ var profileCss = `
 .bt-profile .bt-settings-panel{margin-inline:auto}
 `;
 function BotThreadTitle({ threadId, title, openPanel }) {
-  const { bot } = useThreadBot(threadId, false);
+  const { bot, error } = useThreadBot(threadId, false);
+  if (bot === void 0 && !error) return null;
   if (!bot) return /* @__PURE__ */ jsx(Fragment2, { children: title });
   return /* @__PURE__ */ jsxs(Fragment2, { children: [
     /* @__PURE__ */ jsx("style", { children: profileCss }),

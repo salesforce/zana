@@ -36275,6 +36275,9 @@ body.split-frame-guard webview {
 
 .thread-detail-timeline {
   flex: 1 1 auto;
+  --thread-scroll-gap: clamp(10px, 2%, 24px);
+  box-sizing: border-box;
+  padding-inline: var(--thread-scroll-gap);
   min-height: 0;
   /* clip, not hidden: hidden on one axis makes this a sticky containing
    * block that is not the vertical scroller, so position:sticky never pins. */
