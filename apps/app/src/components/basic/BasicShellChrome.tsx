@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, ChevronDown, ChevronRight, Folder, Menu, PanelLeft, PanelLeftClose, PanelsTopLeft, Plus, Search, X } from 'lucide-react';
 import { ZanaIcon } from '../icons/ZanaIcon.js';
 import { SidebarResizer } from '../SidebarResizer.js';
@@ -10,15 +10,26 @@ import { useEnsureThreads } from '../../hooks/useEnsureThreads.js';
 import { useHosts, primaryHost } from '../../hooks/useHosts.js';
 import { getScopedProjectId } from '../../lib/windowScope.js';
 import { getNewThreadRoutePath, getRootRoutePath, getThreadRoutePath, threadIdFromPath } from '../../lib/route-paths.js';
-import { setBasicUiMode, useBasicUi } from '../../lib/basic-ui.js';
+import { isBasicUiRouteSupported, setBasicUiMode, useBasicUi } from '../../lib/basic-ui.js';
 import { threadRailStatus } from '../fleet-item.js';
 import { basicConversationGroups, type BasicConversationGroup } from './basic-conversation-groups.js';
 import './basic-ui.css';
 
+function newChatPath(scopedProjectId: string | null) {
+  return scopedProjectId ? getNewThreadRoutePath(scopedProjectId) : getRootRoutePath();
+}
+
 export function BasicUiModeSwitch() {
   const basic = useBasicUi();
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  function enterBasic() {
+    if (basic) return;
+    if (!isBasicUiRouteSupported(pathname)) navigate(newChatPath(getScopedProjectId()));
+    setBasicUiMode('basic');
+  }
   return <div className="basic-ui-mode-switch" role="group" aria-label="Interface view">
-    <button type="button" data-testid="basic-ui-mode-basic" aria-label="Basic view" title="Basic view" aria-pressed={basic} onClick={() => setBasicUiMode('basic')}><ZanaIcon size={19} /></button>
+    <button type="button" data-testid="basic-ui-mode-basic" aria-label="Basic view" title="Basic view" aria-pressed={basic} onClick={enterBasic}><ZanaIcon size={19} /></button>
     <button type="button" data-testid="basic-ui-mode-advanced" aria-label="Advanced view" title="Advanced view" aria-pressed={!basic} onClick={() => setBasicUiMode('advanced')}><PanelsTopLeft size={15} aria-hidden="true" /></button>
   </div>;
 }
@@ -109,9 +120,8 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
   const visibleGroups = groups.slice(0, limit);
   const activeGroup = groups.find(group => group.threads.some(thread => thread.id === activeId));
   if (activeGroup && !visibleGroups.includes(activeGroup)) visibleGroups.push(activeGroup);
-  const newChatPath = scopedProjectId ? getNewThreadRoutePath(scopedProjectId) : getRootRoutePath();
   return <aside id="basic-conversation-sidebar" className="sidebar basic-ui-sidebar" data-testid="basic-ui-sidebar" aria-label="Conversations" hidden={hidden}>
-    <Link className="basic-ui-new-chat" to={newChatPath} onClick={onNavigate}><Plus size={17} aria-hidden="true" />New chat</Link>
+    <Link className="basic-ui-new-chat" to={newChatPath(scopedProjectId)} onClick={onNavigate}><Plus size={17} aria-hidden="true" />New chat</Link>
     <div className="basic-ui-chat-search list-filter">
       <Search size={14} className="list-filter-icon" aria-hidden="true" />
       <input ref={searchRef} type="search" aria-label="Search chats" placeholder="Search chats" value={query}

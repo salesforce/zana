@@ -168,7 +168,7 @@ describe('Basic conversation navigation', () => {
 
 describe('Basic shell controls', () => {
   it('provides named icon buttons with tooltips and the current view selected', () => {
-    render(<BasicUiModeSwitch />);
+    render(<MemoryRouter><BasicUiModeSwitch /></MemoryRouter>);
     const basic = screen.getByRole('button', { name: 'Basic view' });
     const advanced = screen.getByRole('button', { name: 'Advanced view' });
     for (const button of [basic, advanced]) {
@@ -197,12 +197,24 @@ describe('Basic shell controls', () => {
     expect(mark.getAttribute('aria-hidden')).toBe('true');
   });
 
-  it('switches only presentation while keeping the current route', () => {
-    render(<MemoryRouter initialEntries={['/scheduler?scope=p#history']}><BasicUiModeSwitch /><BasicUnsupportedDestination /><RouteProbe /></MemoryRouter>);
-    fireEvent.click(screen.getByTestId('basic-ui-mode-basic'));
-    expect(screen.getByTestId('basic-ui-mode-basic').getAttribute('aria-pressed')).toBe('true');
+  it.each<[string, string | null, string]>([
+    ['/scheduler?scope=p#history', null, '/'],
+    ['/projects/p2/inbox', 'p2', '/projects/p2/threads/new'],
+    ['/threads/one?turn=2#message', null, '/threads/one?turn=2#message'],
+    ['/projects/p2/threads/two', 'p2', '/projects/p2/threads/two'],
+    ['/projects/p2/threads/new?prompt=hello', 'p2', '/projects/p2/threads/new?prompt=hello'],
+    ['/?prompt=hello', null, '/?prompt=hello']
+  ])('enters Basic from %s at the conversation or New chat', (from, scope, expected) => {
+    data.scoped = scope;
+    render(<MemoryRouter initialEntries={[from]}><BasicUiModeSwitch /><RouteProbe /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'Basic view' }));
     expect(getBasicUiMode()).toBe('basic');
-    expect(screen.getByRole('main', { name: 'Continue in Advanced' })).toBeTruthy();
+    expect(screen.getByTestId('route').textContent).toBe(expected);
+  });
+
+  it('opens an explicit Advanced-only link at the same destination', () => {
+    setBasicUiMode('basic');
+    render(<MemoryRouter initialEntries={['/scheduler?scope=p#history']}><BasicUnsupportedDestination /><RouteProbe /></MemoryRouter>);
     fireEvent.click(screen.getByRole('button', { name: 'Open in Advanced' }));
     expect(getBasicUiMode()).toBe('advanced');
     expect(screen.getByTestId('route').textContent).toBe('/scheduler?scope=p#history');
