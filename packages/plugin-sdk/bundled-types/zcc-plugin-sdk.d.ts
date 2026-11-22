@@ -889,6 +889,11 @@ export type PluginSdkInbox = PluginSdk['inbox'];
 }
 
 declare module '@zana-ai/zcc-plugin-sdk/app' {
+  export interface PluginOwnedThreadIconProps {
+    threadId: string;
+    size: number;
+    fallback: import('react').ReactNode;
+  }
   export interface PluginOwnedThreadTitleProps {
     threadId: string;
     title: string;

@@ -1452,6 +1452,11 @@ var profileCss = `
 .bt-profile .bt-hero.is-editing h2{font-size:18px}
 .bt-profile .bt-settings-panel{margin-inline:auto}
 `;
+function BotThreadIcon({ threadId, size, fallback }) {
+  const { bot, error } = useThreadBot(threadId, false);
+  if (bot === void 0 && !error) return null;
+  return bot ? /* @__PURE__ */ jsx(BotAvatar, { bot, size }) : /* @__PURE__ */ jsx(Fragment2, { children: fallback });
+}
 function BotThreadTitle({ threadId, title, openPanel }) {
   const { bot, error } = useThreadBot(threadId, false);
   if (bot === void 0 && !error) return null;
@@ -2111,6 +2116,7 @@ var app_default = definePluginApp((app) => {
     icon: "Bot",
     layout: "flush",
     experimental_ownedThreadTitle: BotThreadTitle,
+    experimental_ownedThreadIcon: BotThreadIcon,
     component: BotThreadProfile
   });
   app.slots.navPanel({ id: "bots", title: "Bots", icon: "Bot", component: BotsPanel, experimental_basicSidebarSection: BasicBots });
@@ -2118,6 +2124,7 @@ var app_default = definePluginApp((app) => {
 export {
   BasicBots,
   BotAvatar,
+  BotThreadIcon,
   BotThreadProfile,
   BotThreadTitle,
   BotsPanel,

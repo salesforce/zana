@@ -534,6 +534,7 @@ function ThreadDetailBody({
           archivedAt: thread.archivedAt ?? null,
           parentThreadId: thread.parentThreadId ?? null,
           visibility: thread.visibility,
+          originPluginId: owner === undefined ? existing?.originPluginId : owner,
           hasPendingInteraction: Boolean(thread.hasPendingInteraction),
           lastReadSeq: typeof timeline?.lastReadSeq === 'number' ? timeline.lastReadSeq : existing?.lastReadSeq ?? null,
           maxSeq: typeof timeline?.maxSeq === 'number' ? timeline.maxSeq : existing?.maxSeq ?? 0,

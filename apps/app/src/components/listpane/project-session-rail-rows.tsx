@@ -8,6 +8,7 @@ import { ThreadArchiveQuickAction } from '../threadCardActions.js';
 import { usePaneContentSplitDrag, useThreadRowSplitDrag } from '../sidebar/useThreadRowSplitDrag.js';
 import { usePaneContentSplitIndicator } from '../sidebar/paneContentSplitIndicator.js';
 import { SplitPaneMiniMap } from '../sidebar/SplitPaneMiniMap.js';
+import { PluginOwnedThreadIcon } from '../../plugins/PluginThreadHeaderActions.js';
 import { ProviderIcon } from '../thread/pickers/ProviderIcon.js';
 import {
   fleetKindLabel,
@@ -112,6 +113,7 @@ export function ProjectThreadRailRow({
   const title = threadTitle(thread);
   const status = threadRailStatus(thread);
   const modernSquad = isModernSquadThread(thread);
+  const providerIcon = <ProviderIcon providerId={thread.providerId} size={14} />;
   const { onPointerDown, openInSplit, consumeClick } = useThreadRowSplitDrag({
     projectId: routeProjectId,
     threadId: thread.id,
@@ -149,7 +151,9 @@ export function ProjectThreadRailRow({
         title={`${title} · ${thread.status}`}
       >
         <span className="tab-profile-icon" aria-hidden="true">
-          <ProviderIcon providerId={thread.providerId} size={14} />
+          {thread.originPluginId
+            ? <PluginOwnedThreadIcon owner={thread.originPluginId} threadId={thread.id} size={20} fallback={providerIcon} />
+            : providerIcon}
         </span>
         <span className="project-terminal-text">
           <span className="project-terminal-name">{title}</span>

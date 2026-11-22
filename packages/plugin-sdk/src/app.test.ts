@@ -165,14 +165,18 @@ describe('definePluginApp', () => {
     expect(set.contentScripts[0]?.id).toBe('boot');
   });
 
-  it('collects a thread title for the owning plugin and validates its component', () => {
-    const title = () => null;
-    const collect = (component: typeof title) => collectPluginApp('notes', 1, definePluginApp(app => {
-      app.slots.threadPanelAction({ id: 'profile', title: 'Profile', component: () => null, experimental_ownedThreadTitle: component });
-    }));
-    expect(collect(title).threadPanelActions[0]?.experimental_ownedThreadTitle).toBe(title);
-    expect(() => collect('invalid' as never)).toThrow(/experimental_ownedThreadTitle/);
-  });
+  it.each(['experimental_ownedThreadTitle', 'experimental_ownedThreadIcon'] as const)(
+    'collects and validates the owning plugin’s %s in both collectors', field => {
+      const view = () => null;
+      const definition = (component: typeof view) => definePluginApp(app => {
+        app.slots.threadPanelAction({ id: 'profile', title: 'Profile', component: () => null, [field]: component });
+      });
+      for (const collect of [collectPluginAppRegistrations, (def: ReturnType<typeof definition>) => collectPluginApp('notes', 1, def)]) {
+        expect(collect(definition(view)).threadPanelActions[0]?.[field]).toBe(view);
+        expect(() => collect(definition('invalid' as never))).toThrow(field);
+      }
+    }
+  );
 
   it('collects composer meta/advanced and accepts the cli-agent scope', () => {
     const def = definePluginApp((app) => {

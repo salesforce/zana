@@ -2,7 +2,7 @@ import { PopoverPicklist } from '@zana-ai/zcc-ui/popover-picklist';
 import { ChevronDown, Pin } from 'lucide-react';
 import { BotMemory } from './src/BotMemory.js';
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { definePluginApp, useRealtime, useRpc, useZccNavigate, type BasicSidebarSectionProps, type PluginOwnedThreadTitleProps, type PluginThreadPanelProps } from '@zana-ai/zcc-plugin-sdk/app';
+import { definePluginApp, useRealtime, useRpc, useZccNavigate, type BasicSidebarSectionProps, type PluginOwnedThreadIconProps, type PluginOwnedThreadTitleProps, type PluginThreadPanelProps } from '@zana-ai/zcc-plugin-sdk/app';
 import { BOT_COLORS, botMemoryTag, defaultBotColor, defaultBotShape, describeCron, type BotRoutine, type BotShape } from './src/model.js';
 import type { BotJobView, BotView } from './src/service.js';
 
@@ -614,6 +614,12 @@ const profileCss = `
 .bt-profile .bt-settings-panel{margin-inline:auto}
 `;
 
+export function BotThreadIcon({ threadId, size, fallback }: PluginOwnedThreadIconProps) {
+  const { bot, error } = useThreadBot(threadId, false);
+  if (bot === undefined && !error) return null;
+  return bot ? <BotAvatar bot={bot} size={size} /> : <>{fallback}</>;
+}
+
 export function BotThreadTitle({ threadId, title, openPanel }: PluginOwnedThreadTitleProps) {
   const { bot, error } = useThreadBot(threadId, false);
   if (bot === undefined && !error) return null;
@@ -1152,7 +1158,7 @@ const ACTIVE_JOB = new Set(['active', 'starting', 'stopping']);
 export default definePluginApp((app) => {
   app.slots.threadPanelAction({
     id: 'profile', title: 'Bot profile', icon: 'Bot', layout: 'flush',
-    experimental_ownedThreadTitle: BotThreadTitle, component: BotThreadProfile
+    experimental_ownedThreadTitle: BotThreadTitle, experimental_ownedThreadIcon: BotThreadIcon, component: BotThreadProfile
   });
   app.slots.navPanel({ id: 'bots', title: 'Bots', icon: 'Bot', component: BotsPanel, experimental_basicSidebarSection: BasicBots });
 });

@@ -99,6 +99,9 @@ test('Basic sidebar opens bot conversations and leaves Advanced navigation intac
   const sidebar = page.getByTestId('basic-ui-sidebar');
   const row = sidebar.getByRole('button', { name: 'Demo Coach', exact: true });
   await expect(row.locator('.bt-av svg')).toBeVisible();
+  const shape = await row.locator('.bt-av').getAttribute('data-shape');
+  const avatarColor = (body: Element) => getComputedStyle(body).fill;
+  const color = await row.locator('.bt-body > g').first().evaluate(avatarColor);
   await expect(row).toHaveAccessibleDescription('Not started');
   await expect(page.locator('.home-panel > .aurora-grid')).toHaveCount(0);
   await expect(sidebar.getByRole('button', { name: 'Show more', exact: true })).toHaveCount(0);
@@ -230,6 +233,17 @@ test('Basic sidebar opens bot conversations and leaves Advanced navigation intac
   await expect(page).toHaveURL(chat);
   await page.getByRole('button', { name: 'Advanced view', exact: true }).click();
   await expect(page.locator('.bt-basic')).toHaveCount(0);
+  const rail = page.locator('.sidebar--global');
+  const activeThread = rail.locator('[data-testid="project-thread-row"][aria-current="true"]');
+  await expect(activeThread.locator('.bt-av')).toHaveAttribute('data-shape', shape!);
+  expect(await activeThread.locator('.bt-body > g').first().evaluate(avatarColor)).toBe(color);
+  const regular = await page.request.post(new URL('/api/v1/threads', chat).href, {
+    data: { projectId, providerId: 'fake', title: 'Ordinary conversation', input: 'Hello' }
+  });
+  expect(regular.ok()).toBe(true);
+  const ordinaryIcon = rail.getByRole('button', { name: 'Ordinary conversation', exact: true }).locator('.tab-profile-icon');
+  await expect(ordinaryIcon.locator('svg')).toBeVisible();
+  await expect(ordinaryIcon.locator('.bt-av')).toHaveCount(0);
   await renamed.click();
   await expect(profile.getByRole('heading', { name: 'Interview Coach' })).toBeVisible();
   await expect(page).toHaveURL(chat);

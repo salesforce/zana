@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import type { PluginOwnedThreadIconProps } from '@zana-ai/zcc-plugin-sdk/app';
 import { PluginSlotBoundary } from './PluginSlotBoundary.js';
 import { listThreadHeaderActions, listThreadPanelActions, subscribePluginSlots } from './plugin-slots.js';
 
@@ -51,5 +52,16 @@ export function PluginOwnedThreadTitle({ threadId, title, owner, onOpen }: {
   return <PluginSlotBoundary key={`${owner}/${action.id}:${action.generation}:${threadId}`}
     pluginId={owner} generation={action.generation} fallback={title}>
     <Title threadId={threadId} title={title} openPanel={() => onOpen(owner, action.id)} />
+  </PluginSlotBoundary>;
+}
+
+export function PluginOwnedThreadIcon({ owner, ...props }: PluginOwnedThreadIconProps & { owner: string }) {
+  const actions = useSyncExternalStore(subscribePluginSlots, listThreadPanelActions, listThreadPanelActions);
+  const action = actions.find(row => row.pluginId === owner && row.experimental_ownedThreadIcon);
+  const Icon = action?.experimental_ownedThreadIcon;
+  if (!action || !Icon) return <>{props.fallback}</>;
+  return <PluginSlotBoundary key={`${owner}/${action.id}:${action.generation}:${props.threadId}`}
+    pluginId={owner} generation={action.generation} fallback={props.fallback}>
+    <Icon {...props} />
   </PluginSlotBoundary>;
 }

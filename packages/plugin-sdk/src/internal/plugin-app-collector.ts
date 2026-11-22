@@ -576,6 +576,11 @@ export function collectPluginAppRegistrations(
           throw new Error(`${kind}: "experimental_ownedThreadTitle" must be a React component function`);
         }
         collected.threadPanelActions.push({
+          ...(registration.experimental_ownedThreadIcon !== undefined ? {
+            experimental_ownedThreadIcon: requireComponent<NonNullable<PluginThreadPanelActionRegistration['experimental_ownedThreadIcon']>>(
+              `${kind}.experimental_ownedThreadIcon`, registration.experimental_ownedThreadIcon
+            ),
+          } : {}),
           ...(registration.experimental_ownedThreadTitle ? { experimental_ownedThreadTitle: registration.experimental_ownedThreadTitle } : {}),
           id,
           title: requireNonEmptyString(kind, "title", registration.title),

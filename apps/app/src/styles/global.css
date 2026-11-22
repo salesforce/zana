@@ -10656,6 +10656,10 @@ body.resizing-col .ext-hub-resizer:active::before {
   color: var(--text-dim);
 }
 
+.project-terminal-row.is-thread .tab-profile-icon {
+  grid-template: 100% / 100%;
+}
+
 .tab-profile-icon.profile-claude {
   color: var(--accent-gold);
 }

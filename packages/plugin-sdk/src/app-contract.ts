@@ -326,7 +326,16 @@ export interface PluginOwnedThreadTitleProps {
   openPanel(): void;
 }
 
+export interface PluginOwnedThreadIconProps {
+  threadId: string;
+  size: number;
+  /** The provider icon to show when the thread has no custom identity. */
+  fallback: ReactNode;
+}
+
 export interface PluginThreadPanelActionRegistration extends PluginSlotBase {
+  /** Decorative icon for threads owned by this plugin in the project tree. */
+  experimental_ownedThreadIcon?: ComponentType<PluginOwnedThreadIconProps>;
   /** Open from the owning thread's heading instead of the general New Tab catalogue. */
   experimental_ownedThreadTitle?: ComponentType<PluginOwnedThreadTitleProps>;
   title: string;
@@ -1722,6 +1731,10 @@ export function collectPluginApp(
             ...(requireLayout(kind, registration.layout)
               ? { layout: registration.layout }
               : {}),
+            ...(registration.experimental_ownedThreadIcon !== undefined ? {
+              experimental_ownedThreadIcon: requireComponent<NonNullable<PluginThreadPanelActionRegistration['experimental_ownedThreadIcon']>>(
+                kind, 'experimental_ownedThreadIcon', registration.experimental_ownedThreadIcon)
+            } : {}),
             ...(registration.experimental_ownedThreadTitle !== undefined ? {
               experimental_ownedThreadTitle: requireComponent<NonNullable<PluginThreadPanelActionRegistration['experimental_ownedThreadTitle']>>(
                 kind, 'experimental_ownedThreadTitle', registration.experimental_ownedThreadTitle)

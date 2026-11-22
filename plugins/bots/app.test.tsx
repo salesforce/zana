@@ -18,7 +18,7 @@ vi.mock('@zana-ai/zcc-plugin-sdk/app', () => ({
   useRealtime: (_channel: string, handler: (payload?: unknown) => void) => { state.realtime.push(handler); }
 }));
 
-import { BasicBots, BotAvatar, BotsPanel, BotThreadProfile, BotThreadTitle, botState, cronFor } from './app.tsx';
+import { BasicBots, BotAvatar, BotsPanel, BotThreadIcon, BotThreadProfile, BotThreadTitle, botState, cronFor } from './app.tsx';
 
 const memoryRpc = vi.fn<(...args: unknown[]) => Promise<unknown>>();
 const scout = {
@@ -44,7 +44,7 @@ afterEach(() => { cleanup(); state.rpc.call.mockReset(); state.navigate.toThread
 it('registers the Bots nav panel', () => {
   expect(state.registered).toEqual(expect.arrayContaining([
     expect.objectContaining({ id: 'bots', title: 'Bots', icon: 'Bot' }),
-    expect.objectContaining({ id: 'profile', experimental_ownedThreadTitle: BotThreadTitle, component: BotThreadProfile })
+    expect.objectContaining({ id: 'profile', experimental_ownedThreadTitle: BotThreadTitle, experimental_ownedThreadIcon: BotThreadIcon, component: BotThreadProfile })
   ]));
 });
 
@@ -620,6 +620,29 @@ it('creates the first bot from the Basic header within the current project', asy
   await waitFor(() => expect(props.openThread).toHaveBeenCalledWith('guide-thread'));
   expect(state.rpc.call).toHaveBeenCalledWith('create', expect.objectContaining({ name: 'Guide', projectId: 'p1' }));
   expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+it('renders the rail avatar from the thread’s bot and updates it on profile edits or deletion', async () => {
+  let bot: typeof scout | null = scout;
+  route({ threadBot: () => bot });
+  const { container } = render(<BotThreadIcon threadId="t1" size={20} fallback="Provider" />);
+  expect(container.textContent).toBe('');
+  const fill = () => container.querySelector<SVGGElement>('.bt-body > g')?.style.fill;
+  await waitFor(() => expect(fill()).toBe('#10b981'));
+  expect(container.querySelector('svg')?.getAttribute('width')).toBe('20');
+  expect(state.rpc.call).toHaveBeenCalledWith('threadBot', { threadId: 't1', profile: false });
+  bot = { ...scout, color: '#abcdef' };
+  state.realtime.at(-1)!({ botId: 'scout' });
+  await waitFor(() => expect(fill()).toBe('#abcdef'));
+  bot = null;
+  state.realtime.at(-1)!({ botId: 'scout' });
+  await screen.findByText('Provider');
+});
+
+it('falls back to the provider icon if identity resolution fails', async () => {
+  route({ threadBot: () => { throw Error('Offline'); } });
+  render(<BotThreadIcon threadId="missing" size={20} fallback="Provider" />);
+  await screen.findByText('Provider');
 });
 
 it('uses the current bot identity in the thread heading and falls back when the bot is gone', async () => {
