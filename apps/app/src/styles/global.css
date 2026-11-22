@@ -42909,14 +42909,6 @@ body.split-frame-guard webview {
 .team-composer-plan-status.thread-command-error { color: var(--danger); }
 .team-composer-plan-other { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
 
-.thread-default-hint {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-
 /* ---- Rail mode: 52px icon-only navigation (sidebar-is-rail) ----------------
  * The class sits on .app-shell, a descendant of :root, so it wins over the
  * inline --col-nav that applySidebarWidth writes on :root. The grid keeps its

@@ -48,6 +48,7 @@ export interface ModelReasoningPickerProps {
   selectedProviderId: string;
   /** Omit to lock the harness (tabs hidden). */
   onSelectedProviderChange?: (value: string) => void;
+  onUseDefaultProvider?: () => void;
   modelValue: string;
   modelOptions: readonly ModelPickerOption[];
   moreModelOptions?: readonly ModelPickerOption[];
@@ -65,6 +66,7 @@ export function ModelReasoningPicker({
   providerOptions,
   selectedProviderId,
   onSelectedProviderChange,
+  onUseDefaultProvider,
   modelValue,
   modelOptions,
   moreModelOptions = [],
@@ -346,7 +348,14 @@ export function ModelReasoningPicker({
           </header>}
           {canSwitchProviders ? (
             <>
-              <div className="model-reasoning-picker-section-label">Harness</div>
+              <div className="model-reasoning-picker-section-label model-reasoning-picker-model-header">
+                <span>Harness</span>
+                {onUseDefaultProvider && <button className="settings-btn" type="button" onClick={() => {
+                  onUseDefaultProvider();
+                  setOpen(false);
+                  triggerRef.current?.focus();
+                }}>Use default</button>}
+              </div>
               <div className="model-reasoning-picker-tabs" role="tablist" aria-label="Harness">
               {providerOptions.map((provider) => {
                 const active = provider.value === selectedProviderId;
