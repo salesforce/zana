@@ -1,5 +1,6 @@
 import { PopoverPicklist } from '@zana-ai/zcc-ui/popover-picklist';
 import { ChevronDown, Pin } from 'lucide-react';
+import { VaultPanel } from './src/vault/VaultPanel.js';
 import { BotMemory } from './src/BotMemory.js';
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { definePluginApp, Markdown, useRealtime, useRpc, useZccNavigate, type BasicSidebarSectionProps, type PluginOwnedThreadIconProps, type PluginOwnedThreadTitleProps, type PluginThreadPanelProps } from '@zana-ai/zcc-plugin-sdk/app';
@@ -565,7 +566,7 @@ function useOpenChat() {
   }, [navigate]);
 }
 
-const TABS = [['details', 'Overview'], ['library', 'Library'], ['settings', 'Settings']] as const;
+const TABS = [['details', 'Overview'], ['library', 'Library'], ['vault', 'Vault'], ['settings', 'Settings']] as const;
 type Tab = (typeof TABS)[number][0];
 const WAKE_MESSAGE = 'Check in: anything new since your last run? Reply in a few lines.';
 
@@ -706,6 +707,9 @@ function BotPage({ bot, onDeleted, profile = false, active = true }: {
       </div>
       <div role="tabpanel" id={`${tabsId}-panel-library`} aria-labelledby={`${tabsId}-tab-library`} hidden={tab !== 'library'}>
         <Library bot={bot} jobsState={jobs} visible={active && tab === 'library'} />
+      </div>
+      <div role="tabpanel" id={`${tabsId}-panel-vault`} aria-labelledby={`${tabsId}-tab-vault`} hidden={tab !== 'vault'}>
+        {active && tab === 'vault' && <VaultPanel bot={bot} />}
       </div>
       <div role="tabpanel" id={`${tabsId}-panel-settings`} aria-labelledby={`${tabsId}-tab-settings`} className="bt-settings-panel" hidden={tab !== 'settings'}>
         <Settings bot={bot} onDeleted={onDeleted} visible={active && tab === 'settings'} />
@@ -1164,6 +1168,7 @@ function Library({ bot, visible, jobsState }: { bot: BotView; visible: boolean; 
 const ACTIVE_JOB = new Set(['active', 'starting', 'stopping']);
 
 export default definePluginApp((app) => {
+  app.slots.settingsSection({ id: 'vault', title: 'Vault', component: () => <VaultPanel /> });
   app.slots.threadPanelAction({
     id: 'profile', title: 'Bot profile', icon: 'Bot', layout: 'flush',
     experimental_ownedThreadTitle: BotThreadTitle, experimental_ownedThreadIcon: BotThreadIcon, component: BotThreadProfile

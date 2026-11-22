@@ -37,7 +37,7 @@ export const BOT_TOOL_NAMES = ['bot_list', 'bot_send', 'bot_reply', 'bot_job_sta
  * Jobs only read; replies and jobs are for a bot's own main thread.
  */
 export function toolsFor(role: ThreadRole['kind']): string[] {
-  if (role === 'main') return [...BOT_TOOL_NAMES];
+  if (role === 'main') return [...BOT_TOOL_NAMES, 'bot_vault_list'];
   if (role === 'job') return ['bot_list'];
   return ['bot_list', 'bot_send', 'bot_routines', 'bot_create'];
 }

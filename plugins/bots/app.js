@@ -274,8 +274,68 @@ var __iconData2 = {
 __iconData2.node;
 var ChevronDown = createLucideIcon(__iconData2);
 
-// ../../node_modules/.pnpm/lucide-react@1.47.0_react@19.3.0/node_modules/lucide-react/dist/esm/icons/pin.mjs
+// ../../node_modules/.pnpm/lucide-react@1.47.0_react@19.3.0/node_modules/lucide-react/dist/esm/icons/contact-round.mjs
 var __iconData3 = {
+  name: "contact-round",
+  size: 24,
+  node: [
+    ["path", { d: "M16 2v2", key: "scm5qe" }],
+    ["path", { d: "M17.915 21a6 6 0 10-12 0", key: "13n4mv" }],
+    ["path", { d: "M8 2v2", key: "pbkmx" }],
+    ["circle", { cx: "12", cy: "11", r: "4", key: "1gt34v" }],
+    ["rect", { x: "3", y: "3", width: "18", height: "18", rx: "2", key: "h1oib" }]
+  ],
+  aliases: ["contact-2"]
+};
+__iconData3.node;
+var ContactRound = createLucideIcon(__iconData3);
+
+// ../../node_modules/.pnpm/lucide-react@1.47.0_react@19.3.0/node_modules/lucide-react/dist/esm/icons/credit-card.mjs
+var __iconData4 = {
+  name: "credit-card",
+  size: 24,
+  node: [
+    ["rect", { width: "20", height: "14", x: "2", y: "5", rx: "2", key: "ynyp8z" }],
+    ["line", { x1: "2", x2: "22", y1: "10", y2: "10", key: "1b3vmo" }],
+    ["path", { d: "M6 14h2", key: "mk7k0u" }]
+  ]
+};
+__iconData4.node;
+var CreditCard = createLucideIcon(__iconData4);
+
+// ../../node_modules/.pnpm/lucide-react@1.47.0_react@19.3.0/node_modules/lucide-react/dist/esm/icons/key-round.mjs
+var __iconData5 = {
+  name: "key-round",
+  size: 24,
+  node: [
+    [
+      "path",
+      {
+        d: "M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z",
+        key: "1s6t7t"
+      }
+    ],
+    ["circle", { cx: "16.5", cy: "7.5", r: ".5", fill: "currentColor", key: "w0ekpg" }]
+  ]
+};
+__iconData5.node;
+var KeyRound = createLucideIcon(__iconData5);
+
+// ../../node_modules/.pnpm/lucide-react@1.47.0_react@19.3.0/node_modules/lucide-react/dist/esm/icons/lock-keyhole.mjs
+var __iconData6 = {
+  name: "lock-keyhole",
+  size: 24,
+  node: [
+    ["circle", { cx: "12", cy: "16", r: "1", key: "1au0dj" }],
+    ["rect", { x: "3", y: "10", width: "18", height: "12", rx: "2", key: "6s8ecr" }],
+    ["path", { d: "M7 10V7a5 5 0 0 1 10 0v3", key: "1pqi11" }]
+  ]
+};
+__iconData6.node;
+var LockKeyhole = createLucideIcon(__iconData6);
+
+// ../../node_modules/.pnpm/lucide-react@1.47.0_react@19.3.0/node_modules/lucide-react/dist/esm/icons/pin.mjs
+var __iconData7 = {
   name: "pin",
   size: 24,
   node: [
@@ -289,11 +349,11 @@ var __iconData3 = {
     ]
   ]
 };
-__iconData3.node;
-var Pin = createLucideIcon(__iconData3);
+__iconData7.node;
+var Pin = createLucideIcon(__iconData7);
 
 // ../../node_modules/.pnpm/lucide-react@1.47.0_react@19.3.0/node_modules/lucide-react/dist/esm/icons/search.mjs
-var __iconData4 = {
+var __iconData8 = {
   name: "search",
   size: 24,
   node: [
@@ -301,8 +361,8 @@ var __iconData4 = {
     ["circle", { cx: "11", cy: "11", r: "8", key: "4ej97u" }]
   ]
 };
-__iconData4.node;
-var Search = createLucideIcon(__iconData4);
+__iconData8.node;
+var Search = createLucideIcon(__iconData8);
 
 // ../../packages/ui/src/use-exclusive-popover.ts
 var activeId = null;
@@ -734,6 +794,302 @@ function renderHostComponent(name, props) {
 }
 function Markdown(props) {
   return renderHostComponent("Markdown", props);
+}
+
+// src/vault/items.ts
+var contactFields = [
+  ["fullName", "Full name"],
+  ["email", "Email"],
+  ["phone", "Phone"],
+  ["address1", "Street address"],
+  ["address2", "Apartment or suite"],
+  ["city", "City"],
+  ["region", "State or region"],
+  ["postalCode", "Postal code"],
+  ["country", "Country"]
+];
+var botScopeKey = (bot) => bot.id + "@" + bot.createdAt;
+var isShared = (item, bot) => item.scope === "all" || item.scope.includes(botScopeKey(bot));
+
+// src/vault/VaultPanel.tsx
+var kinds = { login: "Login", card: "Card", contact: "Contact info" };
+var icons = { login: KeyRound, card: CreditCard, contact: ContactRound };
+var styles = `
+.bv{max-width:44rem;margin:auto;color:var(--text-primary);font-size:13px;line-height:1.5}.bv h3,.bv h4,.bv p{margin:0}.bv p,.bv small{color:var(--text-muted)}
+.bv header,.bv footer,.bv-bar,.bv-tabs,.bv-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.bv header,.bv footer{justify-content:space-between}.bv header{margin-bottom:14px}
+.bv button,.bv input,.bv textarea,.bv select{font:inherit;color:inherit}.bv button{cursor:pointer;border:1px solid var(--border);border-radius:7px;background:var(--bg-elevated);padding:5px 10px}.bv button:disabled{opacity:.5;cursor:default}
+.bv .bv-primary,.bv button[aria-pressed=true]{color:var(--accent-blue);border-color:var(--accent-blue)}.bv form,.bv-editor,.bv-list{display:grid;gap:12px}.bv-editor,.bv-list{padding:14px;border:1px solid var(--border);border-radius:10px}
+.bv label{display:grid;gap:4px}.bv input:not([type=checkbox]),.bv select{box-sizing:border-box;border:1px solid var(--border);padding:7px 9px;border-radius:6px;background:var(--bg-base);width:100%}
+.bv fieldset{border:0;margin:0;padding:0;display:grid;gap:6px}.bv legend{margin-bottom:4px}.bv .bv-check{display:flex;gap:7px;align-items:center}.bv .bv-row{display:flex;align-items:center;gap:12px;text-align:left;width:100%;background:transparent;border:0;padding:8px}
+.bv .bv-row small,.bv .bv-row strong{display:block;overflow-wrap:anywhere}.bv .bv-row:hover{background:var(--bg-hover)}.bv .bv-danger,.bv [role=alert]{color:var(--danger,#db6a70)}.bv .bv-stack{display:grid;gap:12px}.bv .bv-mask{color:var(--text-muted)}
+`;
+var ownerToken = "";
+function errorText(reason) {
+  return reason instanceof Error ? reason.message : "Vault request failed.";
+}
+function WriteOnly({ name, label, saved }) {
+  const [replace, setReplace] = useState(!saved);
+  return replace ? /* @__PURE__ */ jsxs("label", { children: [
+    label,
+    /* @__PURE__ */ jsx("input", { name, type: "password", autoComplete: "new-password", maxLength: name === "password" ? 4096 : 32 })
+  ] }) : /* @__PURE__ */ jsxs("div", { className: "bv-bar", children: [
+    /* @__PURE__ */ jsx("span", { children: label }),
+    /* @__PURE__ */ jsx("span", { className: "bv-mask", children: "\u2022\u2022\u2022\u2022\u2022\u2022 saved" }),
+    /* @__PURE__ */ jsx("button", { type: "button", "aria-label": "Replace " + label, onClick: () => setReplace(true), children: "Replace" })
+  ] });
+}
+function ItemEditor({ editor, bots, contacts, bot, busy, save, close: close2, remove }) {
+  const { kind, item } = editor;
+  const [all, setAll] = useState(item ? item.scope === "all" : false);
+  const [deleting, setDeleting] = useState(false);
+  const scope = item ? item.scope : bot ? [botScopeKey(bot)] : [];
+  function submit(e) {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const input = Object.fromEntries(fd.entries());
+    save({
+      ...input,
+      kind,
+      id: item?.id,
+      revision: item?.revision,
+      scope: all ? "all" : fd.getAll("scope"),
+      ...kind === "login" ? { sites: String(input.sites ?? "").split(/[\s,]+/).filter(Boolean) } : {}
+    });
+  }
+  return /* @__PURE__ */ jsxs("form", { className: "bv-editor", onSubmit: submit, children: [
+    /* @__PURE__ */ jsxs("h4", { children: [
+      item ? "Edit " : "New ",
+      kinds[kind].toLowerCase()
+    ] }),
+    kind === "login" && /* @__PURE__ */ jsxs(Fragment2, { children: [
+      /* @__PURE__ */ jsxs("label", { children: [
+        "Websites",
+        /* @__PURE__ */ jsx("input", { name: "sites", required: true, defaultValue: item?.sites.join(", "), placeholder: "accounts.example.com" })
+      ] }),
+      /* @__PURE__ */ jsxs("label", { children: [
+        "Username",
+        /* @__PURE__ */ jsx("input", { name: "username", autoComplete: "off", defaultValue: item?.username })
+      ] }),
+      /* @__PURE__ */ jsx(WriteOnly, { name: "password", label: "Password", saved: !!item }),
+      /* @__PURE__ */ jsxs("label", { children: [
+        "Hint",
+        /* @__PURE__ */ jsx("input", { name: "hint", defaultValue: item?.hint })
+      ] })
+    ] }),
+    kind === "card" && /* @__PURE__ */ jsxs(Fragment2, { children: [
+      /* @__PURE__ */ jsxs("label", { children: [
+        "Nickname",
+        /* @__PURE__ */ jsx("input", { name: "label", defaultValue: item?.label, placeholder: "Travel card" })
+      ] }),
+      /* @__PURE__ */ jsxs("label", { children: [
+        "Name on card",
+        /* @__PURE__ */ jsx("input", { name: "nameOnCard", autoComplete: "off", defaultValue: item?.nameOnCard })
+      ] }),
+      /* @__PURE__ */ jsx(WriteOnly, { name: "number", label: "Card number", saved: !!item }),
+      /* @__PURE__ */ jsx(WriteOnly, { name: "expiry", label: "Expiry (MM/YY)", saved: !!item }),
+      /* @__PURE__ */ jsxs("label", { children: [
+        "Billing contact",
+        /* @__PURE__ */ jsxs("select", { name: "billingContactId", defaultValue: item?.billingContactId ?? "", children: [
+          /* @__PURE__ */ jsx("option", { value: "", children: "None" }),
+          contacts.map((contact) => /* @__PURE__ */ jsx("option", { value: contact.id, children: contact.label }, contact.id))
+        ] })
+      ] }),
+      /* @__PURE__ */ jsx(WriteOnly, { name: "securityCode", label: "Security code (optional)", saved: !!item?.hasCode })
+    ] }),
+    kind === "contact" && contactFields.map(([key, label]) => /* @__PURE__ */ jsxs("label", { children: [
+      label,
+      /* @__PURE__ */ jsx("input", { name: key, required: key === "fullName", defaultValue: item?.contact?.[key] })
+    ] }, key)),
+    /* @__PURE__ */ jsxs("fieldset", { children: [
+      /* @__PURE__ */ jsx("legend", { children: "Share with" }),
+      /* @__PURE__ */ jsxs("label", { className: "bv-check", children: [
+        /* @__PURE__ */ jsx("input", { type: "checkbox", checked: all, onChange: (e) => setAll(e.target.checked) }),
+        "All current and future bots"
+      ] }),
+      !all && bots.map((b) => /* @__PURE__ */ jsxs("label", { className: "bv-check", children: [
+        /* @__PURE__ */ jsx("input", { name: "scope", type: "checkbox", value: botScopeKey(b), defaultChecked: scope !== "all" && scope.includes(botScopeKey(b)) }),
+        b.name
+      ] }, b.id))
+    ] }),
+    kind === "contact" && /* @__PURE__ */ jsx("p", { children: "Shared bots can read these contact details." }),
+    /* @__PURE__ */ jsxs("footer", { children: [
+      /* @__PURE__ */ jsx("div", { children: item && (deleting ? /* @__PURE__ */ jsxs("span", { children: [
+        "Delete this item? ",
+        /* @__PURE__ */ jsx("button", { type: "button", className: "bv-danger", disabled: busy, onClick: remove, children: "Confirm delete" })
+      ] }) : /* @__PURE__ */ jsx("button", { type: "button", className: "bv-danger", onClick: () => setDeleting(true), children: "Delete item" })) }),
+      /* @__PURE__ */ jsxs("div", { className: "bv-actions", children: [
+        /* @__PURE__ */ jsx("button", { type: "button", onClick: close2, disabled: busy, children: "Cancel" }),
+        /* @__PURE__ */ jsx("button", { className: "bv-primary", disabled: busy, children: "Save item" })
+      ] })
+    ] })
+  ] });
+}
+function VaultPanel({ bot }) {
+  const rpc = useRpc();
+  const titleId = useId();
+  const [configured, setConfigured] = useState();
+  const [items, setItems] = useState(null);
+  const [bots, setBots] = useState([]);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [editor, setEditor] = useState();
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("all");
+  const [adding, setAdding] = useState(false);
+  const loadId = useRef(0);
+  const load = useCallback(async () => {
+    const id = ++loadId.current;
+    const status = await rpc.call("vaultStatus");
+    if (id !== loadId.current) return;
+    setConfigured(status.configured);
+    if (!ownerToken) {
+      setItems(null);
+      return;
+    }
+    try {
+      const [result, choices] = await Promise.all([rpc.call("vaultList", { token: ownerToken }), rpc.call("list")]);
+      if (id !== loadId.current) return;
+      setItems(result);
+      setBots(choices);
+    } catch (e) {
+      if (id !== loadId.current) return;
+      if (!errorText(e).includes("Unlock the Vault")) throw e;
+      ownerToken = "";
+      setItems(null);
+      setEditor(void 0);
+    }
+  }, [rpc]);
+  const refresh = useCallback(() => {
+    void load().catch((e) => setError(errorText(e)));
+  }, [load]);
+  useEffect(() => {
+    refresh();
+    return () => {
+      ++loadId.current;
+    };
+  }, [refresh]);
+  useRealtime("bots:vault-changed", refresh);
+  async function action(fn) {
+    setBusy(true);
+    setError("");
+    try {
+      await fn();
+      await load();
+    } catch (e) {
+      setError(errorText(e));
+      if (errorText(e).includes("Unlock the Vault")) {
+        ownerToken = "";
+        setEditor(void 0);
+        setItems(null);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+  function unlock(e) {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const fd = new FormData(form);
+    if (!configured && fd.get("confirm") !== fd.get("passphrase")) {
+      setError("The passphrases must match.");
+      return;
+    }
+    const passphrase = fd.get("passphrase");
+    form.reset();
+    void action(async () => {
+      ownerToken = (await rpc.call("vaultUnlock", { passphrase, create: !configured })).token;
+    });
+  }
+  const shared = items?.filter((item) => !bot || isShared(item, bot)) ?? [];
+  const shown = shared.filter((item) => (filter === "all" || item.kind === filter) && [item.label, item.username, item.last4, ...item.sites, item.contact?.email].some((value) => value?.toLowerCase().includes(search.toLowerCase())));
+  return /* @__PURE__ */ jsxs("section", { className: "bv", "aria-labelledby": titleId, children: [
+    /* @__PURE__ */ jsx("style", { children: styles }),
+    /* @__PURE__ */ jsxs("header", { children: [
+      /* @__PURE__ */ jsxs("div", { children: [
+        /* @__PURE__ */ jsx("h3", { id: titleId, children: "Vault" }),
+        /* @__PURE__ */ jsx("p", { children: bot ? "Items shared with " + bot.name : "Logins, cards, and contacts for your bots." })
+      ] }),
+      items && /* @__PURE__ */ jsx("button", { type: "button", disabled: busy, onClick: () => void action(async () => {
+        await rpc.call("vaultLock", { token: ownerToken });
+        ownerToken = "";
+        setItems(null);
+        setEditor(void 0);
+      }), children: "Lock Vault" })
+    ] }),
+    error && /* @__PURE__ */ jsxs("p", { role: "alert", children: [
+      error,
+      " ",
+      configured === void 0 && /* @__PURE__ */ jsx("button", { type: "button", onClick: refresh, children: "Retry" })
+    ] }),
+    configured === void 0 ? /* @__PURE__ */ jsx("p", { role: "status", children: "Loading Vault\u2026" }) : !items ? /* @__PURE__ */ jsxs("form", { className: "bv-editor", onSubmit: unlock, children: [
+      /* @__PURE__ */ jsx(LockKeyhole, { size: 20 }),
+      /* @__PURE__ */ jsx("h4", { children: configured ? "Unlock your Vault" : "Create your encrypted Vault" }),
+      /* @__PURE__ */ jsx("p", { children: configured ? "Unlock for 30 minutes." : "Choose a passphrase of at least 12 characters. Keep a copy somewhere safe. You\u2019ll need it to unlock your saved items." }),
+      /* @__PURE__ */ jsxs("label", { children: [
+        "Vault passphrase",
+        /* @__PURE__ */ jsx("input", { name: "passphrase", required: true, type: "password", minLength: 12, maxLength: 512, autoComplete: configured ? "current-password" : "new-password" })
+      ] }),
+      !configured && /* @__PURE__ */ jsxs("label", { children: [
+        "Confirm passphrase",
+        /* @__PURE__ */ jsx("input", { name: "confirm", required: true, type: "password", autoComplete: "new-password" })
+      ] }),
+      /* @__PURE__ */ jsx("div", { children: /* @__PURE__ */ jsx("button", { className: "bv-primary", disabled: busy, children: configured ? "Unlock" : "Create Vault" }) })
+    ] }) : editor ? /* @__PURE__ */ jsx(
+      ItemEditor,
+      {
+        editor,
+        bot,
+        bots,
+        contacts: items.filter((item) => item.kind === "contact"),
+        busy,
+        close: () => {
+          setEditor(void 0);
+          setError("");
+        },
+        save: (item) => void action(async () => {
+          await rpc.call("vaultSave", { token: ownerToken, item });
+          setEditor(void 0);
+        }),
+        remove: () => void action(async () => {
+          await rpc.call("vaultRemove", { token: ownerToken, id: editor.item?.id, revision: editor.item?.revision });
+          setEditor(void 0);
+        })
+      },
+      editor.item?.id ?? editor.kind
+    ) : /* @__PURE__ */ jsxs("div", { className: "bv-stack", children: [
+      /* @__PURE__ */ jsxs("div", { className: "bv-bar", children: [
+        /* @__PURE__ */ jsx("button", { type: "button", "aria-expanded": adding, onClick: () => setAdding(!adding), children: "New item" }),
+        adding && Object.keys(kinds).map((kind) => /* @__PURE__ */ jsx("button", { type: "button", onClick: () => {
+          setEditor({ kind });
+          setAdding(false);
+        }, children: kinds[kind] }, kind))
+      ] }),
+      shared.length > 0 && /* @__PURE__ */ jsxs(Fragment2, { children: [
+        /* @__PURE__ */ jsx("input", { type: "search", "aria-label": "Search Vault", placeholder: "Search Vault", value: search, onChange: (e) => setSearch(e.target.value) }),
+        /* @__PURE__ */ jsx("div", { className: "bv-tabs", children: ["all", "login", "card", "contact"].map((k) => /* @__PURE__ */ jsxs("button", { type: "button", "aria-pressed": filter === k, onClick: () => setFilter(k), children: [
+          k === "all" ? "All" : kinds[k],
+          " \xB7 ",
+          shared.filter((item) => k === "all" || k === item.kind).length
+        ] }, k)) })
+      ] }),
+      /* @__PURE__ */ jsx("div", { className: "bv-list", children: !shown.length ? /* @__PURE__ */ jsx("p", { children: shared.length ? "No matching items." : "No saved items here yet." }) : shown.map((item) => {
+        const Icon2 = icons[item.kind];
+        return /* @__PURE__ */ jsxs("button", { type: "button", className: "bv-row", onClick: () => {
+          setEditor({ kind: item.kind, item });
+          setError("");
+        }, children: [
+          /* @__PURE__ */ jsx(Icon2, { size: 18 }),
+          /* @__PURE__ */ jsxs("span", { children: [
+            /* @__PURE__ */ jsxs("strong", { children: [
+              item.label,
+              item.last4 && " \u2022\u2022\u2022\u2022 " + item.last4
+            ] }),
+            /* @__PURE__ */ jsx("small", { children: [item.username ?? item.contact?.email, item.scope === "all" ? "All bots" : bots.filter((b) => isShared(item, b)).map((b) => b.name).join(", ") || "No current bots"].filter(Boolean).join(" \xB7 ") })
+          ] })
+        ] }, item.id);
+      }) })
+    ] })
+  ] });
 }
 
 // src/BotMemory.tsx
@@ -1418,7 +1774,7 @@ function useOpenChat() {
     navigate.toThread(threadId);
   }, [navigate]);
 }
-var TABS = [["details", "Overview"], ["library", "Library"], ["settings", "Settings"]];
+var TABS = [["details", "Overview"], ["library", "Library"], ["vault", "Vault"], ["settings", "Settings"]];
 var WAKE_MESSAGE = "Check in: anything new since your last run? Reply in a few lines.";
 function useThreadBot(threadId, profile, active = true) {
   const rpc = useRpc();
@@ -1585,6 +1941,7 @@ function BotPage({ bot, onDeleted, profile = false, active = true }) {
         /* @__PURE__ */ jsx(Details, { bot, jobs, openLibrary: () => setTab("library"), visible: active && tab === "details" })
       ] }),
       /* @__PURE__ */ jsx("div", { role: "tabpanel", id: `${tabsId}-panel-library`, "aria-labelledby": `${tabsId}-tab-library`, hidden: tab !== "library", children: /* @__PURE__ */ jsx(Library, { bot, jobsState: jobs, visible: active && tab === "library" }) }),
+      /* @__PURE__ */ jsx("div", { role: "tabpanel", id: `${tabsId}-panel-vault`, "aria-labelledby": `${tabsId}-tab-vault`, hidden: tab !== "vault", children: active && tab === "vault" && /* @__PURE__ */ jsx(VaultPanel, { bot }) }),
       /* @__PURE__ */ jsx("div", { role: "tabpanel", id: `${tabsId}-panel-settings`, "aria-labelledby": `${tabsId}-tab-settings`, className: "bt-settings-panel", hidden: tab !== "settings", children: /* @__PURE__ */ jsx(Settings, { bot, onDeleted, visible: active && tab === "settings" }) })
     ] })
   ] });
@@ -2127,6 +2484,7 @@ function Library({ bot, visible, jobsState }) {
 }
 var ACTIVE_JOB = /* @__PURE__ */ new Set(["active", "starting", "stopping"]);
 var app_default = definePluginApp((app) => {
+  app.slots.settingsSection({ id: "vault", title: "Vault", component: () => /* @__PURE__ */ jsx(VaultPanel, {}) });
   app.slots.threadPanelAction({
     id: "profile",
     title: "Bot profile",
@@ -2165,6 +2523,10 @@ lucide-react/dist/esm/Icon.mjs:
 lucide-react/dist/esm/createLucideIcon.mjs:
 lucide-react/dist/esm/icons/check.mjs:
 lucide-react/dist/esm/icons/chevron-down.mjs:
+lucide-react/dist/esm/icons/contact-round.mjs:
+lucide-react/dist/esm/icons/credit-card.mjs:
+lucide-react/dist/esm/icons/key-round.mjs:
+lucide-react/dist/esm/icons/lock-keyhole.mjs:
 lucide-react/dist/esm/icons/pin.mjs:
 lucide-react/dist/esm/icons/search.mjs:
 lucide-react/dist/esm/lucide-react.mjs:

@@ -3,6 +3,7 @@ import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import { CLI_COMMANDS, runCli } from './src/cli.js';
 import { BotValidationError } from './src/model.js';
 import { BotService, errorMessage } from './src/service.js';
+import { registerVault } from './src/vault/register.js';
 import { BotStore } from './src/store.js';
 import { registerBotTools, toolsFor } from './src/tools.js';
 
@@ -115,6 +116,7 @@ export default async function plugin(zcc: ZccPluginApi): Promise<void> {
     return { tools: toolsFor(role), ...(instructions ? { instructions } : {}) };
   });
   registerBotTools(zcc, service);
+  registerVault(zcc, service);
   registerRpc(zcc, service);
 
   zcc.cli.register({

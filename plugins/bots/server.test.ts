@@ -116,10 +116,24 @@ describe('bots plugin', () => {
     expect(spawns[0].prompt).toBe('[From the user (Bots panel)]\nhello');
   });
 
+  it('only shares Vault items with the bound main bot thread and revokes access when locked', async () => {
+    const { harness, call } = await load();
+    await harness.callRpc('create', { name:'Scout' });
+    const main = await harness.callRpc('openThread', { bot:'Scout' }) as { threadId:string };
+    const owner = await harness.callRpc('vaultUnlock', { passphrase:'a disposable test vault', create:true }) as { token:string };
+    const input = { kind:'contact', fullName:'Example Contact', email:'contact@example.test', scope:'all' };
+    await harness.callRpc('vaultSave', { ...owner, item: input });
+    await expect(call('bot_vault_list', { threadId:main.threadId }, 'other')).rejects.toThrow('main thread');
+    expect(await call('bot_vault_list', {}, main.threadId)).toMatchObject([{ contact:{email:input.email} }]);
+    await expect(harness.callRpc('vaultList', {})).rejects.toThrow('Unlock');
+    await harness.callRpc('vaultLock', owner);
+    await expect(call('bot_vault_list', {}, main.threadId)).rejects.toThrow('Unlock');
+  });
+
   it('registers tools, CLI, schedule and instructions', async () => {
     const { harness, instructions } = await load();
     expect(harness.agentTools.map((row) => row.name).sort()).toEqual(
-      ['bot_create', 'bot_job_start', 'bot_list', 'bot_reply', 'bot_routines', 'bot_send']
+      ['bot_create', 'bot_job_start', 'bot_list', 'bot_reply', 'bot_routines', 'bot_send', 'bot_vault_list']
     );
     expect(harness.schedules).toEqual([expect.objectContaining({ name: 'routines', cron: '* * * * *' })]);
     expect(instructions('')).toBeNull();
@@ -131,7 +145,7 @@ describe('bots plugin', () => {
     const { harness, configure } = await load();
     await harness.callRpc('create', { name: 'Scout', personality: 'Terse.' });
     expect(configure('x').tools).toEqual(['bot_list', 'bot_send', 'bot_routines', 'bot_create']);
-    expect(configure('fresh', { botId: 'scout', botRole: 'main' }).tools).toHaveLength(6);
+    expect(configure('fresh', { botId: 'scout', botRole: 'main' }).tools).toHaveLength(7);
     expect(configure('fresh', { botId: 'scout', botRole: 'job' }).tools).toEqual(['bot_list']);
     expect(configure('fresh', { botId: 'scout', botRole: 'main' }).instructions).toContain('Terse.');
     expect(configure('fresh', { botId: 'scout', botRole: 'job' }).instructions).toContain('background job');

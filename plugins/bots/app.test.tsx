@@ -11,7 +11,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock('@zana-ai/zcc-plugin-sdk/app', () => ({
   definePluginApp: (setup: (app: unknown) => void) =>
-    setup({ slots: { navPanel: (row: unknown) => state.registered.push(row), threadPanelAction: (row: unknown) => state.registered.push(row) } }),
+    setup({ slots: { settingsSection: (row: unknown) => state.registered.push(row), navPanel: (row: unknown) => state.registered.push(row), threadPanelAction: (row: unknown) => state.registered.push(row) } }),
   callPluginRpc: (...args: unknown[]) => memoryRpc(...args),
   useRpc: () => state.rpc,
   Markdown: ({ content, editor, className }: import('@zana-ai/zcc-plugin-sdk/app').MarkdownProps) => editor
@@ -430,6 +430,9 @@ it('keeps tab panels mounted and supports arrow keys', async () => {
   expect(document.activeElement).toBe(library);
   await screen.findByText('No background jobs yet.');
   fireEvent.keyDown(library, { key: 'ArrowRight' });
+  const vault = screen.getByRole('tab', { name: 'Vault' });
+  expect(vault.getAttribute('aria-selected')).toBe('true');
+  fireEvent.keyDown(vault, { key: 'ArrowRight' });
   expect(screen.getByRole('tab', { name: 'Settings' }).getAttribute('aria-selected')).toBe('true');
   expect(screen.getByDisplayValue('Draft')).toBeTruthy();
 });

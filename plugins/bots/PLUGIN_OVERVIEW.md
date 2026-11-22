@@ -11,6 +11,12 @@ Turn on **Bots** in **Settings → Experimental** to get started. New installati
 - **Agent tools** in every thread: `bot_list`, `bot_send`, `bot_create` and `bot_routines`. Bots also get `bot_reply` and `bot_job_start`.
 - **CLI:** `zcc bots list | show | create | update | delete | send | routine`.
 
+## Vault
+
+Open **Settings → Plugins → Bots → Vault** to manage the whole Vault, or open **Vault** in a bot’s profile to see items shared with that bot. Create a passphrase to encrypt the Vault on this Zana instance. Unlocking lasts 30 minutes. Restarting or disabling the plugin locks it sooner.
+
+Save a login, card or contact and choose the bots that may use it. Select **All current and future bots** to share an item with every bot. Editing a saved login or card lets you replace its secret fields. A bot’s main thread can use `bot_vault_list` to read its shared contacts and identify masked logins and cards. Passwords, card numbers, expiry dates and security codes are write-only.
+
 ## How it works
 
 Bots are global. The project you set only decides where the bot's threads run. If you don't set one, the Default Project is used. Each bot runs with **full** permissions, including its background jobs.
