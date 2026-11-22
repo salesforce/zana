@@ -185,16 +185,12 @@ export class BotService {
     return views.filter((job): job is BotJobView => job !== null).sort((a, b) => b.startedAt - a.startedAt);
   }
 
-  /**
-   * Deliver a message to the bot's single main thread, creating (or recreating,
-   * when the old one was deleted) that thread on first contact. Messages to a
-   * busy bot queue behind its current turn.
-   */
-  async deliver(ref: string, delivery: Delivery): Promise<{ bot: Bot; threadId: string; created: boolean }> {
-    const text = { ...delivery, prompt: validatePrompt(delivery.prompt, 'message') };
+  /** Opening and messaging share a queue so they can never create two main threads. */
+  async openMainThread(ref: string, delivery?: Delivery): Promise<{ bot: Bot; threadId: string; created: boolean }> {
+    const text = delivery && { ...delivery, prompt: validatePrompt(delivery.prompt, 'message') };
     const target = await this.requireBot(ref);
     const previous = this.deliveries.get(target.id) ?? Promise.resolve();
-    const run = previous.catch(() => undefined).then(() => this.deliverNow(target.id, text));
+    const run = previous.catch(() => undefined).then(() => this.openMainThreadNow(target.id, text));
     this.deliveries.set(target.id, run);
     try {
       return await run;
@@ -203,17 +199,17 @@ export class BotService {
     }
   }
 
-  private async deliverNow(botId: string, delivery: Delivery): Promise<{ bot: Bot; threadId: string; created: boolean }> {
+  private async openMainThreadNow(botId: string, delivery?: Delivery): Promise<{ bot: Bot; threadId: string; created: boolean }> {
     const bot = await this.requireBot(botId);
     const existing = bot.mainThreadId ? await this.thread(bot.mainThreadId) : null;
-    if (existing) {
+    if (existing && existing.deletedAt == null) {
       if (existing.archivedAt != null) await this.zcc.sdk.threads.unarchive({ threadId: existing.id });
-      await this.zcc.sdk.threads.send({ threadId: existing.id, ...this.wire(delivery), mode: 'queue-if-active' });
+      if (delivery) await this.zcc.sdk.threads.send({ threadId: existing.id, ...this.wire(delivery), mode: 'queue-if-active' });
       return { bot, threadId: existing.id, created: false };
     }
     const spawned = await this.zcc.sdk.threads.spawn({
       projectId: bot.projectId,
-      ...this.wire(delivery),
+      ...(delivery ? this.wire(delivery) : { deferFirstTurn: true }),
       title: bot.name,
       permissionMode: 'full',
       visibility: 'visible',
@@ -234,7 +230,7 @@ export class BotService {
   async send(ref: string, message: string, from: Sender) {
     const bot = await this.requireBot(ref);
     const text = validatePrompt(message, 'message');
-    if (from.kind === 'user') return this.deliver(bot.id, inboundDelivery(text, { kind: 'user', via: from.via }));
+    if (from.kind === 'user') return this.openMainThread(bot.id, inboundDelivery(text, { kind: 'user', via: from.via }));
     const role = this.roleOf(from.threadId);
     if (role.kind === 'job') throw new BotValidationError('background jobs cannot message bots; put it in your final answer instead');
     if (role.kind === 'main' && role.bot.id === bot.id) {
@@ -247,7 +243,7 @@ export class BotService {
     const source = role.kind === 'main'
       ? { kind: 'bot' as const, bot: role.bot, threadId: from.threadId }
       : { kind: 'thread' as const, threadId: from.threadId, title: await this.titleOf(from.threadId) };
-    const result = await this.deliver(bot.id, inboundDelivery(text, source));
+    const result = await this.openMainThread(bot.id, inboundDelivery(text, source));
     this.trust.allowReply(bot.id, from.threadId);
     return result;
   }
@@ -393,7 +389,7 @@ export class BotService {
     const bot = await this.store.get(botId);
     const routine = bot?.routines.find((row) => row.id === routineId);
     if (!bot || !routine || (!force && (!routine.enabled || this.ranInMinute(routine, at)))) return null;
-    const result = await this.deliver(bot.id, routineDelivery(routine));
+    const result = await this.openMainThread(bot.id, routineDelivery(routine));
     await this.store.markRoutineRun(bot.id, routine.id, at);
     this.changed(bot.id);
     return { threadId: result.threadId };
@@ -442,7 +438,7 @@ export class BotService {
     if (await this.store.removeJob(threadId)) this.changed();
     const bot = this.botForMainThread(threadId);
     if (bot) {
-      await this.store.setMainThread(bot.id, undefined);
+      await this.store.clearMainThread(bot.id, threadId);
       this.changed(bot.id);
     }
   }

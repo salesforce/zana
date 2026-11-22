@@ -34,6 +34,10 @@ export function registerRpc(zcc: Pick<ZccPluginApi, 'rpc' | 'sdk'>, service: Bot
     const bot = await service.remove(ref(args), { archiveThreads: args.archiveThreads === true });
     return { id: bot.id };
   });
+  zcc.rpc.method('openThread', async raw => {
+    const { threadId } = await service.openMainThread(ref(record(raw)));
+    return { threadId };
+  });
   zcc.rpc.method('send', async (raw) => {
     const args = record(raw);
     const result = await service.send(ref(args), String(args.message ?? ''), { kind: 'user', via: 'Bots panel' });

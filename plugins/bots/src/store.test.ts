@@ -91,7 +91,8 @@ describe('BotStore', () => {
     await expect(store.update('a', { name: 'B' })).rejects.toThrow('already exists');
     await expect(store.update('zzz', {})).rejects.toThrow('unknown bot');
     expect((await store.setMainThread('a', 't1')).mainThreadId).toBe('t1');
-    expect((await store.setMainThread('a', undefined)).mainThreadId).toBeUndefined();
+    expect((await store.clearMainThread('a', 'previous')).mainThreadId).toBe('t1');
+    expect((await store.clearMainThread('a', 't1')).mainThreadId).toBeUndefined();
   });
 
   it('manages routines', async () => {

@@ -13,6 +13,7 @@ import {
   getConversationThread,
   getEnvironment,
   getPrimaryHost,
+  getThreadExecutionState,
   listConversationThreadEventsWindow,
   queryConversationThreads
 } from '@zana-ai/zcc-db';
@@ -271,10 +272,15 @@ export function createAttachedProductPluginService(
       return order === 'desc' ? mapped.slice().reverse() : mapped;
     },
     sendThread: async ({ threadId, prompt, visibility, mode }) => {
+      const existing = getConversationThread(ctx.db, threadId);
+      const useInitialPlan = existing?.originPluginId && !existing.providerThreadId
+        && getThreadExecutionState(ctx.db, threadId)?.requestedMode === 'plan'
+        && !readLastThreadExecution(ctx, threadId).acpMode;
+      const input = useInitialPlan ? slashPlanPromptInput(prompt).input : { type: 'text', text: prompt, mentions: [] };
       const thread = await sendConversationTurn(
         ctx,
         threadId,
-        [{ type: 'text', text: prompt, mentions: [], ...(visibility ? { visibility } : {}) }],
+        [{ ...input, ...(visibility ? { visibility } : {}) }],
         mode ?? 'start',
         undefined,
         { origin: 'system' }
@@ -388,6 +394,7 @@ export function createAttachedProductPluginService(
       pluginId,
       projectId,
       prompt,
+      deferFirstTurn,
       providerId,
       harness,
       parentThreadId,
@@ -434,14 +441,15 @@ export function createAttachedProductPluginService(
       // plugin's per-call choice); resolved overrides win over the yolo hint.
       const effectiveModel = model ?? routing?.model;
       const effectivePermissionMode = permissionMode ?? routing?.permissionMode ?? resolved.permissionMode;
-      const planned = routing?.slashPlan ? slashPlanPromptInput(prompt) : null;
+      const planned = prompt && routing?.slashPlan ? slashPlanPromptInput(prompt) : null;
       let thread: Awaited<ReturnType<typeof createConversationFromRequest>>;
       try {
         thread = await createConversationFromRequest(ctx, {
           projectId,
           providerId: resolved.providerId,
-          input: [planned?.text ?? prompt],
-          promptInput: [planned?.input ?? { type: 'text', text: prompt, mentions: [] }] as never,
+          input: prompt ? [planned?.text ?? prompt] : [],
+          promptInput: prompt ? [planned?.input ?? { type: 'text', text: prompt, mentions: [] }] : [],
+          ...(deferFirstTurn ? { deferFirstTurn: routing?.slashPlan ? 'slash-plan' : true } : {}),
           title: title?.trim() || `Plugin: ${pluginId}`,
           parentThreadId,
           originPluginId: pluginId,

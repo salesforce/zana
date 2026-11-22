@@ -762,7 +762,9 @@ export type PluginSdkInbox = PluginSdk['inbox'];
         search(args: { query: string; archived?: boolean; limit?: number }): Promise<Array<NonNullable<Awaited<ReturnType<ZccPluginApi['sdk']['threads']['get']>>>>>;
         spawn(args: {
           projectId: string;
-          prompt: string;
+          /** Required unless deferFirstTurn creates an empty conversation. */
+          prompt?: string;
+          deferFirstTurn?: boolean;
           /** Exact thread provider id; wins over `harness`. With neither, the host's first provider is used (legacy). */
           providerId?: string;
           /**

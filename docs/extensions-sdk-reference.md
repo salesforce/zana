@@ -63,6 +63,8 @@ database, logs or spawn-plan dumps, they are cleared when the daemon disconnects
 or the plugin is disposed, and a variable the user already set on the machine is
 never overridden.
 
+Pass `deferFirstTurn: true` and omit `prompt` to create an empty thread. The first message starts its provider session.
+
 `sdk.threads.spawn` accepts `hostId`, `serviceTier: "default" | "fast"` and
 `environment: { kind: "unmanaged" | "personal" | "worktree" | "reuse", ... }`.
 The server validates environment choices and authorizes host/project access.

@@ -394,7 +394,9 @@ export type PluginSdkThreadSpawnHarness = 'project-default';
 
 export interface PluginSdkThreadSpawnArgs {
   projectId: string;
-  prompt: string;
+  /** Required unless deferFirstTurn creates an empty conversation. */
+  prompt?: string;
+  deferFirstTurn?: boolean;
   /**
    * Exact thread provider id. Wins over `harness`; an unknown id rejects.
    * With neither `providerId` nor `harness`, the host uses its first

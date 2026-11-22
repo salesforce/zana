@@ -510,6 +510,10 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
         id: 'thr-spawned'
       });
       expect(spawnThread).toHaveBeenCalledWith({ pluginId: 'demo', projectId: 'p', prompt: 'hi' });
+      await handle.api.sdk.threads.spawn({ projectId: 'p', deferFirstTurn: true });
+      expect(spawnThread).toHaveBeenLastCalledWith({ pluginId: 'demo', projectId: 'p', deferFirstTurn: true });
+      await expect(handle.api.sdk.threads.spawn({ projectId: 'p' })).rejects.toThrow('prompt is required');
+      await expect(handle.api.sdk.threads.spawn({ projectId: 'p', prompt: 'hi', deferFirstTurn: true })).rejects.toThrow('omit prompt');
       await expect(handle.api.sdk.threads.spawn({
         projectId: 'p',
         prompt: 'seeded',

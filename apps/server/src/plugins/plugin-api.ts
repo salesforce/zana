@@ -1301,13 +1301,15 @@ export function createPluginApi(
           const projectId = typeof args?.projectId === 'string' ? args.projectId.trim() : '';
           const prompt = typeof args?.prompt === 'string' ? args.prompt : '';
           if (!projectId) throw new Error('projectId is required');
-          if (!prompt.trim()) throw new Error('prompt is required');
+          const deferFirstTurn = args.deferFirstTurn === true;
+          if (deferFirstTurn && args.prompt !== undefined) throw new Error('omit prompt when deferring the first turn');
+          if (!deferFirstTurn && !prompt.trim()) throw new Error('prompt is required');
           const spawnProviderId = typeof args?.providerId === 'string' && args.providerId.trim() ? args.providerId.trim() : undefined;
           const spawnHarness = args?.harness !== undefined && args?.harness !== null ? parseSpawnHarness(args.harness) : undefined;
           return options.spawnThread({
             pluginId,
             projectId,
-            prompt,
+            ...(deferFirstTurn ? { deferFirstTurn: true } : { prompt }),
             ...(spawnProviderId ? { providerId: spawnProviderId } : {}),
             ...(spawnHarness ? { harness: spawnHarness } : {}),
             ...(typeof args?.parentThreadId === 'string' && args.parentThreadId.trim()

@@ -255,6 +255,8 @@ describe('attached plugin service: threads.spawn provider resolution', () => {
 
       providers[1]!.composerActions = ['plan'];
       try {
+        await attach(plan).spawnThread({ projectId: 'p1', deferFirstTurn: true, harness: 'project-default' });
+        expect(lastRequest()).toMatchObject({ deferFirstTurn: 'slash-plan', input: [], promptInput: [] });
         await attach(plan).spawnThread({ projectId: 'p1', prompt: 'go', harness: 'project-default' });
       } finally {
         delete providers[1]!.composerActions;

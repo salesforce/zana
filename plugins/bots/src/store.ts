@@ -141,12 +141,15 @@ export class BotStore {
     return this.mutate(ref, (bot) => patchBot(bot, input, this.now()));
   }
 
-  setMainThread(ref: string, threadId: string | undefined): Promise<Bot> {
-    return this.mutate(ref, (bot) => {
-      const next = { ...bot, updatedAt: this.now() };
-      if (threadId) next.mainThreadId = threadId;
-      else delete next.mainThreadId;
-      return next;
+  setMainThread(ref: string, threadId: string): Promise<Bot> {
+    return this.mutate(ref, bot => ({ ...bot, mainThreadId: threadId, updatedAt: this.now() }));
+  }
+
+  clearMainThread(ref: string, deletedId: string): Promise<Bot> {
+    return this.mutate(ref, bot => {
+      if (bot.mainThreadId !== deletedId) return bot;
+      delete bot.mainThreadId;
+      return { ...bot, updatedAt: this.now() };
     });
   }
 

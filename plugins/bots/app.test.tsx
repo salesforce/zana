@@ -465,7 +465,7 @@ it('opens real paged bot memories from Overview and recovers after Memory is una
 
 it('shows each scoped bot’s avatar and live status, opens its thread and filters by name', async () => {
   let rows = [scout, fresh, { ...scout, id: 'other', name: 'Remote', projectId: 'p2' }];
-  route({ list: () => rows });
+  route({ list: () => rows, openThread: () => ({ threadId: 't1' }) });
   const cleanupIds = vi.fn();
   const props = { searchQuery: '', activeThreadId: 't1', projectIds: ['p1'], openThread: vi.fn(), registerThreads: vi.fn(() => cleanupIds) };
   const view = render(<BasicBots {...props} />);
@@ -482,7 +482,7 @@ it('shows each scoped bot’s avatar and live status, opens its thread and filte
   expect(screen.queryByText('Remote')).toBeNull();
   expect(props.registerThreads).toHaveBeenCalledWith(['t1']);
   fireEvent.click(row);
-  expect(props.openThread).toHaveBeenCalledWith('t1');
+  await waitFor(() => expect(props.openThread).toHaveBeenCalledWith('t1'));
   view.rerender(<BasicBots {...props} searchQuery="  fre " />);
   expect(screen.queryByRole('button', { name: 'Scout', exact: true })).toBeNull();
   expect(screen.getByRole('button', { name: 'Fresh', exact: true })).toBeTruthy();
@@ -492,23 +492,36 @@ it('shows each scoped bot’s avatar and live status, opens its thread and filte
   expect(cleanupIds).toHaveBeenCalled();
 });
 
-it('retries a failed load and starts a new chat only after the user submits', async () => {
+it('opens an empty chat on click and lets the user retry a failed open', async () => {
   route({ list: () => { throw Error('offline'); } });
   const props = { searchQuery: '', activeThreadId: null, projectIds: ['p1'], openThread: vi.fn(), registerThreads: vi.fn() };
   render(<BasicBots {...props} />);
   await screen.findByRole('alert');
-  route({ list: () => [fresh], send: () => ({ threadId: 'new-id' }) });
+  route({ list: () => [fresh], openThread: () => { throw Error('Could not open chat'); } });
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   const row = await screen.findByRole('button', { name: 'Fresh', exact: true });
   fireEvent.click(row);
-  expect(row.getAttribute('aria-expanded')).toBe('true');
+  await screen.findByText('Could not open chat');
+  expect(props.openThread).not.toHaveBeenCalled();
+  route({ openThread: () => ({ threadId: 'new-id' }) });
   fireEvent.click(row);
-  expect(screen.queryByLabelText('Message Fresh')).toBeNull();
-  fireEvent.click(row);
-  expect(state.rpc.call.mock.calls.some(([method]) => method === 'send')).toBe(false);
-  fireEvent.change(screen.getByLabelText('Message Fresh'), { target: { value: 'hello' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Start conversation' }));
   await waitFor(() => expect(props.openThread).toHaveBeenCalledWith('new-id'));
+  expect(screen.queryByLabelText('Message Fresh')).toBeNull();
+  expect(state.rpc.call.mock.calls.some(([method]) => method === 'send')).toBe(false);
+});
+
+it('follows the most recent bot click when an earlier open finishes late', async () => {
+  let finish!: (result: { threadId: string }) => void;
+  route({ list: () => [fresh, scout], openThread: ({bot}) => bot === 'fresh'
+    ? new Promise(resolve => { finish = resolve; }) : { threadId: 't1' } });
+  const openThread = vi.fn();
+  render(<BasicBots searchQuery="" activeThreadId={null} projectIds={['p1']} openThread={openThread} registerThreads={vi.fn()} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Fresh', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Scout', exact: true }));
+  await waitFor(() => expect(openThread).toHaveBeenCalledWith('t1'));
+  finish({ threadId: 'old-click' });
+  await Promise.resolve();
+  expect(openThread).toHaveBeenCalledTimes(1);
 });
 
 it('shows five bots, puts the newest pins first, and searches beyond the collapsed list', async () => {
@@ -550,7 +563,7 @@ it('reports failed pin updates without opening a chat or changing the pin', asyn
 
 it('creates the first bot from the Basic header within the current project', async () => {
   let bots: typeof fresh[] = [];
-  route({ list: () => bots, create: ({ name }) => {
+  route({ list: () => bots, openThread: () => ({ threadId: 'guide-thread' }), create: ({ name }) => {
     const bot = { ...fresh, id: 'new-bot', name };
     bots = [bot];
     return bot;
@@ -568,8 +581,7 @@ it('creates the first bot from the Basic header within the current project', asy
   fireEvent.click(add);
   fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Guide' } });
   fireEvent.click(screen.getByRole('button', { name: 'Create bot' }));
-  expect(await screen.findByLabelText('Message Guide')).toBeTruthy();
+  await waitFor(() => expect(props.openThread).toHaveBeenCalledWith('guide-thread'));
   expect(state.rpc.call).toHaveBeenCalledWith('create', expect.objectContaining({ name: 'Guide', projectId: 'p1' }));
   expect(screen.queryByRole('dialog')).toBeNull();
-  expect(props.openThread).not.toHaveBeenCalled();
 });

@@ -13,4 +13,4 @@ Give an agent a name, a personality and a schedule. A bot is one persistent thre
 
 Bots are global. The project you set only decides where the bot's threads run. If you don't set one, the Default Project is used. Each bot runs with **full** permissions, including its background jobs.
 
-A bot's thread is created on first contact. If you delete that thread, the next message starts a new one. Archived threads are unarchived when a message arrives. A bot can run at most 3 background jobs at once, and keeps the last 50 job records.
+Click a bot in the Basic sidebar to open its main thread. The first click creates an empty chat. Sending a message or running a routine can also create the thread. Opening or messaging a bot restores its archived thread, or creates a new one if its thread was deleted. A bot can run at most 3 background jobs at once, and keeps the last 50 job records.

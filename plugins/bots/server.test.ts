@@ -70,6 +70,30 @@ async function load(extra: Record<string, unknown> = {}) {
 }
 
 describe('bots plugin', () => {
+  it('creates one empty main thread across clicks and routine deliveries, restoring or recreating it as needed', async () => {
+    const { harness, spawns, sends, threads, options } = await load();
+    await harness.callRpc('create', { name: 'Scout', providerId: 'codex', model: 'chosen' });
+    const open = () => harness.callRpc('openThread', { bot: 'scout' });
+    expect(await Promise.all([open(), open()])).toEqual([{ threadId: 't1' }, { threadId: 't1' }]);
+    expect(spawns).toEqual([expect.objectContaining({
+      deferFirstTurn: true, projectId: 'default', model: 'chosen', providerId: 'codex', permissionMode: 'full',
+      pluginMetadata: { botId: 'scout', botRole: 'main' }
+    })]);
+    expect(spawns[0]).not.toHaveProperty('prompt');
+    expect(sends).toHaveLength(0);
+    options.getThread.mockRejectedValueOnce(new Error('temporarily offline'));
+    await expect(open()).rejects.toThrow('temporarily offline');
+    threads.get('t1')!.archivedAt = 5;
+    expect(await open()).toEqual({ threadId: 't1' });
+    expect(threads.get('t1')!.archivedAt).toBeNull();
+    threads.delete('t1');
+    const [opened, sent] = await Promise.all([open(), harness.callRpc('send', { bot: 'scout', message: 'Hello' })]);
+    expect(opened).toEqual({ threadId: 't2' });
+    expect(sent).toEqual({ threadId: 't2', created: false });
+    expect(spawns).toHaveLength(2);
+    expect(sends).toHaveLength(1);
+  });
+
   it('keeps sender context in the prompt on hosts without message attribution', async () => {
     const { host, harness, spawns } = await load();
     Reflect.deleteProperty(host.zcc.sdk.threads, 'messageSources');

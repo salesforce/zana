@@ -1079,7 +1079,7 @@ var basicListCss = `
 .bt-basic-list { display: grid; gap: 2px; }
 .bt-basic-item { position: relative; display: flex; align-items: center; border-radius: 8px; }
 .bt-basic-item:is(:hover, :focus-within) { background: var(--bg-hover); }
-.bt-basic-item:has([aria-current="page"], [aria-expanded="true"]) { background: var(--bg-elevated); }
+.bt-basic-item:has([aria-current="page"]) { background: var(--bg-elevated); }
 .bt-basic-pin { display: grid; place-items: center; flex: 0 0 30px; height: 30px; border-radius: 6px;
   padding: 0; margin-right: 4px; background: transparent; border: 0; color: var(--text-muted); cursor: pointer; }
 .bt-basic-pin:hover, .bt-basic-pin:focus-visible { color: var(--text-primary); background: var(--bg-hover); }
@@ -1097,14 +1097,9 @@ var basicListCss = `
 .bt-basic-dialog::backdrop { background: rgb(0 0 0 / 45%); }
 .bt-basic-dialog .bt-root { height: auto; }
 .bt-basic-dialog .bt-create { min-width: 0; }
-.bt-basic .bt-start { display: grid; gap: 7px; margin: 5px 10px 12px; }
-.bt-basic .bt-start textarea { width: 100%; box-sizing: border-box; min-height: 64px; resize: vertical; }
 .bt-basic .bt-note, .bt-basic [role="alert"] { color: var(--text-muted); font-size: 11px; }
 `;
-function BasicBotRow({ bot, activeThreadId, starting, setStarting, openThread }) {
-  const state = botState(bot);
-  const canOpen = Boolean(bot.mainThreadId && state !== "missing");
-  const expanded = !canOpen && starting;
+function BasicBotRow({ bot, activeThreadId, opening, onOpen }) {
   const current = Boolean(activeThreadId && bot.mainThreadId === activeThreadId);
   const statusId = useId();
   const pinned = bot.pinnedAt != null;
@@ -1120,14 +1115,10 @@ function BasicBotRow({ bot, activeThreadId, starting, setStarting, openThread })
           "aria-label": bot.name,
           "aria-describedby": statusId,
           "aria-current": current ? "page" : void 0,
-          "aria-expanded": canOpen ? void 0 : expanded,
-          onClick: () => {
-            if (canOpen && bot.mainThreadId) {
-              setStarting(false);
-              openThread(bot.mainThreadId);
-            } else setStarting(!expanded);
-          },
-          children: /* @__PURE__ */ jsx(BotListIdentity, { bot, live: current || expanded, statusId })
+          "aria-busy": opening,
+          disabled: opening,
+          onClick: onOpen,
+          children: /* @__PURE__ */ jsx(BotListIdentity, { bot, live: current, statusId })
         }
       ),
       /* @__PURE__ */ jsx(
@@ -1144,8 +1135,7 @@ function BasicBotRow({ bot, activeThreadId, starting, setStarting, openThread })
         }
       )
     ] }),
-    feedback,
-    expanded && /* @__PURE__ */ jsx(StartConversation, { bot, state, compact: true, onStarted: openThread })
+    feedback
   ] });
 }
 function BasicBots({ searchQuery, activeThreadId, projectIds, openThread, registerThreads }) {
@@ -1153,7 +1143,30 @@ function BasicBots({ searchQuery, activeThreadId, projectIds, openThread, regist
   const [creating, setCreating] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const listId = useId();
-  const [starting, setStarting] = useState(null);
+  const rpc = useRpc();
+  const [opening, setOpening] = useState(null);
+  const [openError, setOpenError] = useState("");
+  const attempt = useRef(0);
+  useEffect(() => {
+    setOpening(null);
+    setOpenError("");
+    return () => {
+      attempt.current++;
+    };
+  }, [activeThreadId]);
+  async function openBot(botId) {
+    const current = ++attempt.current;
+    setOpening(botId);
+    setOpenError("");
+    try {
+      const { threadId } = await rpc.call("openThread", { bot: botId });
+      if (current === attempt.current) openThread(threadId);
+    } catch (err) {
+      if (current === attempt.current) setOpenError(message(err));
+    } finally {
+      if (current === attempt.current) setOpening(null);
+    }
+  }
   const eligible = useMemo(() => bots.filter((bot) => projectIds.includes(bot.projectId)), [bots, projectIds]);
   useEffect(() => {
     const ids = eligible.flatMap((bot) => bot.mainThreadId ? [bot.mainThreadId] : []);
@@ -1177,7 +1190,7 @@ function BasicBots({ searchQuery, activeThreadId, projectIds, openThread, regist
         onCreated: (id) => {
           setCreating(false);
           setShowAll(true);
-          setStarting(id);
+          void openBot(id);
           void refresh();
         }
       }
@@ -1186,14 +1199,14 @@ function BasicBots({ searchQuery, activeThreadId, projectIds, openThread, regist
       "Couldn\u2019t load bots. ",
       /* @__PURE__ */ jsx("button", { type: "button", onClick: () => void refresh(), children: "Retry" })
     ] }),
+    openError && /* @__PURE__ */ jsx("p", { role: "alert", className: "bt-alert", children: openError }),
     /* @__PURE__ */ jsx("div", { id: listId, className: "bt-basic-list", children: visible.map((bot) => /* @__PURE__ */ jsx(
       BasicBotRow,
       {
         bot,
         activeThreadId,
-        openThread,
-        starting: starting === bot.id,
-        setStarting: (open2) => setStarting(open2 ? bot.id : null)
+        opening: opening === bot.id,
+        onOpen: () => void openBot(bot.id)
       },
       bot.id
     )) }),
@@ -1454,7 +1467,7 @@ function BotPage({ bot, onDeleted }) {
     ] })
   ] });
 }
-function StartConversation({ bot, state, onStarted, compact = false }) {
+function StartConversation({ bot, state, onStarted }) {
   const rpc = useRpc();
   const [text, setText] = useState("");
   const [error, setError] = useState("");
@@ -1481,7 +1494,7 @@ function StartConversation({ bot, state, onStarted, compact = false }) {
     }
   };
   return /* @__PURE__ */ jsxs("form", { className: "bt-start settings-field", "aria-label": `Start ${bot.name}`, onSubmit: (event) => void start(event), children: [
-    /* @__PURE__ */ jsx("span", { className: "bt-note", style: { margin: 0 }, children: compact ? "Send a first message to open this bot\u2019s chat." : state === "missing" ? `${bot.name}'s main thread was deleted. Your next message starts a fresh main thread; routines and memory are kept.` : `${bot.name} has no thread yet. The first message wakes it up and opens the chat beside this page.` }),
+    /* @__PURE__ */ jsx("span", { className: "bt-note", style: { margin: 0 }, children: state === "missing" ? `${bot.name}'s main thread was deleted. Your next message starts a fresh main thread; routines and memory are kept.` : `${bot.name} has no thread yet. The first message wakes it up and opens the chat beside this page.` }),
     /* @__PURE__ */ jsx(
       "textarea",
       {
@@ -1495,7 +1508,7 @@ function StartConversation({ bot, state, onStarted, compact = false }) {
       }
     ),
     error && /* @__PURE__ */ jsx("p", { role: "alert", className: "bt-alert", children: error }),
-    /* @__PURE__ */ jsx("button", { type: "submit", className: compact ? "btn btn-sm" : "bt-btn is-primary", disabled: busy || !text.trim(), style: { marginTop: 8 }, children: busy ? "Starting\u2026" : "Start conversation" })
+    /* @__PURE__ */ jsx("button", { type: "submit", className: "bt-btn is-primary", disabled: busy || !text.trim(), style: { marginTop: 8 }, children: busy ? "Starting\u2026" : "Start conversation" })
   ] });
 }
 function Details({ bot, jobs, openLibrary, visible }) {

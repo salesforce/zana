@@ -15,6 +15,7 @@ import {
   getThreadExecutionState,
   listConversationThreadEvents,
   listDueDeferredThreadMessages,
+  listExecutionHosts,
   listLiveConversationThreadsForHost,
   listOpenSessionConversationThreadsForHost,
   setConversationProviderThreadId,
@@ -76,7 +77,9 @@ import { LIVE_TURN_COMMAND_TIMEOUT_MS } from '../../http/host-hub.js';
 import { archiveConversationOnHost, unarchiveConversationOnHost } from './thread-host-commands.js';
 import { collectConversationArchiveDescendants } from './conversation-child-ops.js';
 import { bridgeLaunchForProvider, getThreadProvider, waitForThreadProvider } from './thread-provider-catalog.js';
-import { readLastThreadExecution } from './thread-last-execution.js';
+import { isRemoteToolProxyActive, remoteWorkspacePath, threadLaunchRemote } from './remote-tool-proxy.js';
+import { toRemoteStartPathHost } from '../hosts/host-public.js';
+import { preparedThreadEvent, readLastThreadExecution } from './thread-last-execution.js';
 import { validateProviderModelSelection } from './provider-model-validation.js';
 import { threadPermissionMode } from './thread-permission-mode.js';
 import {
@@ -431,8 +434,9 @@ async function dispatchTurnSubmit(
     }
   };
   try {
-    if (!args.thread.providerThreadId && args.thread.originKind === 'fork') {
-      const command = await threadStartCommandForFork(
+    if (!args.thread.providerThreadId && (args.thread.originKind === 'fork'
+      || (args.thread.originPluginId && preparedThreadEvent(ctx, args.thread.id)))) {
+      const command = await threadStartCommandForFirstMessage(
         ctx,
         args.thread,
         args.prompt,
@@ -1086,7 +1090,7 @@ async function turnSubmitCommand(
   };
 }
 
-async function threadStartCommandForFork(
+async function threadStartCommandForFirstMessage(
   ctx: ProductHttpContext,
   thread: ConversationThreadRow,
   prompt: PromptInput[],
@@ -1110,10 +1114,12 @@ async function threadStartCommandForFork(
     threadId: thread.id,
     projectId: thread.projectId
   });
-  const fork = describeCopiedForkStart(
+  const fork = thread.originKind === 'fork' ? describeCopiedForkStart(
     listConversationThreadEvents(ctx.db, thread.id, { omitPayloadTypes: ['turn/diff/updated'] }),
     getThreadProvider(thread.providerId)?.capabilities.fork
-  );
+  ) : null;
+  const project = thread.originKind !== 'fork' ? ctx.toProjects().find(row => row.id === thread.projectId) : undefined;
+  const remoteToolProxy = project && isRemoteToolProxyActive(project, thread.hostId);
   const automatedSkillIds = threadAutomatedSkillIds(ctx.db, thread.id);
   return {
     type: 'thread.start',
@@ -1122,7 +1128,10 @@ async function threadStartCommandForFork(
     projectId: thread.projectId,
     providerId: thread.providerId,
     input: prompt,
-    cwd: environment?.path ?? undefined,
+    cwd: project?.remote && !remoteToolProxy ? undefined : environment?.path ?? undefined,
+    ...(remoteToolProxy ? { remoteToolProxy: true, remote: threadLaunchRemote(project, remoteWorkspacePath(
+      project, true, ctx.config.getConfig().remoteDefaultPath, listExecutionHosts(ctx.db).map(toRemoteStartPathHost)
+    )) } : {}),
     title: thread.title ?? undefined,
     bridgeLaunch: bridgeLaunchForProvider(thread.providerId, ctx.pluginHostArtifacts),
     permissionMode,

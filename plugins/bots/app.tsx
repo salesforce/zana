@@ -289,7 +289,7 @@ const basicListCss = `
 .bt-basic-list { display: grid; gap: 2px; }
 .bt-basic-item { position: relative; display: flex; align-items: center; border-radius: 8px; }
 .bt-basic-item:is(:hover, :focus-within) { background: var(--bg-hover); }
-.bt-basic-item:has([aria-current="page"], [aria-expanded="true"]) { background: var(--bg-elevated); }
+.bt-basic-item:has([aria-current="page"]) { background: var(--bg-elevated); }
 .bt-basic-pin { display: grid; place-items: center; flex: 0 0 30px; height: 30px; border-radius: 6px;
   padding: 0; margin-right: 4px; background: transparent; border: 0; color: var(--text-muted); cursor: pointer; }
 .bt-basic-pin:hover, .bt-basic-pin:focus-visible { color: var(--text-primary); background: var(--bg-hover); }
@@ -307,18 +307,12 @@ const basicListCss = `
 .bt-basic-dialog::backdrop { background: rgb(0 0 0 / 45%); }
 .bt-basic-dialog .bt-root { height: auto; }
 .bt-basic-dialog .bt-create { min-width: 0; }
-.bt-basic .bt-start { display: grid; gap: 7px; margin: 5px 10px 12px; }
-.bt-basic .bt-start textarea { width: 100%; box-sizing: border-box; min-height: 64px; resize: vertical; }
 .bt-basic .bt-note, .bt-basic [role="alert"] { color: var(--text-muted); font-size: 11px; }
 `;
 
-function BasicBotRow({ bot, activeThreadId, starting, setStarting, openThread }: {
-  bot: BotView; activeThreadId: string | null; starting: boolean;
-  setStarting(open: boolean): void; openThread(id: string): void;
+function BasicBotRow({ bot, activeThreadId, opening, onOpen }: {
+  bot: BotView; activeThreadId: string | null; opening: boolean; onOpen(): void;
 }) {
-  const state = botState(bot);
-  const canOpen = Boolean(bot.mainThreadId && state !== 'missing');
-  const expanded = !canOpen && starting;
   const current = Boolean(activeThreadId && bot.mainThreadId === activeThreadId);
   const statusId = useId();
   const pinned = bot.pinnedAt != null;
@@ -327,12 +321,8 @@ function BasicBotRow({ bot, activeThreadId, starting, setStarting, openThread }:
     <div className="bt-basic-item">
       <button type="button" className="bt-item bt-basic-row" title={bot.name} aria-label={bot.name} aria-describedby={statusId}
         aria-current={current ? 'page' : undefined}
-        aria-expanded={canOpen ? undefined : expanded}
-        onClick={() => {
-          if (canOpen && bot.mainThreadId) { setStarting(false); openThread(bot.mainThreadId); }
-          else setStarting(!expanded);
-        }}>
-        <BotListIdentity bot={bot} live={current || expanded} statusId={statusId} />
+        aria-busy={opening} disabled={opening} onClick={onOpen}>
+        <BotListIdentity bot={bot} live={current} statusId={statusId} />
       </button>
       <button type="button" className="bt-basic-pin" aria-label={`${pinned ? 'Unpin' : 'Pin'} ${bot.name}`}
         title={pinned ? 'Unpin bot' : 'Pin bot'} aria-pressed={pinned} disabled={busy}
@@ -341,7 +331,6 @@ function BasicBotRow({ bot, activeThreadId, starting, setStarting, openThread }:
       </button>
     </div>
     {feedback}
-    {expanded && <StartConversation bot={bot} state={state} compact onStarted={openThread} />}
   </>;
 }
 
@@ -350,7 +339,28 @@ export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread,
   const [creating, setCreating] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const listId = useId();
-  const [starting, setStarting] = useState<string | null>(null);
+  const rpc = useRpc();
+  const [opening, setOpening] = useState<string | null>(null);
+  const [openError, setOpenError] = useState('');
+  const attempt = useRef(0);
+  useEffect(() => {
+    setOpening(null);
+    setOpenError('');
+    return () => { attempt.current++; };
+  }, [activeThreadId]);
+  async function openBot(botId: string) {
+    const current = ++attempt.current;
+    setOpening(botId);
+    setOpenError('');
+    try {
+      const { threadId } = await rpc.call('openThread', { bot: botId }) as { threadId: string };
+      if (current === attempt.current) openThread(threadId);
+    } catch (err) {
+      if (current === attempt.current) setOpenError(message(err));
+    } finally {
+      if (current === attempt.current) setOpening(null);
+    }
+  }
   const eligible = useMemo(() => bots.filter(bot => projectIds.includes(bot.projectId)), [bots, projectIds]);
   useEffect(() => {
     const ids = eligible.flatMap(bot => bot.mainThreadId ? [bot.mainThreadId] : []);
@@ -372,13 +382,14 @@ export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread,
       onCancel={() => setCreating(false)} onCreated={id => {
         setCreating(false);
         setShowAll(true);
-        setStarting(id);
+        void openBot(id);
         void refresh();
       }} />}
     {error && <p role="alert">Couldn’t load bots. <button type="button" onClick={() => void refresh()}>Retry</button></p>}
+    {openError && <p role="alert" className="bt-alert">{openError}</p>}
     <div id={listId} className="bt-basic-list">
-      {visible.map(bot => <BasicBotRow key={bot.id} bot={bot} activeThreadId={activeThreadId} openThread={openThread}
-        starting={starting === bot.id} setStarting={open => setStarting(open ? bot.id : null)} />)}
+      {visible.map(bot => <BasicBotRow key={bot.id} bot={bot} activeThreadId={activeThreadId} opening={opening === bot.id}
+        onOpen={() => void openBot(bot.id)} />)}
     </div>
     {!query && matches.length > BASIC_BOT_LIMIT && <button type="button" className="bt-basic-more"
       aria-expanded={showAll} aria-controls={listId} onClick={() => setShowAll(!showAll)}>
@@ -597,7 +608,7 @@ function BotPage({ bot, onDeleted }: { bot: BotView; onDeleted(): void }) {
   );
 }
 
-function StartConversation({ bot, state, onStarted, compact = false }: { compact?: boolean; bot: BotView; state: BotState; onStarted(threadId: string): void }) {
+function StartConversation({ bot, state, onStarted }: { bot: BotView; state: BotState; onStarted(threadId: string): void }) {
   const rpc = useRpc();
   const [text, setText] = useState('');
   const [error, setError] = useState('');
@@ -622,14 +633,14 @@ function StartConversation({ bot, state, onStarted, compact = false }: { compact
   return (
     <form className="bt-start settings-field" aria-label={`Start ${bot.name}`} onSubmit={(event) => void start(event)}>
       <span className="bt-note" style={{ margin: 0 }}>
-        {compact ? 'Send a first message to open this bot’s chat.' : state === 'missing'
+        {state === 'missing'
           ? `${bot.name}'s main thread was deleted. Your next message starts a fresh main thread; routines and memory are kept.`
           : `${bot.name} has no thread yet. The first message wakes it up and opens the chat beside this page.`}
       </span>
       <textarea aria-label={`Message ${bot.name}`} value={text}
         onChange={(e) => { setText(e.target.value); setError(''); }} placeholder="Introduce yourself and tell me what you can do." />
       {error && <p role="alert" className="bt-alert">{error}</p>}
-      <button type="submit" className={compact ? "btn btn-sm" : "bt-btn is-primary"} disabled={busy || !text.trim()} style={{ marginTop: 8 }}>{busy ? 'Starting…' : 'Start conversation'}</button>
+      <button type="submit" className="bt-btn is-primary" disabled={busy || !text.trim()} style={{ marginTop: 8 }}>{busy ? 'Starting…' : 'Start conversation'}</button>
     </form>
   );
 }

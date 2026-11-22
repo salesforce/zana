@@ -3,9 +3,12 @@ import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { expect, test } from './fixtures/app.js';
+import { makeFakeAgentBinary } from './sdk/harness.js';
 
 const exec = promisify(execFile);
-test.use({ initialConfig: { sponsorPromptDismissed: true }, launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
+const harness = makeFakeAgentBinary({ profile: 'claude', sequence: 'work-then-idle' });
+test.afterAll(() => harness.cleanup());
+test.use({ initialConfig: { sponsorPromptDismissed: true, claudeBinary: harness.path, defaultHarness: 'claude', defaultThreadProviderId: 'fake' }, launchEnv: { ZCC_FAKE_PROVIDER: '1' } });
 
 test('Bots shows routines, tagged memory, and host settings controls in the installed panel', async ({ app, home }, testInfo) => {
   test.setTimeout(180_000);
@@ -115,7 +118,7 @@ test('Basic sidebar opens bot conversations and leaves Advanced navigation intac
   await dialog.getByRole('textbox', { name: 'Name' }).fill('Reviewer');
   await dialog.getByRole('button', { name: 'Create bot' }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(sidebar.getByLabel('Message Reviewer')).toBeVisible();
+  await expect(sidebar.getByRole('button', { name: 'Reviewer', exact: true })).toHaveAttribute('aria-current', 'page');
   await sidebar.getByRole('button', { name: 'Show less', exact: true }).click();
   const more = sidebar.getByRole('button', { name: 'Show more', exact: true });
   await expect(more).toBeVisible();
@@ -137,12 +140,22 @@ test('Basic sidebar opens bot conversations and leaves Advanced navigation intac
   await expect(row).toHaveCount(0);
   await search.fill('coach');
   await row.click();
-  await sidebar.getByLabel('Message Demo Coach').fill('Hello from the sidebar test.');
-  await sidebar.getByRole('button', { name: 'Start conversation' }).click();
   await expect(page).toHaveURL(/\/threads\/[^/?#]+/);
   await expect(row).toHaveAttribute('aria-current', 'page');
   await expect(page.locator('.thread-detail-main > .aurora-grid')).toBeVisible();
   const chat = page.url();
+  const api = new URL('/api/v1' + new URL(chat).pathname, chat).href;
+  const readThread = async () => (await (await page.request.get(api)).json()).thread;
+  expect(await readThread()).toMatchObject({ title: 'Demo Coach', status: 'idle', providerThreadId: null, permissionMode: 'full' });
+  const composer = page.getByTestId('thread-command-input');
+  await expect(composer).toHaveText('');
+  await expect(sidebar.getByLabel('Message Demo Coach')).toHaveCount(0);
+  await composer.fill('Hello from the thread composer.');
+  await page.getByTestId('thread-command-send').click();
+  await expect.poll(async () => (await readThread()).providerThreadId).toBeTruthy();
+  await expect.poll(async () => (await readThread()).status).toBe('idle');
+  const { events } = await (await page.request.get(api + '/events')).json();
+  expect(events.filter((event: { type: string }) => event.type === 'client/turn/requested')).toHaveLength(1);
   await search.fill('');
   await expect(sidebar.locator('.basic-ui-chat-row')).toHaveCount(0);
   await sidebar.getByRole('link', { name: 'New chat' }).click();
