@@ -11,14 +11,14 @@ const state = vi.hoisted(() => ({
 
 vi.mock('@zana-ai/zcc-plugin-sdk/app', () => ({
   definePluginApp: (setup: (app: unknown) => void) =>
-    setup({ slots: { navPanel: (row: unknown) => state.registered.push(row) } }),
+    setup({ slots: { navPanel: (row: unknown) => state.registered.push(row), threadPanelAction: (row: unknown) => state.registered.push(row) } }),
   callPluginRpc: (...args: unknown[]) => memoryRpc(...args),
   useRpc: () => state.rpc,
   useZccNavigate: () => state.navigate,
   useRealtime: (_channel: string, handler: (payload?: unknown) => void) => { state.realtime.push(handler); }
 }));
 
-import { BasicBots, BotAvatar, BotsPanel, botState, cronFor } from './app.tsx';
+import { BasicBots, BotAvatar, BotsPanel, BotThreadProfile, BotThreadTitle, botState, cronFor } from './app.tsx';
 
 const memoryRpc = vi.fn<(...args: unknown[]) => Promise<unknown>>();
 const scout = {
@@ -42,7 +42,10 @@ beforeEach(() => { memoryRpc.mockReset().mockResolvedValue({ memories: [], hasMo
 afterEach(() => { cleanup(); state.rpc.call.mockReset(); state.navigate.toThread.mockReset(); });
 
 it('registers the Bots nav panel', () => {
-  expect(state.registered).toEqual([expect.objectContaining({ id: 'bots', title: 'Bots', icon: 'Bot' })]);
+  expect(state.registered).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: 'bots', title: 'Bots', icon: 'Bot' }),
+    expect.objectContaining({ id: 'profile', experimental_ownedThreadTitle: BotThreadTitle, component: BotThreadProfile })
+  ]));
 });
 
 it('derives bot state and routine crons', () => {
@@ -584,4 +587,40 @@ it('creates the first bot from the Basic header within the current project', asy
   await waitFor(() => expect(props.openThread).toHaveBeenCalledWith('guide-thread'));
   expect(state.rpc.call).toHaveBeenCalledWith('create', expect.objectContaining({ name: 'Guide', projectId: 'p1' }));
   expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+it('uses the current bot identity in the thread heading and falls back when the bot is gone', async () => {
+  let bot: typeof scout | null = scout;
+  route({ threadBot: ({ threadId }) => threadId === 't1' ? bot : null });
+  const openPanel = vi.fn();
+  render(<BotThreadTitle threadId="t1" title="Old chat title" openPanel={openPanel} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Open Scout profile' }));
+  expect(openPanel).toHaveBeenCalledOnce();
+  bot = null;
+  state.realtime.at(-1)!({ botId: 'unrelated' });
+  expect(state.rpc.call).toHaveBeenCalledTimes(1);
+  state.realtime.at(-1)!({ botId: 'scout' });
+  await screen.findByText('Old chat title');
+  expect(screen.queryByRole('button')).toBeNull();
+});
+
+it('recovers a failed profile lookup and never shows another thread’s profile', async () => {
+  let unavailable = true;
+  route({ threadBot: ({ threadId }) => {
+    if (unavailable) throw Error('Offline');
+    return threadId === 't1' ? scout : null;
+  } });
+  const props = { threadId: 't1', pluginId: 'bots', params: null };
+  const view = render(<BotThreadProfile {...props} />);
+  const retry = await screen.findByRole('button', { name: 'Retry' });
+  unavailable = false;
+  fireEvent.click(retry);
+  await screen.findByRole('heading', { name: 'Scout' });
+  expect(screen.getByText('Terse', { selector: 'p' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Chat', exact: true })).toBeNull();
+  fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+  expect(screen.getByLabelText('Name', { exact: true })).toBeTruthy();
+  view.rerender(<BotThreadProfile {...props} threadId="other" />);
+  expect(screen.queryByRole('heading', { name: 'Scout' })).toBeNull();
+  await screen.findByText('This conversation no longer belongs to a bot.');
 });

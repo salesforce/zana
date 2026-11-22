@@ -20,6 +20,14 @@ function ref(args: Record<string, unknown>, field = 'bot'): string {
 
 export function registerRpc(zcc: Pick<ZccPluginApi, 'rpc' | 'sdk'>, service: BotService): void {
   zcc.rpc.method('list', () => service.listViews());
+  zcc.rpc.method('threadBot', async raw => {
+    const args = record(raw);
+    const role = service.roleOf(ref(args, 'threadId'));
+    if (role.kind === 'thread') return null;
+    if (args.profile === true) return service.view(role.bot);
+    const { id, name, color } = role.bot;
+    return { id, name, color };
+  });
   zcc.rpc.method('get', async (raw) => {
     const bot = await service.requireBot(ref(record(raw)));
     return { bot: await service.view(bot), jobs: await service.jobs(bot.id) };

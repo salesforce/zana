@@ -572,7 +572,11 @@ export function collectPluginAppRegistrations(
         ) {
           throw new Error(`${kind}: "layout" must be "padded" or "flush"`);
         }
+        if (registration.experimental_ownedThreadTitle !== undefined && typeof registration.experimental_ownedThreadTitle !== 'function') {
+          throw new Error(`${kind}: "experimental_ownedThreadTitle" must be a React component function`);
+        }
         collected.threadPanelActions.push({
+          ...(registration.experimental_ownedThreadTitle ? { experimental_ownedThreadTitle: registration.experimental_ownedThreadTitle } : {}),
           id,
           title: requireNonEmptyString(kind, "title", registration.title),
           ...(registration.icon !== undefined

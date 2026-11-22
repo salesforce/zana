@@ -889,6 +889,11 @@ export type PluginSdkInbox = PluginSdk['inbox'];
 }
 
 declare module '@zana-ai/zcc-plugin-sdk/app' {
+  export interface PluginOwnedThreadTitleProps {
+    threadId: string;
+    title: string;
+    openPanel(): void;
+  }
   export interface BasicSidebarSectionProps {
     searchQuery: string;
     activeThreadId: string | null;

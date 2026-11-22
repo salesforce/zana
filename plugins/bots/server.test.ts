@@ -94,6 +94,20 @@ describe('bots plugin', () => {
     expect(sends).toHaveLength(1);
   });
 
+  it('resolves a main conversation and its jobs to the live bot profile', async () => {
+    const { harness, call } = await load();
+    await harness.callRpc('create', { name: 'Scout', color: '#35a16b' });
+    const { threadId } = await harness.callRpc('openThread', { bot: 'scout' }) as { threadId: string };
+    const job = await call('bot_job_start', { title: 'Digest', prompt: 'Write digest' }, threadId) as { threadId: string };
+    await harness.callRpc('update', { bot: 'scout', patch: { name: 'Scout II' } });
+    for (const id of [threadId, job.threadId]) {
+      expect(await harness.callRpc('threadBot', { threadId: id })).toEqual({ id: 'scout', name: 'Scout II', color: expect.any(String) });
+      expect(await harness.callRpc('threadBot', { threadId: id, profile: true })).toMatchObject({ name: 'Scout II', routines: [] });
+    }
+    expect(await harness.callRpc('threadBot', { threadId: 'unrelated' })).toBeNull();
+    await expect(harness.callRpc('threadBot', {})).rejects.toThrow('threadId is required');
+  });
+
   it('keeps sender context in the prompt on hosts without message attribution', async () => {
     const { host, harness, spawns } = await load();
     Reflect.deleteProperty(host.zcc.sdk.threads, 'messageSources');

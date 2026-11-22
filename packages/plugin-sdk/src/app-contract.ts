@@ -319,7 +319,16 @@ export interface PluginThreadPanelActionContext {
   openPanel(options?: { title?: string; params?: JsonValue }): boolean;
 }
 
+/** A panel can provide a clickable title in conversations created by its plugin. */
+export interface PluginOwnedThreadTitleProps {
+  threadId: string;
+  title: string;
+  openPanel(): void;
+}
+
 export interface PluginThreadPanelActionRegistration extends PluginSlotBase {
+  /** Open from the owning thread's heading instead of the general New Tab catalogue. */
+  experimental_ownedThreadTitle?: ComponentType<PluginOwnedThreadTitleProps>;
   title: string;
   /** New Tab category. Defaults to the installed plugin's name. */
   category?: string;
@@ -1713,6 +1722,10 @@ export function collectPluginApp(
             ...(requireLayout(kind, registration.layout)
               ? { layout: registration.layout }
               : {}),
+            ...(registration.experimental_ownedThreadTitle !== undefined ? {
+              experimental_ownedThreadTitle: requireComponent<NonNullable<PluginThreadPanelActionRegistration['experimental_ownedThreadTitle']>>(
+                kind, 'experimental_ownedThreadTitle', registration.experimental_ownedThreadTitle)
+            } : {}),
             ...(scopes !== undefined ? { scopes } : {}),
             ...(pages !== undefined ? { pages } : {}),
             ...(registration.run !== undefined ? { run: registration.run } : {})

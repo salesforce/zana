@@ -232,6 +232,7 @@ export type {
   PluginQuestionForm,
   PluginPendingInteractionView,
   PluginThreadPanelActionRegistration,
+  PluginOwnedThreadTitleProps,
   PluginThreadPanelPage,
   PluginThreadPanelScope,
   PluginNewThreadPanelActionRegistration,

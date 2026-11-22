@@ -2,7 +2,7 @@ Give an agent a name, a personality and a schedule. A bot is one persistent thre
 
 ## What you get
 
-- A **Bots** panel. Create a bot, chat with it in its main thread, edit its routines, see its background jobs, and change its personality.
+- A **Bots** panel. Create a bot, chat with it in its main thread, edit its routines, see its background jobs, and change its personality. Click the bot’s name at the top of its thread to open its profile, routines, library and settings beside the chat.
 - **Routines.** A routine posts a prompt into the bot's thread on a 5-field cron, in host local time. Ranges such as `1-5` work. A routine that fires while the bot is busy waits until its turn ends.
 - **Background jobs.** For heavy work, the bot starts a hidden thread with `bot_job_start`. When the job finishes, its final answer is posted back to the bot, so the bot's thread stays readable.
 - **Memory.** Each bot saves and searches `zcc memory` with its own tag (`bot:<id>`).

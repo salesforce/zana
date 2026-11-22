@@ -123,6 +123,7 @@ export type {
   PluginThreadListRegistration,
   PluginThreadPanelActionContext,
   PluginThreadPanelActionRegistration,
+  PluginOwnedThreadTitleProps,
   PluginThreadPanelProps,
   PluginThreadPanelPage,
   PluginThreadPanelScope,

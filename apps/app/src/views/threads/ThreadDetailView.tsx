@@ -72,7 +72,8 @@ import { PluginTabDeck } from '../../components/thread/secondary-panel/PluginTab
 import { ThreadPluginTab } from '../../components/thread/secondary-panel/ThreadPluginTab.js';
 import { ThreadExplorerTab } from '../../components/thread/secondary-panel/ThreadExplorerTab.js';
 import { ThreadInboxTab } from '../../components/thread/secondary-panel/ThreadInboxTab.js';
-import { PluginThreadHeaderActions } from '../../plugins/PluginThreadHeaderActions.js';
+import { openPluginThreadPanel } from '../../plugins/plugin-thread-panel.js';
+import { PluginOwnedThreadTitle, PluginThreadHeaderActions } from '../../plugins/PluginThreadHeaderActions.js';
 import { ThreadPanelOwnerProvider } from '../../plugins/thread-panel-owner.js';
 import type { ThreadChatMessageAction } from '@zana-ai/zcc-plugin-sdk/app';
 import { copyText } from '../../components/thread/secondary-panel/threadSecondaryPanelLogic.js';
@@ -281,6 +282,7 @@ function ThreadDetailBody({
   const [backgroundCommands, setBackgroundCommands] = useState<TimelineViewWorkflowWorkRow[]>([]);
   const [modelFallback, setModelFallback] = useState<ThreadTimelineModelFallback | null>(null);
   const [parentThreadId, setParentThreadId] = useState<string | null>(null);
+  const [pluginOwner, setPluginOwner] = useState<{ threadId: string; id: string } | null>(null);
   const [originKind, setOriginKind] = useState<string | null>(null);
   const [promptMode, setPromptMode] = useState<{ mode: string; prompt?: string } | null>(null);
   const [executionModeRequested, setExecutionModeRequested] = useState<string | null>(null);
@@ -492,6 +494,7 @@ function ThreadDetailBody({
         parentThreadId?: string | null;
         visibility?: ThreadListItem['visibility'];
         originKind?: unknown;
+        originPluginId?: string | null;
         hasPendingInteraction?: boolean;
         updatedAt?: number;
         runtime?: ThreadListItem['runtime'] & { displayStatus?: string };
@@ -512,6 +515,10 @@ function ThreadDetailBody({
       setThreadServiceTier(typeof thread.serviceTier === 'string' ? thread.serviceTier : null);
       setThreadAcpMode(typeof thread.acpMode === 'string' ? thread.acpMode : null);
       setThreadPermissionMode({ threadId, mode: typeof thread.permissionMode === 'string' ? thread.permissionMode : null });
+      const owner = thread.originPluginId;
+      setPluginOwner(previous => owner
+        ? (previous?.threadId === threadId && previous.id === owner ? previous : { threadId, id: owner })
+        : null);
       setParentThreadId(thread.parentThreadId ?? null);
       setOriginKind(typeof thread.originKind === 'string' ? thread.originKind : null);
       hadThreadRecordRef.current = true;
@@ -1011,6 +1018,14 @@ function ThreadDetailBody({
         <header className="thread-detail-header thread-detail-header--balanced" data-title-in-shell={Boolean(mobileTitleTarget) || undefined} data-controls-in-shell={Boolean(mobileControlsTarget) || undefined}>
           <ThreadDetailHeading
             title={title}
+            titleContent={pluginOwner?.threadId === threadId ? <PluginOwnedThreadTitle
+              threadId={threadId} title={title} owner={pluginOwner.id}
+              onOpen={(pluginId, actionId) => {
+                if (openPluginThreadPanel({ threadId, pluginId, actionId }) && !showSecondaryPanel && !hostedSecondary) {
+                  navigate(getThreadRoutePath(threadId));
+                }
+              }}
+            /> : undefined}
             titleTarget={mobileTitleTarget}
             draggable={!basic && Boolean(pane?.beginPaneDrag)}
             onPointerDown={

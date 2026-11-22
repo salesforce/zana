@@ -932,10 +932,10 @@ button.bt-row:hover{background:var(--bg-hover)}
 .bt-section-head{justify-content:space-between;margin:0 0 8px}
 .bt-topline{border-bottom:1px solid var(--border);padding:9px 24px;color:var(--text-muted);font-size:12px}
 .bt-meta{font-size:12px;color:var(--text-muted)}
-#bot-panel-settings{max-width:720px}
-#bot-panel-settings .bt-card{border:0}
-#bot-panel-settings .bt-row{padding:12px 0}
-#bot-panel-settings .bt-row :is(input,select,textarea,.bt-picker){width:min(55%,310px);box-sizing:border-box}
+.bt-settings-panel{max-width:720px}
+.bt-settings-panel .bt-card{border:0}
+.bt-settings-panel .bt-row{padding:12px 0}
+.bt-settings-panel .bt-row :is(input,select,textarea,.bt-picker){width:min(55%,310px);box-sizing:border-box}
 .bt-root .bt-field :is(input,select,textarea),.bt-start textarea{box-sizing:border-box}
 .bt-sec .bt-memory{padding:10px 14px}
 .bt-memory+.bt-memory{border-top:1px solid var(--border)}
@@ -944,7 +944,7 @@ button.bt-row:hover{background:var(--bg-hover)}
 .bt-grow,.bt-hero-text,.bt-memory{overflow-wrap:anywhere}
 .bt-root .settings-field{margin-bottom:0}
 @container (max-width:700px){.bt-layout{grid-template-columns:135px minmax(0,1fr)}.bt-list-head{flex-wrap:wrap}.bt-when{text-align:left}.bt-row.is-routine .bt-grow{flex-basis:55%}}
-@container (max-width:520px){.bt-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}.bt-root .bt-list{max-height:110px;flex-direction:row;align-items:center;overflow:auto;border-right:0;border-bottom:1px solid var(--border)}.bt-list .bt-item{width:auto;flex:none}.bt-list-head{flex:none;gap:4px}.bt-inner{padding:16px 12px 32px}.bt-row{flex-wrap:wrap}#bot-panel-settings .bt-row :is(input,select,textarea,.bt-picker){width:100%}.bt-colors{flex-wrap:wrap}}
+@container (max-width:520px){.bt-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}.bt-root .bt-list{max-height:110px;flex-direction:row;align-items:center;overflow:auto;border-right:0;border-bottom:1px solid var(--border)}.bt-list .bt-item{width:auto;flex:none}.bt-list-head{flex:none;gap:4px}.bt-inner{padding:16px 12px 32px}.bt-row{flex-wrap:wrap}.bt-settings-panel .bt-row :is(input,select,textarea,.bt-picker){width:100%}.bt-colors{flex-wrap:wrap}}
 .bt-root code{font-size:12px}
 `;
 var BODY = {
@@ -960,7 +960,7 @@ var BODY = {
   round: /* @__PURE__ */ jsx("circle", { cx: 50, cy: 52, r: 34 })
 };
 function BotAvatar({ bot, size = 40, live = false }) {
-  const state = botState(bot);
+  const state = "mainThreadStatus" in bot ? botState(bot) : void 0;
   const color = bot.color ?? defaultBotColor(bot.id);
   const shape = defaultBotShape(bot.id);
   const asleep = state === "asleep";
@@ -1394,17 +1394,103 @@ function useOpenChat() {
 }
 var TABS = [["details", "Overview"], ["library", "Library"], ["settings", "Settings"]];
 var WAKE_MESSAGE = "Check in: anything new since your last run? Reply in a few lines.";
-function BotPage({ bot, onDeleted }) {
+function useThreadBot(threadId, profile, active = true) {
+  const rpc = useRpc();
+  const [bot, setBot] = useState();
+  const [error, setError] = useState("");
+  const sequence = useRef(0);
+  const refresh = useCallback(async () => {
+    if (!active) return;
+    const request = ++sequence.current;
+    try {
+      const result = await rpc.call("threadBot", { threadId, profile });
+      if (request !== sequence.current) return;
+      setBot(result);
+      setError("");
+    } catch (err) {
+      if (request === sequence.current) setError(message(err));
+    }
+  }, [active, rpc, threadId, profile]);
+  useEffect(() => {
+    void refresh();
+    return () => {
+      sequence.current++;
+    };
+  }, [refresh]);
+  useRealtime(CHANNEL, (payload) => {
+    const id = payload?.botId;
+    if (!id || !bot || id === bot.id) void refresh();
+  });
+  return { bot, error, refresh };
+}
+var profileCss = `
+.bt-thread-title{display:inline-flex;align-items:center;vertical-align:middle;gap:7px;max-width:100%;min-width:0;
+  padding:3px 9px 3px 5px;border:1px solid var(--border);border-radius:999px;background:var(--bg-panel);
+  color:var(--text-primary);font:inherit;cursor:pointer;-webkit-app-region:no-drag}
+.bt-thread-title:hover{background:var(--bg-hover);border-color:var(--text-dim)}
+.bt-thread-title:focus-visible{outline:2px solid var(--accent-blue);outline-offset:-2px}
+.bt-thread-title>span:not(.bt-av){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bt-thread-title>svg{flex:none;color:var(--text-muted)}
+.basic-ui .thread-detail-title-block:has(.bt-thread-title){align-items:center}
+.basic-ui .thread-detail-title-row:has(.bt-thread-title){max-width:100%}
+.bt-profile .bt-inner{padding:22px clamp(14px,5%,32px) 36px}
+.bt-profile .bt-hero{flex-direction:column;text-align:center;gap:10px}
+.bt-profile .bt-hero-text{min-width:0;width:100%}
+.bt-profile .bt-title{justify-content:center}
+.bt-profile .bt-hero .bt-personality{display:block;white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0 0}
+.bt-profile .bt-tabs{justify-content:center}
+`;
+function BotThreadTitle({ threadId, title, openPanel }) {
+  const { bot } = useThreadBot(threadId, false);
+  if (!bot) return /* @__PURE__ */ jsx(Fragment2, { children: title });
+  return /* @__PURE__ */ jsxs(Fragment2, { children: [
+    /* @__PURE__ */ jsx("style", { children: profileCss }),
+    /* @__PURE__ */ jsxs(
+      "button",
+      {
+        type: "button",
+        className: "bt-thread-title",
+        "aria-label": `Open ${bot.name} profile`,
+        title: `Open ${bot.name} profile`,
+        onPointerDown: (event) => event.stopPropagation(),
+        onClick: openPanel,
+        children: [
+          /* @__PURE__ */ jsx(BotAvatar, { bot, size: 22 }),
+          /* @__PURE__ */ jsx("span", { children: bot.name }),
+          /* @__PURE__ */ jsx(ChevronDown, { size: 13, "aria-hidden": "true" })
+        ]
+      }
+    )
+  ] });
+}
+function BotThreadProfile({ threadId, active }) {
+  return /* @__PURE__ */ jsx(ThreadProfile, { threadId, active }, threadId);
+}
+function ThreadProfile({ threadId, active = true }) {
+  const { bot, error, refresh } = useThreadBot(threadId, true, active);
+  return /* @__PURE__ */ jsxs("div", { className: "bt-root bt-profile", children: [
+    /* @__PURE__ */ jsx("style", { children: CSS2 + profileCss }),
+    /* @__PURE__ */ jsxs("div", { className: "bt-main", children: [
+      error && /* @__PURE__ */ jsxs("p", { role: "alert", className: "bt-empty-line", children: [
+        "Couldn\u2019t load the bot profile. ",
+        /* @__PURE__ */ jsx("button", { type: "button", className: "bt-btn", onClick: () => void refresh(), children: "Retry" })
+      ] }),
+      bot ? /* @__PURE__ */ jsx(BotPage, { bot, profile: true, active, onDeleted: () => void refresh() }, bot.id) : !error && /* @__PURE__ */ jsx("p", { role: "status", className: "bt-empty-line", children: bot === void 0 ? "Loading profile\u2026" : "This conversation no longer belongs to a bot." })
+    ] })
+  ] });
+}
+function BotPage({ bot, onDeleted, profile = false, active = true }) {
+  const tabsId = useId();
   const [tab, setTab] = useState("details");
   const openChat = useOpenChat();
   const wake = useAction(bot.id);
   const catalog = useCatalog(bot.providerId ?? "");
-  const jobs = useJobs(bot.id);
+  const jobs = useJobs(bot.id, active);
   const state = botState(bot);
   const hasThread = Boolean(bot.mainThreadId) && (state === "working" || state === "asleep");
   const projectName = catalog.data?.projects.find((row) => row.id === bot.projectId)?.name ?? (catalog.data || catalog.error ? bot.projectId : "\u2026");
   return /* @__PURE__ */ jsxs(Fragment2, { children: [
-    /* @__PURE__ */ jsxs("div", { className: "bt-topline", children: [
+    !profile && /* @__PURE__ */ jsxs("div", { className: "bt-topline", children: [
       "Bots ",
       /* @__PURE__ */ jsx("span", { "aria-hidden": "true", children: "/" }),
       " ",
@@ -1412,7 +1498,7 @@ function BotPage({ bot, onDeleted }) {
     ] }),
     /* @__PURE__ */ jsxs("div", { className: "bt-inner", children: [
       /* @__PURE__ */ jsxs("header", { className: "bt-hero", children: [
-        /* @__PURE__ */ jsx(BotAvatar, { bot, size: 44, live: true }),
+        /* @__PURE__ */ jsx(BotAvatar, { bot, size: profile ? 58 : 44, live: active }),
         /* @__PURE__ */ jsxs("div", { className: "bt-hero-text", children: [
           /* @__PURE__ */ jsxs("div", { className: "bt-title", children: [
             /* @__PURE__ */ jsx("h2", { children: bot.name }),
@@ -1422,13 +1508,14 @@ function BotPage({ bot, onDeleted }) {
               bot.activeJobs ? ` \xB7 ${bot.activeJobs} background job${bot.activeJobs === 1 ? "" : "s"}` : ""
             ] })
           ] }),
+          profile && bot.personality && /* @__PURE__ */ jsx("p", { className: "bt-personality", children: bot.personality }),
           /* @__PURE__ */ jsxs("span", { className: "bt-meta", children: [
             projectName,
             " \xB7 ",
             /* @__PURE__ */ jsx("span", { className: "bt-chip is-warn", title: "Bots run without asking for approval", children: "Full access" })
           ] })
         ] }),
-        /* @__PURE__ */ jsxs("div", { className: "bt-actions", children: [
+        !profile && /* @__PURE__ */ jsxs("div", { className: "bt-actions", children: [
           hasThread && /* @__PURE__ */ jsx("button", { type: "button", className: "bt-btn is-primary", onClick: () => openChat(bot, bot.mainThreadId), children: "Chat" }),
           state === "asleep" && /* @__PURE__ */ jsx(
             "button",
@@ -1446,11 +1533,11 @@ function BotPage({ bot, onDeleted }) {
       /* @__PURE__ */ jsx("div", { role: "tablist", "aria-label": `${bot.name} sections`, className: "bt-tabs", children: TABS.map(([id, label], index) => /* @__PURE__ */ jsx(
         "button",
         {
-          id: `bot-tab-${id}`,
+          id: `${tabsId}-tab-${id}`,
           type: "button",
           role: "tab",
           "aria-selected": tab === id,
-          "aria-controls": `bot-panel-${id}`,
+          "aria-controls": `${tabsId}-panel-${id}`,
           tabIndex: tab === id ? 0 : -1,
           onClick: () => setTab(id),
           onKeyDown: (event) => arrowNav(event, TABS.length, index, (next) => setTab(TABS[next][0])),
@@ -1458,12 +1545,12 @@ function BotPage({ bot, onDeleted }) {
         },
         id
       )) }),
-      /* @__PURE__ */ jsxs("div", { role: "tabpanel", id: "bot-panel-details", "aria-labelledby": "bot-tab-details", hidden: tab !== "details", children: [
-        !hasThread && /* @__PURE__ */ jsx(StartConversation, { bot, state, onStarted: (threadId) => openChat(bot, threadId) }),
-        /* @__PURE__ */ jsx(Details, { bot, jobs, openLibrary: () => setTab("library"), visible: tab === "details" })
+      /* @__PURE__ */ jsxs("div", { role: "tabpanel", id: `${tabsId}-panel-details`, "aria-labelledby": `${tabsId}-tab-details`, hidden: tab !== "details", children: [
+        !profile && !hasThread && /* @__PURE__ */ jsx(StartConversation, { bot, state, onStarted: (threadId) => openChat(bot, threadId) }),
+        /* @__PURE__ */ jsx(Details, { bot, jobs, openLibrary: () => setTab("library"), visible: active && tab === "details" })
       ] }),
-      /* @__PURE__ */ jsx("div", { role: "tabpanel", id: "bot-panel-library", "aria-labelledby": "bot-tab-library", hidden: tab !== "library", children: /* @__PURE__ */ jsx(Library, { bot, jobsState: jobs, visible: tab === "library" }) }),
-      /* @__PURE__ */ jsx("div", { role: "tabpanel", id: "bot-panel-settings", "aria-labelledby": "bot-tab-settings", hidden: tab !== "settings", children: /* @__PURE__ */ jsx(Settings, { bot, onDeleted }) })
+      /* @__PURE__ */ jsx("div", { role: "tabpanel", id: `${tabsId}-panel-library`, "aria-labelledby": `${tabsId}-tab-library`, hidden: tab !== "library", children: /* @__PURE__ */ jsx(Library, { bot, jobsState: jobs, visible: active && tab === "library" }) }),
+      /* @__PURE__ */ jsx("div", { role: "tabpanel", id: `${tabsId}-panel-settings`, "aria-labelledby": `${tabsId}-tab-settings`, className: "bt-settings-panel", hidden: tab !== "settings", children: /* @__PURE__ */ jsx(Settings, { bot, onDeleted }) })
     ] })
   ] });
 }
@@ -1944,12 +2031,13 @@ function DeleteBot({ bot, onDeleted }) {
     action.feedback
   ] }) });
 }
-function useJobs(botId) {
+function useJobs(botId, active = true) {
   const rpc = useRpc();
   const [jobs, setJobs] = useState(null);
   const [error, setError] = useState("");
   const seq = useRef(0);
   const load = useCallback(async () => {
+    if (!active) return;
     const mine = ++seq.current;
     try {
       const rows = await rpc.call("jobs", { bot: botId });
@@ -1959,7 +2047,7 @@ function useJobs(botId) {
     } catch (err) {
       if (mine === seq.current) setError(message(err));
     }
-  }, [rpc, botId]);
+  }, [rpc, botId, active]);
   useEffect(() => {
     void load();
     return () => {
@@ -1999,11 +2087,21 @@ function Library({ bot, visible, jobsState }) {
 }
 var ACTIVE_JOB = /* @__PURE__ */ new Set(["active", "starting", "stopping"]);
 var app_default = definePluginApp((app) => {
+  app.slots.threadPanelAction({
+    id: "profile",
+    title: "Bot profile",
+    icon: "Bot",
+    layout: "flush",
+    experimental_ownedThreadTitle: BotThreadTitle,
+    component: BotThreadProfile
+  });
   app.slots.navPanel({ id: "bots", title: "Bots", icon: "Bot", component: BotsPanel, experimental_basicSidebarSection: BasicBots });
 });
 export {
   BasicBots,
   BotAvatar,
+  BotThreadProfile,
+  BotThreadTitle,
   BotsPanel,
   botState,
   cronFor,

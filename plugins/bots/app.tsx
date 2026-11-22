@@ -1,8 +1,8 @@
 import { PopoverPicklist } from '@zana-ai/zcc-ui/popover-picklist';
-import { Pin } from 'lucide-react';
+import { ChevronDown, Pin } from 'lucide-react';
 import { BotMemory } from './src/BotMemory.js';
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { definePluginApp, useRealtime, useRpc, useZccNavigate, type BasicSidebarSectionProps } from '@zana-ai/zcc-plugin-sdk/app';
+import { definePluginApp, useRealtime, useRpc, useZccNavigate, type BasicSidebarSectionProps, type PluginOwnedThreadTitleProps, type PluginThreadPanelProps } from '@zana-ai/zcc-plugin-sdk/app';
 import { BOT_COLORS, botMemoryTag, defaultBotColor, defaultBotShape, describeCron, type BotRoutine, type BotShape } from './src/model.js';
 import type { BotJobView, BotView } from './src/service.js';
 
@@ -117,10 +117,10 @@ button.bt-row:hover{background:var(--bg-hover)}
 .bt-section-head{justify-content:space-between;margin:0 0 8px}
 .bt-topline{border-bottom:1px solid var(--border);padding:9px 24px;color:var(--text-muted);font-size:12px}
 .bt-meta{font-size:12px;color:var(--text-muted)}
-#bot-panel-settings{max-width:720px}
-#bot-panel-settings .bt-card{border:0}
-#bot-panel-settings .bt-row{padding:12px 0}
-#bot-panel-settings .bt-row :is(input,select,textarea,.bt-picker){width:min(55%,310px);box-sizing:border-box}
+.bt-settings-panel{max-width:720px}
+.bt-settings-panel .bt-card{border:0}
+.bt-settings-panel .bt-row{padding:12px 0}
+.bt-settings-panel .bt-row :is(input,select,textarea,.bt-picker){width:min(55%,310px);box-sizing:border-box}
 .bt-root .bt-field :is(input,select,textarea),.bt-start textarea{box-sizing:border-box}
 .bt-sec .bt-memory{padding:10px 14px}
 .bt-memory+.bt-memory{border-top:1px solid var(--border)}
@@ -129,7 +129,7 @@ button.bt-row:hover{background:var(--bg-hover)}
 .bt-grow,.bt-hero-text,.bt-memory{overflow-wrap:anywhere}
 .bt-root .settings-field{margin-bottom:0}
 @container (max-width:700px){.bt-layout{grid-template-columns:135px minmax(0,1fr)}.bt-list-head{flex-wrap:wrap}.bt-when{text-align:left}.bt-row.is-routine .bt-grow{flex-basis:55%}}
-@container (max-width:520px){.bt-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}.bt-root .bt-list{max-height:110px;flex-direction:row;align-items:center;overflow:auto;border-right:0;border-bottom:1px solid var(--border)}.bt-list .bt-item{width:auto;flex:none}.bt-list-head{flex:none;gap:4px}.bt-inner{padding:16px 12px 32px}.bt-row{flex-wrap:wrap}#bot-panel-settings .bt-row :is(input,select,textarea,.bt-picker){width:100%}.bt-colors{flex-wrap:wrap}}
+@container (max-width:520px){.bt-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}.bt-root .bt-list{max-height:110px;flex-direction:row;align-items:center;overflow:auto;border-right:0;border-bottom:1px solid var(--border)}.bt-list .bt-item{width:auto;flex:none}.bt-list-head{flex:none;gap:4px}.bt-inner{padding:16px 12px 32px}.bt-row{flex-wrap:wrap}.bt-settings-panel .bt-row :is(input,select,textarea,.bt-picker){width:100%}.bt-colors{flex-wrap:wrap}}
 .bt-root code{font-size:12px}
 `;
 
@@ -149,8 +149,10 @@ const BODY: Record<BotShape, ReactNode> = {
  * Grok-style avatar: a colored body (shape picked per bot), eyes that blink and look around,
  * closed while the bot sleeps. `live` animates it always; otherwise it animates on list-row hover.
  */
-export function BotAvatar({ bot, size = 40, live = false }: { bot: BotView; size?: number; live?: boolean }) {
-  const state = botState(bot);
+type BotIdentity = Pick<BotView, 'id' | 'name' | 'color'>;
+
+export function BotAvatar({ bot, size = 40, live = false }: { bot: BotIdentity | BotView; size?: number; live?: boolean }) {
+  const state = 'mainThreadStatus' in bot ? botState(bot) : undefined;
   const color = bot.color ?? defaultBotColor(bot.id);
   const shape = defaultBotShape(bot.id);
   const asleep = state === 'asleep';
@@ -550,30 +552,107 @@ const TABS = [['details', 'Overview'], ['library', 'Library'], ['settings', 'Set
 type Tab = (typeof TABS)[number][0];
 const WAKE_MESSAGE = 'Check in: anything new since your last run? Reply in a few lines.';
 
-function BotPage({ bot, onDeleted }: { bot: BotView; onDeleted(): void }) {
+type ThreadBotResult<T> = { bot: T | null | undefined; error: string; refresh(): Promise<void> };
+
+function useThreadBot(threadId: string, profile: true, active: boolean): ThreadBotResult<BotView>;
+function useThreadBot(threadId: string, profile: false): ThreadBotResult<BotIdentity>;
+function useThreadBot(threadId: string, profile: boolean, active = true): ThreadBotResult<BotIdentity | BotView> {
+  const rpc = useRpc();
+  const [bot, setBot] = useState<BotIdentity | BotView | null>();
+  const [error, setError] = useState('');
+  const sequence = useRef(0);
+  const refresh = useCallback(async () => {
+    if (!active) return;
+    const request = ++sequence.current;
+    try {
+      const result = await rpc.call('threadBot', { threadId, profile }) as BotIdentity | BotView | null;
+      if (request !== sequence.current) return;
+      setBot(result);
+      setError('');
+    } catch (err) {
+      if (request === sequence.current) setError(message(err));
+    }
+  }, [active, rpc, threadId, profile]);
+  useEffect(() => {
+    void refresh();
+    return () => { sequence.current++; };
+  }, [refresh]);
+  useRealtime(CHANNEL, payload => {
+    const id = (payload as { botId?: string } | null)?.botId;
+    if (!id || !bot || id === bot.id) void refresh();
+  });
+  return { bot, error, refresh };
+}
+
+const profileCss = `
+.bt-thread-title{display:inline-flex;align-items:center;vertical-align:middle;gap:7px;max-width:100%;min-width:0;
+  padding:3px 9px 3px 5px;border:1px solid var(--border);border-radius:999px;background:var(--bg-panel);
+  color:var(--text-primary);font:inherit;cursor:pointer;-webkit-app-region:no-drag}
+.bt-thread-title:hover{background:var(--bg-hover);border-color:var(--text-dim)}
+.bt-thread-title:focus-visible{outline:2px solid var(--accent-blue);outline-offset:-2px}
+.bt-thread-title>span:not(.bt-av){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bt-thread-title>svg{flex:none;color:var(--text-muted)}
+.basic-ui .thread-detail-title-block:has(.bt-thread-title){align-items:center}
+.basic-ui .thread-detail-title-row:has(.bt-thread-title){max-width:100%}
+.bt-profile .bt-inner{padding:22px clamp(14px,5%,32px) 36px}
+.bt-profile .bt-hero{flex-direction:column;text-align:center;gap:10px}
+.bt-profile .bt-hero-text{min-width:0;width:100%}
+.bt-profile .bt-title{justify-content:center}
+.bt-profile .bt-hero .bt-personality{display:block;white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0 0}
+.bt-profile .bt-tabs{justify-content:center}
+`;
+
+export function BotThreadTitle({ threadId, title, openPanel }: PluginOwnedThreadTitleProps) {
+  const { bot } = useThreadBot(threadId, false);
+  if (!bot) return <>{title}</>;
+  return <><style>{profileCss}</style>
+    <button type="button" className="bt-thread-title" aria-label={`Open ${bot.name} profile`}
+      title={`Open ${bot.name} profile`} onPointerDown={event => event.stopPropagation()} onClick={openPanel}>
+      <BotAvatar bot={bot} size={22} /><span>{bot.name}</span><ChevronDown size={13} aria-hidden="true" />
+    </button></>;
+}
+
+export function BotThreadProfile({ threadId, active }: PluginThreadPanelProps) {
+  return <ThreadProfile key={threadId} threadId={threadId} active={active} />;
+}
+
+function ThreadProfile({ threadId, active = true }: { threadId: string; active?: boolean }) {
+  const { bot, error, refresh } = useThreadBot(threadId, true, active);
+  return <div className="bt-root bt-profile"><style>{CSS + profileCss}</style><div className="bt-main">
+    {error && <p role="alert" className="bt-empty-line">Couldn’t load the bot profile. <button type="button" className="bt-btn" onClick={() => void refresh()}>Retry</button></p>}
+    {bot ? <BotPage key={bot.id} bot={bot} profile active={active} onDeleted={() => void refresh()} />
+      : !error && <p role="status" className="bt-empty-line">{bot === undefined ? 'Loading profile…' : 'This conversation no longer belongs to a bot.'}</p>}
+  </div></div>;
+}
+
+function BotPage({ bot, onDeleted, profile = false, active = true }: {
+  bot: BotView; onDeleted(): void; profile?: boolean; active?: boolean;
+}) {
+  const tabsId = useId();
   const [tab, setTab] = useState<Tab>('details');
   const openChat = useOpenChat();
   const wake = useAction(bot.id);
   const catalog = useCatalog(bot.providerId ?? '');
-  const jobs = useJobs(bot.id);
+  const jobs = useJobs(bot.id, active);
   const state = botState(bot);
   const hasThread = Boolean(bot.mainThreadId) && (state === 'working' || state === 'asleep');
   const projectName = catalog.data?.projects.find((row) => row.id === bot.projectId)?.name ?? (catalog.data || catalog.error ? bot.projectId : '…');
 
   return (
     <>
-      <div className="bt-topline">Bots <span aria-hidden="true">/</span> {bot.name}</div>
+      {!profile && <div className="bt-topline">Bots <span aria-hidden="true">/</span> {bot.name}</div>}
       <div className="bt-inner">
       <header className="bt-hero">
-        <BotAvatar bot={bot} size={44} live />
+        <BotAvatar bot={bot} size={profile ? 58 : 44} live={active} />
         <div className="bt-hero-text">
           <div className="bt-title"><h2>{bot.name}</h2>
             <span className="bt-chip"><span className="bt-dot" data-state={state} />{STATE_LABEL[state]}
               {bot.activeJobs ? ` · ${bot.activeJobs} background job${bot.activeJobs === 1 ? '' : 's'}` : ''}</span>
           </div>
+          {profile && bot.personality && <p className="bt-personality">{bot.personality}</p>}
           <span className="bt-meta">{projectName} · <span className="bt-chip is-warn" title="Bots run without asking for approval">Full access</span></span>
         </div>
-        <div className="bt-actions">
+        {!profile && <div className="bt-actions">
           {hasThread && (
             <button type="button" className="bt-btn is-primary" onClick={() => openChat(bot, bot.mainThreadId!)}>Chat</button>
           )}
@@ -581,12 +660,12 @@ function BotPage({ bot, onDeleted }: { bot: BotView; onDeleted(): void }) {
             <button type="button" className="bt-btn" disabled={wake.busy}
               onClick={() => void wake.run('send', { message: WAKE_MESSAGE }, `${bot.name} is waking up`)}>Wake</button>
           )}
-        </div>
+        </div>}
       </header>
       {wake.feedback}
       <div role="tablist" aria-label={`${bot.name} sections`} className="bt-tabs">
         {TABS.map(([id, label], index) => (
-          <button key={id} id={`bot-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`bot-panel-${id}`}
+          <button key={id} id={`${tabsId}-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`${tabsId}-panel-${id}`}
             tabIndex={tab === id ? 0 : -1} onClick={() => setTab(id)}
             onKeyDown={(event) => arrowNav(event, TABS.length, index, (next) => setTab(TABS[next]![0]))}>
             {label}
@@ -594,14 +673,14 @@ function BotPage({ bot, onDeleted }: { bot: BotView; onDeleted(): void }) {
         ))}
       </div>
       {/* Every panel stays mounted so unsaved edits and scroll survive a tab switch. */}
-      <div role="tabpanel" id="bot-panel-details" aria-labelledby="bot-tab-details" hidden={tab !== 'details'}>
-        {!hasThread && <StartConversation bot={bot} state={state} onStarted={(threadId) => openChat(bot, threadId)} />}
-        <Details bot={bot} jobs={jobs} openLibrary={() => setTab('library')} visible={tab === 'details'} />
+      <div role="tabpanel" id={`${tabsId}-panel-details`} aria-labelledby={`${tabsId}-tab-details`} hidden={tab !== 'details'}>
+        {!profile && !hasThread && <StartConversation bot={bot} state={state} onStarted={(threadId) => openChat(bot, threadId)} />}
+        <Details bot={bot} jobs={jobs} openLibrary={() => setTab('library')} visible={active && tab === 'details'} />
       </div>
-      <div role="tabpanel" id="bot-panel-library" aria-labelledby="bot-tab-library" hidden={tab !== 'library'}>
-        <Library bot={bot} jobsState={jobs} visible={tab === 'library'} />
+      <div role="tabpanel" id={`${tabsId}-panel-library`} aria-labelledby={`${tabsId}-tab-library`} hidden={tab !== 'library'}>
+        <Library bot={bot} jobsState={jobs} visible={active && tab === 'library'} />
       </div>
-      <div role="tabpanel" id="bot-panel-settings" aria-labelledby="bot-tab-settings" hidden={tab !== 'settings'}>
+      <div role="tabpanel" id={`${tabsId}-panel-settings`} aria-labelledby={`${tabsId}-tab-settings`} className="bt-settings-panel" hidden={tab !== 'settings'}>
         <Settings bot={bot} onDeleted={onDeleted} />
       </div>
     </div></>
@@ -984,12 +1063,13 @@ function DeleteBot({ bot, onDeleted }: { bot: BotView; onDeleted(): void }) {
   );
 }
 
-function useJobs(botId: string) {
+function useJobs(botId: string, active = true) {
   const rpc = useRpc();
   const [jobs, setJobs] = useState<BotJobView[] | null>(null);
   const [error, setError] = useState('');
   const seq = useRef(0);
   const load = useCallback(async () => {
+    if (!active) return;
     const mine = ++seq.current;
     try {
       const rows = (await rpc.call('jobs', { bot: botId })) as BotJobView[];
@@ -999,7 +1079,7 @@ function useJobs(botId: string) {
     } catch (err) {
       if (mine === seq.current) setError(message(err));
     }
-  }, [rpc, botId]);
+  }, [rpc, botId, active]);
   useEffect(() => { void load(); return () => { seq.current++; }; }, [load]);
   useRealtime(CHANNEL, (payload) => {
     const id = (payload as { botId?: unknown } | null)?.botId;
@@ -1039,5 +1119,9 @@ function Library({ bot, visible, jobsState }: { bot: BotView; visible: boolean; 
 const ACTIVE_JOB = new Set(['active', 'starting', 'stopping']);
 
 export default definePluginApp((app) => {
+  app.slots.threadPanelAction({
+    id: 'profile', title: 'Bot profile', icon: 'Bot', layout: 'flush',
+    experimental_ownedThreadTitle: BotThreadTitle, component: BotThreadProfile
+  });
   app.slots.navPanel({ id: 'bots', title: 'Bots', icon: 'Bot', component: BotsPanel, experimental_basicSidebarSection: BasicBots });
 });

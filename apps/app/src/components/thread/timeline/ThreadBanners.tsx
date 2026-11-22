@@ -261,6 +261,7 @@ export function ThreadDetailActions({ target, children }: { target?: HTMLElement
 
 export function ThreadDetailHeading({
   title,
+  titleContent,
   titleTarget,
   overflowTarget,
   overflow,
@@ -270,6 +271,7 @@ export function ThreadDetailHeading({
   metadata
 }: {
   title: string;
+  titleContent?: ReactNode;
   titleTarget?: HTMLElement | null;
   overflowTarget?: HTMLElement | null;
   overflow?: ReactNode;
@@ -278,7 +280,7 @@ export function ThreadDetailHeading({
   status?: ReactNode;
   metadata?: ReactNode;
 }) {
-  const heading = <h1 title={title}>{title}</h1>;
+  const heading = <h1 title={title}>{titleContent ?? title}</h1>;
   return (
     <div
       className={`thread-detail-heading${draggable ? ' split-pane-drag-handle' : ''}`}

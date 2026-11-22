@@ -165,6 +165,15 @@ describe('definePluginApp', () => {
     expect(set.contentScripts[0]?.id).toBe('boot');
   });
 
+  it('collects a thread title for the owning plugin and validates its component', () => {
+    const title = () => null;
+    const collect = (component: typeof title) => collectPluginApp('notes', 1, definePluginApp(app => {
+      app.slots.threadPanelAction({ id: 'profile', title: 'Profile', component: () => null, experimental_ownedThreadTitle: component });
+    }));
+    expect(collect(title).threadPanelActions[0]?.experimental_ownedThreadTitle).toBe(title);
+    expect(() => collect('invalid' as never)).toThrow(/experimental_ownedThreadTitle/);
+  });
+
   it('collects composer meta/advanced and accepts the cli-agent scope', () => {
     const def = definePluginApp((app) => {
       app.composer.customize({
