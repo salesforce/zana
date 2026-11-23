@@ -36,8 +36,10 @@
 .basic-ui-chat-row:hover, .basic-ui-chat-row.is-active { background: var(--sidebar-hover); }
 .basic-ui-chat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .basic-ui-chat-status { font-size: 10px; color: var(--text-muted); }
-.basic-ui-chat-status.status-working { color: var(--accent-green, #638457); }
-.basic-ui-chat-status.status-attention { color: var(--accent-gold, #ae8b4c); }
+/* Mirrors the advanced rail (.agents-row-working / .agents-row-needs-you). */
+.basic-ui-chat-status.status-working { font-weight: 650; color: var(--accent-gold, #ae8b4c); animation: nav-badge-pulse 1.1s ease-in-out infinite; }
+.basic-ui-chat-status.status-attention { font-weight: 650; color: var(--danger, #c4473a); }
+@media (prefers-reduced-motion: reduce) { .basic-ui-chat-status.status-working { animation: none; } }
 .basic-ui-sidebar-empty, .basic-ui-sidebar-note { margin: 10px; color: var(--text-muted); font-size: 11px; line-height: 1.8; }
 .basic-ui-sidebar-note { margin-top: 18px; font-size: 10px; }
 .basic-ui-more-chats { width: 100%; border: 0; padding: 12px; background: transparent; color: var(--text-muted); font-size: 11px; cursor: pointer; }
