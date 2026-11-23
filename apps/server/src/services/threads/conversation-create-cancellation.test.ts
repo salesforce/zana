@@ -7,6 +7,7 @@ import {
   openDatabase, upsertHost, type ZccDatabase
 } from '@zana-ai/zcc-db';
 import type { ProductHttpContext } from '../../http/product-context.js';
+import { closeThreadReads } from './thread-reads.js';
 import { createConversationFromRequest } from './conversation-create.js';
 import { sendConversationTurn, stopConversation } from './conversation-lifecycle.js';
 import { getThreadProvider, registerThreadProvider, trackThreadProviderStartup } from './thread-provider-catalog.js';
@@ -56,7 +57,7 @@ beforeEach(() => {
     }
   } as unknown as ProductHttpContext;
 });
-afterEach(() => { unregister(); db.close(); rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { unregister(); db.close(); closeThreadReads(dir); rmSync(dir, { recursive: true, force: true }); });
 
 describe('prepared plugin conversations', () => {
   it.each([undefined, 'planning'])('retains the requested mode for an empty conversation (%s)', async acpMode => {
