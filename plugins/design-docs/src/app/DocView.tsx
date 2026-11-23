@@ -411,6 +411,8 @@ export function DocView({
     <div
       ref={measureRef}
       {...{ [OWN_FIND_ATTRIBUTE]: '' }}
+      // Focusable so a click on a non-focusable spot (banner text, a disabled button) keeps Ctrl+F inside the doc.
+      tabIndex={-1}
       onKeyDown={(event) => {
         // Nothing mounted to search (editor, binary file, loading): leave the key unclaimed rather than swallow it.
         const handle = previewHandle.current;

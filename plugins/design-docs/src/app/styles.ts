@@ -611,6 +611,7 @@ export const DESIGN_DOCS_STYLES = `
 .dd-template-files { margin-top: 2px; color: var(--text-dim); font-family: var(--font-mono, ui-monospace, monospace); font-size: 10.5px; }
 
 /* ── Doc ────────────────────────────────────────────────────────────── */
+.dd-doc:focus { outline: none; }
 .dd-doc { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; }
 .dd-doc-header { flex: 0 0 auto; padding: 12px 16px 10px 20px; border-bottom: 1px solid var(--border); }
 .dd-doc-header-compact { padding: 8px 8px 8px 12px; }

@@ -206,6 +206,14 @@ describe('Ctrl+F with a past revision open', () => {
     // The banner and its controls are not part of the snapshot, but the key still reaches the preview's bar.
     expect(ctrlF(screen.getByRole('button', { name: 'Close revision' }))).toBe(true);
     expect(await screen.findByRole('searchbox', { name: 'Find in doc' })).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole('searchbox', { name: 'Find in doc' }), { key: 'Escape' });
+
+    // A click on a spot that cannot take focus (banner text, a disabled Restore) lands on the doc root, which must be focusable.
+    const root = document.querySelector('.dd-doc') as HTMLElement;
+    root.focus();
+    expect(document.activeElement).toBe(root);
+    expect(ctrlF(root)).toBe(true);
+    expect(await screen.findByRole('searchbox', { name: 'Find in doc' })).toBeTruthy();
   });
 });
 
