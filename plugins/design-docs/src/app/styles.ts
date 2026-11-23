@@ -885,7 +885,10 @@ textarea.dd-doc-summary { display: block; }
 
 /* Editor */
 .dd-editor { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
-.dd-editor-body { display: flex; flex: 1 1 auto; min-height: 0; }
+.dd-editor-body { position: relative; display: flex; flex: 1 1 auto; min-height: 0; }
+.dd-editor-find { display: contents; }
+/* In split mode the bar sits over the text pane, not the preview. */
+.dd-editor-split .dd-editor-find .dom-find-bar { right: calc(50% + 20px); }
 .dd-editor-input {
   flex: 1 1 0;
   min-width: 0;

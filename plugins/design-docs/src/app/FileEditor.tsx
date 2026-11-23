@@ -3,6 +3,7 @@ import { AlertTriangle, FileWarning, RotateCcw, Save } from 'lucide-react';
 import type { DesignDocFile } from '../shared/contract.js';
 import { localizeDocLink } from '../shared/paths.js';
 import { errorMessage, isConflict, toast, useApi, type DocKind, type WriteResult } from './api.js';
+import { useEditorFind } from './use-editor-find.js';
 import { ActorLabel, Spinner } from './ui.js';
 
 export interface EditorState {
@@ -51,6 +52,8 @@ export function FileEditor({
   const preview = useDeferredValue(draft);
   const latest = useRef({ dirty, draft, saved });
   const awaitingRefresh = useRef<DesignDocFile | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const find = useEditorFind(inputRef, draft);
   latest.current = { dirty, draft, saved };
 
   // Follow remote revisions while clean; flag them while dirty.
@@ -154,7 +157,7 @@ export function FileEditor({
   };
 
   return (
-    <div className="dd-editor">
+    <div className="dd-editor" {...find.rootProps}>
       {removed && dirty && !conflict ? (
         <div className="dd-banner dd-banner-warn" role="alert">
           <FileWarning size={14} aria-hidden />
@@ -178,7 +181,9 @@ export function FileEditor({
         </div>
       ) : null}
       <div className={`dd-editor-body${split ? ' dd-editor-split' : ''}`}>
+        {find.bar}
         <textarea
+          ref={inputRef}
           className="dd-editor-input"
           value={draft}
           spellCheck={file.kind === 'markdown' || file.kind === 'text'}
