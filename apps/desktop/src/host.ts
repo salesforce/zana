@@ -415,8 +415,9 @@ import { Overseer, type OverseerToolEvent } from '@zana-ai/zcc-server/services/f
 import { OverseerAuditRing } from '@zana-ai/zcc-server/services/followups/overseer-audit';
 import { ContentScreen, type ContentScreenEvent, buildWarningText } from './window/content-screen.js';
 import { HeartbeatService } from '@zana-ai/zcc-server/services/followups/heartbeat';
-import { createApiErrorResume } from './api-error-resume-wiring.js';
+import { apiErrorProducerLookup, createApiErrorDispatchCtx, createApiErrorResume } from './api-error-resume-wiring.js';
 import { createWorkerApiErrorRecovery, routeApiErrorStop, workerApiErrorRecoveryEnabled } from './worker-api-error-recovery-wiring.js';
+import { armQuietCheck, disarm, dispatchApiErrorStop, forgetSession as forgetApiErrorDispatch, touch as touchApiErrorDispatch, type DispatchCtx } from './api-error-dispatch.js';
 import { createWrapUpClose } from './wrap-up-close-wiring.js';
 import { LocalExtensionWatcher } from '@zana-ai/zcc-server/services/extensions/local-extension-watcher';
 import { AutonomousRunSupervisor, AUTONOMOUS_DEFAULTS } from '@zana-ai/zcc-server/services/agents/autonomous-run-supervisor';
@@ -8017,6 +8018,16 @@ teamPlanHandoff = new TeamPlanHandoff({
     log: logMainInfo
   })
 });
+const apiErrorDispatchCtx: DispatchCtx = createApiErrorDispatchCtx({
+  ptys,
+  onTurnFailed: (id) => wrapUpClose.onTurnFailed(id),
+  routeStop: (id, s, event) => routeApiErrorStop({ service: apiErrorResume, recovery: workerApiErrorRecovery, enabled: () => workerApiErrorRecoveryEnabled(store.getConfig()), agentStatus, logMainError }, id, s, event)
+});
+const apiErrorProducerFor = apiErrorProducerLookup({
+  ptys,
+  producerForProfile: (profile) => providerFor(profile as LaunchProfileId).adapter.status?.apiErrorProducer
+});
+
 const squadSessionExit = {
   executionStore,
   handleSquadWorktreeTerminal: handleSquadTerminalWithReport,
@@ -8683,6 +8694,7 @@ function wireBridgeListeners() {
     // Feed the raw PTY stream through the OSC-title detector. Cheap and
     // off the render path — only emits when the agent state actually changes.
     agentStatus.observeData(sessionId, data);
+    touchApiErrorDispatch(apiErrorDispatchCtx, sessionId);
     // The registration chooses a primary visual source. Lifecycle hooks remain
     // an additive AgentStatusTracker overlay, never a mutually exclusive mode.
     const session = ptys.getSession(sessionId);
@@ -8788,6 +8800,7 @@ function wireBridgeListeners() {
     // Same release for the OpenCode session-id resolver's cache (Rule 5).
     heartbeat.remove(sessionId);
     apiErrorResume.forget(sessionId);
+    forgetApiErrorDispatch(apiErrorDispatchCtx, sessionId, apiErrorProducerFor(sessionId));
     workerApiErrorRecovery.forget(sessionId);
     wrapUpClose.forget(sessionId);
     // Drop a session that exits while working so a dead pty can't pin the Mac
@@ -10199,6 +10212,7 @@ async function bootstrapNormal() {
        agentStatus.turnFinished(sessionId);
        wrapUpClose.onTurnFinished(sessionId);
        apiErrorResume.cancel(sessionId);
+       disarm(apiErrorDispatchCtx, sessionId);
        void scheduler.onAgentFinished(sessionId).catch(error => logMainError('scheduler Stop', error));
       // A goal worker finishing its turn is the trigger to evaluate + branch
       // (achieved / re-spawn / escalate). No-op for non-goal sessions.
@@ -10221,11 +10235,10 @@ async function bootstrapNormal() {
         const event = providerFor(session.profile as LaunchProfileId).adapter.status?.interactionHook?.(body);
         if (event?.kind === 'requested') agentStatus.inputRequested(sessionId, event.key);
         else if (event?.kind === 'resolved') agentStatus.inputResolved(sessionId, event.keys);
-        else if (event?.kind === 'interrupted') agentStatus.turnFinished(sessionId);
+        else if (event?.kind === 'interrupted') { disarm(apiErrorDispatchCtx, sessionId); agentStatus.turnFinished(sessionId); }
         else if (event?.kind === 'api-error-stop') {
           // A wrap-up turn that an API error ended is not finished: it stays open, with an inbox note.
-          wrapUpClose.onTurnFailed(sessionId);
-          routeApiErrorStop({ service: apiErrorResume, recovery: workerApiErrorRecovery, enabled: () => workerApiErrorRecoveryEnabled(store.getConfig()), agentStatus, logMainError }, sessionId, session, event);
+          dispatchApiErrorStop(apiErrorDispatchCtx, sessionId, event);
         }
         return;
       }
@@ -10247,6 +10260,8 @@ async function bootstrapNormal() {
       } else {
         ptyLifecycle.turnStarted(sessionId, projectId);
         apiErrorResume.cancel(sessionId);
+        disarm(apiErrorDispatchCtx, sessionId);
+        { const producer = apiErrorProducerFor(sessionId); if (producer) armQuietCheck(apiErrorDispatchCtx, sessionId, producer, transcriptRefForSession(session)); }
         workerApiErrorRecovery.onTurnStarted(sessionId, agentStatus.get(sessionId));
         agentStatus.turnStarted(sessionId);
         wrapUpClose.onTurnStarted(sessionId);

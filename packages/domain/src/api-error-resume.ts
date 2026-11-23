@@ -47,6 +47,11 @@ export const API_ERROR_RESUME_SUGGESTIONS: ReadonlyArray<Partial<ApiErrorResumeR
   { match: 'Connection lost mid-response', matchMode: 'contains', message: 'continue', delaySeconds: 30 }
 ];
 
+/** Who a suggestion is for, shown beside its button, so a vendor-specific starting point is not mistaken for a general one. */
+export const API_ERROR_RESUME_SUGGESTION_HINTS: Readonly<Record<string, string>> = {
+  'Provider anthropic not found': 'LiteLLM proxy in front of Claude Code'
+};
+
 const RULE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 // C0 (incl. ESC), DEL and C1 control characters.
 // eslint-disable-next-line no-control-regex

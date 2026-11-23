@@ -20,7 +20,7 @@ const descriptor = (id: string, label: string, over: Partial<HarnessAdapterDescr
 const claude = descriptor('claude', 'Claude Code', { apiErrorResume: 'supported' });
 const codex = descriptor('codex', 'Codex', { apiErrorResume: 'unsupported' });
 const opencode = descriptor('opencode', 'OpenCode', { apiErrorResume: 'unsupported' });
-const NEUTRAL_HELP = "When an agent's turn stops on an API error that matches a rule below, Zana sends it a message so it carries on. Off by default. Covers CLI Agent tabs, Squad engineers and scheduled runs for agents that report API errors.";
+const NEUTRAL_HELP = "When an agent's turn stops on an API error that matches a rule below, Zana sends it a message so it carries on. Off by default.";
 const NONE_LINE = 'None of the agents installed on this machine can report API errors yet. Agents on other hosts may still be covered.';
 const toggle = () => screen.getByRole('switch', { name: 'Resume after matching API errors' }) as HTMLInputElement;
 const coverageLines = () => screen.queryAllByText(/^(On this machine, works with:|None of the agents installed)/);
@@ -49,6 +49,20 @@ describe('ApiErrorResumeSection', () => {
     fireEvent.click(screen.getByRole('switch', { name: 'Resume after matching API errors' }));
     expect(onUpdate).toHaveBeenCalledWith({ apiErrorResume: { enabled: true, rules: [], maxPerWindow: 3, windowMinutes: 15 } }, THROW);
     expect(screen.queryByText('Add rule')).toBeNull();
+  });
+
+  it('labels the vendor-specific suggestion and leaves the generic one unlabelled', () => {
+    setup(on());
+    expect(screen.getByText('(LiteLLM proxy in front of Claude Code)')).toBeTruthy();
+    const generic = screen.getByText('+ Connection lost mid-response');
+    expect(generic.querySelector('.api-error-resume-hint')).toBeNull();
+  });
+
+  it('explains the message column: label, placeholder and help line', () => {
+    setup(on([rule({ message: 'go on' })]));
+    expect(screen.getByText('Send this message')).toBeTruthy();
+    expect(screen.getByLabelText('Send this message (rule 1)').getAttribute('placeholder')).toBe('continue');
+    expect(screen.getByText(/typed into the agent as if you sent it/)).toBeTruthy();
   });
 
   it('a suggestion adds its rule and its button hides once present', () => {
@@ -132,8 +146,8 @@ describe('ApiErrorResumeSection', () => {
     expect((input as HTMLInputElement).value).toBe('rate limited');
     expect(onConfigDraft).not.toHaveBeenCalled();
     expect(onUpdate).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByLabelText('Send (rule 1)'), { target: { value: 'go on' } });
-    fireEvent.blur(screen.getByLabelText('Send (rule 1)'));
+    fireEvent.change(screen.getByLabelText('Send this message (rule 1)'), { target: { value: 'go on' } });
+    fireEvent.blur(screen.getByLabelText('Send this message (rule 1)'));
     expect(onUpdate.mock.calls[0][0].apiErrorResume.rules).toEqual([expect.objectContaining({ match: 'rate limited', message: 'go on' })]);
   });
 
@@ -346,7 +360,7 @@ describe('ApiErrorResumeSection', () => {
   it('a blur with nothing changed saves nothing', () => {
     const { onUpdate } = setup(on([rule()]));
     fireEvent.blur(screen.getByLabelText('When the error matches (rule 1)'));
-    fireEvent.blur(screen.getByLabelText('Send (rule 1)'));
+    fireEvent.blur(screen.getByLabelText('Send this message (rule 1)'));
     fireEvent.blur(screen.getByLabelText('After (seconds) (rule 1)'), { target: { value: '20' } });
     expect(onUpdate).not.toHaveBeenCalled();
   });
@@ -385,7 +399,7 @@ describe('ApiErrorResumeSection', () => {
   it('caps the message length and stops adding rules at the limit', () => {
     const many = Array.from({ length: 20 }, (_, i) => rule({ id: `r${i}`, match: `error number ${i}` }));
     setup(on(many));
-    expect(screen.getByLabelText('Send (rule 1)').getAttribute('maxlength')).toBe('200');
+    expect(screen.getByLabelText('Send this message (rule 1)').getAttribute('maxlength')).toBe('200');
     expect((screen.getByText('Add rule') as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByText('+ Provider anthropic not found') as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText('You can have up to 20 rules.')).toBeTruthy();
@@ -417,7 +431,7 @@ describe('ApiErrorResumeSection', () => {
 
   it('every field uses the shared themed settings input, not the native control', () => {
     setup(on([rule()]));
-    for (const label of ['When the error matches (rule 1)', 'Send (rule 1)', 'After (seconds) (rule 1)', 'Messages before stopping', 'Minutes in the window']) {
+    for (const label of ['When the error matches (rule 1)', 'Send this message (rule 1)', 'After (seconds) (rule 1)', 'Messages before stopping', 'Minutes in the window']) {
       expect(screen.getByLabelText(label).classList.contains('settings-input')).toBe(true);
     }
     expect(screen.getByLabelText('Error text to check').classList.contains('settings-textarea')).toBe(true);
