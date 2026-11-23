@@ -3,6 +3,7 @@ import {
   backgroundTaskStatusSchema,
   backgroundTaskUsageSchema,
   jsonValueSchema,
+  messageSourceSchema,
   pendingInteractionUserAnswerSchema,
   pendingInteractionUserQuestionQuestionSchema,
   promptTextMentionSchema,
@@ -132,6 +133,8 @@ export const timelineUserConversationRowSchema =
     // is nullable (null = no thread subject, e.g. an `unlabeled` legacy row).
     systemMessageKind: systemMessageKindSchema,
     systemMessageSubject: systemMessageSubjectSchema.nullable(),
+    /** Sender of a plugin-delivered message no person typed (e.g. a bot reply). */
+    messageSource: messageSourceSchema.optional(),
     turnRequest: timelineConversationTurnRequestSchema,
     mentions: z.array(promptTextMentionSchema),
     references: z.array(promptTextReferenceSchema).max(24).optional(),

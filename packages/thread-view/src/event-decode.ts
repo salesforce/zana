@@ -52,6 +52,7 @@ export function getEventProviderThreadId(
     case "client/turn/rejected":
     case "client/turn/start":
     case "system/error":
+    case "system/plugin/message":
     case "system/manager/user_message":
     case "system/thread/interrupted":
     case "system/operation":
@@ -111,6 +112,7 @@ export function getEventParentToolCallId(
     case "client/turn/rejected":
     case "client/turn/start":
     case "system/error":
+    case "system/plugin/message":
     case "system/manager/user_message":
     case "system/thread/interrupted":
     case "system/operation":

@@ -103,6 +103,7 @@ import { applyLoggedConversationLifecycleEvent } from './conversation-lifecycle-
 import { admissionPromptFromInput } from '../../plugins/admission-prompt.js';
 import { admissionRefusal, admitDispatch } from './dispatch-service.js';
 import type { DispatchOrigin } from '@zana-ai/zcc-domain';
+import type { MessageSource } from '@zana-ai/zcc-domain/thread-runtime';
 import { findOpenConversationTurn } from './conversation-host-recovery.js';
 import {
   ensureConversationThreadIsWritable,
@@ -132,7 +133,7 @@ export async function sendConversationTurn(
     claudeCodePermissionMode?: 'plan';
     providerOptions?: Record<string, unknown>;
   },
-  options: { peerReviewId?: string; senderThreadId?: string; drain?: boolean; resumeQueue?: boolean; compact?: boolean; planRevision?: number; skipAdmission?: boolean; origin?: DispatchOrigin; retainQueuedRow?: boolean } = {}
+  options: { peerReviewId?: string; senderThreadId?: string; messageSource?: MessageSource; drain?: boolean; resumeQueue?: boolean; compact?: boolean; planRevision?: number; skipAdmission?: boolean; origin?: DispatchOrigin; retainQueuedRow?: boolean } = {}
 ): Promise<ConversationThreadRow> {
   return withConversationSend(ctx.db, threadId, lease => {
     if (options.senderThreadId) assertPeerDispatch(ctx, threadId, options.senderThreadId, options.peerReviewId, input);
@@ -159,7 +160,7 @@ async function sendConversationTurnWithLease(
     claudeCodePermissionMode?: 'plan';
     providerOptions?: Record<string, unknown>;
   },
-  options: { peerReviewId?: string; senderThreadId?: string; drain?: boolean; resumeQueue?: boolean; compact?: boolean; planRevision?: number; skipAdmission?: boolean; origin?: DispatchOrigin; retainQueuedRow?: boolean } = {}
+  options: { peerReviewId?: string; senderThreadId?: string; messageSource?: MessageSource; drain?: boolean; resumeQueue?: boolean; compact?: boolean; planRevision?: number; skipAdmission?: boolean; origin?: DispatchOrigin; retainQueuedRow?: boolean } = {}
 ): Promise<ConversationThreadRow> {
   const thread = getConversationThread(ctx.db, threadId);
   if (!thread) {
@@ -199,7 +200,7 @@ async function sendConversationTurnWithLease(
         mode,
         execution,
         admission,
-        peerReviewId: options.peerReviewId, senderThreadId: options.senderThreadId
+        peerReviewId: options.peerReviewId, senderThreadId: options.senderThreadId, messageSource: options.messageSource
       });
       ctx.hub.emit('threads:updated', conversationThreadView(ctx, live));
       return live;
@@ -261,7 +262,7 @@ async function sendConversationTurnWithLease(
   }
   const ghostQueue = shouldQueueGhostActiveSend(ctx, live, mode);
   if (options.compact !== true && isManualCompactionActive(ctx, live.id) && options.drain !== true) {
-    deferConversationSend(ctx, { threadId: live.id, input, mode, execution, peerReviewId: options.peerReviewId, senderThreadId: options.senderThreadId });
+    deferConversationSend(ctx, { threadId: live.id, input, mode, execution, peerReviewId: options.peerReviewId, senderThreadId: options.senderThreadId, messageSource: options.messageSource });
     ctx.hub.emit('threads:updated', conversationThreadView(ctx, live));
     return live;
   }
@@ -277,7 +278,7 @@ async function sendConversationTurnWithLease(
     || (isSteerSendMode(mode) && awaitsSteerTarget(ctx.db, live))
   );
   if (shouldQueue) {
-    deferConversationSend(ctx, { threadId: live.id, input, mode, execution, peerReviewId: options.peerReviewId, senderThreadId: options.senderThreadId });
+    deferConversationSend(ctx, { threadId: live.id, input, mode, execution, peerReviewId: options.peerReviewId, senderThreadId: options.senderThreadId, messageSource: options.messageSource });
     ctx.hub.emit('threads:updated', conversationThreadView(ctx, live));
     return live;
   }
@@ -295,7 +296,7 @@ async function sendConversationTurnWithLease(
   live = recoverConversationProviderThreadId(ctx.db, getConversationThread(ctx.db, threadId) ?? live);
   ensureConversationThreadIsWritable(live);
   if (options.drain !== true && mode === 'queue-if-active' && (live.status === 'active' || live.status === 'starting')) {
-    deferConversationSend(ctx, { threadId: live.id, input, mode, execution, peerReviewId: options.peerReviewId, senderThreadId: options.senderThreadId });
+    deferConversationSend(ctx, { threadId: live.id, input, mode, execution, peerReviewId: options.peerReviewId, senderThreadId: options.senderThreadId, messageSource: options.messageSource });
     ctx.hub.emit('threads:updated', conversationThreadView(ctx, live));
     return live;
   }
@@ -339,7 +340,8 @@ async function sendConversationTurnWithLease(
     reasoningLevel: execution?.reasoningLevel,
     serviceTier,
     acpMode: execution?.acpMode,
-    senderThreadId: options.senderThreadId
+    senderThreadId: options.senderThreadId,
+    messageSource: options.messageSource
   });
   const started = applyLoggedConversationLifecycleEvent(ctx, {
     threadId: live.id,
@@ -366,7 +368,9 @@ async function sendConversationTurnWithLease(
   });
   const next = getConversationThread(ctx.db, live.id) ?? live;
   ctx.hub.emit('threads:updated', conversationThreadView(ctx, next));
-  if (textPrompt[0] && next.originKind !== 'fork') ctx.threadTitleNamer?.request(next.id, textPrompt[0]);
+  // Name from what people see, not an agent-only sender header.
+  const titleSeed = flattenThreadInput(visiblePromptParts(resolvedInput)).map((part) => part.trim()).find((part) => part.length > 0);
+  if (titleSeed && next.originKind !== 'fork') ctx.threadTitleNamer?.request(next.id, titleSeed);
   // Presence-only signal for plugins (never the marker text/paths themselves).
   const hadAttachments = attachmentMarkersFromInput(
     resolvedInput,
@@ -859,7 +863,7 @@ export async function forkConversation(
 export async function flushHeldConversationSteerSends(ctx: ProductHttpContext, threadId: string): Promise<void> {
   quarantineLegacyPeerMessages(ctx, threadId);
   const flushed = await flushHeldConversationSteers(ctx, threadId, async (payload) => {
-    await sendConversationTurn(ctx, threadId, payload.input, 'steer', payload.execution, { drain: true, retainQueuedRow: true, peerReviewId: payload.peerReviewId, senderThreadId: payload.senderThreadId });
+    await sendConversationTurn(ctx, threadId, payload.input, 'steer', payload.execution, { drain: true, retainQueuedRow: true, peerReviewId: payload.peerReviewId, senderThreadId: payload.senderThreadId, messageSource: payload.messageSource });
   });
   const thread = flushed > 0 ? getConversationThread(ctx.db, threadId) : null;
   if (thread) ctx.hub.emit('threads:updated', conversationThreadView(ctx, thread));
@@ -874,7 +878,7 @@ export async function flushHeldConversationSends(
   try {
     await flushHeldConversationSteerSends(ctx, threadId);
     await flushDeferredConversationMessages(ctx, threadId, async (payload) => {
-      await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution, { drain: true, retainQueuedRow: true, peerReviewId: payload.peerReviewId, senderThreadId: payload.senderThreadId });
+      await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution, { drain: true, retainQueuedRow: true, peerReviewId: payload.peerReviewId, senderThreadId: payload.senderThreadId, messageSource: payload.messageSource });
     }, options);
   } finally {
     const thread = getConversationThread(ctx.db, threadId);
@@ -910,7 +914,7 @@ export async function sendHeldConversationMessage(
   try {
     await sendDeferredConversationMessage(ctx, threadId, itemId, async (payload) => {
       if (!payload.admission) {
-        await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution, { drain: true, skipAdmission: true, peerReviewId: payload.peerReviewId, senderThreadId: payload.senderThreadId });
+        await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution, { drain: true, skipAdmission: true, peerReviewId: payload.peerReviewId, senderThreadId: payload.senderThreadId, messageSource: payload.messageSource });
         return;
       }
       if (!payload.admission.overrideable) {
@@ -939,7 +943,7 @@ export async function sendHeldConversationMessage(
           'This queued message is stale; a newer wait superseded it'
         );
       }
-      await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution, { drain: true, skipAdmission: true, peerReviewId: payload.peerReviewId, senderThreadId: payload.senderThreadId });
+      await sendConversationTurn(ctx, threadId, payload.input, payload.mode, payload.execution, { drain: true, skipAdmission: true, peerReviewId: payload.peerReviewId, senderThreadId: payload.senderThreadId, messageSource: payload.messageSource });
     }, expectedUpdatedAt);
   } finally {
     const thread = getConversationThread(ctx.db, threadId);
@@ -1149,4 +1153,10 @@ async function threadStartCommandForFirstMessage(
     ...(automatedSkillIds !== undefined ? { automatedSkillIds } : {}),
     ...sessionTooling
   };
+}
+
+function visiblePromptParts(input: unknown): unknown {
+  return Array.isArray(input)
+    ? input.filter((part) => !(part && typeof part === 'object' && (part as { visibility?: unknown }).visibility === 'agent-only'))
+    : input;
 }

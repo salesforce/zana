@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  appendConversationThreadEvent, createConversationThread, listConversationThreadEventsWindow,
+  conversationTimelineWindowStart, appendConversationThreadEvent, createConversationThread, listConversationThreadEventsWindow,
   getConversationTurnStart, deleteConversationThreadEventsAfter,
   openDatabase, upsertHost, type ZccDatabase
 } from '../index.js';
@@ -86,4 +86,15 @@ it('looks up turn ancestry by ID across long histories, reopen, migration and re
   expect(getConversationTurnStart(db, one.id, 'child')).toEqual(child);
   expect(getConversationTurnStart(db, one.id, 'wrapped')).toBeNull();
   migrate(db.sqlite);
+});
+
+it('pages a thread made up of direct plugin updates using the message boundaries', () => {
+  dir = mkdtempSync(join(tmpdir(), 'thread-direct-messages-'));
+  db = openDatabase(join(dir, 'test.sqlite'));
+  const host = upsertHost(db, { name: 'test', hostKeyHash: 'h'.repeat(64) });
+  const { id } = createConversationThread(db, { projectId: 'p', hostId: host.id, providerId: 'fake' });
+  for (let i = 0; i < 25; i++) appendConversationThreadEvent(db, { threadId: id, type: 'system/plugin/message' });
+  expect(conversationTimelineWindowStart(db, id, 26, 10)).toBe(16);
+  expect(conversationTimelineWindowStart(db, id, 16, 10)).toBe(6);
+  expect(conversationTimelineWindowStart(db, id, 6, 10)).toBe(1);
 });

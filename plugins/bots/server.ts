@@ -134,7 +134,7 @@ export default async function plugin(zcc: ZccPluginApi): Promise<void> {
     }
   });
 
-  const isBotThread = (threadId: string) => service.instructionsFor(threadId) !== null;
+  const isBotThread = (threadId: string) => service.roleOf(threadId).kind !== 'thread';
   for (const name of ['thread.idle', 'thread.active', 'thread.failed'] as const) {
     zcc.events.on(name, (event) => {
       if (isBotThread(event.threadId)) service.changed();

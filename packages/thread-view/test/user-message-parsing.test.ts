@@ -165,6 +165,32 @@ describe("user message parsing", () => {
     });
   });
 
+  it("carries a plugin message source and hides its agent-only header", () => {
+    const row = userMessageRequest();
+    const source = { pluginId: "bots", kind: "bot" as const, label: "Scout", color: "#3b82f6", threadId: "bot-main", detail: "replied" };
+    const { event, meta } = decodeThreadEventRow({
+      ...row,
+      data: {
+        ...row.data,
+        messageSource: source,
+        input: [
+          { type: "text", text: "[Reply from bot Scout]", mentions: [], visibility: "agent-only" },
+          { type: "text", text: "CI is green", mentions: [] },
+        ],
+      },
+    });
+
+    const message = parseUserFromClientRequest({ decoded: event, meta, options: standardProjectionOptions });
+
+    expect(message).toMatchObject({ kind: "user", messageSource: source, text: "CI is green" });
+  });
+
+  it("omits messageSource for an ordinary user message", () => {
+    const { event, meta } = decodeThreadEventRow(userMessageRequest());
+    const message = parseUserFromClientRequest({ decoded: event, meta, options: standardProjectionOptions });
+    expect(message).not.toHaveProperty("messageSource");
+  });
+
   it("renders grouped queued turn requests as separate user messages", () => {
     const factory = createTimelineEventFactory({ threadId: "thread-1" });
     const row = factory.clientTurnRequested({

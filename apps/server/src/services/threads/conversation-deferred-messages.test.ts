@@ -220,6 +220,18 @@ describe('deferred conversation messages', () => {
     expect(rows).toHaveLength(0);
   });
 
+  it('keeps a plugin message source on a queued send', async () => {
+    rows.length = 0;
+    queuePaused = false;
+    const messageSource = { pluginId: 'bots', kind: 'bot' as const, label: 'Scout' };
+    deferConversationSend(ctx(true), { threadId: 'thr-1', input: 'one', mode: 'auto', messageSource });
+    const delivered: unknown[] = [];
+    await flushDeferredConversationMessages(ctx(false), 'thr-1', async (payload) => {
+      delivered.push(payload.messageSource);
+    });
+    expect(delivered).toEqual([messageSource]);
+  });
+
   it('does not flush while a pending interaction is still open', async () => {
     rows.length = 0;
     queuePaused = false;

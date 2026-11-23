@@ -1,11 +1,10 @@
+import { jobThreadInstructions, mainThreadInstructions } from './instructions.js';
 import type { PluginSdkThreadSummary, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import {
   BotValidationError,
   MAX_ACTIVE_JOBS_PER_BOT,
   inboundDelivery,
   jobDelivery,
-  jobThreadInstructions,
-  mainThreadInstructions,
   replyDelivery,
   routineDelivery,
   validatePrompt,
@@ -16,6 +15,7 @@ import {
   type BotRoutine,
   type RoutineInput
 } from './model.js';
+import { runDirectRoutine } from './direct-routines.js';
 import { TrustLedger } from './policy.js';
 import { BotStore, findRoutine, type BotJob } from './store.js';
 
@@ -58,6 +58,7 @@ export function minuteKey(at: number): string {
 export class BotService {
   /** Per-bot chain so two concurrent deliveries cannot both create a main thread. */
   private readonly deliveries = new Map<string, Promise<unknown>>();
+  private readonly firing = new Map<string, Promise<{ threadId: string } | null>>();
   readonly trust: TrustLedger;
 
   constructor(
@@ -139,8 +140,13 @@ export class BotService {
 
   async remove(ref: string, options: { archiveThreads?: boolean } = {}): Promise<Bot> {
     const bot = await this.requireBot(ref);
-    const jobs = await this.store.jobs(bot.id);
-    await this.store.remove(bot.id);
+    return this.serialize(`routines:${bot.id}`, () => this.removeBot(bot.id, options));
+  }
+
+  private async removeBot(id: string, options: { archiveThreads?: boolean }): Promise<Bot> {
+    const bot = await this.requireBot(id);
+    const jobs = await this.store.jobs(id);
+    await this.store.remove(id);
     if (options.archiveThreads) {
       for (const threadId of [bot.mainThreadId, ...jobs.map((job) => job.threadId)]) {
         if (!threadId) continue;
@@ -189,14 +195,7 @@ export class BotService {
   async openMainThread(ref: string, delivery?: Delivery): Promise<{ bot: Bot; threadId: string; created: boolean }> {
     const text = delivery && { ...delivery, prompt: validatePrompt(delivery.prompt, 'message') };
     const target = await this.requireBot(ref);
-    const previous = this.deliveries.get(target.id) ?? Promise.resolve();
-    const run = previous.catch(() => undefined).then(() => this.openMainThreadNow(target.id, text));
-    this.deliveries.set(target.id, run);
-    try {
-      return await run;
-    } finally {
-      if (this.deliveries.get(target.id) === run) this.deliveries.delete(target.id);
-    }
+    return this.serialize(target.id, () => this.openMainThreadNow(target.id, text));
   }
 
   private async openMainThreadNow(botId: string, delivery?: Delivery): Promise<{ bot: Bot; threadId: string; created: boolean }> {
@@ -305,7 +304,8 @@ export class BotService {
     const thread = await this.thread(target);
     if (!thread || thread.deletedAt) throw new BotValidationError(`unknown thread "${target}"`);
     if (thread.archivedAt != null) throw new BotValidationError('that thread is archived');
-    await this.zcc.sdk.threads.send({ threadId: target, ...this.wire(replyDelivery(bot, text)), mode: 'queue-if-active' });
+    // Land in the running turn (or start one) instead of waiting in the queue for "Send now".
+    await this.zcc.sdk.threads.send({ threadId: target, ...this.wire(replyDelivery(bot, text)), mode: 'steer-if-active' });
     return { threadId: target };
   }
 
@@ -315,14 +315,7 @@ export class BotService {
    */
   async startJob(fromThreadId: string, input: { prompt?: unknown; title?: unknown }): Promise<{ threadId: string }> {
     const key = `jobs:${this.botForMainThread(fromThreadId)?.id ?? fromThreadId}`;
-    const previous = this.deliveries.get(key) ?? Promise.resolve();
-    const run = previous.catch(() => undefined).then(() => this.startJobNow(fromThreadId, input));
-    this.deliveries.set(key, run);
-    try {
-      return await run;
-    } finally {
-      if (this.deliveries.get(key) === run) this.deliveries.delete(key);
-    }
+    return this.serialize(key, () => this.startJobNow(fromThreadId, input));
   }
 
   private async startJobNow(fromThreadId: string, input: { prompt?: unknown; title?: unknown }): Promise<{ threadId: string }> {
@@ -354,21 +347,32 @@ export class BotService {
     return { threadId: spawned.id };
   }
 
+  private async serialize<T>(key: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.deliveries.get(key) ?? Promise.resolve();
+    const run = previous.then(work, work);
+    this.deliveries.set(key, run);
+    try { return await run; }
+    finally { if (this.deliveries.get(key) === run) this.deliveries.delete(key); }
+  }
+
   async addRoutine(ref: string, input: RoutineInput) {
-    const result = await this.store.addRoutine(ref, input);
-    this.changed(result.bot.id);
+    const { id } = await this.requireBot(ref);
+    const result = await this.serialize(`routines:${id}`, () => this.store.addRoutine(id, input));
+    this.changed(id);
     return result;
   }
 
   async updateRoutine(ref: string, routineRef: string, input: RoutineInput) {
-    const bot = await this.store.updateRoutine(ref, routineRef, input);
-    this.changed(bot.id);
+    const { id } = await this.requireBot(ref);
+    const bot = await this.serialize(`routines:${id}`, () => this.store.updateRoutine(id, routineRef, input));
+    this.changed(id);
     return bot;
   }
 
   async removeRoutine(ref: string, routineRef: string) {
-    const bot = await this.store.removeRoutine(ref, routineRef);
-    this.changed(bot.id);
+    const { id } = await this.requireBot(ref);
+    const bot = await this.serialize(`routines:${id}`, () => this.store.removeRoutine(id, routineRef));
+    this.changed(id);
     return bot;
   }
 
@@ -380,23 +384,54 @@ export class BotService {
     return result;
   }
 
-  /**
-   * Deliver one routine occurrence. The routine is re-read first, so one that
-   * was disabled or removed meanwhile does not fire; the run is recorded only
-   * after the bot got it, so a failed delivery is retried on the next tick.
-   */
-  private async fire(botId: string, routineId: string, at: number, force = false): Promise<{ threadId: string } | null> {
-    const bot = await this.store.get(botId);
-    const routine = bot?.routines.find((row) => row.id === routineId);
-    if (!bot || !routine || (!force && (!routine.enabled || this.ranInMinute(routine, at)))) return null;
-    const result = await this.openMainThread(bot.id, routineDelivery(routine));
-    await this.store.markRoutineRun(bot.id, routine.id, at);
-    this.changed(bot.id);
-    return { threadId: result.threadId };
+  /** Coalesce overlapping manual and timer requests before doing I/O. */
+  private async fire(botId: string, routineId: string, dueAt: number, force = false, at = dueAt): Promise<{ threadId: string } | null> {
+    const key = JSON.stringify([botId, routineId]);
+    const current = this.firing.get(key);
+    if (current) {
+      const result = await current;
+      return !result && force ? this.fire(botId, routineId, dueAt, true, at) : result;
+    }
+    const run = this.serialize(`routines:${botId}`, () => this.deliverRoutine(botId, routineId, dueAt, at, force));
+    this.firing.set(key, run);
+    try { return await run; }
+    finally { this.firing.delete(key); }
   }
 
-  private ranInMinute(routine: BotRoutine, at: number): boolean {
-    return routine.lastRunAt !== undefined && minuteKey(routine.lastRunAt) === minuteKey(at);
+  private async deliverRoutine(botId: string, routineId: string, dueAt: number, at: number, force: boolean) {
+    const bot = await this.store.get(botId);
+    const routine = bot?.routines.find(row => row.id === routineId);
+    if (!routine) return null;
+    if (!force && (!routine.enabled || this.alreadyRan(routine, dueAt) || !this.cronMatches(routine.cron, new Date(dueAt)))) return null;
+
+    let threadId: string;
+    let prices: Record<string, number> | undefined;
+    const usesModel = !routine.kind || routine.kind === 'agent';
+    try {
+      if (usesModel) {
+        const main = await this.openMainThread(botId, routineDelivery(routine));
+        threadId = main.threadId;
+      } else {
+        const threads = this.zcc.sdk.threads;
+        if (!threads.postMessage) throw new Error('Update Zana to run direct routines');
+        const result = await runDirectRoutine(routine);
+        const main = await this.openMainThread(botId);
+        await threads.postMessage({ threadId: main.threadId, text: result.text });
+        threadId = main.threadId;
+        prices = result.prices;
+      }
+    } catch (error) {
+      await this.store.markRoutineRun(botId, routineId, at, 'failed', { error: errorMessage(error) });
+      this.changed(botId);
+      throw error;
+    }
+    await this.store.markRoutineRun(botId, routineId, at, usesModel ? 'sent' : 'posted', { prices });
+    this.changed(botId);
+    return { threadId };
+  }
+
+  private alreadyRan(routine: BotRoutine, at: number): boolean {
+    return routine.lastRunAt !== undefined && (routine.lastRunAt >= at || minuteKey(routine.lastRunAt) === minuteKey(at));
   }
 
   /**
@@ -415,10 +450,10 @@ export class BotService {
       let fired = 0;
       for (const routine of bot.routines) {
         if (!routine.enabled) continue;
-        const due = minutes.find((minute) => this.cronMatches(routine.cron, new Date(minute * 60_000)) && !this.ranInMinute(routine, minute * 60_000));
+        const due = minutes.find((minute) => this.cronMatches(routine.cron, new Date(minute * 60_000)) && !this.alreadyRan(routine, minute * 60_000));
         if (due === undefined) continue;
         try {
-          if (await this.fire(bot.id, routine.id, due === nowMinute ? at : due * 60_000)) fired += 1;
+          if (await this.fire(bot.id, routine.id, due * 60_000, false, at)) fired += 1;
         } catch (error) {
           this.zcc.log.warn(`routine ${bot.name}/${routine.name} failed: ${errorMessage(error)}`);
         }
@@ -451,7 +486,7 @@ export class BotService {
   /** Older hosts drop `source` / `agentContext`: keep the header in the prompt there. */
   private wire(delivery: Delivery): Delivery | { prompt: string } {
     const threads = this.zcc.sdk.threads;
-    return 'messageSources' in threads && threads.messageSources ? delivery : { prompt: `${delivery.agentContext}\n${delivery.prompt}` };
+    return threads.messageSources ? delivery : { prompt: `${delivery.agentContext}\n${delivery.prompt}` };
   }
 
   /** A label for the asking thread; a failed lookup only loses the title. */

@@ -4031,6 +4031,10 @@ export interface ThreadHistoryRow {
   title: string | null;
   updatedAt: number;
   archivedAt: number | null;
+  /** Execution host, creation time and creating plugin, so history lists can share roster filters. */
+  hostId?: string;
+  createdAt?: number;
+  originPluginId?: string | null;
   unavailableReason?: string;
 }
 export interface ThreadHistoryPage {

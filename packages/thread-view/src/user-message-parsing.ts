@@ -331,6 +331,7 @@ function buildClientUserMessage({
     // fire for a decoded stored event.
     systemMessageKind: decoded.systemMessageKind ?? "unlabeled",
     systemMessageSubject: decoded.systemMessageSubject ?? null,
+    ...(decoded.messageSource ? { messageSource: decoded.messageSource } : {}),
     turnRequest,
     text: parsedInput.text,
     mentions: parsedInput.mentions,
@@ -528,11 +529,11 @@ export function parseRejectedUsersFromClientRequest(
   return messages;
 }
 
-export function parseLegacyUserMessage(
+export function parseStandaloneMessage(
   decoded: ThreadEvent,
   meta: EventMeta,
 ): EventProjectionAssistantTextMessage | null {
-  if (decoded.type !== "system/manager/user_message") {
+  if (decoded.type !== "system/manager/user_message" && decoded.type !== "system/plugin/message") {
     return null;
   }
 
@@ -543,7 +544,7 @@ export function parseLegacyUserMessage(
 
   return {
     kind: "assistant-text",
-    id: messageId(decoded.threadId, "assistant", `legacy:${meta.seq}`),
+    id: messageId(decoded.threadId, "assistant", `${decoded.type === "system/plugin/message" ? "plugin" : "legacy"}:${meta.seq}`),
     threadId: decoded.threadId,
     sourceSeqStart: meta.seq,
     sourceSeqEnd: meta.seq,
@@ -551,6 +552,6 @@ export function parseLegacyUserMessage(
     scope: decoded.scope,
     text,
     status: "completed",
-    isLegacyUserMessage: true,
+    ...(decoded.type === "system/plugin/message" ? { pluginId: decoded.pluginId } : { isLegacyUserMessage: true }),
   };
 }

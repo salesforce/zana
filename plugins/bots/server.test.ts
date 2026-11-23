@@ -240,7 +240,7 @@ describe('bots plugin', () => {
     expect(await call('bot_reply', { threadId: 'asker', message: 'green' }, 't1')).toEqual({ threadId: 'asker' });
     expect(sends.at(-1)).toMatchObject({
       threadId: 'asker', prompt: 'green', agentContext: '[Reply from bot Scout]',
-      source: { kind: 'bot', label: 'Scout', threadId: 't1', detail: 'replied' }
+      source: { kind: 'bot', label: 'Scout', threadId: 't1', detail: 'replied' }, mode: 'steer-if-active'
     });
     expect(sends.at(-1)!.source!.color).toMatch(/^#[0-9a-f]{6}$/);
     await expect(call('bot_reply', { threadId: 'stranger', message: 'x' }, 't1')).rejects.toThrow('only reply to a thread that messaged you');
@@ -377,7 +377,7 @@ describe('bots plugin', () => {
     }
     expect(await service.tick(60_000)).toBe(1);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('boom'));
-    // The failed delivery was not recorded, so the next tick retries it; the delivered one does not repeat.
+    // A failed attempt is recorded too. Both can run on the next matching minute.
     expect((await store.get('a'))!.routines[0]!.lastRunAt ?? (await store.get('b'))!.routines[0]!.lastRunAt).toBe(60_000);
     // Next minute: the failed one is retried and the other fires again (this cron matches every minute).
     expect(await service.tick(120_000)).toBe(2);
@@ -567,5 +567,61 @@ describe('zcc bots CLI', () => {
     const host = createFakePluginHost({ ...w.options, listProjects: async () => { throw new Error('no'); }, listProviders: async () => { throw new Error('no'); } } as never);
     await plugin(host.zcc);
     expect(await host.harness.callRpc('catalog', null)).toEqual({ projects: [], providers: [], models: [], modelError: null });
+  });
+});
+
+describe('direct routine delivery', () => {
+  it('runs a ten-minute price check through the scheduler, keeps the baseline through failure and never asks a model', async () => {
+    const post = vi.fn(async (_message: { threadId: string; text: string }) => {});
+    const { harness, call, spawns, sends } = await load({ postThreadMessage: post });
+    await harness.callRpc('create', { name: 'Quotes' });
+    const api = { bot: 'Quotes', routineId: 'bitcoin' };
+    await call('bot_routines', { action: 'add', bot: 'Quotes', name: 'Bitcoin', cron: '*/10 * * * *', kind: 'price', asset: 'BTC', currencies: ['USD', 'CHF'] });
+    const http = vi.spyOn(globalThis, 'fetch');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const rate = (n: number) => Response.json({ data: { currency: 'BTC', rates: { USD: String(n), CHF: String(n / 2) } } });
+      vi.setSystemTime(new Date(2026, 0, 2, 9, 10));
+      http.mockResolvedValueOnce(rate(10000));
+      await harness.runSchedule('routines');
+      await harness.runSchedule('routines');
+      expect(spawns).toEqual([expect.objectContaining({ deferFirstTurn: true, visibility: 'visible' })]);
+      expect(spawns[0]).not.toHaveProperty('prompt');
+      expect(post).toHaveBeenCalledTimes(1);
+      expect(post.mock.calls[0]![0].text).not.toContain('%');
+      vi.setSystemTime(new Date(2026, 0, 2, 9, 20));
+      http.mockRejectedValueOnce(new Error('offline'));
+      await harness.runSchedule('routines');
+      expect(post).toHaveBeenCalledTimes(1);
+      // A manual run after a missed slot also satisfies the subsequent catch-up tick.
+      vi.setSystemTime(new Date(2026, 0, 2, 9, 32));
+      http.mockResolvedValueOnce(rate(10100));
+      await Promise.all([harness.callRpc('runRoutine', api), harness.callRpc('runRoutine', api)]);
+      await harness.runSchedule('routines');
+      expect(post).toHaveBeenCalledTimes(2);
+      expect(post.mock.calls[1]![0]).toMatchObject({ threadId: 't1', text: expect.stringContaining('(+1.00%)') });
+      expect(http).toHaveBeenCalledTimes(3);
+      expect(sends).toHaveLength(0);
+      const { bot } = await harness.callRpc('get', { bot: 'Quotes' }) as { bot: import('./src/model.js').Bot };
+      expect(bot.routines[0]?.runs?.map(r => r.status)).toEqual(['posted', 'failed', 'posted']);
+      expect(bot.routines[0]?.runs?.[1]?.error).toBe('offline');
+    } finally { vi.useRealTimers(); http.mockRestore(); }
+  });
+
+  it('uses literal reminders from the CLI and keeps an unavailable host from falling back to AI', async () => {
+    const post = vi.fn();
+    const { host, harness, spawns, sends } = await load({ postThreadMessage: post });
+    const run = (...args: string[]) => harness.runCli(args);
+    await run('create', 'Clock');
+    expect((await run('routine', 'add', 'clock', '--name', 'Stretch', '--kind', 'reminder', '--prompt', 'Take a break', '--cron', '*/10 * * * *')).exitCode).toBe(0);
+    for (let i = 0; i < 6; i++) await run('routine', 'run', 'clock', 'stretch');
+    expect(post).toHaveBeenCalledWith({ threadId: 't1', text: 'Take a break' });
+    const info = JSON.parse((await run('show', 'clock', '--json')).stdout!);
+    expect(info.routines[0].runs).toHaveLength(5);
+    expect((await run('routine', 'update', 'clock', 'stretch', '--kind', 'price', '--asset', 'BTC', '--currencies', 'USD,CHF')).exitCode).toBe(0);
+    Reflect.deleteProperty(host.zcc.sdk.threads, 'postMessage');
+    expect((await run('routine', 'run', 'clock', 'stretch')).stderr).toContain('Update Zana');
+    expect(spawns).toHaveLength(1);
+    expect(sends).toHaveLength(0);
   });
 });

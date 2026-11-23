@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const captured: { options?: Record<string, any> } = {};
 const getConversationThread = vi.fn();
+const appendConversationThreadEvent = vi.fn(() => ({ sequence: 7 }));
 const sendConversationTurn = vi.fn(async () => ({ id: 'thread-sent' }));
 const forkConversation = vi.fn(async () => ({ id: 'thread-forked' }));
 
@@ -25,7 +26,7 @@ vi.mock('../services/threads/conversation-lifecycle.js', async (original) => ({
 }));
 vi.mock('@zana-ai/zcc-db', async (original) => ({
   ...await original<typeof import('@zana-ai/zcc-db')>(),
-  getConversationThread
+  getConversationThread, appendConversationThreadEvent
 }));
 vi.mock('../services/interactions/interaction-service.js', () => ({ InteractionService: class {} }));
 vi.mock('../services/interactions/interaction-maintenance.js', () => ({ startInteractionMaintenance: () => () => {} }));
@@ -35,6 +36,7 @@ const { createAttachedProductPluginService } = await import('./product-plugins.j
 function attach() {
   const ctx = {
     db: {},
+    hub: { emit: vi.fn() },
     dataDir: '/tmp/zcc-pty-interactions-missing',
     pendingInteractions: {
       requestPluginInteraction: vi.fn(async () => 'pending-result'),
@@ -94,6 +96,22 @@ describe('attached plugin service: requestPluginInteraction routing', () => {
 });
 
 describe('attached plugin service: plugin-driven turns are tagged origin system', () => {
+  it('posts an owned thread message without invoking a provider, and refuses foreign, archived or missing threads', async () => {
+    const { ctx, options } = attach();
+    const args = { threadId: 't1', pluginId: 'owner', text: 'A routine result' };
+    for (const row of [null, { originPluginId: 'other' }, { originPluginId: 'owner', archivedAt: 1 }]) {
+      getConversationThread.mockReturnValue(row);
+      await expect(options.postThreadMessage(args)).rejects.toThrow('owned');
+    }
+    expect(appendConversationThreadEvent).not.toHaveBeenCalled();
+    getConversationThread.mockReturnValue({ originPluginId: 'owner' });
+    await options.postThreadMessage(args);
+    const payload = { ...args, scope: { kind: 'thread' }, type: 'system/plugin/message' };
+    expect(appendConversationThreadEvent).toHaveBeenCalledWith(ctx.db, { threadId: 't1', type: payload.type, payload });
+    expect(ctx.hub.emit).toHaveBeenCalledWith('threads:event', expect.objectContaining({ payload, sequence: 7 }));
+    expect(sendConversationTurn).not.toHaveBeenCalled();
+  });
+
   it('sendThread defaults mode to start, tags the turn system, and honours visibility', async () => {
     const { ctx, options } = attach();
     await expect(options.sendThread({ threadId: 't1', prompt: 'hi' })).resolves.toEqual({ id: 'thread-sent' });
@@ -103,6 +121,20 @@ describe('attached plugin service: plugin-driven turns are tagged origin system'
     await options.sendThread({ threadId: 't1', prompt: 'hi', visibility: 'hidden', mode: 'queue-if-active' });
     expect(sendConversationTurn).toHaveBeenLastCalledWith(
       ctx, 't1', [{ type: 'text', text: 'hi', mentions: [], visibility: 'hidden' }], 'queue-if-active', undefined, { origin: 'system' }
+    );
+  });
+
+  it('sendThread attaches a host-stamped message source and an agent-only header', async () => {
+    const { ctx, options } = attach();
+    const messageSource = { pluginId: 'bots', kind: 'bot', label: 'Demo Tester' };
+    await options.sendThread({ threadId: 't1', prompt: 'hi', mode: 'steer-if-active', messageSource, agentContext: '[Reply from bot Demo Tester]' });
+    expect(sendConversationTurn).toHaveBeenLastCalledWith(
+      ctx, 't1',
+      [
+        { type: 'text', text: '[Reply from bot Demo Tester]', mentions: [], visibility: 'agent-only' },
+        { type: 'text', text: 'hi', mentions: [] }
+      ],
+      'steer-if-active', undefined, { origin: 'system', messageSource }
     );
   });
 

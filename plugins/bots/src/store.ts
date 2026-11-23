@@ -13,6 +13,7 @@ import {
   type BotInput,
   type BotPatch,
   type BotRoutine,
+  type RoutineRun,
   type RoutineInput
 } from './model.js';
 
@@ -200,10 +201,15 @@ export class BotStore {
     });
   }
 
-  markRoutineRun(botId: string, routineId: string, at: number): Promise<Bot> {
+  markRoutineRun(botId: string, routineId: string, at: number, status: RoutineRun['status'] = 'sent',
+    details: { error?: string; prices?: Record<string, number> } = {}): Promise<Bot> {
+    const run: RoutineRun = { at, status, ...(details.error ? { error: details.error.slice(0, 200) } : {}) };
     return this.mutate(botId, (bot) => ({
       ...bot,
-      routines: bot.routines.map((row) => (row.id === routineId ? { ...row, lastRunAt: at } : row))
+      routines: bot.routines.map(row => row.id !== routineId ? row : {
+        ...row, lastRunAt: at, runs: [run, ...(row.runs ?? [])].slice(0, 5),
+        ...(details.prices ? { lastPrices: details.prices } : {})
+      })
     }));
   }
 

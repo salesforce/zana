@@ -1,3 +1,4 @@
+import { toolInstructions } from '../instructions.js';
 import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import type { BotService } from '../service.js';
 import { botScopeKey } from './items.js';
@@ -42,7 +43,7 @@ export function registerVault(zcc: ZccPluginApi, bots: BotService) {
   });
   zcc.agents.registerTool({
     name: 'bot_assigned_cases',
-    description: 'Read up to 20 open Salesforce cases assigned to this bot’s connected account. Works during scheduled routines.',
+    description: toolInstructions.bot_assigned_cases,
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     execute: async (input, ctx) => {
       if (Object.keys(record(input)).length) throw new Error('This action takes no arguments.');
@@ -58,7 +59,7 @@ export function registerVault(zcc: ZccPluginApi, bots: BotService) {
   });
   zcc.agents.registerTool({
     name: 'bot_vault_list',
-    description: 'List Vault items the owner has shared with this bot. Shared contacts include their contact details. Logins and cards show only identifying details.',
+    description: toolInstructions.bot_vault_list,
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     execute: async (_input, ctx) => {
       const bot = bots.botForMainThread(ctx.threadId);

@@ -29,12 +29,15 @@ it('lists archived and active conversations, preserves project scope and exclude
   expect(conversationHistory(db, { archived: 'archived' }).rows.map((r) => r.id)).toEqual([two.id]);
   expect(conversationHistory(db, { archived: 'active', projectId: 'p' }).rows.map((r) => r.id)).toEqual([one.id]);
   expect(conversationHistory(db, { projectId: 'unknown' }).rows).toEqual([]);
+  expect(conversationHistory(db, { archived: 'archived' }).rows[0]).toMatchObject({ hostId, createdAt: two.createdAt, originPluginId: null });
 });
 
 it('searches titles and conversation messages, with literal SQL wildcard characters', () => {
   const thread = create('100%_complete');
   appendConversationThreadEvent(db, { threadId: thread.id, type: 'client/turn/requested', payload: { prompt: ['remember the orange bird'] } });
   appendConversationThreadEvent(db, { threadId: thread.id, type: 'item/completed', payload: { event: { item: { type: 'agentMessage', text: 'violet elephant' } } } });
+  const notice = appendConversationThreadEvent(db, { threadId: thread.id, type: 'system/plugin/message', payload: { text: 'Stretch break' } });
+  expect(conversationHistory(db, { query: 'stretch' }).rows[0]?.matchingMessage).toEqual({ sequence: notice.sequence, text: 'Stretch break' });
   const other = create('other');
   appendConversationThreadEvent(db, { threadId: other.id, type: 'item/completed', payload: { event: { item: { type: 'commandExecution', command: 'orange bird' } } } });
   for (const query of ['%_', 'ORANGE bird', 'violet elephant']) expect(conversationHistory(db, { query }).rows.map((r) => r.id)).toEqual([thread.id]);

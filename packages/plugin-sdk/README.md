@@ -148,6 +148,8 @@ Product SDK delegation accepts `sdk.threads.spawn({ projectId, prompt, providerI
 A `project-default` spawn also applies that harness's Global → Project AI-harness overrides; explicit `model`/`permissionMode` win, and an override a thread cannot apply rejects.
 `sdk.threads.search({ query, archived?, limit? })` searches visible saved titles and messages,
 including older and archived threads, newest first. Results are capped at 25.
+For scheduled output that is already computed, `sdk.threads.postMessage({ threadId, text })` appends a durable chat message without starting a model turn. The thread must be unarchived and belong to the calling plugin. Messages accept up to 8,000 characters. Check for the method when supporting older hosts.
+When a message comes from something other than the user, such as a bot reply, pass `source: { kind, label, color?, threadId?, detail? }` to `sdk.threads.send` or `sdk.threads.spawn`. `kind` is `bot`, `thread`, `user`, `routine` or `job`. The chat then shows the sender's name and kind instead of a plain user prompt. The host stamps the calling plugin's id and rejects labels with control or bidirectional characters. `agentContext` (up to 500 characters) goes to the model as a hidden header, for example `[Reply from bot Scout]`, and is never shown. Check `sdk.threads.messageSources` before passing either on older hosts. Use `mode: 'steer-if-active'` so a reply joins the running turn instead of waiting in the Next-turn queue.
 Provider capabilities advertise `supportsServiceTier` for execution pickers.
 Environment choices are validated by the server; omit the choice for the project default.
 `sdk.providers.models` discovers models on the selected host and reports discovery errors.

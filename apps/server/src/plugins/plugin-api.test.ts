@@ -825,6 +825,7 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
         status: 'idle'
       }));
       const listThreadEvents = vi.fn(async () => [{ seq: 1, type: 'turn/started', payload: {} }]);
+      const postThreadMessage = vi.fn();
       const sendThread = vi.fn(async () => ({ id: 'thr-1' }));
       const archiveThread = vi.fn(async () => ({ id: 'thr-1' }));
       const forkThread = vi.fn(async () => ({ id: 'thr-2' }));
@@ -832,7 +833,7 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
       const handle = createPluginApi('demo', dir, {
         getThread,
         listThreadEvents,
-        sendThread,
+        sendThread, postThreadMessage,
         archiveThread,
         forkThread,
         unarchiveThread
@@ -847,10 +848,24 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
       await expect(handle.api.sdk.threads.send({ threadId: 'thr-1', prompt: 'continue' })).resolves.toEqual({
         id: 'thr-1'
       });
+      await handle.api.sdk.threads.postMessage!({ threadId: ' thr-1 ', text: ' hello ' });
+      expect(postThreadMessage).toHaveBeenCalledWith({ threadId: 'thr-1', pluginId: 'demo', text: 'hello' });
+      for (const args of [{ threadId: '', text: 'hi' }, { threadId: 'thr-1', text: ' ' }, { threadId: 'thr-1', text: 'x'.repeat(8001) }]) {
+        await expect(handle.api.sdk.threads.postMessage!(args)).rejects.toThrow();
+      }
       expect(sendThread).toHaveBeenCalledWith({
         pluginId: 'demo',
         threadId: 'thr-1',
         prompt: 'continue'
+      });
+      expect(handle.api.sdk.threads.messageSources).toBe(true);
+      await handle.api.sdk.threads.send({
+        threadId: 'thr-1', prompt: 'green', mode: 'steer-if-active', agentContext: '[Reply from bot Scout]',
+        source: { kind: 'bot', label: 'Scout', color: '#3b82f6', threadId: 'bot-main', detail: 'replied', pluginId: 'forged' } as never
+      });
+      expect(sendThread).toHaveBeenLastCalledWith({
+        pluginId: 'demo', threadId: 'thr-1', prompt: 'green', mode: 'steer-if-active', agentContext: '[Reply from bot Scout]',
+        messageSource: { pluginId: 'demo', kind: 'bot', label: 'Scout', color: '#3b82f6', threadId: 'bot-main', detail: 'replied' }
       });
       await expect(handle.api.sdk.threads.archive({ threadId: 'thr-1' })).resolves.toEqual({ id: 'thr-1' });
       await expect(handle.api.sdk.threads.fork({ threadId: 'thr-1' })).resolves.toEqual({ id: 'thr-2' });
@@ -872,6 +887,7 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
         agentContextSeed: [{ type: 'text', text: 'seed', mentions: [], visibility: 'agent-only' }]
       });
       const bare = createPluginApi('bare', dir);
+      await expect(bare.api.sdk.threads.postMessage!({ threadId: 't', text: 'hi' })).rejects.toThrow('unavailable');
       await expect(bare.api.sdk.threads.get({ threadId: 'thr-1' })).rejects.toThrow(/not available/);
       await handle.dispose();
       await bare.dispose();

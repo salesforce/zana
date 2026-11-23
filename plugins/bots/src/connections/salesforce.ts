@@ -1,3 +1,4 @@
+import { boundedJson } from '../bounded-json.js';
 // Only this server adapter handles provider credentials. Requests and response shapes are fixed here.
 export type AccountMode = 'service' | 'delegated';
 export interface Grant {
@@ -41,25 +42,6 @@ function textField(raw: unknown, max = 8192): string {
 export const appId = (value: unknown) => textField(value, 512);
 export const appSecret = (value: unknown) => textField(value, 2048);
 
-async function boundedJson(response: Response): Promise<Record<string, unknown>> {
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > 128 * 1024) throw new Error();
-      chunks.push(value);
-    }
-    const data = JSON.parse(Buffer.concat(chunks).toString());
-    return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
-  } finally {
-    await reader.cancel().catch(() => {});
-  }
-}
 export class SalesforceConnection {
   constructor(private request: typeof fetch = (...args) => fetch(...args)) {}
   private async call(url: string, init: RequestInit, signal: AbortSignal) {

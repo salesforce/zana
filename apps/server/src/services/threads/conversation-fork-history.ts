@@ -21,7 +21,8 @@ export const INHERITED_FORK_EVENT_TYPES = [
   'turn/completed',
   'turn.completed',
   'thread/compacted',
-  'system/manager/user_message'
+  'system/manager/user_message',
+  'system/plugin/message'
 ] as const;
 
 const inheritedTypeSet = new Set<string>(INHERITED_FORK_EVENT_TYPES);
