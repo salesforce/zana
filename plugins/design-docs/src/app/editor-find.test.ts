@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findMatchOffsets, highlightSegments, MAX_PAINTED_MATCHES, PAINT_WINDOW_CHARS, stepIndex } from './editor-find.js';
+import { findMatchOffsets, highlightSegments, MAX_PAINTED_MATCHES, nearestIndex, PAINT_WINDOW_CHARS, stepIndex } from './editor-find.js';
 
 const SPECIALS = 'a.b a+b (x) [y] \\';
 
@@ -60,5 +60,15 @@ describe('highlightSegments', () => {
     expect(segments.map((segment) => segment.text).join('')).toBe(text);
     const far = highlightSegments('x'.repeat(PAINT_WINDOW_CHARS * 2) + 'zz', findMatchOffsets('zz' + 'x'.repeat(PAINT_WINDOW_CHARS * 2) + 'zz', 'zz'), 2, 0);
     expect(far.filter((segment) => segment.hit)).toHaveLength(1);
+  });
+});
+
+describe('nearestIndex', () => {
+  it('picks the first match at or after the caret, wrapping to the first', () => {
+    expect(nearestIndex([3, 10, 20], 0)).toBe(0);
+    expect(nearestIndex([3, 10, 20], 10)).toBe(1);
+    expect(nearestIndex([3, 10, 20], 11)).toBe(2);
+    expect(nearestIndex([3, 10, 20], 21)).toBe(0);
+    expect(nearestIndex([], 5)).toBe(-1);
   });
 });

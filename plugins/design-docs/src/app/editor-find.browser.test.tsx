@@ -115,14 +115,59 @@ describe('find in the text editor', () => {
     expect(count()).toBe('1/3');
   });
 
-  it('does not seed from a multi-line selection and keeps the typed query on a second Ctrl+F', () => {
+  it('does not seed from a multi-line selection', () => {
     const input = renderEditor();
     input.setSelectionRange(0, 15);
     ctrlF(input);
     expect(findInput().value).toBe('');
-    type('end');
+  });
+
+  it('keeps the typed query and the current match on a second Ctrl+F, even when the match differs in case', () => {
+    const input = renderEditor();
+    ctrlF(input);
+    type('beta');
+    fireEvent.keyDown(findInput(), { key: 'Enter' });
+    fireEvent.keyDown(findInput(), { key: 'Enter' });
+    expect(selected(input)).toBe('BETA');
+    expect(count()).toBe('3/3');
     ctrlF(findInput());
-    expect(findInput().value).toBe('end');
+    expect(findInput().value).toBe('beta');
+    expect(count()).toBe('3/3');
+    expect(document.activeElement).toBe(findInput());
+  });
+
+  it('starts at the match nearest the caret, wrapping to the first', () => {
+    const input = renderEditor();
+    input.setSelectionRange(12, 12);
+    ctrlF(input);
+    type('beta');
+    expect(count()).toBe('3/3');
+    fireEvent.keyDown(findInput(), { key: 'Escape' });
+    input.setSelectionRange(0, 0);
+    ctrlF(input);
+    type('beta');
+    expect(count()).toBe('1/3');
+    fireEvent.keyDown(findInput(), { key: 'Escape' });
+    input.setSelectionRange(TEXT.length, TEXT.length);
+    ctrlF(input);
+    type('beta');
+    expect(count()).toBe('1/3');
+  });
+
+  it('measures wrapping in a copy with the textarea usable width and the whole text', () => {
+    const input = renderEditor();
+    Object.defineProperty(input, 'clientWidth', { value: 321, configurable: true });
+    const mirrors: Array<{ width: string; text: string }> = [];
+    const append = document.body.append.bind(document.body);
+    vi.spyOn(document.body, 'append').mockImplementation((...nodes: Array<Node | string>) => {
+      const first = nodes[0] as HTMLElement;
+      mirrors.push({ width: first.style.width, text: first.textContent ?? '' });
+      append(...nodes);
+    });
+    ctrlF(input);
+    type('gamma');
+    expect(mirrors[0].width).toBe('321px');
+    expect(mirrors[0].text.replace(String.fromCharCode(0x200b), '')).toBe(TEXT);
   });
 
   it('keeps the caret while typing in the editor with the bar open', () => {

@@ -22,20 +22,29 @@ export function stepIndex(current: number, direction: 1 | -1, count: number): nu
 }
 
 const MIRRORED_STYLES = [
-  'boxSizing', 'width', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'borderTopWidth', 'borderRightWidth',
-  'borderBottomWidth', 'borderLeftWidth', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'letterSpacing', 'lineHeight', 'tabSize'
+  'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant',
+  'letterSpacing', 'wordSpacing', 'wordBreak', 'textTransform', 'textIndent', 'lineHeight', 'tabSize'
 ] as const;
 const FALLBACK_LINE_HEIGHT = 20;
+const MARKER = String.fromCharCode(0x200b);
 
-/** Vertical offset of the line holding `offset`, measured in an off-screen copy of the textarea. */
+/**
+ * Vertical offset of the line holding `offset`, measured in an off-screen copy
+ * of the textarea. The copy has the textarea's usable width (`clientWidth`:
+ * without the scrollbar) and the whole text, with only a zero-width marker
+ * inserted, so every line wraps exactly as it does in the textarea.
+ */
 function offsetTopOf(textarea: HTMLTextAreaElement, offset: number): { top: number; lineHeight: number } {
   const style = getComputedStyle(textarea);
   const mirror = document.createElement('div');
   for (const name of MIRRORED_STYLES) mirror.style[name] = style[name];
-  Object.assign(mirror.style, { position: 'absolute', visibility: 'hidden', top: '0', left: '-9999px', whiteSpace: 'pre-wrap', overflowWrap: 'break-word' });
+  Object.assign(mirror.style, {
+    position: 'absolute', visibility: 'hidden', top: '0', left: '-9999px', boxSizing: 'border-box', border: '0',
+    width: `${textarea.clientWidth}px`, whiteSpace: 'pre-wrap', overflowWrap: 'break-word'
+  });
   const marker = document.createElement('span');
-  marker.textContent = '.';
-  mirror.append(textarea.value.slice(0, offset), marker);
+  marker.textContent = MARKER;
+  mirror.append(textarea.value.slice(0, offset), marker, textarea.value.slice(offset));
   document.body.append(mirror);
   try {
     const lineHeight = Number.parseFloat(style.lineHeight) || FALLBACK_LINE_HEIGHT;
@@ -43,6 +52,13 @@ function offsetTopOf(textarea: HTMLTextAreaElement, offset: number): { top: numb
   } finally {
     mirror.remove();
   }
+}
+
+/** The first match at or after `anchor` (the caret when find opened), wrapping to the first; -1 when there are none. */
+export function nearestIndex(offsets: number[], anchor: number): number {
+  if (offsets.length === 0) return -1;
+  const found = offsets.findIndex((offset) => offset >= anchor);
+  return found === -1 ? 0 : found;
 }
 
 /** Selects the match without taking focus, and scrolls the textarea so it is on screen (centred when it was not). */

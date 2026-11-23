@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { DomFindBar } from '../../../../apps/app/src/components/DomFindBar.js';
 import { shortcutForCommand } from '../../../../apps/app/src/lib/keyboard-shortcut-settings.js';
 import { OWN_FIND_ATTRIBUTE } from '../../../../apps/app/src/lib/thread-find.js';
-import { findMatchOffsets, highlightSegments, revealMatch, stepIndex } from './editor-find.js';
+import { findMatchOffsets, highlightSegments, nearestIndex, revealMatch, stepIndex } from './editor-find.js';
 
 const MAX_SEEDED_QUERY = 200;
 
@@ -13,80 +13,111 @@ function selectionSeed(textarea: HTMLTextAreaElement | null): string | null {
   return selected && selected.length <= MAX_SEEDED_QUERY && !selected.includes('\n') ? selected : null;
 }
 
-/**
- * Ctrl+F for the text editor. The search runs on the draft text; the current
- * match is selected in the textarea (focus stays in the bar) and scrolled into
- * view. Spread `rootProps` on the editor root: it claims Ctrl+F (so neither
- * thread search nor a surrounding doc handler sees the key) and carries
- * `data-own-find`. `bar` is the find bar to render while open.
- */
-export function useEditorFind(textareaRef: RefObject<HTMLTextAreaElement | null>, text: string) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const [index, setIndex] = useState(0);
-  const [focusRequest, setFocusRequest] = useState(0);
-  const [revealKey, setRevealKey] = useState(0);
-  const offsets = useMemo(() => (open ? findMatchOffsets(text, query) : []), [open, text, query]);
-  const current = offsets.length === 0 ? -1 : Math.min(index, offsets.length - 1);
-  const latest = useRef({ offsets, current, length: query.length });
-  latest.current = { offsets, current, length: query.length };
+interface FindKeys {
+  open: boolean;
+  onOpen: () => void;
+  onStep: (direction: 1 | -1) => void;
+  onClose: () => void;
+}
 
-  // Select and scroll only when the user searches or steps, never when the text changes under a caret.
-  useEffect(() => {
-    const { offsets, current, length } = latest.current;
-    const textarea = textareaRef.current;
-    if (revealKey > 0 && textarea && current >= 0) revealMatch(textarea, offsets[current], length);
-  }, [revealKey, textareaRef]);
-
-  const changeQuery = useCallback((value: string) => {
-    setQuery(value);
-    setIndex(0);
-    setRevealKey((key) => key + 1);
-  }, []);
-  const step = useCallback((direction: 1 | -1) => {
-    setIndex(stepIndex(current, direction, offsets.length));
-    setRevealKey((key) => key + 1);
-  }, [current, offsets.length]);
-  const openBar = useCallback(() => {
-    const seed = selectionSeed(textareaRef.current);
-    if (seed !== null && seed !== query) changeQuery(seed);
-    setOpen(true);
-    setFocusRequest((value) => value + 1);
-  }, [changeQuery, query, textareaRef]);
-  const close = useCallback(() => {
-    setOpen(false);
-    setQuery('');
-    textareaRef.current?.focus();
-  }, [textareaRef]);
-
-  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+/** Ctrl+F opens (or refocuses) the bar; while it is open F3 steps and Esc closes. */
+function findKeyHandler({ open, onOpen, onStep, onClose }: FindKeys) {
+  return (event: KeyboardEvent<HTMLElement>) => {
     if (shortcutForCommand('thread.find', event.nativeEvent)) {
       event.preventDefault();
-      openBar();
+      onOpen();
     } else if (open && event.key === 'F3') {
       event.preventDefault();
-      step(event.shiftKey ? -1 : 1);
+      onStep(event.shiftKey ? -1 : 1);
     } else if (open && event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
-      close();
+      onClose();
     }
   };
+}
 
-  // The textarea's own selection is not drawn while focus is in the bar, so the matches are painted on a
-  // backdrop behind the (transparent) textarea, scrolled in step with it.
+/**
+ * Selects and scrolls to the current match, but only when the user searches or
+ * steps (`revealKey` changes), never when the text changes under a caret.
+ */
+function useRevealOnSearch(textareaRef: RefObject<HTMLTextAreaElement | null>, revealKey: number, target: { offset: number | undefined; length: number }) {
+  const latest = useRef(target);
+  latest.current = target;
+  useEffect(() => {
+    const { offset, length } = latest.current;
+    const textarea = textareaRef.current;
+    if (revealKey > 0 && textarea && offset !== undefined) revealMatch(textarea, offset, length);
+  }, [revealKey, textareaRef]);
+}
+
+/**
+ * The textarea's own selection is not drawn while focus is in the bar, so the
+ * matches are painted on a backdrop behind the (transparent) textarea, which
+ * is scrolled in step with it.
+ */
+function useFindBackdrop(textareaRef: RefObject<HTMLTextAreaElement | null>, active: boolean, text: string, offsets: number[], length: number, current: number) {
   const backdropRef = useRef<HTMLDivElement>(null);
   const syncScroll = useCallback(() => {
     if (backdropRef.current && textareaRef.current) backdropRef.current.scrollTop = textareaRef.current.scrollTop;
   }, [textareaRef]);
-  useLayoutEffect(syncScroll, [syncScroll, open, offsets, current]);
-  const backdrop: ReactNode = open ? (
+  useLayoutEffect(syncScroll, [syncScroll, active, offsets, current]);
+  const backdrop: ReactNode = active ? (
     <div ref={backdropRef} className="dd-editor-backdrop" aria-hidden>
-      {highlightSegments(text, offsets, query.length, current).map((segment, position) =>
+      {highlightSegments(text, offsets, length, current).map((segment, position) =>
         segment.hit ? <mark key={position} className={segment.hit === 'current' ? 'dd-find-hit dd-find-current' : 'dd-find-hit'}>{segment.text}</mark> : segment.text
       )}
     </div>
   ) : null;
+  return { backdrop, syncScroll };
+}
+
+/**
+ * Ctrl+F for the text editor. The search runs on the draft text; the current
+ * match is selected in the textarea, painted on a backdrop and scrolled into
+ * view, and the search starts at the match nearest the caret. Spread
+ * `rootProps` on the editor root: it claims Ctrl+F (so neither thread search
+ * nor a surrounding doc handler sees the key) and carries `data-own-find`.
+ */
+export function useEditorFind(textareaRef: RefObject<HTMLTextAreaElement | null>, text: string) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  // `null`: nothing stepped yet, so the match nearest the caret when find opened is current.
+  const [stepped, setStepped] = useState<number | null>(null);
+  const [anchor, setAnchor] = useState(0);
+  const [focusRequest, setFocusRequest] = useState(0);
+  const [revealKey, setRevealKey] = useState(0);
+  const offsets = useMemo(() => (open ? findMatchOffsets(text, query) : []), [open, text, query]);
+  const current = stepped === null ? nearestIndex(offsets, anchor) : Math.min(stepped, offsets.length - 1);
+  useRevealOnSearch(textareaRef, revealKey, { offset: offsets[current], length: query.length });
+  const { backdrop, syncScroll } = useFindBackdrop(textareaRef, open, text, offsets, query.length, current);
+
+  const changeQuery = useCallback((value: string) => {
+    setQuery(value);
+    setStepped(null);
+    setRevealKey((key) => key + 1);
+  }, []);
+  const step = useCallback((direction: 1 | -1) => {
+    setStepped(stepIndex(current, direction, offsets.length));
+    setRevealKey((key) => key + 1);
+  }, [current, offsets.length]);
+  const openBar = useCallback(() => {
+    // Only a closed bar starts a search: a second Ctrl+F must not rewrite the query from the match find selected.
+    if (!open) {
+      const textarea = textareaRef.current;
+      setAnchor(textarea?.selectionStart ?? 0);
+      const seed = selectionSeed(textarea);
+      if (seed !== null) changeQuery(seed);
+      setOpen(true);
+    }
+    setFocusRequest((value) => value + 1);
+  }, [changeQuery, open, textareaRef]);
+  const close = useCallback(() => {
+    setOpen(false);
+    setQuery('');
+    setStepped(null);
+    textareaRef.current?.focus();
+  }, [textareaRef]);
 
   const bar: ReactNode = open ? (
     <div className="dd-editor-find">
@@ -103,5 +134,5 @@ export function useEditorFind(textareaRef: RefObject<HTMLTextAreaElement | null>
     </div>
   ) : null;
 
-  return { bar, backdrop, active: open, onScroll: syncScroll, rootProps: { [OWN_FIND_ATTRIBUTE]: '', onKeyDown } };
+  return { bar, backdrop, active: open, onScroll: syncScroll, rootProps: { [OWN_FIND_ATTRIBUTE]: '', onKeyDown: findKeyHandler({ open, onOpen: openBar, onStep: step, onClose: close }) } };
 }
