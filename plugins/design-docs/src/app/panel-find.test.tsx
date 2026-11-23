@@ -14,6 +14,8 @@ import { AGENT, createHarness, type Harness } from './test-harness.js';
 
 /** fireEvent returns false when a listener called preventDefault. */
 const ctrlF = (target: Element) => !fireEvent.keyDown(target, { key: 'f', ctrlKey: true });
+/** The doc's find handle registers once its preview mounts; until then the key is deliberately left alone. */
+const ctrlFReady = (target: Element) => waitFor(() => expect(ctrlF(target)).toBe(true));
 
 function commentedDoc(harness: Harness) {
   const doc = harness.store.create(
@@ -47,17 +49,17 @@ describe('Ctrl+F in a doc outside its content', () => {
     renderDoc(harness, doc.id);
     await screen.findByRole('navigation', { name: 'Files' });
 
-    expect(ctrlF(header())).toBe(true);
+    await ctrlFReady(header());
     expect(await screen.findByRole('searchbox', { name: 'Find in doc' })).toBeTruthy();
     fireEvent.keyDown(screen.getByRole('searchbox', { name: 'Find in doc' }), { key: 'Escape' });
     expect(screen.queryByRole('searchbox', { name: 'Find in doc' })).toBeNull();
 
-    expect(ctrlF(within(screen.getByRole('navigation', { name: 'Files' })).getAllByRole('button')[0]!)).toBe(true);
+    await ctrlFReady(within(screen.getByRole('navigation', { name: 'Files' })).getAllByRole('button')[0]!);
     expect(await screen.findByRole('searchbox', { name: 'Find in doc' })).toBeTruthy();
     fireEvent.keyDown(screen.getByRole('searchbox', { name: 'Find in doc' }), { key: 'Escape' });
 
     fireEvent.click(within(rail()).getByRole('tab', { name: /History/ }));
-    expect(ctrlF(within(rail()).getByRole('tab', { name: /History/ }))).toBe(true);
+    await ctrlFReady(within(rail()).getByRole('tab', { name: /History/ }));
     expect(await screen.findByRole('searchbox', { name: 'Find in doc' })).toBeTruthy();
   });
 
@@ -66,7 +68,7 @@ describe('Ctrl+F in a doc outside its content', () => {
     const doc = commentedDoc(harness);
     renderDoc(harness, doc.id, 'page.html');
     await waitFor(() => expect(document.querySelector('iframe[title="page.html"]')).not.toBeNull());
-    expect(ctrlF(header())).toBe(true);
+    await ctrlFReady(header());
     expect(await screen.findByRole('searchbox', { name: 'Find in doc' })).toBeTruthy();
   });
 
@@ -191,7 +193,7 @@ describe('Ctrl+F with a past revision open', () => {
     await screen.findByRole('table', { name: /Changes in revision/ });
 
     // Diff view: there is no preview, so the revision view owns the find bar.
-    expect(ctrlF(row)).toBe(true);
+    await ctrlFReady(row);
     const bar = await screen.findByRole('searchbox', { name: 'Find in doc' });
     fireEvent.change(bar, { target: { value: 'deadline' } });
     await waitFor(() => expect(screen.getByTestId('dom-find-bar-count').textContent).toBe('1/1'));
@@ -199,12 +201,12 @@ describe('Ctrl+F with a past revision open', () => {
 
     // Full snapshot: the preview inside it answers.
     fireEvent.click(screen.getByRole('button', { name: 'Full file' }));
-    expect(ctrlF(row)).toBe(true);
+    await ctrlFReady(row);
     expect(await screen.findByRole('searchbox', { name: 'Find in doc' })).toBeTruthy();
     fireEvent.keyDown(screen.getByRole('searchbox', { name: 'Find in doc' }), { key: 'Escape' });
 
     // The banner and its controls are not part of the snapshot, but the key still reaches the preview's bar.
-    expect(ctrlF(screen.getByRole('button', { name: 'Close revision' }))).toBe(true);
+    await ctrlFReady(screen.getByRole('button', { name: 'Close revision' }));
     expect(await screen.findByRole('searchbox', { name: 'Find in doc' })).toBeTruthy();
     fireEvent.keyDown(screen.getByRole('searchbox', { name: 'Find in doc' }), { key: 'Escape' });
 
@@ -212,7 +214,7 @@ describe('Ctrl+F with a past revision open', () => {
     const root = document.querySelector('.dd-doc') as HTMLElement;
     root.focus();
     expect(document.activeElement).toBe(root);
-    expect(ctrlF(root)).toBe(true);
+    await ctrlFReady(root);
     expect(await screen.findByRole('searchbox', { name: 'Find in doc' })).toBeTruthy();
   });
 });
