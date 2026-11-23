@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createServer, type Server } from 'node:http';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { getOnboardingProfile } from '../services/onboarding-profile.js';
@@ -84,4 +87,21 @@ it('hides probe failures behind a generic error', async () => {
   const response = await fetch(`${url}/api/v1/onboarding/git/status`);
   expect(response.status).toBe(500);
   expect(await response.json()).toEqual({ error: 'Git sign-in check failed' });
+});
+
+it('serves the identity hint from main, only on a match, and rejects other methods', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'zcc-route-hint-'));
+  const cfg = join(dir, 'gitconfig');
+  vi.stubEnv('GIT_CONFIG_GLOBAL', cfg);
+  const profile = { id: 'example', organization: 'Example', question: 'Employee?', prerequisite: 'Connect.', marketplaceSource: 'path:/fixture', identityHint: { emailDomains: ['example.com'] } };
+  vi.stubEnv('ZCC_ONBOARDING_PROFILE', JSON.stringify(profile));
+  writeFileSync(cfg, '[user]\n\temail = me@example.com\n');
+  expect(await (await fetch(`${url}/api/v1/onboarding/identity-hint`)).json()).toEqual({ hint: { match: true, email: 'me@example.com' } });
+  writeFileSync(cfg, '[user]\n\temail = me@elsewhere.org\n');
+  expect(await (await fetch(`${url}/api/v1/onboarding/identity-hint`)).json()).toEqual({ hint: { match: false } });
+  vi.stubEnv('ZCC_ONBOARDING_PROFILE', 'off');
+  expect(await (await fetch(`${url}/api/v1/onboarding/identity-hint`)).json()).toEqual({ hint: { match: false } });
+  expect((await fetch(`${url}/api/v1/onboarding/identity-hint`, { method: 'POST' })).status).toBe(404);
+  vi.stubEnv('ZCC_ONBOARDING_PROFILE', '{broken');
+  expect((await fetch(`${url}/api/v1/onboarding/identity-hint`)).status).toBe(503);
 });

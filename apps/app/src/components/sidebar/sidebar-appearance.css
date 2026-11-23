@@ -340,3 +340,8 @@
   font-size: 11px;
   color: var(--text-muted);
 }
+
+/* Feature mount point above the sidebar footer (e.g. the onboarding resume pill). */
+.sidebar-footer-slot:empty { display: none; }
+.sidebar-footer-slot { padding: 0 8px 6px; }
+.basic-ui-sidebar .sidebar-footer-slot { padding: 6px 0 0; }

@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type MouseEvent, type ReactNode } f
 import { ArrowLeft, ArrowRight, Sparkles, X } from 'lucide-react';
 import { measureHelpTips, type HelpTip, type PositionedHelpTip } from './help-targets.js';
 import { useHelp } from './HelpProvider.js';
+import { useOnboarding } from '../onboarding/onboarding-store.js';
 import '../../styles/contextual-help.css';
 
 /** A guide over real controls: hiding it never remounts the page's children. */
@@ -14,6 +15,8 @@ export function ContextualHelp({ children, surfaceId, tips, invitation = 'Need a
   className?: string;
 }) {
   const { enabled: helpEnabled, activeSurface, explore, finish } = useHelp();
+  // The setup companion already guides first run, so the tips invitation waits (open or minimized).
+  const onboardingOpen = useOnboarding(state => state.open);
   const instanceId = useId();
   const surfaceKey = `${surfaceId}-${instanceId}`;
   const enabled = helpEnabled && activeSurface === surfaceKey;
@@ -88,7 +91,7 @@ export function ContextualHelp({ children, surfaceId, tips, invitation = 'Need a
         if (selected) closeCard();
         else done();
       }}>
-      {helpEnabled && <div className={`contextual-help-invitation${enabled ? ' is-active' : ''}`} data-contextual-help-ui>
+      {helpEnabled && !onboardingOpen && <div className={`contextual-help-invitation${enabled ? ' is-active' : ''}`} data-contextual-help-ui>
         <svg className="contextual-help-arrow" viewBox="0 0 112 72" fill="none" aria-hidden="true">
           <path d="M100 10C69 1 34 12 35 34C36 53 65 55 72 38C79 19 38 26 12 63M12 63L14 47M12 63L29 59" />
         </svg>

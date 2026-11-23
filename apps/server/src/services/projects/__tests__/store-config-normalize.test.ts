@@ -1211,12 +1211,14 @@ describe('normalizeConfig — onboarding', () => {
   it('preserves bounded progress across unrelated config writes', () => {
     const onboarding = { version: 1, profileId: 'employees', audience: 'organization', step: 'connections',
       marketplaceSource: 'path:/fixture', packId: 'starter', pluginIds: ['fixture-tool'] } as const;
-    expect(normalizeConfig({ onboarding: { ...onboarding, pluginIds: [...onboarding.pluginIds] } }).onboarding).toEqual(onboarding);
-    store.setConfig({ onboarding: { ...onboarding, pluginIds: [...onboarding.pluginIds] } });
+    const migrated = { version: 2, profileId: 'employees', audience: 'organization', marketplaceSource: 'path:/fixture', packId: 'starter',
+      pluginIds: ['fixture-tool'], steps: { harness: 'todo', workplace: 'done', bundle: 'todo', advanced: 'todo' } };
+    expect(normalizeConfig({ onboarding: { ...onboarding, pluginIds: [...onboarding.pluginIds] } as never }).onboarding).toEqual(migrated);
+    store.setConfig({ onboarding: { ...onboarding, pluginIds: [...onboarding.pluginIds] } as never });
     store.setConfig({ theme: 'dark' });
-    expect(store.getConfig().onboarding).toEqual(onboarding);
+    expect(store.getConfig().onboarding).toEqual(migrated);
   });
-  it.each([null, {}, { version: 2 }, { version: 1, profileId: 'employees', audience: 'general', step: 'bundles' }])(
+  it.each([null, {}, { version: 3 }, { version: 1, profileId: 'employees', audience: 'general', step: 'bundles' }])(
     'drops malformed or inconsistent progress %j', onboarding => {
       expect(normalizeConfig({ onboarding: onboarding as never }).onboarding).toBeUndefined();
     });
@@ -1285,5 +1287,15 @@ describe('normalizeConfig — dismissedWorkerExits', () => {
   });
   it('ignores a non-array value', () => {
     expect(normalizeConfig({ dismissedWorkerExits: 'a' as never })).not.toHaveProperty('dismissedWorkerExits');
+  });
+});
+
+describe('normalizeConfig onboarding v2', () => {
+  it('migrates v1 onboarding to v2 and keeps v2', () => {
+    const v1 = { version: 1 as const, profileId: 'p', audience: 'general' as const, step: 'complete' as const };
+    expect(normalizeConfig({ onboarding: v1 as never }).onboarding).toMatchObject({ version: 2, profileId: 'p', audience: 'general' });
+    const v2 = { version: 2 as const, audience: 'undecided' as const, steps: { harness: 'todo', workplace: 'todo', bundle: 'todo', advanced: 'todo' } };
+    expect(normalizeConfig({ onboarding: v2 as never }).onboarding).toEqual(v2);
+    expect(normalizeConfig({ onboarding: { version: 9 } as never })).not.toHaveProperty('onboarding');
   });
 });
