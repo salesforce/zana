@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { Editor } from '@tiptap/core';
 import { describe, expect, it } from 'vitest';
 import { findActiveTrigger } from '../components/composer/find-active-trigger.js';
@@ -78,5 +79,64 @@ describe('composerPromptExtensions slash trigger', () => {
       type: 'doc',
       content: [{ type: 'paragraph', content: [{ type: 'text', text: '/plan' }] }]
     });
+  });
+});
+
+describe('composerPromptExtensions Shift+Enter in lists', () => {
+  function shiftEnter(editor: Editor): void {
+    editor.view.someProp('handleKeyDown', (handler) =>
+      handler(editor.view, new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true })));
+  }
+
+  function editorWith(markdownEnabled: boolean, content: object) {
+    return new Editor({
+      element: document.createElement('div'),
+      extensions: composerPromptExtensions(markdownEnabled, 'Ask anything'),
+      content
+    });
+  }
+
+  const bulletDoc = {
+    type: 'doc',
+    content: [{
+      type: 'bulletList',
+      content: [{ type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'one' }] }] }]
+    }]
+  };
+
+  it('starts a new bullet from a filled item', () => {
+    const editor = editorWith(true, bulletDoc);
+    editor.commands.focus('end');
+    shiftEnter(editor);
+    editor.commands.insertContent('two');
+    const json = editor.getJSON();
+    editor.destroy();
+    expect(json.content?.[0]?.content?.map((item) => item.content?.[0]?.content?.[0]?.text)).toEqual(['one', 'two']);
+  });
+
+  it('leaves the list from an empty bullet', () => {
+    const editor = editorWith(true, bulletDoc);
+    editor.commands.focus('end');
+    shiftEnter(editor);
+    shiftEnter(editor);
+    const json = editor.getJSON();
+    editor.destroy();
+    expect(json.content?.map((node) => node.type)).toEqual(['bulletList', 'paragraph']);
+    expect(json.content?.[0]?.content).toHaveLength(1);
+  });
+
+  it('keeps Shift+Enter as a line break outside a list', () => {
+    const editor = editorWith(true, { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'a' }] }] });
+    editor.commands.focus('end');
+    shiftEnter(editor);
+    const json = editor.getJSON();
+    editor.destroy();
+    expect(json.content?.[0]?.content?.map((node) => node.type)).toEqual(['text', 'hardBreak']);
+  });
+
+  it('does not add the list keymap when markdown is disabled', () => {
+    const names = composerPromptExtensions(false, '').map((extension) => extension.name);
+    expect(names).not.toContain('promptListKeymap');
+    expect(composerPromptExtensions(true, '').map((extension) => extension.name)).toContain('promptListKeymap');
   });
 });

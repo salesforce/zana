@@ -38,7 +38,9 @@ import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js
 import { useProjectTabAvailability } from '../hooks/useProjectTabAvailability.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import { useCompactLayout } from '../hooks/useCompactLayout.js';
+import { showInMainWindow } from '../plugins/plugin-view-windows.js';
 import {
+  getAgentsRoutePath,
   getProjectInboxRoutePath,
   getNewThreadRoutePath,
   getProjectModeRoutePath,
@@ -152,6 +154,12 @@ export function ProjectScopedNav({
   }, [mode, goalsEnabled, followUpsEnabled, project.id, setProjectView]);
 
   const handleBack = () => {
+    // A project window is locked to this project, so Back hands off to the
+    // main window, which lists every project, instead of unlocking this one.
+    if (!isFocus) {
+      void showInMainWindow(route.isProjectSettings ? getSettingsRoutePath() : getAgentsRoutePath());
+      return;
+    }
     useUi.getState().exitProjectFocus(
       route.isProjectSettings ? getSettingsRoutePath() : routeMemory.projectBackRoutePath
     );
@@ -339,17 +347,17 @@ export function ProjectScopedNav({
       railVariant={railVariant}
       settingsRoutePath={getProjectSettingsRoutePath(project.id)}
       header={
-        isFocus ? (
-          <button
-            type="button"
-            className="settings-app-back"
-            onClick={handleBack}
-            aria-label={backLabel}
-          >
-            <ArrowLeft size={17} aria-hidden="true" />
-            Back
-          </button>
-        ) : null
+        <button
+          type="button"
+          className="settings-app-back"
+          data-testid="project-nav-back"
+          onClick={handleBack}
+          aria-label={backLabel}
+          title={isFocus ? undefined : 'Show all projects in the main window'}
+        >
+          <ArrowLeft size={17} aria-hidden="true" />
+          Back
+        </button>
       }
       utilityStart={
         isFocus ? (

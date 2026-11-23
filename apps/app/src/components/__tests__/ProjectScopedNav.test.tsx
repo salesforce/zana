@@ -50,7 +50,8 @@ const h = vi.hoisted(() => {
     agentCounts: { active: 0, blocked: 0 },
     scheduleCount: 6,
     tabAvailability: {} as Record<string, { available: boolean; reason?: string }>,
-    compact: false
+    compact: false,
+    showInMainWindow: vi.fn(async () => true)
   };
 });
 
@@ -87,6 +88,9 @@ vi.mock('../../plugins/plugin-slots', () => ({
     const first = tabs.find((row) => row.pluginId === tab.pluginId);
     return first?.id === tab.id ? tab.pluginId : `${tab.pluginId}:${tab.id}`;
   }
+}));
+vi.mock('../../plugins/plugin-view-windows', () => ({
+  showInMainWindow: h.showInMainWindow
 }));
 vi.mock('../../lib/resolveIcon', () => ({
   resolveIcon: () => () => null
@@ -264,7 +268,7 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     h.agentCounts = { active: 0, blocked: 0 };
   });
 
-  it('omits the pop-out control in a dedicated project window', () => {
+  it('omits the pop-out control but keeps Back in a dedicated project window', () => {
     const markup = renderNav(
       <ProjectScopedNav project={project} variant="window" />
     );
@@ -276,8 +280,9 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     expect(markup).toContain('href="/projects/proj-1/settings"');
     expect(markup).toContain('aria-label="Report a bug"');
     expect(markup).not.toContain('aria-label="Go back"');
-    expect(markup).not.toContain('class="settings-app-back"');
-    expect(markup).not.toContain('>Back</button>');
+    expect(markup).toContain('aria-label="Back to all projects"');
+    expect(markup).toContain('title="Show all projects in the main window"');
+    expect(markup).toContain('>Back</button>');
   });
 
   it('renders extension project tabs as ordinary destination rows', () => {
