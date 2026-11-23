@@ -78,5 +78,5 @@ export function usePageFind(send: (message: ToPage) => void, hostRef: RefObject<
   }, [open, query]);
 
   const hostProps = { [OWN_FIND_ATTRIBUTE]: '', tabIndex: -1, onKeyDown: findKeyHandler({ open, onOpen: openBar, onStep: step, onClose: close }) };
-  return { open, query, setQuery, matchIndex: result.index, matchCount: result.count, focusRequest, step, close, onResult: setResult, onPageKey, onPageReady, hostProps };
+  return { open, query, setQuery, matchIndex: result.index, matchCount: result.count, focusRequest, step, close, openBar, onResult: setResult, onPageKey, onPageReady, hostProps };
 }

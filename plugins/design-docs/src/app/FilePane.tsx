@@ -99,7 +99,7 @@ export function FilePane({
 
   let body: ReactNode;
   if (revision) {
-    body = <RevisionView key={revision.id} doc={doc} revision={revision} onClose={onCloseRevision} onOpenPath={onOpenPath} docKind={kind} />;
+    body = <RevisionView key={revision.id} doc={doc} revision={revision} onClose={onCloseRevision} onOpenPath={onOpenPath} docKind={kind} previewHandle={previewHandle} />;
   } else if (!meta && !(file && effectiveMode !== 'preview')) {
     body = <div className="dd-center dd-muted">{path} is not in this doc anymore.</div>;
   } else if (!file) {

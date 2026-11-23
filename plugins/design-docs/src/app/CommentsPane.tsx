@@ -4,6 +4,8 @@ import { Check, ChevronDown, ChevronRight, MessageSquare, Reply, RotateCcw, Tras
 import type { DesignDocComment, DesignDocDetail } from '../shared/contract.js';
 import { MAX_COMMENT_LENGTH } from '../shared/limits.js';
 import { errorMessage, toast, useApi } from './api.js';
+import { DomFindBar } from '../../../../apps/app/src/components/DomFindBar.js';
+import { useDomFind } from '../../../../apps/app/src/lib/use-dom-find.js';
 import { usePersistentState } from './hooks.js';
 import { ActorLabel, ConfirmDialog, EmptyState, IconButton, TimeAgo, type ConfirmRequest } from './ui.js';
 
@@ -147,6 +149,11 @@ function CommentCard({
   );
 }
 
+/** Changes whenever the rendered comment text does, so find re-reads the DOM (lengths alone miss same-length edits). */
+export function commentsContentKey(scope: string, showResolved: boolean, visible: DesignDocComment[]): string {
+  return `${scope}|${showResolved}|${visible.map((comment) => `${comment.id}:${comment.status}:${comment.body}:${comment.replies.map((reply) => `${reply.id}:${reply.body}`).join('\u0001')}`).join('\u0002')}`;
+}
+
 export function CommentsPane({
   doc,
   activePath,
@@ -184,6 +191,10 @@ export function CommentsPane({
   );
   const open = visible.filter((comment) => comment.status === 'open');
   const resolved = visible.filter((comment) => comment.status === 'resolved');
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  // Ctrl+F searches the comment threads; the text boxes keep the key too, without touching the draft.
+  const find = useDomFind(scrollRef, rootRef, commentsContentKey(scope, showResolved, visible));
 
   const run = async (action: () => Promise<unknown>, failure: string): Promise<boolean> => {
     try {
@@ -256,7 +267,19 @@ export function CommentsPane({
   };
 
   return (
-    <div className="dd-rail-pane dd-comments">
+    <div className="dd-rail-pane dd-comments" ref={rootRef} {...find.hostProps}>
+      {find.open ? (
+        <DomFindBar
+          label="Find in comments"
+          value={find.query}
+          onChange={find.setQuery}
+          onStep={find.step}
+          onClose={find.close}
+          matchIndex={find.matchIndex}
+          matchCount={find.matchCount}
+          focusRequest={find.focusRequest}
+        />
+      ) : null}
       <div className="dd-rail-toolbar">
         <div className="dd-segmented" role="group" aria-label="Comment scope">
           <button type="button" className={scope === 'all' ? 'on' : ''} onClick={() => setScope('all')}>
@@ -267,7 +290,7 @@ export function CommentsPane({
           </button>
         </div>
       </div>
-      <div className="dd-rail-scroll">
+      <div className="dd-rail-scroll" ref={scrollRef}>
         {open.length === 0 ? (
           <EmptyState icon={MessageSquare} title="No open comments">
             Select text in the document to comment on it, or ask an agent for a review.

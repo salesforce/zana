@@ -478,6 +478,7 @@ export function PageFrame({
   useEffect(() => {
     if (!handleRef) return;
     const handle: PreviewHandle = {
+      openFind: find.openBar,
       focusQuote(quote) {
         if (readyRef.current && portRef.current) send({ type: 'focus', quote });
         else pendingFocus.current = quote;
@@ -488,7 +489,7 @@ export function PageFrame({
     return () => {
       if (handleRef.current === handle) handleRef.current = null;
     };
-  }, [handleRef]);
+  }, [handleRef, find.openBar]);
 
   const renderProblems = useMemo<PageProblem[]>(
     () =>
