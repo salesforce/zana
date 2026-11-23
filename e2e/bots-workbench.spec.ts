@@ -359,6 +359,12 @@ test('Basic sidebar opens bot conversations and leaves Advanced navigation intac
   await page.getByTestId('nav-agents').click();
   const cards = page.locator('.agent-card.is-thread');
   const botCard = cards.filter({ hasText: (await readThread()).title });
+  // Bot threads stay off the Agents board until the Bots toggle shows them.
+  await expect(botCard).toHaveCount(0);
+  const showBots = page.getByTestId('agents-board-thread-toggle-bots-threads');
+  await expect(showBots).toHaveAttribute('aria-pressed', 'false');
+  await showBots.click();
+  await expect(showBots).toHaveAttribute('aria-pressed', 'true');
   await expect(botCard.locator('.agent-card-icon .bt-av')).toHaveAttribute('data-shape', shape!);
   expect(await botCard.locator('.bt-body > g').first().evaluate(avatarColor)).toBe(color);
   const regularCard = cards.filter({ hasText: 'Ordinary conversation' });

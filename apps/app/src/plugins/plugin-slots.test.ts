@@ -256,3 +256,16 @@ it('accepts older registration snapshots without browser toolbar contributions',
  try{replacePluginSlots('older-toolbar',set);expect(listBrowserToolbarActions().filter(row=>row.pluginId==='older-toolbar')).toEqual([]);}
  finally{clearPluginSlots('older-toolbar');}
 });
+
+it('accepts older registration snapshots without Agents-board thread toggles', async () => {
+  const { collectPluginApp } = await import('@zana-ai/zcc-plugin-sdk');
+  const { replacePluginSlots, listAgentsBoardThreadToggles } = await import('./plugin-slots.js');
+  const set = collectPluginApp('older-toggles', 1, definePluginApp(() => {}));
+  delete (set as Partial<typeof set>).agentsBoardThreadToggles;
+  try {
+    replacePluginSlots('older-toggles', set);
+    expect(listAgentsBoardThreadToggles().filter(row => row.pluginId === 'older-toggles')).toEqual([]);
+  } finally {
+    clearPluginSlots('older-toggles');
+  }
+});

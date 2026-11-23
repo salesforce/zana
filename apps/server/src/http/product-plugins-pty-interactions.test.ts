@@ -10,6 +10,8 @@ const getConversationThread = vi.fn();
 const appendConversationThreadEvent = vi.fn(() => ({ sequence: 7 }));
 const sendConversationTurn = vi.fn(async () => ({ id: 'thread-sent' }));
 const forkConversation = vi.fn(async () => ({ id: 'thread-forked' }));
+const getThreadExecutionState = vi.fn((): { requestedMode?: string } | undefined => undefined);
+const readLastThreadExecution = vi.fn(() => ({}));
 
 vi.mock('../plugins/plugin-service.js', () => ({
   createPluginService: (options: Record<string, unknown>) => {
@@ -26,8 +28,9 @@ vi.mock('../services/threads/conversation-lifecycle.js', async (original) => ({
 }));
 vi.mock('@zana-ai/zcc-db', async (original) => ({
   ...await original<typeof import('@zana-ai/zcc-db')>(),
-  getConversationThread, appendConversationThreadEvent
+  getConversationThread, appendConversationThreadEvent, getThreadExecutionState
 }));
+vi.mock('../services/threads/thread-last-execution.js', () => ({ readLastThreadExecution }));
 vi.mock('../services/interactions/interaction-service.js', () => ({ InteractionService: class {} }));
 vi.mock('../services/interactions/interaction-maintenance.js', () => ({ startInteractionMaintenance: () => () => {} }));
 
@@ -136,6 +139,17 @@ describe('attached plugin service: plugin-driven turns are tagged origin system'
       ],
       'steer-if-active', undefined, { origin: 'system', messageSource }
     );
+  });
+
+  it('sendThread turns the first message of a plan-mode plugin thread into /plan and keeps visibility', async () => {
+    const { options } = attach();
+    getConversationThread.mockReturnValue({ id: 't1', originPluginId: 'bots', providerThreadId: null });
+    getThreadExecutionState.mockReturnValueOnce({ requestedMode: 'plan' });
+    await options.sendThread({ threadId: 't1', prompt: 'design it', visibility: 'hidden' });
+    const input = (sendConversationTurn.mock.calls.at(-1) as unknown as unknown[])[2] as Array<Record<string, unknown>>;
+    expect(input).toHaveLength(1);
+    expect(input[0]).toMatchObject({ visibility: 'hidden' });
+    expect(String(input[0]!.text)).toContain('design it');
   });
 
   it('forkThread tags the fork system and records the originating plugin', async () => {
