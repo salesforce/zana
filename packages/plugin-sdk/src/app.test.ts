@@ -165,6 +165,15 @@ describe('definePluginApp', () => {
     expect(set.contentScripts[0]?.id).toBe('boot');
   });
 
+  it.each([true, false, undefined])('collects the project tab shortcut opt-in (%s)', projectTabShortcut => {
+    const def = definePluginApp(app => app.slots.threadPanelAction({
+      id: 'notes', title: 'Notes', component: () => null, projectTabShortcut
+    }));
+    for (const set of [collectPluginAppRegistrations(def), collectPluginApp('notes', 1, def)]) {
+      expect(set.threadPanelActions[0]?.projectTabShortcut).toBe(projectTabShortcut || undefined);
+    }
+  });
+
   it.each(['experimental_ownedThreadTitle', 'experimental_ownedThreadIcon'] as const)(
     'collects and validates the owning plugin’s %s in both collectors', field => {
       const view = () => null;

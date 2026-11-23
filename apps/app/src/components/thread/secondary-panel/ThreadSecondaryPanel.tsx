@@ -36,6 +36,7 @@ export function ThreadSecondaryPanel({
   onSelectPlan,
   onNewTab,
   onAddTool,
+  projectShortcuts = [],
   canAddBrowser = true,
   onCloseTab,
   onCloseTabs,
@@ -59,6 +60,7 @@ export function ThreadSecondaryPanel({
   onSelectPlan?: () => void;
   onNewTab: () => void;
   onAddTool?: (kind: ThreadPanelToolKind) => void;
+  projectShortcuts?: ThreadToolMenuItem[];
   canAddBrowser?: boolean;
   onCloseTab: (tabId: string) => void;
   onCloseTabs?: (tabIds: string[]) => void;
@@ -122,6 +124,7 @@ export function ThreadSecondaryPanel({
       ...(canAddBrowser ? [{ id: 'browser', label: 'Browser', icon: <Globe />, run: () => onAddTool('browser') }] : []),
       { id: 'explorer', label: 'Files', icon: <FolderTree />, run: () => onAddTool('explorer') }
     ] : []),
+    ...projectShortcuts,
     { id: 'more', label: 'More tools…', icon: <Plus />, run: onNewTab }
   ] : [
     ...(dock && menuTab ? [{ id: 'move', label: `Move ${menuTab.title} to ${dock.side === 'bottom' ? 'right' : 'bottom'} panel`,

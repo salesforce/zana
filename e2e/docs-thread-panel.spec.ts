@@ -1,15 +1,17 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect } from './fixtures/app.js';
+import { openThreadToolLauncher } from './fixtures/thread-tool-panel.js';
 
 // With thread tabs on, a card opens the thread in its own tab. The inspector modal, whose URL has no thread, needs them off.
 test.use({
   launchEnv: { ZCC_FAKE_PROVIDER: '1' },
-  initialConfig: { classicSessionViewEnabled: false, threadTabsEnabled: false, agentsBoardView: 'board', sponsorPromptDismissed: true }
+  initialConfig: { classicSessionViewEnabled: false, threadTabsEnabled: false, dockableThreadToolsEnabled: true, agentsBoardView: 'board', sponsorPromptDismissed: true }
 });
 
 test('a Docs card opens inside its thread inspector when the URL has no thread', async ({ app }) => {
   const { window, home } = app;
+  await window.setViewportSize({ width: 1280, height: 800 });
   const projectPath = join(home, 'docs-inspector-project');
   mkdirSync(join(projectPath, '.zcc', 'library'), { recursive: true });
   const original = '---\ntitle: \"Keep  exactly\"\n---\n\n# Inspector document\n\nOwned by the visible conversation.\n\nSecond paragraph.\n\n<!-- preserve me -->\n';
@@ -63,4 +65,25 @@ test('a Docs card opens inside its thread inspector when the URL has no thread',
   await expect.poll(() => readFileSync(file, 'utf8')).toBe(original.replace('# Inspector document', '# Updated inspector'));
   expect(new URL(window.url()).pathname).toBe('/agents');
   await expect(window.locator('.library-panel')).toHaveCount(0);
+
+  // The same registered action browses the project when launched without a card.
+  const add = modal.getByRole('button', { name: 'Add tool to right panel' });
+  await add.click();
+  await window.getByRole('menuitem', { name: 'Library', exact: true }).click();
+  const library = modal.locator('.library-view');
+  const note = library.getByRole('button', { name: 'inspector.md' });
+  await expect(note).toBeVisible();
+  await note.click();
+  await expect(library.getByRole('heading', { name: 'Updated inspector' })).toBeVisible();
+  await add.click();
+  await window.getByRole('menuitem', { name: 'Library', exact: true }).click();
+  const closeLibrary = modal.getByRole('button', { name: 'Close Library', exact: true });
+  await expect(closeLibrary).toHaveCount(1);
+  await library.getByRole('button', { name: 'Back to documents' }).click();
+  await expect(note).toBeVisible();
+  await closeLibrary.click();
+  await openThreadToolLauncher(modal);
+  await modal.getByTestId('thread-new-tab-plugin-docs-document').click();
+  await expect(note).toBeVisible();
+  expect(new URL(window.url()).pathname).toBe('/agents');
 });

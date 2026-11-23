@@ -1,10 +1,13 @@
 import { PeerMessageReviews } from '../../components/thread/timeline/PeerMessageReviews.js';
 import { subscribeProductReconnect } from '../../lib/product-ws.js';
 import { ArchivedThreadBanner } from '../../components/history/ArchivedThreadBanner.js';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
-import { PanelBottom, PanelRight } from 'lucide-react';
+import { PanelBottom, PanelRight, Puzzle } from 'lucide-react';
+import { threadPanelActionMatchesScope } from '@zana-ai/zcc-plugin-sdk';
+import { listThreadPanelActions, subscribePluginSlots } from '../../plugins/plugin-slots.js';
+import { resolveIcon } from '../../lib/resolveIcon.js';
 import { isBasicUiRouteSupported, setBasicUiMode, useBasicUi } from '../../lib/basic-ui.js';
 import '../../components/basic/basic-conversation.css';
 import { useBasicPanelLayout } from '../../hooks/useBasicPanelLayout.js';
@@ -89,6 +92,7 @@ import {
   activeClosableTab,
   activePinnedView,
   uniqueTabSuffix,
+  type ClosableSecondaryTab,
   type ThreadSecondaryPanelState
 } from '../../components/thread/secondary-panel/threadSecondaryPanelState.js';
 import { getDesktopBrowserApi } from '../../lib/desktop-browser.js';
@@ -643,7 +647,8 @@ function ThreadDetailBody({
     panel.selectPin('diff');
   }, [panel, dockEnabled, toolDock.update]);
 
-  const appendDockTool = useCallback((side: ToolDockSide, input: { kind: 'terminal' | 'browser' | 'explorer'; title: string; sessionId?: string; url?: string }) => {
+  const threadActions = useSyncExternalStore(subscribePluginSlots, listThreadPanelActions, listThreadPanelActions);
+  const appendDockTool = useCallback((side: ToolDockSide, input: Omit<ClosableSecondaryTab, 'id'>) => {
     const id = `${input.kind}:${uniqueTabSuffix(globalThis.crypto?.randomUUID?.bind(globalThis.crypto))}`;
     toolDock.update(current => side === 'bottom'
       ? { ...current, bottomIds: [...current.bottomIds, id], bottomActiveId: id, collapsed: false }
@@ -836,6 +841,19 @@ function ThreadDetailBody({
           onSelectPlan={() => activateTool('plan')}
           onNewTab={() => dockEnabled ? addDockTab(side) : panel.openNewTab()}
           onAddTool={dockEnabled ? kind => addTool(side, kind) : undefined}
+          projectShortcuts={dockEnabled && projectId ? threadActions.filter(action =>
+            action.projectTabShortcut && !action.run && !action.experimental_ownedThreadTitle && threadPanelActionMatchesScope(action, 'thread')
+          ).map(action => {
+            const Icon = action.icon ? resolveIcon(action.icon) : Puzzle;
+            return {
+              id: `plugin:${action.pluginId}/${action.id}`, label: action.title, icon: <Icon />,
+              run: () => {
+                const existing = state.tabs.find(tab => tab.kind === 'plugin' && tab.moduleId === action.pluginId && tab.actionId === action.id && tab.params == null);
+                if (existing) activateTool(existing.id);
+                else appendDockTool(side, { kind: 'plugin', moduleId: action.pluginId, actionId: action.id, title: action.title, layout: action.layout });
+              }
+            };
+          }) : []}
           canAddBrowser={hasDesktopBridge()}
           onCloseTab={panel.closeTab}
           onCloseTabs={panel.closeTabs}

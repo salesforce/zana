@@ -576,6 +576,7 @@ export function collectPluginAppRegistrations(
           throw new Error(`${kind}: "experimental_ownedThreadTitle" must be a React component function`);
         }
         collected.threadPanelActions.push({
+          ...(registration.projectTabShortcut === true ? { projectTabShortcut: true } : {}),
           ...(registration.experimental_ownedThreadIcon !== undefined ? {
             experimental_ownedThreadIcon: requireComponent<NonNullable<PluginThreadPanelActionRegistration['experimental_ownedThreadIcon']>>(
               `${kind}.experimental_ownedThreadIcon`, registration.experimental_ownedThreadIcon

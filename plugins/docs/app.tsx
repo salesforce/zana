@@ -34,7 +34,8 @@ export default definePluginApp((app) => {
   });
   app.slots.threadPanelAction({
     id: 'document',
-    title: 'Library document',
+    title: 'Library',
+    projectTabShortcut: true,
     icon: 'Library',
     layout: 'flush',
     scopes: ['thread', 'agent-session'],
