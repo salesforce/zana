@@ -916,6 +916,9 @@ textarea.dd-doc-summary { display: block; }
   tab-size: 2;
 }
 .dd-editor-split .dd-editor-input { border-right: 1px solid var(--border); background: var(--bg-base); }
+/* Must follow the rule above: with find open the split textarea stays transparent so the backdrop shows, and the backdrop takes the same border so both wrap at one width. */
+.dd-editor-split .dd-editor-field-find .dd-editor-input { background: transparent; }
+.dd-editor-split .dd-editor-backdrop { border-right: 1px solid transparent; }
 .dd-editor-preview { display: flex; flex: 1 1 0; min-width: 0; min-height: 0; }
 .dd-editor-preview .dd-prose { padding: 20px 28px 64px; }
 .dd-editor-footer { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; height: 40px; padding: 0 10px 0 14px; border-top: 1px solid var(--border); }

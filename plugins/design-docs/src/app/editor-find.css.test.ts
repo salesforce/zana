@@ -17,4 +17,13 @@ describe('editor find layout assumptions', () => {
     expect(styles).toContain('.dd-editor-split .dd-editor-find .dom-find-bar { right: calc(50% + 20px); }');
     expect(rule(styles, '.dd-editor-body')).toMatch(/position:\s*relative/u);
   });
+
+  it('keeps the split-mode textarea transparent while find is open, so the highlight backdrop shows', () => {
+    const styles = readFileSync(resolve(ROOT, 'plugins/design-docs/src/app/styles.ts'), 'utf8');
+    const opaque = styles.indexOf('.dd-editor-split .dd-editor-input {');
+    const transparent = styles.indexOf('.dd-editor-split .dd-editor-field-find .dd-editor-input { background: transparent; }');
+    expect(opaque).toBeGreaterThan(-1);
+    expect(transparent).toBeGreaterThan(opaque);
+    expect(styles).toContain('.dd-editor-split .dd-editor-backdrop { border-right: 1px solid transparent; }');
+  });
 });
