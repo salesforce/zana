@@ -37,7 +37,7 @@ import {
   highlightMarkdownCode,
   languageFromMarkdownClassName
 } from './markdown-code-highlight.js';
-import { boundedText, isOversizedText, LargeTextPreview } from './LargeTextPreview.js';
+import { isOversizedText, LargeTextPreview } from './LargeTextPreview.js';
 import { CodeBlockWithCopy, fencedCodeText } from './FencedCodeBlock.js';
 
 // Stable component types keep asynchronous link resolution and folder selection
@@ -166,7 +166,8 @@ export function DocContent({
   storage?: boolean;
   copyableCode?: boolean;
 }) {
-  if (isOversizedText(content)) return <LargeTextPreview text={content} />;
+  const oversizedContent = useMemo(() => isOversizedText(content), [content]);
+  if (oversizedContent) return <LargeTextPreview text={content} ignoreDataUrls />;
   const lower = path.toLowerCase();
   if (lower.endsWith('.md') || lower.endsWith('.markdown') || lower.endsWith('.mdx')) {
     // Library docs carry a `---`…`---` metadata header. react-markdown has no
@@ -289,9 +290,11 @@ export const MarkdownContent = memo(function MarkdownContent({
   localDocumentImages?: boolean;
   fileScope?: ProjectFileScope;
 }) {
-  const oversized = isOversizedText(text);
-  const shown = oversized ? boundedText(text) : text;
-  const body = documentPath !== undefined ? shown : unwrapBareFence(shown);
+  const oversized = useMemo(() => isOversizedText(text), [text]);
+  const body = useMemo(() => {
+    if (oversized) return '';
+    return documentPath !== undefined ? text : unwrapBareFence(text);
+  }, [oversized, text, documentPath]);
   const [rewriteLocalhost] = useBooleanPreference(
     REWRITE_LOCALHOST_LINKS_STORAGE_KEY,
     REWRITE_LOCALHOST_LINKS_DEFAULT
@@ -351,7 +354,7 @@ export const MarkdownContent = memo(function MarkdownContent({
         onOpen={exportable ? undefined : () => setLightbox({ src, alt })} />
     );
   }, [documentPath, threadId, storage, projectId, exportable, localDocumentImages, fileScope]);
-  if (oversized) return <LargeTextPreview text={text} />;
+  if (oversized) return <LargeTextPreview text={text} ignoreDataUrls />;
   return (
     <>
       <MarkdownLinkScope.Provider value={{ threadId, projectId, filePathHints, exportable, hostname, rewriteLocalhost, documentLinks, fileLinksAsAnchors, onTaskChange }}>
