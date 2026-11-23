@@ -3,6 +3,7 @@ import { normalizePortableAttachments } from '../projects/portable-attachments.j
 import { projectOnHost, ProjectSourceUnavailableError } from '@zana-ai/zcc-domain/project';
 import type { ThreadStartResult } from '@zana-ai/zcc-contracts/host-rpc';
 import {
+  appendConversationThreadEvent,
   createConversationThread,
   createEnvironment,
   findProjectEnvironmentByHostPath,
@@ -94,6 +95,8 @@ export interface CreateConversationInput {
   projectId: string;
   providerId: string;
   input: string[];
+  /** Plugin SDK only. Provision the conversation and wait for its first real message. */
+  deferFirstTurn?: true | 'slash-plan';
   promptInput?: unknown;
   hostId?: string;
   id?: string;
@@ -370,14 +373,14 @@ export async function createConversationFromRequest(
     promptSource,
     (path) => resolvePromptAttachmentPath(ctx.dataDir, input.projectId, path)
   );
-  if (prompt.length === 0) {
+  if (prompt.length === 0 && !input.deferFirstTurn) {
     throw new ThreadCreateError(400, 'invalid-input', 'input is required');
   }
 
   let project = requireProject(ctx, input.projectId);
   // Main-authorized creates are squad member starts, admitted by their own entry.
   // A create cannot be held for later, so a wait is a refusal and nothing is created.
-  if (!authorizedContext) {
+  if (!authorizedContext && !input.deferFirstTurn) {
     const refusal = admissionRefusal(await admitDispatch(ctx, {
       projectId: project.id,
       surface: 'modern',
@@ -498,6 +501,31 @@ export async function createConversationFromRequest(
     }
   }
 
+  async function finishEmptyThread(thread: ConversationThreadRow, lease: ConversationSendLease): Promise<ConversationThreadRow> {
+    const environment = getEnvironment(ctx.db, thread.environmentId!);
+    if (!getThreadProvider(providerId)) throw new ThreadCreateError(400, 'invalid-provider', `unknown thread provider: ${providerId}`);
+    await validateProviderModelSelection(ctx, {
+      hostId, providerId, cwd: modelCatalogCwd(environment, threadStartCwd(environment, input.cwd), dropCwd || (project?.remote && !remoteToolProxy)),
+      model: input.model, reasoningLevel: input.reasoningLevel
+    });
+    lease.assertCurrent();
+    const permissionMode = clampPermissionModeToHost(ctx.db, hostId, input.permissionMode!) ?? 'accept-edits';
+    const requestedMode = input.deferFirstTurn === 'slash-plan' ? 'plan' : input.acpMode ?? 'agent';
+    const idle = ctx.db.transaction(() => {
+      recordThreadExecutionMode(ctx.db, { threadId: thread.id, requestedMode, effectiveMode: requestedMode });
+      appendConversationThreadEvent(ctx.db, {
+        threadId: thread.id, type: 'thread/prepared',
+        payload: { type: 'thread/prepared', execution: {
+          model: input.model, reasoningLevel: input.reasoningLevel, permissionMode,
+          serviceTier: input.serviceTier, acpMode: input.acpMode
+        } }
+      });
+      return updateConversationThreadStatus(ctx.db, thread.id, 'idle')!;
+    });
+    ctx.hub.emit('threads:updated', conversationThreadView(ctx, idle));
+    return idle;
+  }
+
   if (choice.kind === 'reuse') {
     const existing = getEnvironment(ctx.db, choice.environmentId);
     if (!existing || existing.projectId !== project.id || existing.hostId !== hostId) {
@@ -560,6 +588,7 @@ export async function createConversationFromRequest(
           });
         }
         lease.assertCurrent();
+        if (input.deferFirstTurn) return await finishEmptyThread(thread, lease);
         if (authorizedContext?.prepareOnly) {
           updateConversationThreadStatus(ctx.db, thread.id, 'idle');
           return getConversationThread(ctx.db, thread.id)!;
@@ -709,6 +738,7 @@ export async function createConversationFromRequest(
         mergeBaseBranch: provisioned.defaultBranch
       });
       lease.assertCurrent();
+      if (input.deferFirstTurn) return await finishEmptyThread(created.thread, lease);
       if (authorizedContext?.prepareOnly) {
         updateConversationThreadStatus(ctx.db, created.thread.id, 'idle');
         return getConversationThread(ctx.db, created.thread.id)!;

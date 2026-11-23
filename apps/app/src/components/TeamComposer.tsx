@@ -61,6 +61,7 @@ export function TeamComposer({
   onComposerProjectIdChange,
   initialText,
   prefill,
+  initialTeamId,
   resolveLaunchPreview,
   onClose
 }: {
@@ -68,6 +69,8 @@ export function TeamComposer({
   initialText?: string;
   /** A reviewed proposal from a conversation; seeds the form and tags the launch with its id. */
   prefill?: SquadLaunchPrefill;
+  /** Preselect this Squad when no proposal is pre-filled (Settings > Squads Launch). */
+  initialTeamId?: string;
   resolveLaunchPreview?: (input: { teamId: string; projectId: string; goal: string; coordinationMode: 'structured' | 'freeform'; sourceCapabilityIds: string[] } & LaunchOptions) => Promise<ExecutionResolvedLaunchV1>;
   onClose?: () => void;
 } & ComposerProjectSelectionProps) {
@@ -93,7 +96,7 @@ export function TeamComposer({
     onComposerProjectIdChange?.(resolved);
   };
   const preferredProjectId = preferredComposerProjectId({ projects, lastProjectId, selectedProjectId });
-  const [draftTeamId, setTeamId] = useComposerSetting(session, 'team.id', prefill?.teamId ?? '');
+  const [draftTeamId, setTeamId] = useComposerSetting(session, 'team.id', prefill?.teamId ?? initialTeamId ?? '');
   const teamId = reviewedBound ? prefill!.teamId : draftTeamId;
   const [coordinationMode, setCoordinationMode] = useComposerSetting<Extract<TeamCoordinationMode, 'structured' | 'freeform'>>(session, 'team.coordination',
     () => prefill?.coordinationMode ?? useData.getState().teamDefaultCoordinationMode

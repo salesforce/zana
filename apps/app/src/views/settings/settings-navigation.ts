@@ -137,17 +137,11 @@ export const SETTINGS_SUBSECTIONS: Partial<Record<SettingsTab, Array<{ id: strin
     { id: 'terminal-tmux', label: 'tmux' }
   ],
   harness: [
-    { id: 'harness-status', label: 'Installed harnesses' },
+    { id: 'harness-registered', label: 'Your AI harnesses' },
+    { id: 'harness-defaults', label: 'Defaults' },
     { id: 'harness-models', label: 'Model lists' },
-    { id: 'harness-thread', label: 'Modern' },
-    { id: 'harness-legacy', label: 'CLI Agent' },
-    { id: 'harness-claude', label: 'Claude Code' },
-    { id: 'harness-cursor', label: 'Cursor' },
-    { id: 'harness-codex', label: 'Codex' },
-    { id: 'harness-pi', label: 'PI' },
-    { id: 'harness-opencode', label: 'OpenCode' },
-    { id: 'harness-grok', label: 'Grok Build' },
-    { id: 'harness-mastracode', label: 'Mastra Code' }
+    { id: 'harness-environment', label: 'API keys and environment' },
+    { id: 'legacy-agent-remote-defaults', label: 'Remote defaults' }
   ],
   editor: [
     { id: 'editor-status', label: 'Installed editors' },

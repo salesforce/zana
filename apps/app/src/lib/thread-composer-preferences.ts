@@ -2,6 +2,7 @@ import { EditorSelectionExtension } from '../components/composer/editor-selectio
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import { PromptMentionExtension } from '../components/composer/prompt-mention-extension.js';
+import { PromptListKeymapExtension } from '../components/composer/prompt-list-keymap-extension.js';
 
 export const NAVIGATE_TO_THREAD_ON_CREATE_KEY = 'zcc.navigateToThreadOnCreate';
 export const NAVIGATE_TO_THREAD_ON_CREATE_DEFAULT = true;
@@ -58,6 +59,7 @@ export function composerPromptExtensions(markdownEnabled: boolean, placeholder: 
     }),
     Placeholder.configure({ placeholder }),
     PromptMentionExtension,
-    EditorSelectionExtension
+    EditorSelectionExtension,
+    ...(markdownEnabled ? [PromptListKeymapExtension] : [])
   ];
 }

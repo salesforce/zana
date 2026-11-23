@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { Project } from '../../types.js';
 
 const state = vi.hoisted(() => ({
@@ -37,19 +37,47 @@ vi.mock('../TeamComposer.js', () => ({ TeamComposer: stub('team') }));
 import { HomeAgentComposer } from '../HomeAgentComposer.js';
 import { resetComposerSessions } from '../composer/composer-session.js';
 import { readLaunchModePreference } from '../../lib/launch-mode-preference.js';
+import { getBasicUiMode, setBasicUiMode } from '../../lib/basic-ui.js';
 
 const project = (id: string) => ({ id, name: id, path: `/p/${id}` }) as unknown as Project;
 
 beforeEach(() => {
+  setBasicUiMode('advanced');
   localStorage.clear();
   resetComposerSessions();
   state.ui.walkthroughHomeMode = null;
   Object.assign(state.data, { composerShowCliAgent: true, composerShowModern: true, composerShowAutonomousTeam: false, teamJobLaunchEnabled: false });
   state.teams = [];
 });
-afterEach(cleanup);
+afterEach(() => { cleanup(); setBasicUiMode('advanced'); });
 
 describe('HomeAgentComposer rendering', () => {
+  it.each(['agent', 'team'] as const)('keeps a saved %s composer and draft mounted behind an Advanced continuation', mode => {
+    if (mode === 'team') { state.teams = [{ id: 't1' }];state.data.composerShowAutonomousTeam = true; }
+    const view = render(<HomeAgentComposer allowLegacyAgent />);
+    fireEvent.click(screen.getByRole('button', { name: mode === 'team' ? /Squad/ : 'CLI Agent' }));
+    const composer = screen.getByTestId(mode === 'team' ? 'team' : 'legacy');
+    const preference = readLaunchModePreference();
+    act(() => setBasicUiMode('basic'));
+    expect(screen.getByRole('button', { name: 'Continue in Advanced' })).toBeTruthy();
+    expect(composer.closest('[hidden]')).toBeTruthy();
+    expect(view.container.querySelector(`[data-testid="${mode === 'team' ? 'team' : 'legacy'}"]`)).toBe(composer);
+    expect(readLaunchModePreference()).toBe(preference);
+    fireEvent.click(screen.getByRole('button', { name: 'Continue in Advanced' }));
+    expect(getBasicUiMode()).toBe('advanced');
+    expect(screen.getByTestId(mode === 'team' ? 'team' : 'legacy')).toBe(composer);
+  });
+  it('retains the exact native composer and selected project across Basic mode switches', () => {
+    const view = render(<HomeAgentComposer allowLegacyAgent project={project('a')} />);
+    const composer = screen.getByTestId('thread');
+    fireEvent.click(screen.getByRole('button', { name: 'pick-thread' }));
+    act(() => setBasicUiMode('basic'));
+    expect(screen.getByTestId('thread')).toBe(composer);
+    expect(screen.getByTestId('thread').getAttribute('data-project')).toBe('picked');
+    expect(screen.queryByText('Continue this draft in Advanced')).toBeNull();
+    act(() => setBasicUiMode('advanced'));
+    expect(view.getByTestId('thread')).toBe(composer);
+  });
   it('reports successful launches through the matching panel handoff callback', () => {
     const onCreated = vi.fn();
     const onAgentCreated = vi.fn();

@@ -37,6 +37,21 @@ describe('document-relative links', () => {
 });
 
 describe('document link activation', () => {
+  it('leaves activation to the editor when interception is disabled', () => {
+    const open = vi.fn();
+    const elementRef = vi.fn();
+    const view = render(<DocumentLinkBoundary documentPath="a.md" onOpenDocument={open} interceptLinks={false} elementRef={elementRef}>
+      <a href="#heading">Heading</a>
+    </DocumentLinkBoundary>);
+    expect(elementRef).toHaveBeenCalledWith(view.container.firstElementChild);
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+    fireEvent(view.getByRole('link'), event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(open).not.toHaveBeenCalled();
+    view.unmount();
+    expect(elementRef).toHaveBeenLastCalledWith(null);
+  });
+
   function mount(href = 'b.md', props: { fragment?: string; onOpenDocument?: ReturnType<typeof vi.fn> } = {}) {
     const open = props.onOpenDocument ?? vi.fn();
     const view = render(<DocumentLinkBoundary documentPath="notes/a.md" onOpenDocument={open} fragment={props.fragment}>

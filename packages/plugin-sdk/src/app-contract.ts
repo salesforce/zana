@@ -30,6 +30,15 @@ export function navPanelListsInExtensionsHub(placement?: PluginNavPanelPlacement
   return placement === 'extensions';
 }
 
+export interface BasicSidebarSectionProps {
+  searchQuery: string;
+  activeThreadId: string | null;
+  projectIds: readonly string[];
+  openThread(threadId: string): void;
+  /** Omit these threads from ordinary history while the section represents them. */
+  registerThreads(threadIds: readonly string[]): () => void;
+}
+
 export interface PluginNavPanelRegistration extends PluginSlotBase {
   title: string;
   icon: string;
@@ -43,6 +52,7 @@ export interface PluginNavPanelRegistration extends PluginSlotBase {
   placement?: PluginNavPanelPlacement;
   component: ComponentType<PluginNavPanelProps>;
   experimental_sidebarAccessory?: ComponentType;
+  experimental_basicSidebarSection?: ComponentType<BasicSidebarSectionProps>;
   headerContent?: ComponentType<PluginNavPanelProps>;
 }
 
@@ -309,7 +319,25 @@ export interface PluginThreadPanelActionContext {
   openPanel(options?: { title?: string; params?: JsonValue }): boolean;
 }
 
+/** A panel can provide a clickable title in conversations created by its plugin. */
+export interface PluginOwnedThreadTitleProps {
+  threadId: string;
+  title: string;
+  openPanel(): void;
+}
+
+export interface PluginOwnedThreadIconProps {
+  threadId: string;
+  size: number;
+  /** The provider icon to show when the thread has no custom identity. */
+  fallback: ReactNode;
+}
+
 export interface PluginThreadPanelActionRegistration extends PluginSlotBase {
+  /** Decorative icon for threads owned by this plugin in the project tree and on Kanban cards. */
+  experimental_ownedThreadIcon?: ComponentType<PluginOwnedThreadIconProps>;
+  /** Open from the owning thread's heading instead of the general New Tab catalogue. */
+  experimental_ownedThreadTitle?: ComponentType<PluginOwnedThreadTitleProps>;
   title: string;
   /** New Tab category. Defaults to the installed plugin's name. */
   category?: string;
@@ -1170,6 +1198,13 @@ export interface ThreadChatProps {
 export interface MarkdownProps {
   content: string;
   className?: string;
+  /** Show the Library's formatted editor. Changes are returned as Markdown for the caller to save. */
+  editor?: {
+    label: string;
+    onChange: (markdown: string) => void;
+    disabled?: boolean;
+    placeholder?: string;
+  };
 }
 
 export interface NewThreadComposerProps {
@@ -1527,6 +1562,12 @@ export function collectPluginApp(
           throw new Error(`${kind}: "experimental_sidebarAccessory" must be a React component function when set`);
         }
         if (
+          registration.experimental_basicSidebarSection !== undefined &&
+          typeof registration.experimental_basicSidebarSection !== 'function'
+        ) {
+          throw new Error(`${kind}: "experimental_basicSidebarSection" must be a React component function when set`);
+        }
+        if (
           registration.placement !== undefined &&
           !PLUGIN_NAV_PANEL_PLACEMENTS.includes(registration.placement)
         ) {
@@ -1540,6 +1581,7 @@ export function collectPluginApp(
             path,
             ...(registration.placement ? { placement: registration.placement } : {}),
             component: requireComponent(kind, 'component', registration.component),
+            ...(registration.experimental_basicSidebarSection ? { experimental_basicSidebarSection: registration.experimental_basicSidebarSection } : {}),
             ...(registration.experimental_sidebarAccessory
               ? { experimental_sidebarAccessory: registration.experimental_sidebarAccessory }
               : {}),
@@ -1696,6 +1738,14 @@ export function collectPluginApp(
             ...(requireLayout(kind, registration.layout)
               ? { layout: registration.layout }
               : {}),
+            ...(registration.experimental_ownedThreadIcon !== undefined ? {
+              experimental_ownedThreadIcon: requireComponent<NonNullable<PluginThreadPanelActionRegistration['experimental_ownedThreadIcon']>>(
+                kind, 'experimental_ownedThreadIcon', registration.experimental_ownedThreadIcon)
+            } : {}),
+            ...(registration.experimental_ownedThreadTitle !== undefined ? {
+              experimental_ownedThreadTitle: requireComponent<NonNullable<PluginThreadPanelActionRegistration['experimental_ownedThreadTitle']>>(
+                kind, 'experimental_ownedThreadTitle', registration.experimental_ownedThreadTitle)
+            } : {}),
             ...(scopes !== undefined ? { scopes } : {}),
             ...(pages !== undefined ? { pages } : {}),
             ...(registration.run !== undefined ? { run: registration.run } : {})

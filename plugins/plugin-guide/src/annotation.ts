@@ -2,6 +2,8 @@ import { Fragment, createElement, type ReactNode } from 'react';
 import { SURFACE_GROUPS, type PluginSurface } from './surfaces.js';
 
 export const MAX_FIXTURE_SCALE = 1.2;
+/** Every spatial wireframe is drawn at this width, then scaled as one picture. */
+export const FIXTURE_AUTHORED_WIDTH = 960;
 export const MAX_CHIP_COUNTER_SCALE = 3;
 export const CHIP_COUNTER_SCALE_PROPERTY = '--guide-chip-scale';
 
@@ -27,6 +29,31 @@ export function annotationNeighbors(
 
 export function panCarets(index: number, slideCount: number): { previous: boolean; next: boolean } {
   return { previous: index > 0, next: index < slideCount - 1 };
+}
+
+export interface SpatialFixtureGeometry {
+  scale: number;
+  /** Scaled outer height, or null before the fixture has laid out. */
+  height: number | null;
+  /** Left margin that centres the authored-width fixture inside the frame. */
+  offsetX: number;
+}
+
+/**
+ * Geometry for a wireframe drawn at {@link FIXTURE_AUTHORED_WIDTH}: columns
+ * never reflow, the whole picture scales uniformly to fit the frame.
+ */
+export function spatialFixtureGeometry(
+  frameWidth: number,
+  authoredHeight: number,
+  availableHeight?: number
+): SpatialFixtureGeometry {
+  const scale = spatialFixtureScale(frameWidth, FIXTURE_AUTHORED_WIDTH, availableHeight, authoredHeight);
+  return {
+    scale,
+    height: authoredHeight > 0 ? authoredHeight * scale : null,
+    offsetX: frameWidth > 0 ? (frameWidth - FIXTURE_AUTHORED_WIDTH) / 2 : 0
+  };
 }
 
 export function spatialFixtureScale(

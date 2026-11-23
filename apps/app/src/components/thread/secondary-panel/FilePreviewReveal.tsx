@@ -4,6 +4,7 @@ import type { CcApi } from '@zana-ai/zcc-desktop-contract';
 import { hasDesktopBridge } from '../../../lib/app-surface.js';
 import { fileManagerName } from '../../../lib/file-manager.js';
 import { product } from '../../../lib/product-client.js';
+import { setBasicUiMode, useBasicUi } from '../../../lib/basic-ui.js';
 import { previewPathParts } from './threadSecondaryPanelLogic.js';
 
 type Request = Parameters<CcApi['openers']['fileLocation']>[0];
@@ -81,6 +82,7 @@ export function binaryPreviewKind(path: string): { label: string; extension: str
 export function FilePreviewFallback({ path, tooLarge = false, reveal }: {
   path: string; tooLarge?: boolean; reveal?: FilePreviewRevealState;
 }) {
+  const basic = useBasicUi();
   const kind = binaryPreviewKind(path);
   const Icon = tooLarge ? FileText : kind?.archive ? FileArchive : Package;
   const manager = fileManagerName();
@@ -95,7 +97,9 @@ export function FilePreviewFallback({ path, tooLarge = false, reveal }: {
         ? tooLarge
           ? `Find it in ${manager} to open it in an app that can handle larger files.`
           : `Find it in ${manager}, then open it${kind?.installer ? ' to get started' : ' in another app'}.`
-        : 'Copy its path from the header to open it on the computer where it is stored.'}</p>
+        : basic ? 'Open Advanced to access this file on the computer where it is stored.'
+          : 'Copy its path from the header to open it on the computer where it is stored.'}</p>
+      {basic && !reveal?.available ? <button type="button" className="btn btn-secondary" onClick={() => setBasicUiMode('advanced')}>Open Advanced</button> : null}
       {reveal?.available ? <><FilePreviewRevealButton state={reveal} primary />
         <p className="thread-file-preview-file-hint">Opens the folder with this file selected.</p></> : null}
     </div>

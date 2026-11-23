@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  createEnvironment, getConversationThread, getEnvironment, listConversationThreadEvents,
+  createEnvironment, getConversationThread, getEnvironment, getThreadExecutionState, listConversationThreadEvents,
   openDatabase, upsertHost, type ZccDatabase
 } from '@zana-ai/zcc-db';
 import type { ProductHttpContext } from '../../http/product-context.js';
@@ -57,6 +57,37 @@ beforeEach(() => {
   } as unknown as ProductHttpContext;
 });
 afterEach(() => { unregister(); db.close(); rmSync(dir, { recursive: true, force: true }); });
+
+describe('prepared plugin conversations', () => {
+  it.each([undefined, 'planning'])('retains the requested mode for an empty conversation (%s)', async acpMode => {
+    const thread = await createConversationFromRequest(ctx, {
+      id: threadId, projectId: 'p', providerId: 'test-provider', input: [], deferFirstTurn: true,
+      originPluginId: 'test-plugin', title: 'Helper', acpMode
+    });
+    expect(thread.providerThreadId).toBeNull();
+    expect(getThreadExecutionState(db, threadId)?.requestedMode).toBe(acpMode ?? 'agent');
+    expect(commands).not.toContain('thread.start');
+  });
+
+  it.each([true, false])('waits for the first real turn before starting the provider (reuse=%s)', async reuse => {
+    const environment = reuse ? createEnvironment(db, { projectId: 'p', hostId, path: dir, status: 'ready', workspaceProvisionType: 'unmanaged' }) : null;
+    const thread = await createConversationFromRequest(ctx, {
+      id: threadId, projectId: 'p', providerId: 'test-provider', input: [], deferFirstTurn: 'slash-plan',
+      title: 'Helper', originPluginId: 'test-plugin', permissionMode: 'full', reasoningLevel: 'high',
+      ...(environment ? { environment: { kind: 'reuse', environmentId: environment.id } } : {})
+    });
+    expect(thread).toMatchObject({ status: 'idle', providerThreadId: null, title: 'Helper' });
+    expect(getThreadExecutionState(db, threadId)?.requestedMode).toBe('plan');
+    expect(commands).not.toContain('thread.start');
+    expect(listConversationThreadEvents(db, threadId).map(event => event.type)).not.toContain('client/turn/requested');
+    await sendConversationTurn(ctx, threadId, ['My first message']);
+    await vi.waitFor(() => expect(getConversationThread(db, threadId)?.providerThreadId).toBe('provider-created'));
+    expect(commands.filter(command => command === 'thread.start')).toHaveLength(1);
+    const turns = listConversationThreadEvents(db, threadId).filter(event => event.type === 'client/turn/requested');
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.payload).toMatchObject({ execution: { permissionMode: 'full', reasoningLevel: 'high' } });
+  });
+});
 
 describe('initial thread cancellation', () => {
   it.each(['create', 'send'])('does not dispatch after Stop while worker provider options are pending (%s)', async phase => {

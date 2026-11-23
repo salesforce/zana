@@ -40,11 +40,9 @@ describe('library document scroll pane', () => {
 
 describe('library markdown edit surfaces', () => {
   it('defaults edit to the WYSIWYG editor and keeps Monaco behind Source', () => {
-    expect(source).toContain('LibraryMarkdownEditor');
-    expect(source).toContain("editSurface === 'rich'");
-    expect(source).toContain("setEditSurface('source')");
-    expect(source).toContain('onMount={registerEditor}');
-    expect(source).toMatch(/<span>Rich<\/span>/);
-    expect(source).toMatch(/<span>Source<\/span>/);
+    expect(source).toContain('<MarkdownDocument');
+    expect(source).toContain('savedValue={content}');
+    expect(source).toContain('onSourceMount={registerEditor}');
+    expect(source).toContain('onSave={() => void saveEdit()}');
   });
 });

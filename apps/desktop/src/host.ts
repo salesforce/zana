@@ -54,6 +54,7 @@ import { SharedClient, allowsSharedNavigation } from './window/shared-client.js'
 import { createHistoryProviders, invalidateHarnessModelCatalog } from '@zana-ai/zcc-host-daemon/harness/registry';
 import { RendererReadiness } from './window/renderer-readiness.js';
 import { installAppPermissions } from './window/app-permissions.js';
+import { windowMenuTail } from './window/window-menu.js';
 import { runStartupDependencyDoctor } from './startup-dependency-doctor.js';
 /**
  * Compatibility IPC host. Window/tray/updater/preload live alongside this file
@@ -102,8 +103,10 @@ import { jobCoordinatorPrompt, rosterWithTiers, type RosterEntry } from './team-
 import {
   createDesktopNativeRecovery, gateInvalidProvidedPlan, recoverSquadStateAtBoot, runSpawnLifecycle, slotRecoveryLaunch,
   sweepUnretainedSquadWorktrees, teamAdmissionRequirements, teamJobFailureResponse, withProposalLaunch, findProposalExecution, type ProposalLaunchDeps,
-  withRenewedSources, scopedSourceRenewal, splitProposedGoalSources
+  withRenewedSources, scopedSourceRenewal, splitProposedGoalSources,
+  allWorkersUnresolvedReasons, unknownPersonaMessage, UnknownPersonaError, admissionSlotRouteFacts
 } from './team-launch-support.js';
+import { warnUnknownPersonaModels } from './persona-model-check.js';
 import { modernRecoverySnapshot } from './team-native-recovery.js';
 import { openExecutionStorage } from './execution-storage.js';
 import { createPlanCorrectionHandoff, createPlanCorrectionHost } from './plan-correction/host.js';
@@ -149,7 +152,7 @@ import { resolveModernMcpAllowlist } from '@zana-ai/zcc-server/services/threads/
 import { narrowAutomatedSkillIds, providerSkillAllowlist, resolvePersonaSkillSelection } from '@zana-ai/zcc-server/services/threads/persona-skill-selection';
 import { resolveSkillSettings } from '@zana-ai/zcc-host-daemon/skill-allowlist-settings';
 import type { SkillSettings } from '@zana-ai/zcc-host-daemon/harness/registration';
-import { effectiveRoles, effectiveSkills, isOrchestratorSlotId } from '@zana-ai/zcc-domain/product';
+import { effectiveRoles, effectiveSkills, isOrchestratorSlotId, TEAM_PLAN_TEXT_MAX_CHARS } from '@zana-ai/zcc-domain/product';
 import { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
 import { AgentLivenessCache } from '@zana-ai/zcc-host-daemon/harness/agent-liveness';
 import { resolveMaxLiveSessions } from '@zana-ai/zcc-host-daemon/capacity';
@@ -161,7 +164,7 @@ import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPre
 import { planNormalizationNote, resolveSquadPlan } from './team-trigger-semantics.js';
 import { renderCanonicalPlan } from '@zana-ai/zcc-server/services/execution/portable-plan-render';
 import type { PortablePlanWorkUnitInput } from '@zana-ai/zcc-server/services/execution/portable-plan';
-import { coldStartCanceled, createDeferredSeatHooks, createDeferredSeatRegistry, createSeatApprovals, createSeatRecycler, createSeatStarter, deferredSeatsOf, freshContextSeatsOf, lateSeatApprovalProblem, lifecycleRecycleOps, preissuedDeadlineMatches, respawnApproval, respawnLaunchShape, seatApprovalId, seatApprovalWindow, seatBindExtras, seatLaunchMode, seatLaunchProblem, seatRecovery, seatRosterEntry } from './on-demand-seat.js';
+import { coldStartCanceled, createDeferredSeatHooks, createDeferredSeatRegistry, createSeatApprovals, createSeatRecycler, createSeatStarter, createWorkerRespawner, workerRespawnUnsupported, deferredSeatsOf, freshContextSeatsOf, lateSeatApprovalProblem, lifecycleRecycleOps, preissuedDeadlineMatches, respawnApproval, respawnLaunchShape, seatApprovalId, seatApprovalWindow, seatBindExtras, seatLaunchMode, seatLaunchProblem, seatRecovery, seatRosterEntry } from './on-demand-seat.js';
 import { createSquadSourceSnapshotter, launchSquad, type SquadLaunchDeps, type SquadSourceProvider } from './squad-launch-core.js';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
@@ -170,9 +173,10 @@ import { SQUAD_SEAT_MARKER, squadSeatRefusal } from './squad-seat-launch.js';
 import { createRestoreCapabilityStore, type RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
 import { createTeamLifecycleIntegration, createTeamLifecycleStore, type TeamLifecycleRecord, type TeamModernWorkerObservation } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
 import { createRemoteReapLedger, remoteReapOrphans, type RemoteReapEntry } from '@zana-ai/zcc-server/services/launch/remote-reap-ledger';
-import { createExecutionStore, isUserOwnedSquadWorktree, recordedLevelPolicy, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
+import { boundReason, SLOT_REASON_MAX, createExecutionStore, isUserOwnedSquadWorktree, recordedLevelPolicy, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
+import { squadConcurrentCap, withSquadLimits } from '@zana-ai/zcc-server/services/execution/squad-limits-policy';
 import { KeyedColdStartSemaphore, SquadExecutionService, type ExecutionRequestV1 } from '@zana-ai/zcc-server/services/execution/service';
 import type { ExecutionWorkUnitInput, ResolvedModelSnapshotV1 } from '@zana-ai/zcc-server/services/execution/store';
 import { verifyHarnesses } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
@@ -193,6 +197,7 @@ import { expandTeamSlots } from '@zana-ai/zcc-server/services/agents/team-slot-e
 import { bindLaunchPrincipal, type LaunchAuthorizationBinding, type LaunchPrincipal, type LaunchPrincipalRef } from '@zana-ai/zcc-server/services/launch/types';
 import type { TerminalLaunchOptions } from '@zana-ai/zcc-server/services/launch/terminal-launcher';
 import * as testTap from './test-tap.js';
+import { testFaultActive, testNoTurnWarnWindowMs, workerSpawnFaultFor } from './test-faults.js';
 import { AgentStatusTracker } from '@zana-ai/zcc-server/services/agents/agent-status';
 import { OutputActivityMonitor } from '@zana-ai/zcc-host-daemon/output-activity';
 import { ScreenScanBlockedDetector } from '@zana-ai/zcc-server/services/agents/screen-scan-blocked-detector';
@@ -1289,6 +1294,23 @@ async function terminateSession(sessionId: string, expected = true): Promise<boo
   return closed;
 }
 
+/**
+ * Closes sessions by id when a launch cannot be recorded. Each close is independent: one stuck
+ * session never leaves the others running. Returns the ids that could not be confirmed closed.
+ */
+export async function closeStartedSessionsById(sessionIds: readonly string[]): Promise<string[]> {
+  const survivors: string[] = [];
+  await Promise.all([...new Set(sessionIds)].map(async (sessionId) => {
+    try {
+      if (!await terminateSession(sessionId)) survivors.push(sessionId);
+    } catch (error) {
+      logMainError(`close started session ${sessionId}`, error);
+      survivors.push(sessionId);
+    }
+  }));
+  return survivors;
+}
+
 export function sanitizeRendererTerminalRequest(req: CreateTerminalRequest): CreateTerminalRequest {
   const {
     cohort: _cohort,
@@ -1332,6 +1354,17 @@ const seatRecycler = createSeatRecycler({
   clearRecovery: async (executionId, slotId) => { await executionStore.clearNativeRecoverySnapshot(executionId, slotId); },
   queuedFor: (sessionId) => workerInjector.pendingCount(sessionId),
   close: terminateSession,
+  log: (message, error) => logMainError(message, error)
+});
+/** Starts a new session for a worker slot whose session is over, on the coordinator's request. Commits through the deferred-seat spawn. */
+const workerRespawner = createWorkerRespawner({
+  lifecycle: teamLifecycle,
+  hasSpawner: (recordId) => deferredSeats.has(recordId),
+  unsupported: (seat) => workerRespawnUnsupported(seat, store.listProjects()),
+  closeSession: (sessionId) => terminateSession(sessionId),
+  sessionGone: async (sessionId) => !(await listLocalTmuxSessionIds()).includes(sessionId),
+  spawn: (recordId, slotId) => deferredSeats.spawn(recordId, slotId),
+  track: (record) => teamLifecycleIntegration.track(record),
   log: (message, error) => logMainError(message, error)
 });
 /** A run's spawners and recyclers are forgotten together when it ends, is stopped or is dismissed. */
@@ -3741,7 +3774,7 @@ const composerPreviewTokens = new Map<string, { key: string; preview: SquadLaunc
 const COMPOSER_PREVIEW_TTL_MS = 5 * 60_000;
 const COMPOSER_PREVIEW_MAX = 200;
 function composerPreviewKey(input: Parameters<import('@zana-ai/zcc-desktop-contract').CcApi['teams']['preview']>[0], caller: { kind: 'window'; windowId: number } | { kind: 'shared-owner' }): string {
-  return JSON.stringify([caller, input.projectId, input.teamId, input.goal.trim(), input.coordinationMode ?? 'structured', input.sourceCapabilityIds ?? [],
+  return JSON.stringify([caller, input.projectId, input.teamId, input.goal.trim(), (input.planText ?? '').trim(), input.coordinationMode ?? 'structured', input.sourceCapabilityIds ?? [],
     launchOptionsSchema.parse({ worktree: input.worktree, onComplete: input.onComplete, push: input.push, checks: input.checks, failurePolicyDefault: input.failurePolicyDefault, target: input.target })]);
 }
 function pruneComposerPreviewTokens(): void {
@@ -3806,6 +3839,7 @@ export async function resolveSquadComposerPreview(input: Parameters<import('@zan
   if (!project) throw new Error('TARGET_UNAVAILABLE');
   if (teamHostProblem(project, localHostId())) throw new SquadPreviewAdmissionError('Project host is unavailable for this launch.');
   const launchOptions = launchOptionsSchema.parse({ worktree: input.worktree, onComplete: input.onComplete, push: input.push, checks: input.checks, failurePolicyDefault: input.failurePolicyDefault, target: input.target });
+  if (input.planText !== undefined && (typeof input.planText !== 'string' || input.planText.length > TEAM_PLAN_TEXT_MAX_CHARS)) throw new SquadPreviewAdmissionError(`planText must be a string of at most ${TEAM_PLAN_TEXT_MAX_CHARS} characters.`);
   const sourceIds = input.sourceCapabilityIds ?? [];
   if (sourceIds.length && caller.kind !== 'window') throw new Error('Execution source capabilities require a trusted window');
   const sourceBases = squadSourceBases();
@@ -3819,7 +3853,8 @@ export async function resolveSquadComposerPreview(input: Parameters<import('@zan
   const capabilityIds = [...new Set([...sourceIds, ...goalCapabilities.map(source => source.id)])];
   const inspected = capabilityIds.length && caller.kind === 'window'
     ? await executionSources.inspect({ windowId: caller.windowId, projectId: project.id, capabilityIds }) : undefined;
-  const texts = [...(inspected?.sources ?? []).map(source => source.extractedText), input.goal];
+  // planText is plan content only: it is never scanned for source paths above.
+  const texts = [...(inspected?.sources ?? []).map(source => source.extractedText), ...(input.planText ? [input.planText] : []), input.goal];
   const plan = resolveSquadPlan(input.coordinationMode === 'freeform' ? 'infer' : 'provided', texts);
   // Attended malformed DAGs retain the existing correction flow, but bad launch declarations never become defaults.
   if (plan.planError) {
@@ -3830,7 +3865,7 @@ export async function resolveSquadComposerPreview(input: Parameters<import('@zan
       const { declaredSquad: _declaredSquad, ...defaulting } = declarations.launch;
       if (Object.keys(defaulting).length) throw new Error('Correct the supplied plan before previewing its launch declarations');
     }
-    if (caller.kind !== 'window') throw new Error(plan.planError);
+    if (caller.kind !== 'window') throw new SquadPreviewAdmissionError(plan.planError);
   }
   const resolved = await resolveSquadLaunchOptions(project.id, { teamId: input.teamId, ...launchOptions, planLaunch: plan.launch });
   const preview = await resolveSquadLocationPreview(project, launchOptions, resolved);
@@ -5871,7 +5906,9 @@ async function resolveTeamModelSnapshots(
   const config = store.getConfig();
   const projectSettings = await getAuthoritativeProjectSettings(projectId);
   const personaSnapshot = personas.list();
-   const verified = await verifyHarnesses(config);
+  const missingPersonas = slots.filter((slot) => !personaSnapshot.some((candidate) => candidate.id === slot.personaId)).map((slot) => slot.personaId);
+  if (missingPersonas.length > 0) throw new UnknownPersonaError(missingPersonas);
+  const verified = await verifyHarnesses(config);
   const observedAt = Date.now();
   return Promise.all(slots.map(async (slot, index) => {
     const persona = personaSnapshot.find((candidate) => candidate.id === slot.personaId);
@@ -5978,7 +6015,7 @@ export function authorizeTeamLaunch(
   }
   const principalRef = { kind: 'team' as const, id: `team:${team.id}:${callerPrincipalId}:${launchRequestId}` };
   const maxLaunches = Math.min(policy.maxLaunches ?? 32, 32);
-  const maxConcurrent = Math.min(policy.maxConcurrent ?? maxLaunches, maxLaunches);
+  const maxConcurrent = squadConcurrentCap(Math.min(policy.maxConcurrent ?? maxLaunches, maxLaunches), team.limits);
   if (expectedSlots.length > maxLaunches) {
     return { ok: false, code: 'RESOURCE_LIMIT', message: `team launch requests ${expectedSlots.length} slots but limit is ${maxLaunches}` };
   }
@@ -6331,6 +6368,7 @@ export async function launchTeam(
   const roster: RosterEntry[] = [];
   const workers: TeamLaunchedWorker[] = [];
   const failedSlots: TeamFailedWorkerSlot[] = [];
+  const joinedSlotReasons = (fallback: string) => boundReason(failedSlots.map((slot) => `${slot.slotId}: ${slot.reason}`).join('; ') || fallback);
   const launchRequestId = structured?.launchRequestId ?? randomUUID();
   const callerPrincipalId = structured?.callerPrincipalId ?? opts?.callerPrincipalId ?? `legacy:${launchRequestId}`;
   const teamPrincipalRef = {
@@ -6503,14 +6541,14 @@ export async function launchTeam(
     }
   }
   const freshSlotIds = new Set(freshContextSeatsOf(team, expectedSlots).map((seat) => seat.slotId));
-  const seatApprovals = createSeatApprovals(freshSlotIds);
+  const seatApprovals = createSeatApprovals(new Set([...freshSlotIds, ...expectedSlots.filter((slot) => slot.role === 'worker').map((slot) => slot.slotId)]));
   const onDemandProblem = seatLaunchProblem(team, expectedSlots, { durable: durableCoordination, structured: !!structured }, structured?.requirePreauthorization === true);
   if (onDemandProblem) {
     revokeRequestAuthorizations();
     return { ok: false, code: 'UNSUPPORTED', message: onDemandProblem };
   }
   const runLimit = Math.min(structured?.policy?.maxLaunches ?? 32, 32);
-  const concurrentLimit = Math.min(structured?.policy?.maxConcurrent ?? runLimit, runLimit);
+  const concurrentLimit = squadConcurrentCap(Math.min(structured?.policy?.maxConcurrent ?? runLimit, runLimit), team.limits);
   if (expectedSlots.length > runLimit) {
     return { ok: false, code: 'RESOURCE_LIMIT', message: `team launch requests ${expectedSlots.length} slots but limit is ${runLimit}` };
   }
@@ -6577,6 +6615,20 @@ export async function launchTeam(
       return { ok: false, code: 'UNSUPPORTED', message: error instanceof Error ? error.message : String(error) };
     }
   }
+  if (team.transport !== 'MODERN') {
+    const unresolvedReasons = allWorkersUnresolvedReasons(expectedSlots, known, structured ? 'all' : 'any');
+    if (unresolvedReasons) {
+      revokeRequestAuthorizations();
+      return { ok: false, code: 'TEAM_LAUNCH_FAILED', message: boundReason(unresolvedReasons) };
+    }
+  }
+  // Advisory only: a persona model the harness catalog does not list is flagged, never blocks the launch.
+  if (team.transport !== 'MODERN') {
+    warnUnknownPersonaModels({
+      slots: expectedSlots, personas: personaSnapshot, providerFor: (personaId) => providerFor(profileFor(personaId)),
+      project, notify: (notice) => inboxStore.append(notice), onError: logMainError
+    });
+  }
   const refused = squadSeatRefusal({
     transport: team.transport, expectedSlots, personas: personaSnapshot, profileFor, personaName, coordinationMode, project,
     platform: process.platform, revoke: revokeRequestAuthorizations
@@ -6604,6 +6656,9 @@ export async function launchTeam(
   }
   if (claim.outcome === 'conflict') return { ok: false, code: 'CONFLICT', message: 'launch request id reused with changed payload' };
 
+  /** A seat the coordinator asked to respawn (its lifecycle row carries the marker until the new session binds). */
+  const isRespawnSeat = async (slotId: string): Promise<boolean> =>
+    (await teamLifecycle.get(claim.record.id))?.workers.find((worker) => worker.slotId === slotId)?.respawned !== undefined;
   const launchSlot = async (
     expectedSlot: { slotId: string; personaId: string; label?: string; role: 'worker' | 'orchestrator' },
     request: CreateTerminalRequest,
@@ -6813,7 +6868,12 @@ export async function launchTeam(
         return { ok: false, code: reservation ? 'UNCERTAIN' : 'DENIED', message: error instanceof Error ? error.message : String(error) };
       } finally { releaseColdStart(); }
     }
-    const result = await launchAuthorizedTerminal(
+    // A spawn that throws is one failed seat, not a failed launch: the rejection becomes a result so
+    // sibling seats keep launching and the seat's lifecycle row is marked spawn-failed below.
+    // Test-only (compiled out of production): the second seat of each row fails to spawn.
+    const result: Result<{ id: string }> = await (workerSpawnFaultFor(slotId)
+      ? Promise.reject(new Error('injected worker spawn fault'))
+      : launchAuthorizedTerminal(
       request,
        teamPrincipalRef,
        { autonomous, coordinationMode, suppressPersonaInitialPrompt: durableCoordination, tabNamerPrompt, ...SQUAD_SEAT_MARKER, ...spawnExtras },
@@ -6847,7 +6907,9 @@ export async function launchTeam(
           maySpawn: () => teamLifecycle.workerMaySpawn(claim.record.id, slotId),
           claimRunning: () => teamLifecycle.claimWorkerRunning(claim.record.id, slotId)
         }
-    ).finally(releaseColdStart);
+    )).catch((error: unknown): Result<{ id: string }> => ({
+      ok: false, code: 'SPAWN_FAILED', message: boundReason(error instanceof Error ? error.message : String(error), SLOT_REASON_MAX)
+    })).finally(releaseColdStart);
     if (durableIdentity) {
       try {
         if (result.ok) {
@@ -6871,14 +6933,15 @@ export async function launchTeam(
   };
 
   /** Open one worker seat's session. `lateSeat` is a seat that starts on demand, after the launch call has returned. */
-  const startWorkerSeat = (expectedSlot: { slotId: string; personaId: string; label?: string; role: 'worker' | 'orchestrator' }, lateSeat: boolean, respawnApprovalId?: string) => {
+  const startWorkerSeat = async (expectedSlot: { slotId: string; personaId: string; label?: string; role: 'worker' | 'orchestrator' }, lateSeat: boolean, respawnApprovalId?: string) => {
      const { slotId, personaId, label: slotLabel } = expectedSlot;
+     const coordinatorRespawn = await isRespawnSeat(slotId);
        // Job/Team identity belongs to ZCC, not whichever harness happens to
        // provide an OSC title or registration hook. Every worker gets a stable
        // host-owned label before the harness starts.
        const label = slotLabel || personaName(personaId) || slotId;
        // A new session of a seat is a new conversation: it never resumes the one before it.
-       const recovery = seatRecovery(recoveryFor(slotId, 'worker', personaId), respawnLaunchShape(seatLaunchMode(lateSeat, respawnApprovalId)).dropsRecovery);
+       const recovery = seatRecovery(recoveryFor(slotId, 'worker', personaId), respawnLaunchShape(coordinatorRespawn ? 'respawn' : seatLaunchMode(lateSeat, respawnApprovalId)).dropsRecovery);
        const workerTask = durableCoordination
          ? jobWorkerPrompt({ executionId: structured?.executionId, slotId, label, personaName: personaName(personaId), ...(recovery.recoveryResume ? { recoveryResume: true } : {}) })
           : taskFor(slotId);
@@ -6919,7 +6982,7 @@ export async function launchTeam(
      if (!known.has(personaId)) {
        const authorizationId = structured?.slots.find((slot) => slot.slotId === slotId)?.authorizationId;
        if (authorizationId) launchAuthorization.revoke(authorizationId);
-       failedSlots.push({ slotId, personaId, reason: 'unknown persona' });
+       failedSlots.push({ slotId, personaId, reason: boundReason(unknownPersonaMessage(personaId), SLOT_REASON_MAX) });
        continue;
      }
      const bindingFailure = taskBindingFailure(personaId);
@@ -6945,7 +7008,12 @@ export async function launchTeam(
          roster.push(seatRosterEntry({ slotId, label: quantity > 1 ? `${label} ${repeatIndex + 1}` : label }, { fresh: freshSlotIds.has(slotId) }));
          continue;
        }
-       const res = await startWorkerSeat(expectedSlot, false);
+       let res: Result<{ id: string }>;
+       try {
+         res = await startWorkerSeat(expectedSlot, false);
+       } catch (error) {
+         res = { ok: false, code: 'SPAWN_FAILED', message: error instanceof Error ? error.message : String(error) };
+       }
        if (res.ok) {
         launched += 1;
         // quantity>1 → suffix so two tabs of one slot are distinguishable in the
@@ -6959,16 +7027,16 @@ export async function launchTeam(
          const authorizationId = launchAuthorizationBySession.get(res.value.id)!;
          workers.push({ sessionId: res.value.id, cohortId, slotId, personaId, projectId: targetProjectId, authorizationId });
        } else {
-         failedSlots.push({ slotId, personaId, reason: res.message });
+         failedSlots.push({ slotId, personaId, reason: boundReason(res.message, SLOT_REASON_MAX) });
        }
   }
 
   const seatStarter = createSeatStarter({
-    hasStarted: (slotId) => seatLifecycle.hadSession(claim.record.id, slotId),
+    hasStarted: async (slotId) => (structured?.requirePreauthorization === true && await isRespawnSeat(slotId)) || seatLifecycle.hadSession(claim.record.id, slotId),
     mintApproval: async (slotId) => respawnApproval(launchAuthorization, await seatLifecycle.priorApprovalOf(claim.record.id, slotId), seatApprovals.expectedFor(slotId)),
     start: (slotId, approvalId) => startWorkerSeat(expectedSlots.find((candidate) => candidate.slotId === slotId)!, true, approvalId)
   });
-  deferredSeats.register(claim.record.id, [...deferredSlotIds, ...freshSlotIds], createDeferredSeatHooks({
+  deferredSeats.register(claim.record.id, [...deferredSlotIds, ...freshSlotIds, ...expectedSlots.filter((slot) => slot.role === 'worker').map((slot) => slot.slotId)], createDeferredSeatHooks({
     recordId: claim.record.id,
     lifecycle: teamLifecycle,
     startSeat: seatStarter,
@@ -6982,7 +7050,10 @@ export async function launchTeam(
   // Orchestrator LAST, carrying the team prompt + the worker roster. Whether it's
   // a declared slot or a standalone persona id, it opens exactly once here.
   if (orchestratorId && !hasOrchestrator) {
-    failedSlots.push({ slotId: `orchestrator:${orchestratorId}`, personaId: orchestratorId, reason: 'unknown persona' });
+    failedSlots.push({ slotId: `orchestrator:${orchestratorId}`, personaId: orchestratorId, reason: boundReason(unknownPersonaMessage(orchestratorId), SLOT_REASON_MAX) });
+  } else if (coordinationMode === 'structured' && failedSlots.length > 0) {
+    // A structured run cannot finish with a missing worker: do not start the coordinator or dispatch the
+    // seeded plan. With no orchestrator the launch fails below and every started worker is closed.
   } else if (hasOrchestrator && launched < MAX_TABS_PER_LAUNCH) {
     const orchestratorSlotId = `orchestrator:${orchestratorId}`;
     const orchestratorRecovery = recoveryFor(orchestratorSlotId, 'orchestrator', orchestratorId!);
@@ -7042,6 +7113,7 @@ export async function launchTeam(
             recoveryResume: orchestratorRecovery.recoveryResume,
           workUnits: seededWorkUnits,
           transport: planTransport,
+          ...(failedSlots.length ? { failedSlots: [...failedSlots] } : {}),
           ...(planFilePath ? { planFilePath } : {}),
           ...(sourceFilePath ? { sourceFilePath } : {}),
           ...(planCorrectionPending ? { planCorrectionPending } : {})
@@ -7098,27 +7170,49 @@ export async function launchTeam(
         });
       }
     } else {
-      failedSlots.push({ slotId: orchestratorSlotId, personaId: orchestratorId!, reason: res.message });
+      failedSlots.push({ slotId: orchestratorSlotId, personaId: orchestratorId!, reason: boundReason(res.message, SLOT_REASON_MAX) });
     }
     }
   }
 
   const result: LaunchTeamResult = { launchRequestId, launched, cohortId, workers, failedSlots, orchestratorSessionId, workerSessionIds };
-  if (durableCoordination && !orchestratorSessionId) {
-    releaseRunSeats(claim.record.id);
-    await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId);
+  let operationResult: Result<LaunchTeamResult>;
+  try {
+    if (durableCoordination && !orchestratorSessionId) {
+      releaseRunSeats(claim.record.id);
+      await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId);
+    }
+    operationResult = durableCoordination && !orchestratorSessionId
+      ? { ok: false, code: 'TEAM_LAUNCH_FAILED', message: joinedSlotReasons('Team coordinator failed to launch') }
+      : launched === 0 && structured
+      ? { ok: false, code: 'TEAM_LAUNCH_FAILED', message: joinedSlotReasons('team launched no workers') }
+      : { ok: true, value: result };
+    if (!operationResult.ok) {
+      revokeRequestAuthorizations();
+    }
+    if (testFaultActive('launch-complete-throw')) throw new Error('injected launch completion fault');
+    await teamLifecycle.complete(claim.record.id, operationResult, result);
+  } catch (error) {
+    // The launch record could not be finished: every seat this request started is closed by id so no
+    // live session outlives a launch that reports failure, then the original error surfaces.
+    try {
+      revokeRequestAuthorizations();
+      releaseRunSeats(claim.record.id);
+    } catch (releaseError) {
+      logMainError('team launch seat release after failed completion', releaseError);
+    }
+    const survivors = await closeStartedSessionsById([...workerSessionIds, ...(orchestratorSessionId ? [orchestratorSessionId] : [])]);
+    if (survivors.length > 0) logMainError('team launch sessions survived cleanup after failed completion', new Error(`launch ${launchRequestId}: could not confirm closed: ${survivors.join(', ')}`));
+    await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId).catch((cancelError) => logMainError('team launch cleanup after failed completion', cancelError));
+    throw error;
   }
-  const operationResult: Result<LaunchTeamResult> = durableCoordination && !orchestratorSessionId
-    ? { ok: false, code: 'TEAM_LAUNCH_FAILED', message: failedSlots.map((slot) => `${slot.slotId}: ${slot.reason}`).join('; ') || 'Team coordinator failed to launch' }
-    : launched === 0 && structured
-    ? { ok: false, code: 'TEAM_LAUNCH_FAILED', message: failedSlots.map((slot) => `${slot.slotId}: ${slot.reason}`).join('; ') || 'team launched no workers' }
-    : { ok: true, value: result };
-  if (!operationResult.ok) {
-    revokeRequestAuthorizations();
+  // The launch is recorded as complete: a failed read or notify below must not tear it down.
+  try {
+    const lifecycleRecord = await teamLifecycle.get(claim.record.id);
+    if (lifecycleRecord) teamLifecycleIntegration.track(lifecycleRecord);
+  } catch (trackError) {
+    logMainError('team launch tracking after completion', trackError);
   }
-  await teamLifecycle.complete(claim.record.id, operationResult, result);
-  const lifecycleRecord = await teamLifecycle.get(claim.record.id);
-  if (lifecycleRecord) teamLifecycleIntegration.track(lifecycleRecord);
   return operationResult;
 
   /** Withdraw the launch approvals still held by seats that never started (run released its spawner). */
@@ -7561,6 +7655,7 @@ const teamRoutingFor = (teamId: string) => teams.list().find((candidate) => cand
 const globalRoutingEnforcement = () => store.getConfig().teamRoutingEnforcementEnabled === true;
 
 const squadExecutionService = new SquadExecutionService({
+  noTurnWarnWindowMs: testNoTurnWarnWindowMs,
   resolveLaunchOptions: resolveSquadLaunchOptions,
   resolveNamedChecks: resolveSquadNamedChecks,
   runNamedCheck: runSquadNamedCheck,
@@ -7590,6 +7685,7 @@ const squadExecutionService = new SquadExecutionService({
     deliverToWorker: (sessionId, text) => ptys.getSession(sessionId)
       ? workerInjector.deliver(sessionId, text) : replyToSquadMember(sessionId, text),
    spawnDeferredWorker: (recordId, slotId) => deferredSeats.spawn(recordId, slotId),
+   respawnWorker: (recordId, slotId) => workerRespawner.respawn(recordId, slotId),
    recycleSeat: (recordId, slotId) => seatRecycler.recycle(recordId, slotId),
    recordUnitDelivered: seatLifecycle.recordDelivered,
    // Keeps a worker parked on an open blocker out of the idle thread-session sweep (self-expiring timestamp).
@@ -7673,6 +7769,7 @@ const squadExecutionService = new SquadExecutionService({
     await handleSquadTerminalWithReport(record);
   },
   onHumanBlocker: (record, blocker) => squadProposalNotifier.onHumanBlocker(record, blocker),
+  onRunWarning: (record, warning) => squadProposalNotifier.onRunWarning(record, warning),
   clearResumeToken: (projectId, executionId) => executionResumeTokens.clear(projectId, executionId),
   cacheResumeToken: (projectId, executionId, token, expiresAt) => executionResumeTokens.set({ projectId, executionId, token, expiresAt }),
   preflightWorkflow: (teamId, workflow) => {
@@ -7822,12 +7919,14 @@ const squadExecutionService = new SquadExecutionService({
       },
       onError: (source, error) => logMainError(`Team admission ${source} inventory failed`, error)
     });
+    const configuredSlots = team ? expandTeamSlots(team) : [];
     const slotRoutes = (request.resolvedModels ?? []).map((model) => ({
-      slotId: model.slotId, personaId: model.personaId ?? '', provider: model.provider, model: model.model,
-      label: team ? expandTeamSlots(team).find(slot => slot.slotId === model.slotId)?.label : undefined,
-      level: model.level, roleOwnedModel: model.roleOwnedModel, capabilities: model.capabilities,
-      modalities: model.modalities, maxContextBytes: model.maxContextBytes, health: model.health,
-      observedAt: model.observedAt, maxAgeMs: model.maxAgeMs,
+      ...admissionSlotRouteFacts(model, (() => {
+        const slot = configuredSlots.find((candidate) => candidate.slotId === model.slotId);
+        if (!slot) return undefined;
+        const roles = effectiveRoles(slot, personaSnapshot.find((candidate) => candidate.id === slot.personaId));
+        return { ...(slot.label !== undefined ? { label: slot.label } : {}), ...(roles !== undefined ? { roles } : {}) };
+      })()),
       ...slotSkillAllowlistFact(team, personaSnapshot, model.personaId, model.slotId),
       ...slotMcpAllowlistFact(team, personaSnapshot, model.personaId, model.slotId,
         { provider: model.provider, remoteCli: team?.transport !== 'MODERN' && !!project?.remote })
@@ -7956,6 +8055,11 @@ function teamExecutionEnabled(): boolean {
   return config.teamJobLaunchEnabled !== false || config.composerShowAutonomousTeam !== false;
 }
 
+/** Agent-driven `execution.start` names a saved Squad; its saved run limits cap whatever policy the agent asked for. */
+function limitedExecutionService() {
+  return withSquadLimits(squadExecutionService, (teamId) => teams.list().find((candidate) => candidate.id === teamId)?.limits);
+}
+
 const startTriggeredSquad = createTriggeredSquadLauncher({
   projects: store,
   teams,
@@ -7979,6 +8083,10 @@ export async function startTeamJobFromUi(
   const teamId = typeof input.teamId === 'string' ? input.teamId.trim() : '';
   const projectId = typeof input.projectId === 'string' ? input.projectId.trim() : '';
   const originalGoal = typeof input.goal === 'string' ? input.goal.trim() : '';
+  if (input.planText !== undefined && (typeof input.planText !== 'string' || input.planText.length > TEAM_PLAN_TEXT_MAX_CHARS)) {
+    return { ok: false, code: 'INVALID', message: `planText must be a string of at most ${TEAM_PLAN_TEXT_MAX_CHARS} characters` };
+  }
+  const planText = input.planText?.trim() || undefined;
   const coordinationMode = input.coordinationMode ?? 'structured';
   if (coordinationMode !== 'structured' && coordinationMode !== 'freeform') {
     return { ok: false, code: 'INVALID', message: 'invalid Team coordination mode' };
@@ -8045,7 +8153,7 @@ export async function startTeamJobFromUi(
   if (input.previewToken !== undefined) {
     try {
       const caller = sourceContext ? { kind: 'window' as const, windowId: sourceContext.windowId } : { kind: 'shared-owner' as const };
-      const previewInput = { teamId, projectId, goal: originalGoal, coordinationMode, sourceCapabilityIds, ...parsedOptions.data };
+      const previewInput = { teamId, projectId, goal: originalGoal, ...(planText ? { planText } : {}), coordinationMode, sourceCapabilityIds, ...parsedOptions.data };
       composerPreview = await claimSquadComposerPreview(previewInput, input.previewToken, caller);
     } catch (error) {
       if (error instanceof SquadPreviewAdmissionError) return { ok: false, code: 'LAUNCH_CHANGED', message: error.message };
@@ -8062,7 +8170,7 @@ export async function startTeamJobFromUi(
   const renewal = scopedSourceRenewal(executionSources, sourceContext?.windowId, projectId);
   const sources: SquadSourceProvider | undefined = sourceContext ? { kind: 'window', windowId: sourceContext.windowId } : undefined;
   return withRenewedSources(() => withProposalLaunch(proposalLaunchDeps, proposalId, projectId, (proposal, reviewedSourcePaths) => launchSquad(squadLaunchDeps, {
-    teamId, project, slots, goal: originalGoal, coordinationMode, title: originalJobTitle, summary: originalSummary,
+    teamId, project, slots, goal: originalGoal, ...(planText ? { planText } : {}), coordinationMode, title: originalJobTitle, summary: originalSummary,
     completionInboxNotice: true,
     sourceCapabilityIds, goalSources: discoveredGoalSources, reviewedSourcePaths,
     launchOptions: proposal?.launchOptions ?? parsedOptions.data,
@@ -8102,6 +8210,7 @@ const squadLaunchDeps: SquadLaunchDeps = {
   inboxStore,
   planCorrectionLaunchBinding,
   canInferPlanForTeam: (teamId) => { const team = teams.list().find((candidate) => candidate.id === teamId); return !!team && canInferPlanForTeam(team); },
+  teamLimits: (teamId) => teams.list().find((candidate) => candidate.id === teamId)?.limits,
   planFindings: async (projectId, teamId, workUnits) => ({
     findings: (await judgePlanFindings(projectId, teamId, { workUnits })).findings,
     squadName: teams.list().find((candidate) => candidate.id === teamId)?.name ?? teamId
@@ -9213,6 +9322,7 @@ function registerIpc() {
     get overseerAudit() { return overseerAudit; },
     get apiErrorResume() { return apiErrorResume; },
     get squadWorkerRestarter() { return squadWorkerRestarter; },
+    get squadWorkerRespawner() { return workerRespawner; },
     get workerApiErrorRecovery() { return workerApiErrorRecovery; },
     get packAndInstallLocal() { return packAndInstallLocal; },
     get pendingWhatsNew() { return pendingWhatsNew; },
@@ -9235,6 +9345,7 @@ function registerIpc() {
     get restoreSquadWorktreeFollowUpClaim() { return squadFollowUpClaims.restoreClaim; },
     get restorePrincipal() { return restorePrincipal; },
     get runDiskSync() { return runDiskSync; },
+    productServerCredential: ensureProductServerCredential,
     get runtimeSupervisor() { return runtimeSupervisor; },
     ensureMainWindowReady,
     get safeHandle() { return safeHandle; },
@@ -9372,19 +9483,14 @@ function buildAppMenu() {
       ]
     },
     {
+      // role 'window' makes this the macOS windows menu, which lists open windows.
       label: 'Window',
+      role: 'window',
       submenu: [
         { role: 'minimize' },
         companionHost.menuItem(),
         { role: 'zoom' },
-        ...(isMac
-          ? ([
-              { type: 'separator' as const },
-              { role: 'front' as const },
-              { type: 'separator' as const },
-              { role: 'window' as const }
-            ] satisfies Electron.MenuItemConstructorOptions[])
-          : ([{ role: 'close' as const }] satisfies Electron.MenuItemConstructorOptions[]))
+        ...windowMenuTail(isMac)
       ]
     },
     {
@@ -10575,7 +10681,7 @@ async function bootstrapNormal() {
     cancelTeamLaunch: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? cancelTeamLaunch : undefined,
     getTeamLaunch: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? getTeamLaunch : undefined,
     reportTeamTask: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? reportTeamTask : undefined,
-    executionService: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? squadExecutionService : undefined,
+    executionService: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? limitedExecutionService() : undefined,
     executionHandoffs: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? executionHandoffs : undefined,
     resolveExecutionLaunchApproval: resolveTeamLaunchApproval,
     resolveExecutionCohortBinding: async (sessionId, projectId, fence) => {

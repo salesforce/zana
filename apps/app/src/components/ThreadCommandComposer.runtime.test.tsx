@@ -15,13 +15,15 @@ import { Schema } from '@tiptap/pm/model';
 import { EditorState } from '@tiptap/pm/state';
 import { PluginAssistantPageContext } from '../plugins/plugin-assistant-context.js';
 import type { PluginPageContext } from '@zana-ai/zcc-domain/thread-runtime';
+import { getBasicUiMode, setBasicUiMode } from '../lib/basic-ui.js';
 
 const h = vi.hoisted(() => {
   const provider = { id: 'codex', displayName: 'Codex', permissionModes: ['full'], composerActions: ['plan'] };
   return {
-    compact: false,
+    compact: false, nativeDiscovery: false, setPermission: vi.fn(),
     foreignLocation: false,
     locationProps: null as any,
+    basicProjectProps: null as any,
     extraProjects: [] as Project[],
     project: { id: 'p1', name: 'Project', path: '/tmp/project' } as Project,
     text: 'Draft',
@@ -52,7 +54,7 @@ const h = vi.hoisted(() => {
       refreshAcpModeOptions: vi.fn(), refreshModels: vi.fn(),
       resetForNewThread: vi.fn(), useDefaultProvider: vi.fn(), providerSelectionSource: 'default'
     },
-    permissionError: undefined as string | undefined, rememberSendMode: vi.fn(),
+    permissionError: undefined as string | undefined, rememberSendMode: vi.fn(), nativeDiscovery: false, setPermission: vi.fn(),
     clear: vi.fn(), insertText: vi.fn(), removeAttachment: vi.fn(),
     send: vi.fn(async () => undefined),
     create: vi.fn(async (): Promise<{ ok: boolean; value: { id: string }; message?: string }> => ({ ok: true, value: { id: 'created' } })),
@@ -69,8 +71,8 @@ const h = vi.hoisted(() => {
 
 vi.mock('../store.js', () => ({
   useData: (select: (state: unknown) => unknown) => select({ projects: [h.project, ...h.extraProjects], lastProjectId: 'p1',
-    loadProjects: h.loadProjects, defaultHarness: 'codex', composerSendMode: 'queue-if-active',
-    setComposerSendMode: h.rememberSendMode, nativeAgentDiscoveryEnabled: false }),
+    loadProjects: h.loadProjects, defaultHarness: 'codex', defaultThreadProviderId: 'codex', composerSendMode: 'queue-if-active',
+    setComposerSendMode: h.rememberSendMode, nativeAgentDiscoveryEnabled: h.nativeDiscovery }),
   useUi: Object.assign((select: (state: unknown) => unknown) => select({ selectedProjectId: 'p1' }),
     { getState: () => ({ appendHostInstallLogs: h.appendLogs, setHostInstallDrawerOpen: h.setDrawerOpen }) })
 }));
@@ -80,7 +82,7 @@ vi.mock('../lib/product-client.js', () => ({ product: {
   hosts: { bootstrap: h.bootstrap, repair: h.repair, updateSshIdentity: h.updateSsh },
   threads: { send: h.send, create: h.create, promptHistory: h.promptHistory, compact: vi.fn(), stop: vi.fn() }
 } }));
-vi.mock('../hooks/useHosts.js', () => ({ defaultHostId: () => 'host1', useHosts: () => h.hosts }));
+vi.mock('../hooks/useHosts.js', () => ({ defaultHostId: (_hosts: unknown, project?: Project) => project?.hostId ?? 'host1', useHosts: () => h.hosts }));
 vi.mock('../hooks/useRouteState.js', () => ({ useRouteState: () => ({ isProjectFocused: false }) }));
 vi.mock('../hooks/usePublicAppUrl.js', () => ({ usePublicAppUrl: () => null }));
 vi.mock('../hooks/useCompactLayout.js', () => ({ useCompactLayout: () => h.compact }));
@@ -93,7 +95,7 @@ vi.mock('./composer-host-status.js', () => ({
   bootstrapOutcome: vi.fn(), composerBootstrapErrorMessage: vi.fn()
 }));
 vi.mock('./thread/pickers/useThreadComposerOptions.js', () => ({ useThreadComposerOptions: (args: typeof h.optionsArgs) => { h.optionsArgs = args; return h.options; } }));
-vi.mock('./thread/pickers/useThreadPermissionMode.js', () => ({ useThreadPermissionMode: () => ({ permissionMode: 'full', setPermissionMode: vi.fn(), selectionError: h.permissionError }) }));
+vi.mock('./thread/pickers/useThreadPermissionMode.js', () => ({ useThreadPermissionMode: () => ({ permissionMode: 'full', setPermissionMode: h.setPermission, selectionError: h.permissionError }) }));
 vi.mock('./composer/use-composer-provider-cli.js', () => ({ useComposerProviderCli: () => ({ blocked: h.cliBlocked }) }));
 vi.mock('./composer/useMobileComposerExpansion.js', () => ({ useMobileComposerExpansion: () => undefined }));
 vi.mock('./composer/use-composer-prompt-field.js', () => ({
@@ -129,21 +131,43 @@ vi.mock('./ComposerHostActionChip.js', () => ({ ComposerHostActionChip: ({ onAct
     {onCopyPairing ? <button onClick={onCopyPairing}>copy</button> : null}</> }));
 vi.mock('./ComposerRemoteHostBadge.js', () => ({ ComposerRemoteHostBadge: () => null }));
 vi.mock('./ComposerProjectPicker.js', () => ({ ComposerProjectPicker: (props: any) => { h.locationProps = props; return null; } }));
+vi.mock('./basic/BasicProjectPicker.js', () => ({ BasicProjectPicker: (props: any) => {
+  h.basicProjectProps = props;
+  return <button aria-label="Project">{props.pinned?.name ?? props.projects.find((project: Project) => project.id === props.value)?.name}</button>;
+} }));
 vi.mock('./thread/ThreadContextMeter.js', () => ({ ThreadContextMeter: () => null }));
 vi.mock('./ui/PopoverPicklist.js', () => ({ PopoverPicklist: () => null }));
 vi.mock('./thread/pickers/ComposerModePicker.js', () => ({ ComposerModePicker: ({ onChange, value }: { onChange: (mode: string) => void; value: string }) =>
   <button data-mode={value} onClick={() => onChange('plan')}>Plan mode</button> }));
-vi.mock('./thread/pickers/ModelReasoningPicker.js', () => ({ ModelReasoningPicker: ({ onReloadModels }: { onReloadModels: () => void }) =>
-  <button onClick={onReloadModels}>Reload models</button> }));
+vi.mock('./thread/pickers/ModelReasoningPicker.js', () => ({ ModelReasoningPicker: ({ onReloadModels, onUseDefaultProvider }: { onReloadModels: () => void; onUseDefaultProvider?: () => void }) =>
+  <><button onClick={onReloadModels}>Reload models</button>{onUseDefaultProvider && <button onClick={onUseDefaultProvider}>Use default harness</button>}</> }));
 vi.mock('./thread/pickers/ReasoningEffortPicker.js', () => ({ ReasoningEffortPicker: () => null }));
+// Desktop renders mode and send mode inside the settings pill; expose the
+// same controls the compact pickers provide so both layouts share assertions.
+vi.mock('./composer/ComposerSettingsPill.js', () => ({ ComposerSettingsPill: ({ groups }: { groups: Array<{ id: string; value: string; onChange: (v: string) => void }> }) => {
+  const mode = groups.find((g) => g.id === 'mode')!;
+  const send = groups.find((g) => g.id === 'send-mode')!;
+  const rest = (groups as Array<{ id: string; label: string; value: string; hint?: string; choices: Array<{ value: string; label: string }>; onChange: (v: string) => void; action?: { label: string; onClick: () => void } }>)
+    .filter((g) => g.id === 'reasoning' || g.id === 'permission');
+  return <>
+    <button data-mode={mode.value} onClick={() => mode.onChange('plan')}>Plan mode</button>
+    <button data-send-mode={send.value} data-hint={(send as { hint?: string }).hint} onClick={() => send.onChange('steer')}>Send mode</button>
+    {rest.map((g) => <button key={g.id} data-value={g.value} data-choices={g.choices.map((c) => `${c.value}:${c.label}`).join(',')}
+      onClick={() => g.onChange(g.choices.at(-1)?.value ?? '')}>{g.label}</button>)}
+    {(mode as { action?: { label: string; onClick: () => void } }).action
+      ? <button onClick={(mode as { action: { onClick: () => void } }).action.onClick}>{(mode as { action: { label: string } }).action.label}</button> : null}
+  </>;
+} }));
 vi.mock('./thread/pickers/ComposerSendModePicker.js', () => ({ ComposerSendModePicker: ({ onChange, value }: { onChange: (mode: string) => void; value: string }) =>
   <button data-send-mode={value} onClick={() => onChange('steer')}>Send mode</button> }));
 
 beforeEach(() => {
   resetComposerSessions();
+  setBasicUiMode('advanced');
   vi.clearAllMocks();
-  h.compact = false;
-  h.extraProjects = []; h.locationProps = null; h.foreignLocation = false;
+  h.compact = false; h.nativeDiscovery = false;
+  h.options.reasoningLevel = 'high'; (h.options as { reasoningOptions: unknown[] }).reasoningOptions = [];
+  h.extraProjects = []; h.locationProps = null; h.basicProjectProps = null; h.foreignLocation = false;
   h.references = undefined; h.promptHistory.mockResolvedValue({entries: []});
   h.text = 'Draft'; h.images = []; h.attachments = []; h.editor.isDestroyed = false;
   const schema = new Schema({ nodes: { doc: { content: 'paragraph+' }, paragraph: { content: 'text*' }, text: {} } });
@@ -155,6 +179,7 @@ beforeEach(() => {
   h.voice.state = 'idle'; h.voice.canRetry = false; h.frozenSend = null;
   h.options.provider = { id: 'codex', displayName: 'Codex', permissionModes: ['full'], composerActions: ['plan'] };
   h.options.providerId = 'codex';
+  h.options.providerSelectionSource = 'default';
   h.options.providers = [h.options.provider];
   h.permissionError = undefined; h.options.selectionError = undefined; h.options.catalogSettled = true;
   h.options.rosterReady = true; h.options.serviceTierOptions = undefined; h.options.registeredProviderIds = ['codex'];
@@ -696,6 +721,35 @@ describe('Modern composer draft session', () => {
     expect(screen.getByRole('button', { name: 'Send mode' }).getAttribute('data-send-mode')).toBe('steer');
   });
 
+  it('wires thinking, permission and role refresh through the settings pill', () => {
+    h.nativeDiscovery = true;
+    h.options.provider = { id: 'codex', displayName: 'Codex', permissionModes: ['accept-edits', 'full'], composerActions: ['plan'] };
+    h.options.reasoningLevel = 'max';
+    (h.options as { reasoningOptions: unknown[] }).reasoningOptions = [
+      { value: 'low', label: 'low' }, { value: 'high', label: 'high' }, { value: 'max', label: 'max' }];
+    render(composer());
+    const thinking = screen.getByRole('button', { name: 'Thinking effort' });
+    expect(thinking.getAttribute('data-value')).toBe('high');
+    expect(thinking.getAttribute('data-choices')).toBe('low:Low,high:High');
+    fireEvent.click(thinking);
+    expect(h.options.setReasoningLevel).toHaveBeenCalledWith('high');
+    const permission = screen.getByRole('button', { name: 'Permission mode' });
+    expect(permission.getAttribute('data-choices')).toContain('full:');
+    fireEvent.click(permission);
+    expect(h.setPermission).toHaveBeenCalledWith('full');
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh roles' }));
+    expect(h.options.refreshAcpModeOptions).toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Send mode' }).getAttribute('data-hint')).toBeTruthy();
+  });
+
+  it('keeps an unknown reasoning label and hides a single permission choice', () => {
+    h.options.reasoningLevel = 'max';
+    (h.options as { reasoningOptions: unknown[] }).reasoningOptions = [{ value: 'max', label: 'max' }];
+    render(composer());
+    expect(screen.getByRole('button', { name: 'Thinking effort' }).getAttribute('data-value')).toBe('max');
+    expect(screen.getByRole('button', { name: 'Permission mode' }).getAttribute('data-choices')).toBe('');
+  });
+
   it('falls back to the default mode when a hydrated thread mode stops being offered', () => {
     h.options.acpMode = 'plan';
     const view = render(composer());
@@ -778,6 +832,131 @@ describe('machine and project selection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(h.create).toHaveBeenCalled());
     expect((h.create.mock.calls as unknown[][])[0][0]).toEqual(expect.objectContaining({ projectId: 'p1', hostId: 'remote' }));
+  });
+});
+
+describe('Basic composer presentation and launch scope', () => {
+  it('uses the merged composer controls with simple project context on a fresh Basic chat', async () => {
+    setBasicUiMode('basic');
+    render(composer({ project: undefined, threadId: undefined }));
+    expect(screen.getByRole('button', { name: 'Project' }).textContent).toBe('Project');
+    expect(screen.getByTestId('plugin-chrome').getAttribute('data-create-plugin')).toBe('false');
+    expect(screen.queryByTestId('thread-default-hint')).toBeNull();
+    expect(h.locationProps).toBeNull();
+    for (const name of ['Composer options']) expect(screen.queryByRole('button', { name })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Reload models' }));
+    expect(h.options.refreshModels).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('button', { name: 'Continue in Advanced' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(h.create).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'p1', hostId: 'host1', environment: { kind: 'unmanaged' } })));
+  });
+
+  it('keeps existing-thread scope and draft intact across presentation switches', async () => {
+    const view = render(composer());
+    const advancedScope = { ...h.optionsArgs };
+    act(() => setBasicUiMode('basic'));
+    expect(screen.queryByTestId('thread-env-label')).toBeNull();
+    expect(screen.queryByTestId('host-action')).toBeNull();
+    expect(h.optionsArgs).toEqual(advancedScope);
+    expect(h.send).not.toHaveBeenCalled(); expect(h.create).not.toHaveBeenCalled(); expect(h.clear).not.toHaveBeenCalled();
+    expect(h.text).toBe('Draft');
+    act(() => setBasicUiMode('advanced'));
+    expect(screen.getByTestId('thread-env-label')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Send mode' })).toBeTruthy();
+    act(() => setBasicUiMode('basic'));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(h.send).toHaveBeenCalledWith('t1', expect.anything(), expect.anything(), expect.objectContaining({ model: 'model-a', reasoningLevel: 'high', permissionMode: 'full' })));
+    view.unmount();
+  });
+
+  it('selects a registered remote project with its bound target and preserves the draft', async () => {
+    const remote = { id: 'remote-project', name: 'Website', hostId: 'remote-host', path: '/website', remote: { host: 'build.example', remotePath: '/website' } } as Project;
+    h.extraProjects = [remote];
+    setBasicUiMode('basic');
+    render(composer({ project: undefined, threadId: undefined }));
+    act(() => h.basicProjectProps.onChange(remote));
+    expect(h.basicProjectProps.value).toBe(remote.id);
+    expect(screen.queryByRole('button', { name: 'Continue in Advanced' })).toBeNull();
+    expect(h.clear).not.toHaveBeenCalled(); expect(h.text).toBe('Draft');
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(h.create).toHaveBeenCalledWith(expect.objectContaining({ projectId: remote.id, hostId: remote.hostId, cwd: remote.path })));
+  });
+
+  it.each(['worktree', 'personal'] as const)('keeps a saved %s launch in Advanced without submitting or rewriting it in Basic', async kind => {
+    const session = composerSession('advanced-draft');
+    session.setSetting('modern.workspace.p1', { kind });
+    const tree = <MemoryRouter><ComposerDraftProvider sessionKey="advanced-draft"><ThreadCommandComposer project={h.project} /></ComposerDraftProvider></MemoryRouter>;
+    render(tree);
+    const settings = { ...session.getSnapshot().settings };
+    act(() => setBasicUiMode('basic'));
+    expect(screen.getByRole('status').textContent).toContain('custom working location');
+    expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(true);
+    await act(async () => h.fieldArgs!.onSubmit());
+    expect(h.create).not.toHaveBeenCalled(); expect(h.clear).not.toHaveBeenCalled();
+    expect(session.getSnapshot().settings).toEqual(settings);
+    fireEvent.click(screen.getByRole('button', { name: 'Continue in Advanced' }));
+    expect(getBasicUiMode()).toBe('advanced');
+    expect(session.getSnapshot().settings).toEqual(settings);
+    expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(false);
+  });
+
+  it('does not silently move a saved Default Project draft from its alternate machine', async () => {
+    h.project.quickAgent = true; h.foreignLocation = true;
+    setBasicUiMode('basic');
+    render(composer({ project: undefined, threadId: undefined, composerProjectId: 'p1', initialHostId: 'remote' }));
+    act(() => h.basicProjectProps.onChange(h.project));
+    expect(h.optionsArgs?.hostId).toBe('remote');
+    expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(true);
+    await act(async () => h.fieldArgs!.onSubmit());
+    expect(h.create).not.toHaveBeenCalled(); expect(h.clear).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue in Advanced' }));
+    expect(h.locationProps.hostId).toBe('remote');
+  });
+
+  it('offers setup in Advanced when the current target is unavailable, without running hidden repair actions', async () => {
+    h.hostBlocked = true; h.hostAction = { kind: 'blocked', reason: 'Machine unavailable' };
+    setBasicUiMode('basic');
+    render(composer());
+    expect(screen.getByRole('status').textContent).toContain('needs setup in Advanced');
+    expect(screen.queryByTestId('host-action')).toBeNull();
+    await act(async () => h.fieldArgs!.onSubmit());
+    expect(h.send).not.toHaveBeenCalled(); expect(h.bootstrap).not.toHaveBeenCalled(); expect(h.repair).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue in Advanced' }));
+    expect(screen.getByTestId('host-action')).toBeTruthy();
+    expect(h.text).toBe('Draft');
+  });
+
+  it('blocks the voice-send path for saved advanced launch locations', () => {
+    const session = composerSession('voice-advanced');
+    session.setSetting('modern.workspace.p1', { kind: 'personal' });
+    h.voice.state = 'recording';
+    setBasicUiMode('basic');
+    render(<MemoryRouter><ComposerDraftProvider sessionKey="voice-advanced"><ThreadCommandComposer project={h.project} /></ComposerDraftProvider></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'Transcribe and send recording' }));
+    expect(h.voice.stop).not.toHaveBeenCalled(); expect(h.create).not.toHaveBeenCalled();
+  });
+
+  it.each(['provider', 'permission', 'installation'] as const)('offers Advanced to repair unavailable %s settings without changing them', async kind => {
+    if (kind === 'provider') h.options.selectionError = 'Saved provider is unavailable';
+    if (kind === 'permission') h.permissionError = 'Saved permission is unavailable';
+    if (kind === 'installation') h.cliBlocked = true;
+    setBasicUiMode('basic');
+    render(composer({ threadId: undefined }));
+    expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(true);
+    await act(async () => h.fieldArgs!.onSubmit());
+    expect(h.create).not.toHaveBeenCalled(); expect(h.options.setProviderId).not.toHaveBeenCalled();
+    expect(h.clear).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue in Advanced' }));
+    expect(getBasicUiMode()).toBe('advanced');
+  });
+
+  it('keeps terminal execution in Advanced when the command is typed in Basic', async () => {
+    h.text = '/terminal ls'; setBasicUiMode('basic');
+    const onRunTerminal = vi.fn();
+    render(composer({ onRunTerminal }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(screen.getByTestId('thread-command-error').textContent).toBe('Open Advanced to run terminal commands.'));
+    expect(onRunTerminal).not.toHaveBeenCalled(); expect(h.send).not.toHaveBeenCalled(); expect(h.clear).not.toHaveBeenCalled();
   });
 });
 
@@ -867,4 +1046,13 @@ describe('context snapshot history and submission', () => {
     fireEvent.click(screen.getByRole('button', {name: 'Send'}));
     await waitFor(() => expect(h.create).toHaveBeenCalledWith(expect.objectContaining({input: [expect.objectContaining({text, references: input[0].references})]})));
   });
+});
+
+it('can restore the default harness on a new chat after a manual selection', () => {
+  h.options.providerSelectionSource = 'choice';
+  const view = render(composer({ threadId: undefined }));
+  fireEvent.click(screen.getByRole('button', { name: 'Use default harness' }));
+  expect(h.options.useDefaultProvider).toHaveBeenCalledOnce();
+  view.rerender(composer({ threadId: 'existing' }));
+  expect(screen.queryByRole('button', { name: 'Use default harness' })).toBeNull();
 });

@@ -1,3 +1,4 @@
+import { createUiSendVerifier, desktopRpcDigest } from '@zana-ai/zcc-server/http/ui-send-proof';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   listPluginAppsFromProductServer,
@@ -230,4 +231,18 @@ describe('plugin-apps product-server fallback', () => {
     );
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/api/v1/plugin-apps/pr-monitor/settings');
   });
+});
+
+it('binds the desktop loopback proof to this RPC and blocks redirects', async () => {
+  const secret = 'fixture-only signing key at least 32 bytes';
+  const verify = createUiSendVerifier(secret);
+  const fetchMock = vi.fn(async (_url: URL, init: RequestInit) => {
+    expect(init.redirect).toBe('error');
+    const body = JSON.parse(init.body as string);
+    const proof = new Headers(init.headers).get('x-zcc-desktop-rpc');
+    expect(verify(proof,'demo',desktopRpcDigest(body.method,body.args),'plugin-desktop')).toBe(true);
+    return Response.json({value:[]});
+  });
+  vi.stubGlobal('fetch',fetchMock);
+  await callPluginRpcOnProductServer('demo','desktop.list',undefined,'http://localhost/',() => secret);
 });

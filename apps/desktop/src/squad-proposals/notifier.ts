@@ -25,6 +25,12 @@ export interface SquadProposalNotifierDeps extends PtyReportQueueDeps {
   log(message: string, error?: unknown): void;
 }
 
+export interface SquadRunWarning {
+  slotId: string;
+  summary: string;
+  kind: 'worker-exit' | 'worker-no-turn' | 'worker-respawn';
+}
+
 /**
  * `[Squad report]` delivery to the conversation a run reports to: the agent that owns it
  * (`execution.start`) or the one that proposed it (the Inbox card).
@@ -37,6 +43,11 @@ export interface SquadProposalNotifier {
    */
   onTerminal(record: ExecutionRecord, opts?: { worktree?: SquadWorktreeOutcome }): Promise<void>;
   onHumanBlocker(record: ExecutionRecord, blocker: Blocker): Promise<void>;
+  /**
+   * A worker exited non-zero or took no turn. Posts one Inbox row (a SIGNAL report, deduped per run, slot and
+   * kind) so the failure reaches the user even when the run's conversation is gone. Never throws.
+   */
+  onRunWarning(record: ExecutionRecord, warning: SquadRunWarning): Promise<void>;
   onState(sessionId: string, state: AgentState): void;
   forget(sessionId: string): void;
   dispose(): void;
@@ -104,7 +115,7 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
   }
 
   /** An Inbox entry carrying a report's text for the run's project; false when it could not be written. */
-  async function postEntry(kind: 'result' | 'blocker', record: ExecutionRecord, subject: string, text: string, dedupeKey: string): Promise<boolean> {
+  async function postEntry(kind: 'result' | 'blocker' | 'warning', record: ExecutionRecord, subject: string, text: string, dedupeKey: string): Promise<boolean> {
     try {
       await deps.appendInbox({
         projectId: record.projectId,
@@ -130,6 +141,15 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
   /** The Inbox copy of a human blocker whose conversation is gone, so the question still reaches the user. */
   const postBlocker = (record: ExecutionRecord, blocker: Blocker, text: string): Promise<boolean> =>
     postEntry('blocker', record, `Squad needs an answer: ${record.jobTitle}`, text, `squad-proposal-blocker:${record.id}:${blocker.id}`);
+
+  /** The Inbox row for a worker warning; the dedupe key keeps a repeated warning for one slot to one row. */
+  async function onRunWarning(record: ExecutionRecord, warning: SquadRunWarning): Promise<void> {
+    if (disposed || !record) return;
+    await postEntry(
+      'warning', record, `Squad worker needs attention: ${record.jobTitle}`, warning.summary,
+      `squad-worker-warning:${record.id}:${record.attempt}:${warning.slotId}:${warning.kind}`
+    );
+  }
 
   /**
    * Runs once the report is delivered or dropped for good. The run is marked reported only
@@ -352,6 +372,7 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
   return {
     onTerminal,
     onHumanBlocker,
+    onRunWarning,
     onState(sessionId, state) { if (!disposed) ptyQueue.flush(sessionId, state); },
     forget(sessionId) { ptyQueue.forget(sessionId); },
     dispose() {

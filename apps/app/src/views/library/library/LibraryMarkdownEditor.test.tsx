@@ -1,17 +1,15 @@
 /**
  * @vitest-environment happy-dom
  */
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import {
-  LibraryMarkdownBubbleToolbar,
+  LibraryMarkdownToolbar,
   LibraryMarkdownEditor,
   shouldShowLibraryBubble
 } from './LibraryMarkdownEditor.js';
+import type { Editor } from '@tiptap/core';
 import { createLibraryMarkdownEditor } from './library-markdown.js';
 
 beforeAll(() => {
@@ -42,11 +40,11 @@ async function waitFor(predicate: () => boolean, label: string, timeoutMs = 2000
   }
 }
 
-function Harness({ initial }: { initial: string }) {
+function Harness({ initial, onEditor }: { initial: string; onEditor?: (editor: Editor | null) => void }) {
   const [value, setValue] = useState(initial);
   return (
     <>
-      <LibraryMarkdownEditor value={value} onChange={setValue} autofocus />
+      <LibraryMarkdownEditor value={value} onChange={setValue} onEditor={onEditor} autofocus />
       <pre data-testid="draft">{value}</pre>
       <button type="button" data-testid="replace" onClick={() => setValue(`${FRONT_MATTER}# Replaced\n`)}>
         Replace
@@ -71,25 +69,22 @@ describe('LibraryMarkdownEditor', () => {
     container = null;
   });
 
-  function mount(initial = INITIAL) {
+  function mount(initial = INITIAL, onEditor?: (editor: Editor | null) => void) {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
     act(() => {
-      root!.render(<Harness initial={initial} />);
+      root!.render(<Harness initial={initial} onEditor={onEditor} />);
     });
     return container;
   }
 
-  it('wires a bubble toolbar and markdown contentType without the deprecated TipTap 2 plugin', () => {
-    const source = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), 'LibraryMarkdownEditor.tsx'),
-      'utf8'
-    );
-    expect(source).toContain('BubbleMenu');
-    expect(source).toContain("contentType: initial.body ? 'markdown' : 'json'");
-    expect(source).toContain('toggleTaskList');
-    expect(source).not.toContain('tiptap-markdown');
+  it('provides one accessible editing surface for the entire document', async () => {
+    const el = mount();
+    await waitFor(() => Boolean(el.querySelector('[role="textbox"]')), 'document editor');
+    expect(el.querySelectorAll('[role="textbox"]')).toHaveLength(1);
+    expect(el.querySelector('[role="textbox"]')?.getAttribute('aria-label')).toBe('Document content');
+    expect(el.querySelector('[role="textbox"]')?.textContent).toContain('Hello world');
   });
 
   it('hides front-matter, keeps it on parent edits, and reloads when the parent value changes', async () => {
@@ -126,6 +121,25 @@ describe('LibraryMarkdownEditor', () => {
     });
     await flush();
     expect(el.querySelector('[data-testid="draft"]')?.textContent?.startsWith('---')).toBe(true);
+  });
+
+  it('preserves surrounding source, the live editor and its caret on parent acknowledgements', async () => {
+    const source = `${FRONT_MATTER}# Heading ##\n\nHello _world_.\n\n<!-- keep -->\n`;
+    const current: { editor: Editor | null } = { editor: null };
+    const el = mount(source, editor => { current.editor = editor; });
+    await waitFor(() => Boolean(current.editor), 'editor');
+    const editor = current.editor!;
+    let from = 0;
+    editor.state.doc.descendants((node, pos) => { if (node.text === 'Hello ') from = pos; });
+    await act(async () => { editor.commands.setTextSelection(from); editor.commands.insertContent('New '); });
+    expect(el.querySelector('[data-testid="draft"]')?.textContent).toBe(source.replace('Hello _world_.', 'New Hello *world*.'));
+    expect(current.editor).toBe(editor);
+    expect(editor.state.selection.from).toBe(from + 4);
+    expect(editor.can().undo()).toBe(true);
+    await act(async () => { editor.commands.undo(); });
+    expect(el.querySelector('[data-testid="draft"]')?.textContent).toBe(source);
+    await act(async () => { (el.querySelector('.library-md-editor') as HTMLElement).dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); });
+    expect(editor.state.selection.$from.parent.textContent).toContain('<!-- keep -->');
   });
 
   it('formats a selection from the bubble toolbar and hides the menu for an empty caret', async () => {
@@ -165,7 +179,7 @@ describe('LibraryMarkdownEditor', () => {
       document.body.appendChild(container);
       root = createRoot(container);
       act(() => {
-        root!.render(<LibraryMarkdownBubbleToolbar editor={editor} />);
+        root!.render(<LibraryMarkdownToolbar editor={editor} />);
       });
       const bold = container.querySelector('[aria-label="Bold"]') as HTMLButtonElement;
       await act(async () => {

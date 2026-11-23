@@ -2,9 +2,12 @@ import { PeerMessageReviews } from '../../components/thread/timeline/PeerMessage
 import { subscribeProductReconnect } from '../../lib/product-ws.js';
 import { ArchivedThreadBanner } from '../../components/history/ArchivedThreadBanner.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { PanelBottom, PanelRight } from 'lucide-react';
+import { isBasicUiRouteSupported, setBasicUiMode, useBasicUi } from '../../lib/basic-ui.js';
+import '../../components/basic/basic-conversation.css';
+import { useBasicPanelLayout } from '../../hooks/useBasicPanelLayout.js';
 import type { ActiveThinking, ThreadTimelineGoal, ThreadTimelineModelFallback, ThreadTimelinePendingTodos } from '@zana-ai/zcc-domain/thread-runtime';
 import { mergeTimelinePages, type ThreadContextWindowUsage, type TimelineRow } from '@zana-ai/zcc-server-contract';
 import { type TimelineViewWorkflowWorkRow } from '@zana-ai/zcc-thread-view';
@@ -68,7 +71,8 @@ import { PluginTabDeck } from '../../components/thread/secondary-panel/PluginTab
 import { ThreadPluginTab } from '../../components/thread/secondary-panel/ThreadPluginTab.js';
 import { ThreadExplorerTab } from '../../components/thread/secondary-panel/ThreadExplorerTab.js';
 import { ThreadInboxTab } from '../../components/thread/secondary-panel/ThreadInboxTab.js';
-import { PluginThreadHeaderActions } from '../../plugins/PluginThreadHeaderActions.js';
+import { openPluginThreadPanel } from '../../plugins/plugin-thread-panel.js';
+import { PluginOwnedThreadTitle, PluginThreadHeaderActions } from '../../plugins/PluginThreadHeaderActions.js';
 import { ThreadPanelOwnerProvider } from '../../plugins/thread-panel-owner.js';
 import type { ThreadChatMessageAction } from '@zana-ai/zcc-plugin-sdk/app';
 import { copyText } from '../../components/thread/secondary-panel/threadSecondaryPanelLogic.js';
@@ -108,7 +112,6 @@ import {
   loadThreadDetailProgressively,
   resolveThreadDetailStatus,
   resolveTimelinePollRows,
-  shouldClearPlaceholderStartingStatus,
   threadDetailLoadError
 } from './thread-detail-load.js';
 
@@ -130,7 +133,7 @@ export function ThreadDetail(props: ThreadDetailProps) {
   const detached = useThreadDetached(props.threadId);
   const projectId = useThreads((s) => s.threads.find((row) => row.id === props.threadId)?.projectId ?? null);
   if (detached) return <DetachedThread threadId={props.threadId} projectId={projectId} />;
-  return <ThreadDetailBody {...props} />;
+  return <ThreadDetailBody key={props.threadId} {...props} />;
 }
 
 function ThreadDetailBody({
@@ -162,6 +165,9 @@ function ThreadDetailBody({
   includePluginMessageActions?: boolean;
 }) {
   const navigate = useNavigate();
+  const basic = useBasicUi();
+  const location = useLocation();
+  const basicRouteHidden = basic && !isBasicUiRouteSupported(location.pathname);
   const route = useRouteState();
   const upsertThread = useThreads((s) => s.upsert);
   const childThreads = useThreads(useShallow(({ threads }) => pendingChildThreads(threads, threadId)));
@@ -175,14 +181,22 @@ function ThreadDetailBody({
   const hostedSecondary = pane?.secondaryPanelHost != null;
   const viewRef = useRef<HTMLElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
+  const basicCompact = useBasicPanelLayout(viewRef, basic);
   const panel = useThreadSecondaryPanel(threadId, {
     modal,
     getContainerWidthPx: () => viewRef.current?.clientWidth ?? 0
   });
+  const wasBasicPanelOpen = useRef(false);
+  useEffect(() => {
+    if (basic && wasBasicPanelOpen.current && !panel.state.isOpen) {
+      mainRef.current?.querySelector<HTMLButtonElement>('[data-testid="thread-secondary-show"]')?.focus({ preventScroll: true });
+    }
+    wasBasicPanelOpen.current = basic && panel.state.isOpen;
+  }, [basic, panel.state.isOpen]);
   const dockEnabled = useData(s => s.dockableThreadToolsEnabled) === true && !compact && showSecondaryPanel;
   const toolDock = useThreadToolDock(threadId, panel.state, dockEnabled);
   const [draggedTool, setDraggedTool] = useState<string | null>(null);
-  useEffect(() => { setDraggedTool(null); }, [threadId, dockEnabled]);
+  useEffect(() => { setDraggedTool(null); }, [threadId, dockEnabled, basic]);
   const moveTool = (id: string, side: ToolDockSide) => {
     toolDock.move(id, side);
     if (side === 'right') {
@@ -232,8 +246,8 @@ function ThreadDetailBody({
     activateTab: activateTool,
     addTab: (tab) => panel.addTab(tab)
   });
-  const [title, setTitle] = useState('Agent');
-  const [status, setStatus] = useState('starting');
+  const [title, setTitle] = useState('');
+  const [status, setStatus] = useState('');
   const [cwd, setCwd] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
   const project = useData((s) => (projectId ? s.projects.find((row) => row.id === projectId) ?? null : null));
@@ -265,6 +279,7 @@ function ThreadDetailBody({
   const [backgroundCommands, setBackgroundCommands] = useState<TimelineViewWorkflowWorkRow[]>([]);
   const [modelFallback, setModelFallback] = useState<ThreadTimelineModelFallback | null>(null);
   const [parentThreadId, setParentThreadId] = useState<string | null>(null);
+  const [pluginOwner, setPluginOwner] = useState<{ threadId: string; id: string } | null>(null);
   const [originKind, setOriginKind] = useState<string | null>(null);
   const [promptMode, setPromptMode] = useState<{ mode: string; prompt?: string } | null>(null);
   const [executionModeRequested, setExecutionModeRequested] = useState<string | null>(null);
@@ -304,7 +319,6 @@ function ThreadDetailBody({
   const loadedRef = useRef(false);
   const loadedThreadRef = useRef<string | null>(null);
   const olderLoadRef = useRef<AbortController | null>(null);
-  const hadThreadRecordRef = useRef(false);
   const runLoadRef = useRef<() => void>(() => {});
   useThreadOpenFileSignal({
     threadId,
@@ -330,6 +344,7 @@ function ThreadDetailBody({
     const withOptimistic = mergeOptimisticTimelineRows(rows, optimisticRow);
     return mergePendingStopRow(withOptimistic, { threadId, isStopping, stoppingAnchorAt });
   }, [isStopping, optimisticRow, rows, stoppingAnchorAt, threadId]);
+  const openingThread = timelineLoading && !loadError && displayRows.length === 0;
 
 
   useEffect(() => {
@@ -391,7 +406,6 @@ function ThreadDetailBody({
       olderCursorRef.current = null;
       setOlderCursor(null);
       setLoadingOlder(false);
-      hadThreadRecordRef.current = false;
       setTimelineLoading(true);
       setLoadError(null);
       setArchivedAt(null);
@@ -476,6 +490,7 @@ function ThreadDetailBody({
         parentThreadId?: string | null;
         visibility?: ThreadListItem['visibility'];
         originKind?: unknown;
+        originPluginId?: string | null;
         hasPendingInteraction?: boolean;
         updatedAt?: number;
         runtime?: ThreadListItem['runtime'] & { displayStatus?: string };
@@ -496,9 +511,12 @@ function ThreadDetailBody({
       setThreadServiceTier(typeof thread.serviceTier === 'string' ? thread.serviceTier : null);
       setThreadAcpMode(typeof thread.acpMode === 'string' ? thread.acpMode : null);
       setThreadPermissionMode({ threadId, mode: typeof thread.permissionMode === 'string' ? thread.permissionMode : null });
+      const owner = thread.originPluginId;
+      setPluginOwner(previous => owner
+        ? (previous?.threadId === threadId && previous.id === owner ? previous : { threadId, id: owner })
+        : null);
       setParentThreadId(thread.parentThreadId ?? null);
       setOriginKind(typeof thread.originKind === 'string' ? thread.originKind : null);
-      hadThreadRecordRef.current = true;
       if (thread.id) {
         const existing = useThreads.getState().threads.find((row) => row.id === thread.id);
         upsertThread({
@@ -516,6 +534,7 @@ function ThreadDetailBody({
           archivedAt: thread.archivedAt ?? null,
           parentThreadId: thread.parentThreadId ?? null,
           visibility: thread.visibility,
+          originPluginId: owner === undefined ? existing?.originPluginId : owner,
           hasPendingInteraction: Boolean(thread.hasPendingInteraction),
           lastReadSeq: typeof timeline?.lastReadSeq === 'number' ? timeline.lastReadSeq : existing?.lastReadSeq ?? null,
           maxSeq: typeof timeline?.maxSeq === 'number' ? timeline.maxSeq : existing?.maxSeq ?? 0,
@@ -561,9 +580,6 @@ function ThreadDetailBody({
           ? (timelineOutcome as PromiseRejectedResult).reason
           : (detailOutcome as PromiseRejectedResult).reason;
         setLoadError(threadDetailLoadError(reason));
-        if (shouldClearPlaceholderStartingStatus(hadThreadRecordRef.current, detailFailed, timelineFailed)) {
-          setStatus('');
-        }
       } else {
         setLoadError(null);
       }
@@ -725,6 +741,10 @@ function ThreadDetailBody({
           appendThreadRecentItem(threadId, { kind: 'file', source: 'workspace', path });
           panel.addTab({ kind: 'file-preview', title, path });
         }}
+        onOpenStorageFile={(path, title) => {
+          appendThreadRecentItem(threadId, { kind: 'file', source: 'thread-storage', path });
+          panel.addTab({ kind: 'storage-preview', title, path });
+        }}
         onOpenBrowser={() => panel.addTab({ kind: 'browser', title: 'Browser', url: '' })}
         onOpenExplorer={() => panel.addTab({ kind: 'explorer', title: 'Explorer' })}
         onOpenInbox={() => panel.addTab({ kind: 'inbox', title: 'Inbox' })}
@@ -749,6 +769,7 @@ function ThreadDetailBody({
       : null;
     panelBody = (
       <ThreadFilePreviewTab
+        previewId={closable.id}
         threadId={threadId}
         previewRevision={closable.previewRevision}
         path={closable.path}
@@ -803,6 +824,9 @@ function ThreadDetailBody({
     return (
         <ThreadSecondaryPanel
           state={state}
+          basic={basic}
+          basicCompact={basicCompact}
+          onOpenAdvanced={() => setBasicUiMode('advanced')}
           dock={dockProps(side)}
           showInfoPin={pins.includes('info')}
           showDiffPin={pins.includes('diff') && Boolean(environmentId)}
@@ -844,7 +868,7 @@ function ThreadDetailBody({
           <BrowserTabDeck
             browserTabs={panel.state.tabs.filter((tab) => tab.kind === 'browser')}
             activeBrowserTabId={closable?.kind === 'browser' ? closable.id : null}
-            canShowNativeBrowserView={state.isOpen && !(side === 'bottom' && (toolDock.dock.collapsed || panel.state.isMaximized)) && !draggedTool && (modal || hostedSecondary || pane?.isFocused !== false)}
+            canShowNativeBrowserView={state.isOpen && !basicRouteHidden && !(basic && side === 'bottom') && !(side === 'bottom' && (toolDock.dock.collapsed || panel.state.isMaximized)) && !draggedTool && (modal || hostedSecondary || pane?.isFocused !== false)}
             threadId={threadId}
             onUpdate={({ tabId, url, title: nextTitle }) => {
               const resolvedTitle = nextTitle && nextTitle.length > 0 ? nextTitle : getBrowserUrlHost(url) || 'Browser';
@@ -974,31 +998,42 @@ function ThreadDetailBody({
       ref={viewRef}
       className={viewClass}
       data-testid="thread-detail"
+      data-basic-panel-compact={basicCompact || undefined}
       data-embedded={embedded ? 'true' : undefined}
       style={panelOpen ? { ['--thread-secondary-width' as string]: `${panel.state.widthPx}px` } : undefined}
     >
       <div className="thread-detail-split">
       <div className={dockEnabled ? "thread-tool-main" : "thread-tool-main--legacy"}>
-      <div ref={mainRef} className="thread-detail-main">
+      <div ref={mainRef} className="thread-detail-main"
+        hidden={basic && showSecondaryPanel && panel.state.isOpen && (basicCompact || panel.state.isMaximized)}
+        inert={basic && showSecondaryPanel && panel.state.isOpen && (basicCompact || panel.state.isMaximized) || undefined}>
         <header className="thread-detail-header thread-detail-header--balanced" data-title-in-shell={Boolean(mobileTitleTarget) || undefined} data-controls-in-shell={Boolean(mobileControlsTarget) || undefined}>
           <ThreadDetailHeading
             title={title}
+            titleContent={pluginOwner?.threadId === threadId ? <PluginOwnedThreadTitle
+              threadId={threadId} title={title} owner={pluginOwner.id}
+              onOpen={(pluginId, actionId) => {
+                if (openPluginThreadPanel({ threadId, pluginId, actionId }) && !showSecondaryPanel && !hostedSecondary) {
+                  navigate(getThreadRoutePath(threadId));
+                }
+              }}
+            /> : undefined}
             titleTarget={mobileTitleTarget}
-            draggable={Boolean(pane?.beginPaneDrag)}
+            draggable={!basic && Boolean(pane?.beginPaneDrag)}
             onPointerDown={
-              pane?.beginPaneDrag
+              !basic && pane?.beginPaneDrag
                 ? (event) => pane.beginPaneDrag?.(event, title)
                 : undefined
             }
             status={!mobileControlsTarget ? <ThreadStatusBadge status={status} waitingOnUser={awaitingUser} thinking={thinking} /> : null}
-            metadata={!mobileControlsTarget && <ThreadDetailContext key={threadId} agent={{
+            metadata={!mobileControlsTarget && Boolean(title) && <><span className="basic-thread-project" hidden={!basic}>{project?.name ?? 'Conversation'}</span><span className="basic-thread-advanced-chrome" hidden={basic} inert={basic || undefined}><ThreadDetailContext key={threadId} agent={{
               providerId: threadProviderId,
               model: threadModel,
               projectName: project?.name ?? null,
               machineName: executionLocation.machineName,
               machineRemote: executionLocation.remote,
               branchName: displayedBranch ?? null
-            }} />}
+            }} /></span></>}
           />
           <ThreadDetailActions target={mobileControlsTarget}>
             {(!mobileControlsTarget || mobileSearchOpen) && <ThreadDetailSearch
@@ -1014,9 +1049,9 @@ function ThreadDetailBody({
               partial={searchActive && search.partial}
             />}
             {mobileControlsTarget && <ThreadStatusBadge status={status} waitingOnUser={awaitingUser} thinking={thinking} />}
-            {!mobileControlsTarget && <PluginThreadHeaderActions threadId={threadId} projectId={projectId} />}
-            <SplitPaneHeaderActions />
-            {dockEnabled ? <button type="button" className="icon-btn"
+            {!mobileControlsTarget && <span className="basic-thread-advanced-chrome" hidden={basic} inert={basic || undefined}><PluginThreadHeaderActions threadId={threadId} projectId={projectId} /></span>}
+            <span className="basic-thread-advanced-chrome" hidden={basic} inert={basic || undefined}><SplitPaneHeaderActions /></span>
+            {dockEnabled ? <button type="button" className="icon-btn basic-thread-advanced-chrome" hidden={basic}
               aria-label={dockPanels.bottom.isOpen && !toolDock.dock.collapsed ? 'Hide bottom panel' : 'Show bottom panel'}
               title={dockPanels.bottom.isOpen && !toolDock.dock.collapsed ? 'Hide bottom panel' : 'Show bottom panel'}
               aria-pressed={dockPanels.bottom.isOpen && !toolDock.dock.collapsed}
@@ -1034,11 +1069,13 @@ function ThreadDetailBody({
                 <PanelRight size={14} />
               </button>
             ) : null}
-            {overflow}
+            <span className="basic-thread-advanced-chrome" hidden={basic} inert={basic || undefined}>{overflow}</span>
           </ThreadDetailActions>
         </header>
         <div className="thread-detail-body">
-          <div className="thread-detail-column">
+          {basic && openingThread ? (
+            <p className="basic-thread-loading" role="status">Loading conversation…</p>
+          ) : <div className="thread-detail-column">
             {leadingContent ? (
               <div className="thread-chat-leading" data-testid="thread-chat-leading-content">
                 {leadingContent}
@@ -1052,6 +1089,7 @@ function ThreadDetailBody({
               thinking={thinking}
               goal={goal}
               loading={timelineLoading}
+              archived={Boolean(archivedAt)}
               hasOlder={olderCursor !== null}
               loadingOlder={loadingOlder}
               onLoadOlder={loadOlderHistory}
@@ -1101,7 +1139,7 @@ function ThreadDetailBody({
               messageActions={messageActions}
               includePluginMessageActions={includePluginMessageActions}
             />
-            <div className="thread-composer-dock">
+            {!openingThread && (title || loadError) && <div className="thread-composer-dock">
               {!compact && <PromptContextBanner
                 threadId={threadId}
                 branchName={displayedBranch ?? null}
@@ -1160,8 +1198,8 @@ function ThreadDetailBody({
                 onPlanActionPending={setPlanActionPending}
                 onPlanActionHandled={() => setPlanAction(null)}
               />}
-            </div>
-          </div>
+            </div>}
+          </div>}
         </div>
       </div>
       {dockEnabled ? (dockPanels.bottom.isOpen ? renderToolPanel(dockPanels.bottom, 'bottom') : draggedTool ? <div

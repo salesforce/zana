@@ -982,8 +982,8 @@ button.statusbar-update {
   height: 100%;
 }
 
-.sidebar-resizer:hover::after,
-body.resizing-col .sidebar-resizer::after {
+body:not(.resizing-col) .sidebar-resizer:hover::after,
+body.resizing-col .sidebar-resizer:active::after {
   background: var(--accent-blue);
   opacity: 0.5;
 }
@@ -2300,8 +2300,8 @@ body.resizing-sidebar-section .sidebar-agents-resizer::after {
   height: 100%;
 }
 
-.list-pane-resizer:hover::after,
-body.resizing-col .list-pane-resizer::after {
+body:not(.resizing-col) .list-pane-resizer:hover::after,
+body.resizing-col .list-pane-resizer:active::after {
   background: var(--accent-blue);
   opacity: 0.5;
 }
@@ -2427,6 +2427,7 @@ body.resizing-col webview {
 
 .list-filter:focus-within {
   border-color: var(--accent-blue);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-blue) 20%, transparent);
 }
 
 .list-filter-icon {
@@ -8036,8 +8037,8 @@ body.resizing-col webview {
   background: transparent;
   transition: background 120ms ease;
 }
-.ext-hub-resizer:hover::before,
-body.resizing-col .ext-hub-resizer::before {
+body:not(.resizing-col) .ext-hub-resizer:hover::before,
+body.resizing-col .ext-hub-resizer:active::before {
   background: var(--accent-blue);
 }
 
@@ -10646,13 +10647,21 @@ body.resizing-col .ext-hub-resizer::before {
   box-shadow: 0 0 6px rgba(47, 129, 247, 0.6);
 }
 
-.tab-profile-icon {
+.tab-profile-icon,
+.thread-identity-icon {
   display: inline-grid;
   place-items: center;
   width: 14px;
   height: 14px;
   flex: 0 0 auto;
+}
+
+.tab-profile-icon {
   color: var(--text-dim);
+}
+
+.thread-identity-icon {
+  grid-template: 100% / 100%;
 }
 
 .tab-profile-icon.profile-claude {
@@ -12174,8 +12183,8 @@ button.statusbar-item {
   transition: opacity 0.15s;
 }
 
-.explorer-resizer:hover::after,
-body.resizing-col .explorer-resizer::after {
+body:not(.resizing-col) .explorer-resizer:hover::after,
+body.resizing-col .explorer-resizer:active::after {
   opacity: 0.6;
 }
 
@@ -14432,6 +14441,13 @@ body.resizing-col .explorer-resizer::after {
   transition: opacity 100ms ease, transform 100ms ease;
 }
 
+/* Squad editor slot controls sit at the left edge of a narrow drawer: grow the tooltip rightwards so it stays on screen. */
+.team-slot-reorder .composer-control-tooltip::after,
+.team-slot-orch-toggle.composer-control-tooltip::after {
+  left: 0;
+  right: auto;
+}
+
 .composer-control-tooltip:hover::after,
 .composer-control-tooltip:focus-within::after {
   opacity: 1;
@@ -15069,6 +15085,22 @@ body.resizing-col .explorer-resizer::after {
 .agent-card-badge.bad {
   background: color-mix(in srgb, var(--danger) 18%, transparent);
   color: var(--danger);
+}
+
+.agent-card-retained {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.agent-card-dismiss {
+  align-self: flex-end;
+  font-size: 11px;
+  padding: 1px 8px;
+  border: 1px solid var(--border, currentColor);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
 }
 
 /* Background (headless) badge — its own accent + a Moon glyph so a detached
@@ -20569,8 +20601,8 @@ body.resizing-col .explorer-resizer::after {
   opacity: 0;
   transition: opacity 0.15s;
 }
-.gus-rail-resizer:hover::after,
-body.resizing-col .gus-rail-resizer::after {
+body:not(.resizing-col) .gus-rail-resizer:hover::after,
+body.resizing-col .gus-rail-resizer:active::after {
   opacity: 0.6;
 }
 
@@ -26355,8 +26387,8 @@ button.launch-persona {
   transition: opacity 0.15s;
 }
 
-.library-resizer:hover::after,
-body.resizing-col .library-resizer::after {
+body:not(.resizing-col) .library-resizer:hover::after,
+body.resizing-col .library-resizer:active::after {
   opacity: 0.6;
 }
 
@@ -26749,6 +26781,9 @@ body.resizing-col .library-resizer::after {
 }
 
 .library-md-editor .tiptap pre {
+  color: #dce6f5;
+  white-space: pre;
+  max-height: 400px;
   margin: 10px 0;
   border-radius: 6px;
   border: 1px solid var(--border);
@@ -26763,6 +26798,10 @@ body.resizing-col .library-resizer::after {
 .library-md-editor .tiptap pre code {
   background: none;
   padding: 0;
+  color: inherit;
+  white-space: inherit;
+  word-break: normal;
+  overflow-wrap: normal;
 }
 
 .library-md-editor .tiptap blockquote {
@@ -26836,6 +26875,50 @@ body.resizing-col .library-resizer::after {
   background: var(--bg-elevated);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
 }
+
+.library-md-editor.is-field {
+  box-sizing: border-box;
+  height: 10rem;
+  min-height: 7rem;
+  padding: 0;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-base);
+}
+
+.library-md-editor.is-field:focus-within {
+  border-color: var(--accent-blue);
+}
+
+.library-md-field-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 4px 6px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.library-md-field-toolbar .library-edit-btn {
+  padding: 5px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+.library-md-field-toolbar .library-edit-btn:is(:hover, [aria-pressed="true"]) {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.library-md-editor.is-field > div:last-child { flex: 1; }
+.library-md-editor.is-field .tiptap { padding: 8px 12px; box-sizing: border-box; overflow-wrap: anywhere; }
+.library-md-editor.is-field .tiptap > :last-child { margin-bottom: 0; }
 
 .library-md-bubble .library-edit-btn {
   padding: 4px 6px;
@@ -26966,8 +27049,8 @@ body.resizing-col .library-resizer::after {
   transition: opacity 0.15s;
 }
 
-.library-split-resizer:hover::after,
-body.resizing-col .library-split-resizer::after {
+body:not(.resizing-col) .library-split-resizer:hover::after,
+body.resizing-col .library-split-resizer:active::after {
   opacity: 0.6;
 }
 
@@ -36244,6 +36327,9 @@ body.split-frame-guard webview {
 
 .thread-detail-timeline {
   flex: 1 1 auto;
+  --thread-scroll-gap: clamp(10px, 2%, 24px);
+  box-sizing: border-box;
+  padding-inline: var(--thread-scroll-gap);
   min-height: 0;
   /* clip, not hidden: hidden on one axis makes this a sticky containing
    * block that is not the vertical scroller, so position:sticky never pins. */
@@ -36253,6 +36339,17 @@ body.split-frame-guard webview {
    * in Chromium (Electron). Gap is reproduced with adjacent-sibling margins. */
   display: block;
   width: 100%;
+}
+
+/* Avoid painting a loading screen or its scrollbar for a fast initial read. */
+.basic-thread-loading,
+.thread-detail-timeline[aria-busy='true'] {
+  animation: thread-loading-reveal 0s 300ms backwards;
+}
+
+@keyframes thread-loading-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .thread-detail-timeline > * + * {
@@ -37989,6 +38086,19 @@ body.split-frame-guard webview {
   width: 8px;
   cursor: col-resize;
   z-index: 2;
+}
+
+.thread-secondary-resizer::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 2px;
+  width: 3px;
+}
+
+body:not(.resizing-col) .thread-secondary-resizer:hover::after,
+body.resizing-col .thread-secondary-resizer:active::after {
+  background: var(--accent-blue);
+  opacity: 0.5;
 }
 
 .thread-secondary-chrome {
@@ -42878,14 +42988,6 @@ body.split-frame-guard webview {
 .team-composer-plan-status.thread-command-error { color: var(--danger); }
 .team-composer-plan-other { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
 
-.thread-default-hint {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-
 /* ---- Rail mode: 52px icon-only navigation (sidebar-is-rail) ----------------
  * The class sits on .app-shell, a descendant of :root, so it wins over the
  * inline --col-nav that applySidebarWidth writes on :root. The grid keeps its
@@ -42968,3 +43070,10 @@ body.split-frame-guard webview {
     border: 1px solid CanvasText;
   }
 }
+
+/* Source-preserving rich document nodes shared with the Library plugin. */
+.library-md-editor .md-editor-image { display:inline-block; max-width:100%; vertical-align:middle; }
+.library-md-editor .md-editor-image img { max-width:100%; height:auto; border-radius:5px; }
+.library-md-editor .md-editor-source { border:1px solid var(--border-subtle, #80808040); border-radius:6px; margin:16px 0; }
+.library-md-editor .md-editor-source::before { content:'Markdown source'; display:block; padding:6px 12px; font-size:10px; color:var(--text-muted); border-bottom:1px solid var(--border-subtle, #80808040); }
+.library-md-editor .md-editor-source pre { margin:0; }

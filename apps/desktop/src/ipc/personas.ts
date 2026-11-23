@@ -11,6 +11,9 @@ export function registerPersonasIpc(): void {
   
 
   safeProductHandle(IPC.personas.list, () => ctx.personas.list(), () => []);
+  // Parameterless by design: nothing renderer-supplied reaches the store, and
+  // the payload is basename + source + fixed reason only (no file contents).
+  safeProductHandle(IPC.personas.loadWarnings, () => ctx.personas.loadWarnings(), () => []);
   safeProductHandle(
     IPC.personas.revealDir,
     () => ctx.personas.revealDir(),

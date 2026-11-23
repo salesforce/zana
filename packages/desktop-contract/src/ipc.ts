@@ -96,6 +96,8 @@ export const IPC = {
     /** Summarize ONE live agent's work into an inbox entry on demand (the
      *  terminal modal's "Summarize to inbox" button). */
     summarizeSession: 'terminals:summarizeSession',
+    /** Restart a Squad worker card in place so it keeps its slot and run binding. Main authorizes. */
+    restartSquadWorker: 'terminals:restartSquadWorker',
     /** Summarize agents' work into ONE folded inbox digest AND file a per-agent
      *  follow-up for any that left unfinished work, before the renderer closes
      *  them (the Agents view's "Close" button with "summarise first" + modal item). */
@@ -182,6 +184,7 @@ export const IPC = {
   config: {
     get: 'config:get',
     set: 'config:set',
+    dismissWorkerExit: 'config:dismissWorkerExit',
     addTrustedPreviewFolder: 'config:addTrustedPreviewFolder',
     removeTrustedPreviewFolder: 'config:removeTrustedPreviewFolder',
     /** Broadcast to EVERY window after a `config:set` so other windows
@@ -405,6 +408,7 @@ export const IPC = {
     onChanged: 'pluginApps:onChanged',
     setEnabled: 'pluginApps:setEnabled',
     callRpc: 'pluginApps:callRpc',
+    callDesktopRpc: 'pluginApps:callDesktopRpc',
     getSettings: 'pluginApps:getSettings',
     setSettings: 'pluginApps:setSettings',
     checkUpdates: 'pluginApps:checkUpdates',
@@ -808,6 +812,7 @@ export const IPC = {
   },
   personas: {
     list: 'personas:list',
+    loadWarnings: 'personas:loadWarnings',
     onChanged: 'personas:onChanged',
     revealDir: 'personas:revealDir',
     save: 'personas:save',

@@ -1,4 +1,4 @@
-import type { ExecutionBoardProjection, TerminalSession } from '@zana-ai/zcc-domain/product';
+import { TEAM_LIMIT_BOUNDS, type ExecutionBoardProjection, type TerminalSession } from '@zana-ai/zcc-domain/product';
 import { isWorkerRecoveryLive, MAX_DELIVERY_ATTEMPTS, type ExecutionRecord, type ExecutionWorkUnit } from './store.js';
 import { usageRollup } from './contracts.js';
 import { timeoutRecoveryBlockReason } from './timeout-recovery-policy.js';
@@ -13,6 +13,18 @@ import type { TeamLifecycleRecord } from '../launch/team-lifecycle-store.js';
 function firstErrorLine(raw: string): string {
   const line = raw.split('\n').map((part) => part.trim()).find((part) => part.length > 0) ?? '';
   return line.replace(/\s+/g, ' ').slice(0, 1_024);
+}
+
+/** Effective run limits from the persisted policy; ceilings the run was never given stay absent. */
+function limitsProjection(record: ExecutionRecord): ExecutionBoardProjection['limits'] {
+  const policy = record.request.policy;
+  const launchCeiling = TEAM_LIMIT_BOUNDS.maxConcurrent.max;
+  const maxLaunches = Math.min(policy?.maxLaunches ?? launchCeiling, launchCeiling);
+  return {
+    maxConcurrent: Math.min(policy?.maxConcurrent ?? maxLaunches, maxLaunches),
+    ...(policy?.maxClaimWallClockMs === undefined ? {} : { claimWallClockMs: policy.maxClaimWallClockMs }),
+    ...(policy?.maxClaimStallMs === undefined ? {} : { claimStallMs: policy.maxClaimStallMs })
+  };
 }
 
 /**
@@ -338,8 +350,11 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
     ...blockerProjection(record),
     ...(deliveries ? { deliveries } : {}),
     ...(coordinatorWakes ? { coordinatorWakes } : {}),
+    limits: limitsProjection(record),
     ...(record.finalSummary ? { finalSummary: record.finalSummary } : {}),
+    ...(record.state === 'FAILED' && record.failureReason ? { failureReason: record.failureReason } : {}),
     ...(assembledResult ? { assembledResult } : {}),
+    ...(record.failedWorkerSlots?.length ? { failedWorkers: record.failedWorkerSlots.map((slot) => ({ slotId: slot.slotId, reason: slot.reason })) } : {}),
     ...(record.resourceBlock ? { resourceBlock: record.resourceBlock } : {}),
     ...(record.routeFitProposal ? { routeFitProposal: record.routeFitProposal } : {}),
     eventCursor: record.lastEventSequence ?? 0,

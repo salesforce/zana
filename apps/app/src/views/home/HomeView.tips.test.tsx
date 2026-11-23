@@ -1,9 +1,11 @@
 // @vitest-environment happy-dom
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, expect, it, vi } from 'vitest';
 import { HomeView } from './HomeView.js';
 import { HelpProvider } from '../../components/help/HelpProvider.js';
+import { setBasicUiMode } from '../../lib/basic-ui.js';
+import zanaGlyph from '../../assets/zana-glyph.svg';
 
 const mocks = vi.hoisted(() => ({ sections: [] as unknown[], composer: vi.fn() }));
 vi.mock('@/components/AuroraGrid', () => ({ AuroraGrid: () => <div /> }));
@@ -17,7 +19,28 @@ vi.mock('@/plugins/plugin-slots', () => ({
   listHomepageSections: () => mocks.sections
 }));
 vi.mock('@/plugins/PluginSlotBoundary', () => ({ PluginSlotBoundary: ({ children }: { children: React.ReactNode }) => children }));
-afterEach(() => { cleanup(); mocks.sections = []; vi.clearAllMocks(); });
+afterEach(() => { cleanup(); mocks.sections = []; vi.clearAllMocks(); setBasicUiMode('advanced'); });
+
+it('presents Basic welcome without remounting its native draft or plugin surfaces', () => {
+  mocks.sections = [{ id: 'example', generation: 1, title: 'Useful links', component: () => <button>Homepage tool</button> }];
+  render(<MemoryRouter><HelpProvider><HomeView /></HelpProvider></MemoryRouter>);
+  const draft = screen.getByRole('textbox', { name: 'Launcher draft' });
+  const plugin = screen.getByRole('button', { name: 'Homepage tool' });
+  fireEvent.change(draft, { target: { value: 'Keep this thought' } });
+  act(() => setBasicUiMode('basic'));
+  expect(screen.getByRole('heading', { name: 'What shall we work on today?' })).toBeTruthy();
+  const mark = document.querySelector('.conversation-welcome > .zana-brand-icon') as HTMLElement;
+  expect(mark.style.mask).toContain(zanaGlyph);
+  expect(mark.getAttribute('aria-hidden')).toBe('true');
+  expect(document.querySelector('.conversation-welcome svg')).toBeNull();
+  expect(screen.getByRole('textbox', { name: 'Launcher draft' })).toBe(draft);
+  expect(screen.queryByRole('button', { name: 'Homepage tool' })).toBeNull();
+  expect(document.querySelector('.home-plugin-section button')).toBe(plugin);
+  act(() => setBasicUiMode('advanced'));
+  expect(screen.queryByRole('heading', { name: 'What shall we work on today?' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Homepage tool' })).toBe(plugin);
+  expect((screen.getByRole('textbox', { name: 'Launcher draft' }) as HTMLInputElement).value).toBe('Keep this thought');
+});
 
 it('offers tips around the launcher and plugin shortcuts while preserving prompt seeding', () => {
   render(<MemoryRouter initialEntries={['/?prompt=Explain%20this%20project&focus=1']}><HelpProvider><HomeView /></HelpProvider></MemoryRouter>);

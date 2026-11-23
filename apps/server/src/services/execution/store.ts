@@ -451,6 +451,14 @@ export interface ExecutionRecord {
   successorExecutionId?: string;
   recoveryRequestId?: string;
   finalSummary?: string;
+  /** Sanitized, bounded reason a run ended FAILED; absent on older records. */
+  failureReason?: string;
+  /** Coordinator respawns spent per worker slot (persisted so a host restart does not reset the cap). */
+  workerRespawns?: Record<string, number>;
+  /** Slots whose exhausted respawn cap has been recorded as an event (once each; value is always 1). */
+  workerRespawnCapNoted?: Record<string, number>;
+  /** Worker slots that failed to spawn at launch (sanitized, bounded); shown on the Squad board card. */
+  failedWorkerSlots?: ExecutionFailedWorkerSlot[];
   assembledResult?: ExecutionAssembledResultV1;
   usageObservations?: ExecutionUsageObservationV1[];
   usageBaseline?: ExecutionUsageBaselineV1;
@@ -762,6 +770,70 @@ const MAX_STRING = 2_048;
 // persistence") that the normalizer already accepted.
 const MAX_WORK_UNIT_TASK = 16_384;
 const MAX_FINAL_SUMMARY = 64 * 1024;
+const MAX_FAILURE_REASON = 2048;
+/** Default and hard ceiling for coordinator respawns of one worker slot. */
+export const DEFAULT_WORKER_RESPAWN_CAP = 2;
+const MAX_WORKER_RESPAWN_SLOTS = 100;
+
+function validWorkerRespawns(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const entries = Object.entries(value as Record<string, unknown>);
+  return entries.length <= MAX_WORKER_RESPAWN_SLOTS
+    && entries.every(([slot, count]) => slot.length > 0 && slot.length <= 120 && Number.isInteger(count) && (count as number) >= 0 && (count as number) <= 100);
+}
+
+export type WorkerRespawnReservation =
+  | { ok: true; count: number; cap: number }
+  | { ok: false; reason: 'unknown-slot' | 'orchestrator-slot' | 'not-running' | 'cap'; count?: number; cap?: number };
+
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
+const WINDOWS_ABS_PATH = /(?<![\w])[A-Za-z]:[\\/](?:[^\s\\/'"`<>|]+[\\/])*([^\s\\/'"`<>|]+)/g;
+const POSIX_ABS_PATH = /(?<![\w:.\/~-])\/(?:[^\s\/'"`<>|]+\/)*([^\s\/'"`<>|]+)/g;
+
+/**
+ * Makes error text safe to store and show to agents, the CLI and peers: control characters become
+ * spaces, absolute paths shrink to their basename, and the result is capped at `max` characters.
+ */
+export function boundReason(text: string, max = MAX_FAILURE_REASON): string {
+  const cleaned = String(text ?? '')
+    .replace(CONTROL_CHARS, ' ')
+    .replace(WINDOWS_ABS_PATH, '$1')
+    .replace(POSIX_ABS_PATH, '$1')
+    .trim();
+  if (cleaned.length <= max) return cleaned;
+  return `${cleaned.slice(0, Math.max(0, max - 1))}…`;
+}
+export const SLOT_REASON_MAX = 500;
+export const MAX_REPORTED_FAILED_SLOTS = 20;
+export interface ExecutionFailedWorkerSlot { slotId: string; reason: string }
+
+/** Sanitizes launch-reported failed slots into the bounded retained shape. */
+export function boundFailedWorkerSlots(slots: readonly unknown[]): ExecutionFailedWorkerSlot[] {
+  return slots.slice(0, MAX_REPORTED_FAILED_SLOTS).map((slot) => {
+    const value = slot && typeof slot === 'object' ? slot as { slotId?: unknown; reason?: unknown } : {};
+    return {
+      slotId: (typeof value.slotId === 'string' ? boundReason(value.slotId, 120) : '') || 'unknown slot',
+      reason: (typeof value.reason === 'string' ? boundReason(value.reason, SLOT_REASON_MAX) : '') || 'unknown reason'
+    };
+  });
+}
+function validFailedWorkerSlots(value: unknown): boolean {
+  return Array.isArray(value) && value.length <= MAX_REPORTED_FAILED_SLOTS && value.every((slot) =>
+    !!slot && typeof slot === 'object' && typeof slot.slotId === 'string' && slot.slotId.length > 0 && slot.slotId.length <= 120
+    && typeof slot.reason === 'string' && slot.reason.length > 0 && slot.reason.length <= SLOT_REASON_MAX);
+}
+
+/** Bounded, sanitized one-line list of failed launch slots (`slot: reason; ...`), at most 2048 characters. */
+export function formatFailedSlots(slots: readonly unknown[], fallback = 'One or more Team slots failed to launch'): string {
+  const listed = slots.slice(0, MAX_REPORTED_FAILED_SLOTS).map((slot) => {
+    const value = slot && typeof slot === 'object' ? slot as { slotId?: unknown; reason?: unknown } : {};
+    const slotId = typeof value.slotId === 'string' && value.slotId ? boundReason(value.slotId, 120) : 'unknown slot';
+    const reason = typeof value.reason === 'string' && value.reason ? boundReason(value.reason, SLOT_REASON_MAX) : 'unknown reason';
+    return `${slotId}: ${reason}`;
+  });
+  if (slots.length > listed.length) listed.push(`and ${slots.length - listed.length} more`);
+  return boundReason(listed.join('; ') || fallback);
+}
 const MAX_WORK_UNITS = 100;
 export const MAX_REPORTED_BLOCKER_IDS = 100;
 const MAX_UNIT_LIST = 100;
@@ -893,6 +965,10 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.successorExecutionId === undefined || validString(record.successorExecutionId))
     && (record.recoveryRequestId === undefined || validString(record.recoveryRequestId))
     && (record.finalSummary === undefined || typeof record.finalSummary === 'string' && record.finalSummary.length > 0 && record.finalSummary.length <= MAX_FINAL_SUMMARY)
+    && (record.failureReason === undefined || typeof record.failureReason === 'string' && record.failureReason.length > 0 && record.failureReason.length <= MAX_FAILURE_REASON)
+    && (record.workerRespawns === undefined || validWorkerRespawns(record.workerRespawns))
+    && (record.workerRespawnCapNoted === undefined || validWorkerRespawns(record.workerRespawnCapNoted))
+    && (record.failedWorkerSlots === undefined || validFailedWorkerSlots(record.failedWorkerSlots))
     && (record.assembledResult === undefined || validAssembledResult(record.assembledResult))
     && (record.usageObservations === undefined || Array.isArray(record.usageObservations) && record.usageObservations.length <= MAX_USAGE_OBSERVATIONS_PER_EXECUTION && record.usageObservations.every(validUsageObservation))
     && (record.usageBaseline === undefined || validUsageRollup(record.usageBaseline))
@@ -2056,6 +2132,10 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       const fromState = record.state;
       const timestamp = now();
       record.state = state;
+      if (state === 'FAILED') {
+        const reason = boundReason(summary);
+        if (reason) record.failureReason = reason;
+      }
       record.stateVersion += 1;
       record.updatedAt = timestamp;
       append(snapshot.state, record, state, severity, string(summary, 'event summary'), timestamp, { kind: 'transition', fromState, toState: state });
@@ -2326,6 +2406,103 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       append(snapshot.state, record, record.state, severity, string(summary, 'event summary'), timestamp, { kind: 'event' });
       persist(snapshot.state, snapshot.hash);
       return clone(record);
+    });
+  }
+
+  /**
+   * Appends one persistent, bounded run-warning event. Unlike `event` it needs no state version: a launch
+   * warning is advisory and must not race members that bump the version while the launch settles.
+   */
+  async function warning(
+    executionId: string,
+    input: { slots: readonly unknown[] } | { slotId: string; summary: string }
+  ): Promise<void> {
+    const workerSlot = 'summary' in input ? input : undefined;
+    if (!workerSlot && !('slots' in input && input.slots.length)) return;
+    await storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      assertActive(record);
+      const timestamp = now();
+      if (workerSlot) {
+        // A worker warning names its slot so the board and Inbox can tie it to one card.
+        append(snapshot.state, record, record.state, 'warning', boundReason(workerSlot.summary), timestamp, { kind: 'event', eventType: 'failure', slotId: boundReason(workerSlot.slotId, 120) });
+      } else {
+        const slots = (input as { slots: readonly unknown[] }).slots;
+        record.failedWorkerSlots = boundFailedWorkerSlots(slots);
+        append(snapshot.state, record, record.state, 'warning', boundReason(`${slots.length} Team slot(s) failed to launch: ${formatFailedSlots(slots)}`), timestamp, { kind: 'event', eventType: 'failure' });
+      }
+      record.updatedAt = timestamp;
+      persist(snapshot.state, snapshot.hash);
+    });
+  }
+
+  /**
+   * Spends one coordinator respawn of a worker slot. The check and the increment happen in one serialized,
+   * persisted write, so concurrent callers can never exceed `cap`. The attempt (or the cap refusal, as a
+   * warning) is recorded as an event. Authority is the caller's: it must already be the bound orchestrator.
+   */
+  async function reserveWorkerRespawn(executionId: string, slotId: string, cap: number = DEFAULT_WORKER_RESPAWN_CAP): Promise<WorkerRespawnReservation> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      assertActive(record);
+      if (isOrchestratorSlotId(slotId)) return { ok: false as const, reason: 'orchestrator-slot' as const };
+      if (!workerSlotsOf(record).some((slot) => slot.slotId === slotId)) return { ok: false as const, reason: 'unknown-slot' as const };
+      if (record.state !== 'RUNNING') return { ok: false as const, reason: 'not-running' as const };
+      const limit = Math.max(0, Math.min(cap, 100));
+      const spent = record.workerRespawns?.[slotId] ?? 0;
+      const timestamp = now();
+      if (spent >= limit) {
+        // The refusal is recorded once per slot: a coordinator that keeps asking must not grow the event log.
+        if (record.workerRespawnCapNoted?.[slotId] === undefined) {
+          record.workerRespawnCapNoted = { ...(record.workerRespawnCapNoted ?? {}), [slotId]: 1 };
+          append(snapshot.state, record, record.state, 'warning', boundReason(`Worker ${slotId} was not respawned: the limit of ${limit} respawn(s) is used up`), timestamp, { kind: 'event', eventType: 'failure', slotId: boundReason(slotId, 120) });
+          record.updatedAt = timestamp;
+          persist(snapshot.state, snapshot.hash);
+        }
+        return { ok: false as const, reason: 'cap' as const, count: spent, cap: limit };
+      }
+      const next = { ...(record.workerRespawns ?? {}), [slotId]: spent + 1 };
+      if (Object.keys(next).length > MAX_WORKER_RESPAWN_SLOTS) return { ok: false as const, reason: 'cap' as const, count: spent, cap: limit };
+      record.workerRespawns = next;
+      record.updatedAt = timestamp;
+      persist(snapshot.state, snapshot.hash);
+      return { ok: true as const, count: spent + 1, cap: limit };
+    });
+  }
+
+  /**
+   * Settle a reservation once the host has answered. A refusal before anything was started gives the count back
+   * (`refund`), so a respawn that never began does not use up the slot's budget; a started respawn is recorded.
+   */
+  async function settleWorkerRespawn(
+    executionId: string,
+    slotId: string,
+    outcome: { refund: true } | { started: { count: number; cap: number } }
+  ): Promise<void> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record) throw new Error('execution not found');
+      const timestamp = now();
+      if ('refund' in outcome) {
+        const spent = record.workerRespawns?.[slotId] ?? 0;
+        if (spent <= 0) return;
+        const next = { ...(record.workerRespawns ?? {}) };
+        if (spent === 1) delete next[slotId]; else next[slotId] = spent - 1;
+        if (Object.keys(next).length > 0) record.workerRespawns = next; else delete record.workerRespawns;
+        if (record.workerRespawnCapNoted) delete record.workerRespawnCapNoted[slotId];
+        record.updatedAt = timestamp;
+        persist(snapshot.state, snapshot.hash);
+        return;
+      }
+      if (terminalStates.has(record.state)) return;
+      append(snapshot.state, record, record.state, 'info', boundReason(`Respawned worker ${slotId} (${outcome.started.count} of ${outcome.started.cap})`), timestamp, { kind: 'event', eventType: 'progress', slotId: boundReason(slotId, 120) });
+      record.updatedAt = timestamp;
+      persist(snapshot.state, snapshot.hash);
     });
   }
 
@@ -3842,6 +4019,8 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       const fromState = record.state;
       record.state = 'FAILED';
       record.finalSummary = finalSummary;
+      const failureReason = boundReason(finalSummary);
+      if (failureReason) record.failureReason = failureReason;
       record.assembledResult = assembleExecutionResult(record, artifacts, finalSummary);
       if (includeRouteFit) record.routeFitProposal = evaluateRouteFit(record, now());
       record.stateVersion += 1;
@@ -4206,7 +4385,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, markReported, markBlockerReported, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, command, producerEvent, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, clearNativeRecoverySnapshot, recordAutomatedMcpCatalogueProvenance, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, recordWorkerRecovery, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, resolveNoRouteBlocker, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, countActiveOwned, listInProject, listActive, listUndisposedSquadWorktrees, listUnreportedExecutions, listUnreportedBlockers, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, markReported, markBlockerReported, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, warning, reserveWorkerRespawn, settleWorkerRespawn, command, producerEvent, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, clearNativeRecoverySnapshot, recordAutomatedMcpCatalogueProvenance, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, recordWorkerRecovery, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, resolveNoRouteBlocker, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, countActiveOwned, listInProject, listActive, listUndisposedSquadWorktrees, listUnreportedExecutions, listUnreportedBlockers, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 /**

@@ -27,6 +27,7 @@ import { getPluginSettingsRoutePath } from '../lib/route-paths.js';
 import { titleWithFixedShortcut, titleWithShortcut } from '../lib/keyboard-shortcut-settings.js';
 import { appNavigate } from '../lib/app-navigate.js';
 import { SidebarResizer } from './SidebarResizer.js';
+import { SidebarFooterSlot } from './sidebar/SidebarFooterSlot.js';
 import {
   SortableNavItem,
   SortableSidebarSection,
@@ -295,6 +296,7 @@ export function SidebarRail({
         renderHiddenItem={(id) => renderItem(id, false, true)}
         collapseBehavior={collapseBehavior}
         onCollapseBehaviorChange={(b) => useUi.getState().setSidebarCollapseBehavior(b)} />}
+      {storageKey !== PROJECT_NAV_ORDER_KEY && <SidebarFooterSlot />}
       <div className="sidebar-utility-bar" aria-label="Sidebar utilities">
         {utilityStart}
         <Link

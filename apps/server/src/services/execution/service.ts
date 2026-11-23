@@ -1,9 +1,9 @@
-import { isDurableCoordination, isOrchestratorSlotId, isRestfulAgentState, validateSquadExecutionTarget, type SquadExecutionTargetSelector, type AgentState, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SessionStats, type SquadBundleWorkflowMetadataV1, type TeamAvailabilityUnknown, type TeamCoordinationMode, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput, type TeamRequirementFailure } from '@zana-ai/zcc-domain/product';
+import { DEFAULT_CLAIM_STALL_MS, DEFAULT_CLAIM_WALL_CLOCK_MS, isDurableCoordination, isOrchestratorSlotId, isRestfulAgentState, validateSquadExecutionTarget, type SquadExecutionTargetSelector, type AgentState, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SessionStats, type SquadBundleWorkflowMetadataV1, type TeamAvailabilityUnknown, type TeamCoordinationMode, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput, type TeamRequirementFailure } from '@zana-ai/zcc-domain/product';
 import { squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
 import { fitRecoveryObjective } from './recovery-objective.js';
 import { createHash } from 'node:crypto';
 import { launchDigest } from '../launch/digest.js';
-import { EXECUTION_RETENTION_MS, unitSlotEligibility, levelCheckSkipped, type ExecutionRoutingPolicyV1, assignmentRequirementFailures, LOOP_LIMIT_BLOCKER_PREFIX, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
+import { EXECUTION_RETENTION_MS, boundReason, formatFailedSlots, unitSlotEligibility, levelCheckSkipped, type ExecutionRoutingPolicyV1, assignmentRequirementFailures, LOOP_LIMIT_BLOCKER_PREFIX, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
 import { timeoutRecoveryBlockReason } from './timeout-recovery-policy.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
@@ -92,7 +92,7 @@ export type WorkerLiveness = 'alive' | 'dead' | 'unknown';
  * DEFAULT_DURABLE_CLAIM_STALL_MS} ceiling below reclaims a silent-but-'working' worker sooner
  * without endangering a streaming one (whose output keeps its lease — and stall clock — fresh).
  */
-const DEFAULT_DURABLE_CLAIM_WALL_CLOCK_MS = 20 * 60_000;
+const DEFAULT_DURABLE_CLAIM_WALL_CLOCK_MS = DEFAULT_CLAIM_WALL_CLOCK_MS;
 
 /**
  * Default OUTPUT-stall ceiling for a durable work-unit claim (~10 min), tighter than the blunt
@@ -104,7 +104,7 @@ const DEFAULT_DURABLE_CLAIM_WALL_CLOCK_MS = 20 * 60_000;
  * streamed then hung is caught 10 min after it went silent, and a still-streaming worker (fresh
  * `progressAt`) is never reclaimed here.
  */
-export const DEFAULT_DURABLE_CLAIM_STALL_MS = 10 * 60_000;
+export const DEFAULT_DURABLE_CLAIM_STALL_MS = DEFAULT_CLAIM_STALL_MS;
 
 /**
  * Inject the durable-claim reclaim ceilings (wall-clock backstop + progress-aware stall) into a
@@ -113,6 +113,13 @@ export const DEFAULT_DURABLE_CLAIM_STALL_MS = 10 * 60_000;
  * (interactive / autonomous chat) modes or when BOTH ceilings are already present, so a
  * caller-set ceiling always wins.
  */
+/** Bounded re-read loop for the post-cancel STOPPED write; each miss means another actor advanced the record. */
+const MAX_STOP_TRANSITION_ATTEMPTS = 8;
+/** Bounded re-read loop while failLaunch lands FAILED against members bumping stateVersion mid-launch. */
+const MAX_FAIL_LAUNCH_ATTEMPTS = 10;
+/** Retention cap for the in-memory dedupe sets of worker warnings (no-turn and worker-exit). */
+const MAX_WORKER_WARNING_KEYS = 512;
+
 export function withDurableClaimWallClockBackstop(
   mode: TeamCoordinationMode | undefined,
   policy: ExecutionPolicyV1 | undefined
@@ -249,14 +256,16 @@ export interface ExecutionServiceDeps {
     admissionDigest?: string,
     nativeRecovery?: NonNullable<ExecutionRecord['nativeRecoverySnapshots']>
   ) => Promise<{ ok: true; value: TeamLaunchAuthorizationResult } | { ok: false; code: string; message: string }> | { ok: true; value: TeamLaunchAuthorizationResult } | { ok: false; code: string; message: string };
-  launchTeam: (teamId: string, projectId: string, request: TeamLaunchRequestInput) => Promise<{ ok: boolean; code?: string; message?: string }>;
+  launchTeam: (teamId: string, projectId: string, request: TeamLaunchRequestInput) => Promise<{ ok: boolean; code?: string; message?: string; value?: { failedSlots?: unknown[] } }>;
   getTeamLaunch: (callerPrincipalId: string, launchRequestId: string) => Promise<unknown>;
   cancelTeamLaunch: (callerPrincipalId: string, launchRequestId: string, opts?: { retainOrchestrator?: boolean }) => Promise<{
     ok: boolean;
     code?: string;
     message?: string;
-    value?: { canceledSessionIds: string[]; pendingSessionIds: string[] };
+    value?: { canceledSessionIds: string[]; pendingSessionIds: string[]; lifecycleState?: string };
   }>;
+  /** Bounded wait for sessions that are still closing after a cancel. Defaults to 4 checks 300ms apart. */
+  cancelSettle?: { attempts?: number; intervalMs?: number; sleep?: (ms: number) => Promise<void> };
   revokeTeamAuthorizations?: (authorizationIds: readonly string[]) => void | Promise<void>;
   replyToSession: (sessionId: string, text: string) => boolean | Promise<boolean>;
   /**
@@ -279,6 +288,14 @@ export interface ExecutionServiceDeps {
    */
   spawnDeferredWorker?: (recordId: string, slotId: string) => Promise<DeferredWorkerSpawnResult>;
   /**
+   * Start a new session for a worker slot whose session is over, from the launch-time snapshot (coordinator
+   * respawn). The host owns every commit (closing check, once-only claim, bind) and must refuse a run that is
+   * closing. `reason` is a stable code; `message` is shown to the coordinator.
+   */
+  respawnWorker?: (recordId: string, slotId: string) => Promise<{ ok: true; sessionId: string } | { ok: false; reason: string; message: string; committed?: true }>;
+  /** Per-slot respawn cap; defaults to {@link DEFAULT_WORKER_RESPAWN_CAP}. */
+  workerRespawnCap?: number;
+  /**
    * Replace a seat's finished session with a fresh one and deliver the assignment to it (#579). Not awaited by
    * the engine: the worker's own completion call is still waiting on the dispatch that hands over the entry.
    * Failures are the host's to settle (a failed respawn releases the assignment undelivered).
@@ -299,6 +316,16 @@ export interface ExecutionServiceDeps {
   retainParkedWorker?: (record: ExecutionRecord, sessionId: string, retainUntilMs: number | null) => Promise<void>;
   /** Called once when a human-audience blocker is created. Failures are logged and never fail the engine. */
   onHumanBlocker?: (record: ExecutionRecord, blocker: NonNullable<ExecutionRecord['blockers']>[number]) => void | Promise<void>;
+  /**
+   * Called after a worker warning (non-zero exit or no turn) is recorded on the run, so the host can post an
+   * Inbox row. Failures are logged and never fail the engine.
+   */
+  onRunWarning?: (record: ExecutionRecord, warning: { slotId: string; summary: string; kind: 'worker-exit' | 'worker-no-turn' | 'worker-respawn' }) => void | Promise<void>;
+  /**
+   * How long a claimed worker may take no turn and emit no output before the run is warned. Defaults to the run's
+   * claim stall limit; E2E shortens it through host config.
+   */
+  noTurnWarnWindowMs?: () => number | undefined;
   inbox?: { append: (input: InboxInput) => Promise<InboxEntry>; appendOnce?: (input: InboxInput) => Promise<InboxEntry> };
   preflightWorkflow?: (teamId: string, workflow: SquadBundleWorkflowMetadataV1) => { ok: boolean; code?: string; message?: string };
   /** Trusted total slot count of the record's team; enables the all-slots-restorable gate. */
@@ -438,6 +465,8 @@ interface ExtractedLifecycle {
     process?: string;
     /** Set on a seat that starts on demand (it may have no session). */
     onDemand?: true;
+    /** Set while the seat waits for the session of a coordinator-requested respawn. */
+    respawned?: 'on-demand' | 'normal';
     /** Units the current session accepted; present only for a seat that starts a fresh session per unit (#579). */
     deliveredUnitCount?: number;
     task?: string;
@@ -685,6 +714,11 @@ export function availabilityUnknownFromAdmission(admission: TeamAdmissionResultV
 
 const MAX_PLAN_CORRECTION_STOP_ATTEMPTS = 5;
 
+/** Freeform and legacy `job-team` runs continue past a failed worker slot with a warning; other modes fail. */
+function warnOnlyOnFailedSlots(mode: TeamCoordinationMode | undefined): boolean {
+  return mode === 'freeform' || mode === 'job-team';
+}
+
 export class ExecutionService {
   private runCheckCompletions = new Map<string, { controller: AbortController; pending: Promise<readonly string[]> }>();
   private checkCompletions = new Map<string, { executionId: string; workUnitId: string; claimId?: string; claimGeneration?: number; controller: AbortController; running?: Promise<ExecutionCheckResultV1>; pending: ReturnType<ExecutionService['completeWorkChecked']> }>();
@@ -700,6 +734,11 @@ export class ExecutionService {
   private readonly parkedHolds: ParkedWorkerHolds;
   private activeClaimCursor?: ActiveClaimCursor;
   private activeReconcileRunning = false;
+  /** Claims already warned as taking no turn (`executionId:unitId:claimId`), bounded so it cannot grow without limit. */
+  private readonly noTurnWarned = new Set<string>();
+  private readonly exitWarned = new Set<string>();
+  /** Worker slots with a respawn in flight (`executionId:slotId`); a second concurrent call refuses. */
+  private readonly respawning = new Set<string>();
   private readonly routeFactCircuits = new Map<string, { state: CircuitState; openedAt?: number }>();
   private readonly wakeConfirmations: CoordinatorWakeConfirmations;
 
@@ -966,7 +1005,7 @@ export class ExecutionService {
       });
       if (!launched.ok) {
         await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
-        await this.transitionOrCurrent(record, 'FAILED', 'error', launched.message ?? 'Team launch failed');
+        await this.failLaunch(record, launched.message ?? 'Team launch failed');
         return { ok: false, code: launched.code ?? 'TEAM_LAUNCH_FAILED', message: launched.message ?? 'Team launch failed' };
       }
       if (!await this.launchMayProceed(record)) {
@@ -979,12 +1018,28 @@ export class ExecutionService {
         }
         return { ok: false, code: 'DEADLINE_EXCEEDED', message: 'execution deadline elapsed during Team launch' };
       }
+      const failedStart = await this.settleFailedSlots(record, launched.value?.failedSlots ?? [], issuedAuthorizationIds);
+      if (failedStart) {
+        return failedStart.state === 'FAILED'
+          ? { ok: false, code: 'TEAM_LAUNCH_FAILED', message: failedStart.failureReason ?? 'One or more Team slots failed to launch' }
+          : { ok: false, code: 'TEAM_LAUNCH_STATE_CONFLICT', message: `Team launch failed while execution is ${failedStart.state.toLowerCase()}` };
+      }
       record = await this.promoteStartingToRunning(record, 'Team launch started');
       return { ok: true, value: { ...record, ...(resumeGrant ? { resumeToken: resumeGrant.token, resumeTokenExpiresAt: resumeGrant.expiresAt } : {}) } };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
-      const current = await this.failLaunch(record, `Team launch error: ${message}`);
+      // Seats this launch request already started must not outlive the failed run. failLaunch cancels the
+      // launch when it writes the FAILED transition; only when that write itself throws does this path cancel
+      // directly, so a launch is never cancelled by two callers for one failure. A failed close never masks
+      // the launch error.
+      let current: ExecutionRecord;
+      try {
+        current = await this.failLaunch(record, `Team launch error: ${message}`);
+      } catch (failError) {
+        await this.cancelBestEffort(record, `execution ${record.id} launch cleanup`);
+        throw failError;
+      }
       return current.state === 'FAILED'
         ? { ok: false, code: message === 'TARGET_UNAVAILABLE' ? 'TARGET_UNAVAILABLE' : 'TEAM_LAUNCH_FAILED', message }
         : { ok: false, code: 'TEAM_LAUNCH_STATE_CONFLICT', message: `Team launch failed while execution is ${current.state.toLowerCase()}` };
@@ -1157,8 +1212,9 @@ export class ExecutionService {
         catch (error) { this.deps.logError?.(`Execution claim recovery lifecycle read failed for ${record.id}`, error); return [record, undefined] as const; }
       }));
       for (const [record, lifecycle] of lifecycles) {
-        if (!lifecycle?.workers) continue;
         const now = (this.deps.now ?? Date.now)();
+        await this.warnNoTurnWorkers(record, lifecycle, now);
+        if (!lifecycle?.workers) continue;
         const claims: { workUnitId: string; claimId: string; claimGeneration: number; reason: string; force?: boolean }[] = [];
         const renewSlots: string[] = [];
         for (const unit of record.workUnits ?? []) {
@@ -1193,6 +1249,67 @@ export class ExecutionService {
     }
   }
 
+  /** Records the run warning and offers it to the host (Inbox). Never throws: a warning must not break recovery. */
+  private async raiseWorkerWarning(record: ExecutionRecord, slotId: string, summary: string, kind: 'worker-exit' | 'worker-no-turn' | 'worker-respawn'): Promise<void> {
+    const bounded = boundReason(summary);
+    try {
+      await this.deps.store.warning(record.id, { slotId, summary: bounded });
+    } catch (error) {
+      this.deps.logError?.(`Worker warning failed for ${record.id}`, error);
+      return;
+    }
+    try {
+      await this.deps.onRunWarning?.(record, { slotId: boundReason(slotId, 120), summary: bounded, kind });
+    } catch (error) {
+      this.deps.logError?.(`Worker warning delivery failed for ${record.id}`, error);
+    }
+  }
+
+  /** A seat that started on demand and never had work is idle, not failed: only assigned or claimed seats warn. */
+  private slotHasAssignment(record: ExecutionRecord, worker: { slotId?: string; onDemand?: true }): boolean {
+    if (!worker.onDemand) return true;
+    return (record.workUnits ?? []).some((unit) => unit.assignedSlotId === worker.slotId || unit.claimedBy?.slotId === worker.slotId);
+  }
+
+  private evictOldest(keys: Set<string>): void {
+    while (keys.size > MAX_WORKER_WARNING_KEYS) keys.delete(keys.values().next().value as string);
+  }
+
+  /** Warns once for a worker that exited with a non-zero code or by signal; a clean exit or a user stop is silent. */
+  private async warnWorkerExit(record: ExecutionRecord, worker: NonNullable<ExtractedLifecycle['workers']>[number]): Promise<void> {
+    if (worker.process !== 'exited' || !worker.slotId || !this.slotHasAssignment(record, worker)) return;
+    const crashed = worker.exitCode !== undefined ? worker.exitCode !== 0 : worker.exitSignal !== undefined && worker.exitSignal !== 0;
+    if (!crashed) return;
+    const how = worker.exitCode !== undefined ? `exited with code ${worker.exitCode}` : `was stopped by signal ${worker.exitSignal}`;
+    const why = worker.exitReason ? `: ${worker.exitReason}` : '';
+    const key = `${record.id}:${worker.slotId}:${worker.sessionId ?? ''}`;
+    if (this.exitWarned.has(key)) return;
+    this.exitWarned.add(key);
+    this.evictOldest(this.exitWarned);
+    await this.raiseWorkerWarning(record, worker.slotId, `Worker ${worker.slotId} ${how}${why}`, 'worker-exit');
+  }
+
+  /**
+   * Warns once per claim whose worker has reported no turn and produced no output for the window since it was
+   * claimed. A worker proven dead is skipped (its exit warns); a claim that is progressing never warns.
+   */
+  private async warnNoTurnWorkers(record: ExecutionRecord, lifecycle: ExtractedLifecycle | undefined, now: number): Promise<void> {
+    const window = this.deps.noTurnWarnWindowMs?.() ?? record.request.policy?.maxClaimStallMs ?? DEFAULT_DURABLE_CLAIM_STALL_MS;
+    for (const unit of record.workUnits ?? []) {
+      if (unit.state !== 'CLAIMED' || !unit.claimId || !unit.assignedSlotId || unit.claimedAt === undefined) continue;
+      if ((unit.turnCount ?? 0) > 0 || (unit.progressAt ?? unit.claimedAt) > unit.claimedAt) continue;
+      if (now - unit.claimedAt < window) continue;
+      const slotId = unit.assignedSlotId;
+      const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === slotId && candidate.projectId === record.projectId);
+      if (worker && DEAD_WORKER_PROCESSES.has(worker.process ?? '')) continue;
+      const key = `${record.id}:${unit.id}:${unit.claimId}`;
+      if (this.noTurnWarned.has(key)) continue;
+      this.noTurnWarned.add(key);
+      this.evictOldest(this.noTurnWarned);
+      await this.raiseWorkerWarning(record, slotId, `Worker ${slotId} has taken no turn for ${formatDuration(window)} after it was assigned work`, 'worker-no-turn');
+    }
+  }
+
   /**
    * Recover one worker claim immediately after main records its terminal PTY state.
    * This deliberately does not share {@link reconcileActive}'s in-flight guard:
@@ -1211,6 +1328,7 @@ export class ExecutionService {
     }
     const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === slotId && candidate.projectId === record.projectId);
     if (!worker || !DEAD_WORKER_PROCESSES.has(worker.process ?? '')) return;
+    await this.warnWorkerExit(record, worker);
     const unit = record.workUnits?.find((candidate) => candidate.state === 'CLAIMED' && candidate.assignedSlotId === slotId);
     if (!unit?.claimId || unit.claimGeneration === undefined) return;
     const reclaimed = await this.deps.store.reclaimExpiredClaims(record.id, [{
@@ -2635,6 +2753,75 @@ export class ExecutionService {
     return outcome;
   }
 
+  /**
+   * Orchestrator-only: replace a dead worker slot. Authority is the main-resolved binding. Order matters: cheap
+   * refusals first (no count spent), then one atomic persisted count under the store mutex, then the host spawn.
+   * A per-slot in-flight set makes a concurrent second call refuse instead of spending the cap twice.
+   */
+  async respawnWorker(binding: ExecutionCohortBinding, slotId: string): Promise<{ ok: true; value: { slotId: string; sessionId: string; respawn: number; cap: number } } | { ok: false; code: string; message: string }> {
+    if (binding.role !== 'orchestrator') return deniedBound('only the coordinator can respawn a worker');
+    if (typeof slotId !== 'string' || !slotId || slotId.length > 120) return invalidBound(new Error('invalid worker slot'));
+    if (isOrchestratorSlotId(slotId)) return deniedBound('the coordinator slot cannot be respawned');
+    const record = await this.getBound(binding);
+    if (!record) return deniedBound('execution not found for bound cohort');
+    if (isResumeGrantTerminal(record.state)) return terminalBound(record);
+    if (record.state !== 'RUNNING') return { ok: false, code: 'INVALID', message: `execution is ${record.state.toLowerCase()}; a worker can only be respawned while it is running` };
+    const known = (record.authorizationContext?.slots ?? []).some((slot) => !isOrchestratorSlotId(slot.slotId) && slot.slotId === slotId);
+    if (!known) return { ok: false, code: 'NOT_FOUND', message: `unknown worker slot "${boundReason(slotId, 120)}"` };
+    const respawn = this.deps.respawnWorker;
+    if (!respawn) return { ok: false, code: 'UNAVAILABLE', message: 'worker respawn is not available on this host' };
+    const key = `${record.id}:${slotId}`;
+    if (this.respawning.has(key)) return { ok: false, code: 'BUSY', message: `worker ${slotId} is already being respawned` };
+    this.respawning.add(key);
+    try {
+      let lifecycle: ExtractedLifecycle | undefined;
+      try { lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId)); } catch (error) {
+        this.deps.logError?.(`respawn lifecycle read failed for ${record.id}/${slotId}`, error);
+      }
+      const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === slotId && candidate.projectId === record.projectId);
+      if (!lifecycle?.recordId || !worker) return { ok: false, code: 'NOT_FOUND', message: `worker ${slotId} has no launched session to replace` };
+      if (worker.respawned !== undefined && !worker.sessionId && (worker.process === 'authorized' || worker.process === 'spawning')) {
+        return { ok: false, code: 'QUEUED', message: `worker ${slotId} is already queued to restart; it starts when the machine has room, so do not call this again` };
+      }
+      if (!DEAD_WORKER_PROCESSES.has(worker.process ?? '')) return { ok: false, code: 'INVALID', message: `worker ${slotId} is still running; only a worker whose session is over can be respawned` };
+      let reservation: Awaited<ReturnType<ExecutionServiceDeps['store']['reserveWorkerRespawn']>>;
+      try { reservation = await this.deps.store.reserveWorkerRespawn(record.id, slotId, this.deps.workerRespawnCap); } catch (error) { return invalidBound(error); }
+      if (!reservation.ok) {
+        if (reservation.reason === 'cap') {
+          await this.notifyRespawnWarning(record, slotId, `Worker ${slotId} could not be respawned: the limit of ${reservation.cap} respawn(s) is used up`);
+          return { ok: false, code: 'CAP_EXCEEDED', message: `worker ${slotId} has already been respawned ${reservation.count} time(s); the limit is ${reservation.cap}` };
+        }
+        return { ok: false, code: reservation.reason === 'unknown-slot' ? 'NOT_FOUND' : 'INVALID', message: `worker ${slotId} cannot be respawned: ${reservation.reason}` };
+      }
+      let outcome: Awaited<ReturnType<NonNullable<ExecutionServiceDeps['respawnWorker']>>>;
+      try { outcome = await respawn(lifecycle.recordId, slotId); } catch (error) {
+        outcome = { ok: false, reason: 'spawn-failed', message: error instanceof Error ? error.message : String(error), committed: true };
+      }
+      if (!outcome.ok && outcome.committed !== true) {
+        // Nothing was started, so the attempt does not count against the slot's budget.
+        await this.deps.store.settleWorkerRespawn(record.id, slotId, { refund: true })
+          .catch((error: unknown) => this.deps.logError?.(`Respawn refund failed for ${record.id}/${slotId}`, error));
+        return { ok: false, code: 'RESPAWN_FAILED', message: `${outcome.reason}: ${boundReason(outcome.message)}` };
+      }
+      if (!outcome.ok) {
+        const message = boundReason(outcome.message);
+        await this.raiseWorkerWarning(record, slotId, `Worker ${slotId} could not be respawned (${outcome.reason}): ${message}`, 'worker-respawn');
+        return { ok: false, code: 'RESPAWN_FAILED', message: `${outcome.reason}: ${message}` };
+      }
+      await this.deps.store.settleWorkerRespawn(record.id, slotId, { started: { count: reservation.count, cap: reservation.cap } })
+        .catch((error: unknown) => this.deps.logError?.(`Respawn event failed for ${record.id}/${slotId}`, error));
+      return { ok: true, value: { slotId, sessionId: outcome.sessionId, respawn: reservation.count, cap: reservation.cap } };
+    } finally {
+      this.respawning.delete(key);
+    }
+  }
+
+  private async notifyRespawnWarning(record: ExecutionRecord, slotId: string, summary: string): Promise<void> {
+    const bounded = boundReason(summary);
+    try { await this.deps.onRunWarning?.(record, { slotId: boundReason(slotId, 120), summary: bounded, kind: 'worker-respawn' }); }
+    catch (error) { this.deps.logError?.(`Respawn warning delivery failed for ${record.id}`, error); }
+  }
+
   async retryWork(binding: ExecutionCohortBinding, workUnitId: string, assignedSlotId?: string) {
     const admission = await this.budgetAdmission(binding.executionId);
     if (!admission.ok) return admission;
@@ -2876,6 +3063,10 @@ export class ExecutionService {
         } catch (error) {
           this.deps.logError?.(`Prior native recovery snapshot clear failed for ${current.id}`, error);
         }
+      }
+      const failedRetry = await this.settleFailedSlots(current, launched.value?.failedSlots ?? [], issuedAuthorizationIds);
+      if (failedRetry) {
+        return { ok: false as const, code: 'TEAM_LAUNCH_FAILED', message: failedRetry.failureReason ?? 'One or more Team slots failed to launch', value: failedRetry };
       }
       if (!await this.launchMayProceed(current)) {
         return { ok: false as const, code: 'DEADLINE_EXCEEDED', message: 'execution deadline elapsed during Team retry launch', value: await this.deps.store.get(current.id) };
@@ -3268,7 +3459,7 @@ export class ExecutionService {
     // The ledger's cancelled state fences plan registration and resume, but must
     // never fence retries of terminal effects after a crash or transient failure.
     await this.cleanupTerminal(record);
-    const canceled = await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
+    const canceled = await this.cancelLaunchVerified(record);
     if (!canceled.ok && canceled.code !== 'NOT_FOUND') {
       throw new Error(`${canceled.code ?? 'CANCEL_FAILED'}: ${canceled.message ?? 'Team cancellation failed'}`);
     }
@@ -3284,7 +3475,7 @@ export class ExecutionService {
       // running as orphaned terminal cards.
       const rawLifecycle = await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
       const lifecycle = extractLifecycleInfo(rawLifecycle);
-      const canceled = await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
+      const canceled = await this.cancelLaunchVerified(record);
       if (!canceled.ok && canceled.code !== 'NOT_FOUND') {
         return {
           ok: false as const,
@@ -3805,7 +3996,7 @@ export class ExecutionService {
     }
     if (record.state === 'FAILED') {
       if (record.stateVersion !== expectedStateVersion) return { ok: false as const, code: 'CONFLICT', message: 'stale execution state', current: record };
-      const canceled = await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
+      const canceled = await this.cancelLaunchVerified(record);
       return canceled.ok
         ? { ok: true as const, value: record, canceled: canceled.value }
         : { ok: false as const, code: canceled.code ?? 'CANCEL_FAILED', message: canceled.message ?? 'Team cancellation failed' };
@@ -3815,10 +4006,29 @@ export class ExecutionService {
     const runChecks = this.runCheckCompletions.get(record.id);
     if (runChecks) { runChecks.controller.abort(); await runChecks.pending.catch(() => undefined); }
     for (const check of this.checkCompletions.values()) if (check.executionId === record.id) check.controller.abort();
-    const canceled = await this.deps.cancelTeamLaunch(record.callerPrincipalId, fenced.value.teamLaunchRequestId);
+    const canceled = await this.cancelLaunchVerified(fenced.value);
     if (!canceled.ok && canceled.code !== 'NOT_FOUND') return { ok: false as const, code: canceled.code ?? 'CANCEL_FAILED', message: canceled.message ?? 'Team cancellation failed' };
-    const stopped = await this.transitionOrCurrent(fenced.value, 'STOPPED', 'info', 'Execution stopped');
+    const stopped = await this.settleStopped(fenced.value);
+    if (!isResumeGrantTerminal(stopped.state)) {
+      return { ok: false as const, code: 'STOP_INCOMPLETE', message: `execution is still ${stopped.state.toLowerCase()} after the stop; retry Stop`, current: stopped };
+    }
     return { ok: true as const, value: stopped, canceled: canceled.value };
+  }
+
+  /**
+   * Land STOPPED after the launch was cancelled. Cancelling closes sessions, and their exit events (worker
+   * exit, blocker/board writes) advance stateVersion while the cancel is in flight, so a single transition
+   * at the fenced version loses the race and silently leaves the run BLOCKED/RUNNING. Re-read and retry
+   * until the run is final; a terminal state written by another actor is accepted as-is.
+   */
+  private async settleStopped(fenced: ExecutionRecord): Promise<ExecutionRecord> {
+    let current = fenced;
+    for (let attempt = 0; attempt < MAX_STOP_TRANSITION_ATTEMPTS; attempt += 1) {
+      const outcome = await this.transitionWithOutcome(current, 'STOPPED', 'info', 'Execution stopped');
+      current = outcome.record;
+      if (outcome.wrote || current.state === 'COMPLETED' || current.state === 'FAILED' || current.state === 'STOPPED') return current;
+    }
+    return current;
   }
 
   private async fenceCommand(record: ExecutionRecord, expectedStateVersion: number, summary: string, slotId?: string) {
@@ -3866,18 +4076,8 @@ export class ExecutionService {
       }
       return record;
     }
-    if (lifecycle.launchResult?.failedSlots?.length) {
-      const details = lifecycle.launchResult.failedSlots
-        .map((slot) => {
-          if (!slot || typeof slot !== 'object') return '';
-          const value = slot as { slotId?: unknown; reason?: unknown };
-          const slotId = typeof value.slotId === 'string' ? value.slotId : 'unknown slot';
-          const reason = typeof value.reason === 'string' ? value.reason : 'unknown reason';
-          return `${slotId}: ${reason}`;
-        })
-        .filter(Boolean)
-        .join('; ');
-      return this.transitionOrCurrent(record, 'FAILED', 'error', details || 'One or more Team slots failed to launch');
+    if (lifecycle.launchResult?.failedSlots?.length && !warnOnlyOnFailedSlots(record.coordinationMode)) {
+      return this.failLaunch(record, formatFailedSlots(lifecycle.launchResult.failedSlots), 'background');
     }
     if (lifecycle.outcome?.status === 'completed' && lifecycle.outcome.result?.ok === false) {
       return this.transitionOrCurrent(record, 'FAILED', 'error', lifecycle.outcome.result.message ?? 'Team launch failed');
@@ -3933,15 +4133,79 @@ export class ExecutionService {
     severity: 'info' | 'warning' | 'error',
     summary: string
   ): Promise<ExecutionRecord> {
+    return (await this.transitionWithOutcome(record, state, severity, summary)).record;
+  }
+
+  /**
+   * Like {@link transitionOrCurrent}, but reports whether this caller wrote the transition. Only the writer
+   * runs terminal cleanup and, for FAILED, cancels the launch: a caller that lost a stale-version race
+   * returns the current record and leaves teardown to whoever won.
+   */
+  private async transitionWithOutcome(
+    record: ExecutionRecord,
+    state: ExecutionRecord['state'],
+    severity: 'info' | 'warning' | 'error',
+    summary: string
+  ): Promise<{ record: ExecutionRecord; wrote: boolean }> {
     try {
       const updated = await this.deps.store.transition(record.id, record.stateVersion, state, severity, summary);
-      if (isResumeGrantTerminal(updated.state)) await this.cleanupTerminal(updated);
-      return updated;
+      if (isResumeGrantTerminal(updated.state)) {
+        await this.cleanupTerminal(updated);
+        if (updated.state === 'FAILED') {
+          // Reads (status, reconcile) must not block on the bounded session-close wait; cancelBestEffort never rejects.
+          void this.cancelBestEffort(updated, `execution ${updated.id} failed-run cleanup`);
+        }
+      }
+      return { record: updated, wrote: true };
     } catch (error) {
       if (!(error instanceof Error) || error.message !== 'stale execution state') throw error;
       const current = await this.deps.store.get(record.id);
       if (!current) throw error;
-      return current;
+      return { record: current, wrote: false };
+    }
+  }
+
+  /**
+   * Cancel the run's launch and wait a bounded time for sessions that are still closing. A close that failed
+   * is retried on each check. The result is incomplete (CANCEL_INCOMPLETE) only if sessions survive the wait;
+   * a launch the lifecycle no longer knows is reported as-is (NOT_FOUND) for the caller to accept.
+   */
+  private async cancelLaunchVerified(
+    record: Pick<ExecutionRecord, 'id' | 'callerPrincipalId' | 'teamLaunchRequestId'>
+  ): Promise<Awaited<ReturnType<ExecutionServiceDeps['cancelTeamLaunch']>>> {
+    const settle = this.deps.cancelSettle;
+    const attempts = Math.max(1, settle?.attempts ?? 4);
+    const intervalMs = Math.max(0, settle?.intervalMs ?? 300);
+    const sleep = settle?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    let last: Awaited<ReturnType<ExecutionServiceDeps['cancelTeamLaunch']>> = { ok: false, code: 'CANCEL_FAILED', message: 'Team cancellation failed' };
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (attempt > 0) await sleep(intervalMs);
+      last = await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
+      // A refused cancellation is the caller's to retry; only surviving sessions are waited on here.
+      if (!last.ok) return last;
+      const pending = last.value?.pendingSessionIds ?? [];
+      if (pending.length === 0 && last.value?.lifecycleState !== 'cancel-pending') return last;
+    }
+    const pending = last.ok ? last.value?.pendingSessionIds ?? [] : [];
+    return {
+      ok: false,
+      code: 'CANCEL_INCOMPLETE',
+      message: pending.length > 0 ? `Team sessions are still closing: ${pending.join(', ')}` : 'Team sessions are still closing',
+      value: {
+        canceledSessionIds: last.value?.canceledSessionIds ?? [],
+        pendingSessionIds: pending,
+        ...(last.value?.lifecycleState ? { lifecycleState: last.value.lifecycleState } : {})
+      }
+    };
+  }
+
+  /** Terminal-path cancel that never throws: the run is already final, so a stuck session is logged for the next Stop to finish. */
+  private async cancelBestEffort(record: ExecutionRecord, context: string): Promise<void> {
+    try {
+      const canceled = await this.cancelLaunchVerified(record);
+      if (!canceled.ok && canceled.code !== 'NOT_FOUND') this.deps.logError?.(context, new Error(`${canceled.code}: ${canceled.message}`));
+    } catch (error) {
+      this.deps.logError?.(context, error);
     }
   }
 
@@ -3999,13 +4263,23 @@ export class ExecutionService {
     }
   }
 
-  private async failLaunch(record: ExecutionRecord, summary: string): Promise<ExecutionRecord> {
+  /**
+   * `cancel: 'background'` is for read/reconcile paths (status), which must not block on the bounded
+   * session-close wait; launch paths keep the awaited, verified cancel.
+   */
+  private async failLaunch(record: ExecutionRecord, summary: string, cancel: 'awaited' | 'background' = 'awaited'): Promise<ExecutionRecord> {
+    const cleanup = async (target: ExecutionRecord, context: string) => {
+      const pending = this.cancelBestEffort(target, context);
+      if (cancel === 'awaited') await pending;
+    };
     let current = record;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    // Members bump stateVersion while a launch is in flight; keep refetching so one writer lands FAILED.
+    for (let attempt = 0; attempt < MAX_FAIL_LAUNCH_ATTEMPTS; attempt += 1) {
       if (current.state !== 'STARTING' && current.state !== 'RUNNING') return current;
       try {
-        const failed = await this.deps.store.transition(current.id, current.stateVersion, 'FAILED', 'error', summary);
+        const failed = await this.deps.store.transition(current.id, current.stateVersion, 'FAILED', 'error', boundReason(summary));
         await this.cleanupTerminal(failed);
+        await cleanup(failed, `execution ${failed.id} failed-launch cleanup`);
         return failed;
       } catch (error) {
         if (!(error instanceof Error) || error.message !== 'stale execution state') throw error;
@@ -4014,7 +4288,27 @@ export class ExecutionService {
         current = refreshed;
       }
     }
+    // Retries exhausted without a FAILED write: still close the seats this launch started.
+    await cleanup(current, `execution ${current.id} failed-launch cleanup after retries`);
     return current;
+  }
+
+  /**
+   * Evaluates worker slots that failed while the launch itself succeeded. Freeform and legacy `job-team` runs
+   * keep going with a persistent warning (the coordinator is told at kickoff); every other mode cannot finish
+   * with a missing worker and fails now. Returns the settled record only when the run was failed.
+   */
+  private async settleFailedSlots(record: ExecutionRecord, failedSlots: unknown[], issuedAuthorizationIds: string[]): Promise<ExecutionRecord | undefined> {
+    if (failedSlots.length === 0) return undefined;
+    if (warnOnlyOnFailedSlots(record.coordinationMode)) {
+      await this.deps.store.warning(record.id, { slots: failedSlots }).catch((error) => {
+        this.deps.logError?.(`Team launch warning failed for ${record.id}`, error);
+      });
+      return undefined;
+    }
+    await this.deps.revokeTeamAuthorizations?.(issuedAuthorizationIds);
+    // failLaunch writes FAILED and cancels the launch once.
+    return this.failLaunch(record, formatFailedSlots(failedSlots));
   }
 
   /** Retained recovery must stay terminal so its recovery mode and snapshots remain actionable. */
@@ -4288,7 +4582,7 @@ export class ExecutionService {
   }
 
   private async cancelTimedOutLaunch(record: ExecutionRecord): Promise<void> {
-    const canceled = await this.deps.cancelTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
+    const canceled = await this.cancelLaunchVerified(record);
     if (!canceled.ok) {
       throw new Error(`${canceled.code ?? 'CANCEL_FAILED'}: ${canceled.message ?? 'Team cancellation failed'}`);
     }

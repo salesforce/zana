@@ -397,8 +397,9 @@ it('combines complementary root and package coverage even when local ids differ'
 it('keeps the existing required CI check as an always-running gate over every job', () => {
   const workflow = readFileSync(resolve('.github/workflows/ci.yml'), 'utf8');
   expect(workflow).toContain('name: Typecheck and test');
-  expect(workflow).toContain('needs: [plan, unit, unit-packages, coverage, e2e-build, e2e, preview-cross-platform, connect-postgres, squad-windows-admission]');
+  expect(workflow).toContain('needs: [plan, unit, unit-packages, coverage, e2e-build, e2e, preview-cross-platform, connect-postgres, squad-windows-admission, squad-test-faults]');
   expect(workflow).toContain('if: always()');
+  expect(workflow).toContain('test "$TEST_FAULTS_RESULT" = success');
   expect(workflow).toContain('test "$UNIT_RESULT" = success');
   expect(workflow).toContain('test "$PACKAGES_RESULT" = success');
   expect(workflow).toContain('test "$COVERAGE_RESULT" = success');

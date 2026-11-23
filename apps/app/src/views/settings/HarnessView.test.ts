@@ -83,9 +83,6 @@ describe('summarizeHarnessHealth', () => {
 describe('Install status login check copy', () => {
   it('says Check verifies sign-in for Cursor, Codex, Pi, and OpenCode', () => {
     const source = readFileSync(new URL('./HarnessView.tsx', import.meta.url), 'utf8');
-    expect(source).toContain(
-      'Check status refreshes installation, sign-in, and model availability.'
-    );
     expect(source).toContain('login={harnessLoginStatus(h.family, modelCatalog, h.installed)}');
     expect(source).toContain('data-testid="harness-machines-link"');
     expect(source).toContain('getSettingsRoutePath(\'machines\')');
@@ -145,7 +142,7 @@ describe('harness settings-search provider', () => {
   it('indexes Modern providers with discovered model names', async () => {
     const { threadProviderEntries, threadProviderSearchId } = await import('@/lib/settings-search/providers/harness');
     const catalog = {
-      providers: [{ id: 'custom', displayName: 'Custom', permissionModes: [], composerActions: [] }],
+      providers: [{ id: 'custom', displayName: 'Custom' }, { id: 'codex', displayName: 'Codex' }],
       byProvider: { codex: { models: [{ id: 'gpt-x', displayName: 'GPT X' }] } }
     } as never;
     const entries = threadProviderEntries([{ id: 'extra', displayName: 'Extra', pluginId: 'p' }], catalog);
@@ -156,8 +153,10 @@ describe('harness settings-search provider', () => {
   });
 
   it('registered provider reads the store without throwing', async () => {
-    const { harnessSearchProvider } = await import('@/lib/settings-search/providers/harness');
-    expect(harnessSearchProvider({ config: {} as AppConfig }).some((e) => e.id === 'harness.provider.claude-code')).toBe(true);
+    const { harnessSearchProvider, rememberHarnessProviders } = await import('@/lib/settings-search/providers/harness');
+    rememberHarnessProviders([{ id: 'custom', displayName: 'Custom', pluginId: 'owner' }]);
+    expect(harnessSearchProvider({ config: {} as AppConfig }).some(e => e.id === 'harness.provider.custom')).toBe(true);
+    rememberHarnessProviders([]);
   });
 });
 

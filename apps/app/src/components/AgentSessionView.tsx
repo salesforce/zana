@@ -32,6 +32,7 @@ import {
 } from './thread/secondary-panel/threadSecondaryPanelState.js';
 import { getDesktopBrowserApi } from '../lib/desktop-browser.js';
 import { getBrowserUrlHost } from '../lib/browser-url.js';
+import { useBasicUi } from '../lib/basic-ui.js';
 import { useOptionalPaneContext } from '../views/thread-detail/PaneContext.js';
 import { agentSessionPanelOwnerId, ThreadPanelOwnerProvider } from '../plugins/thread-panel-owner.js';
 import { SplitPaneHeaderActions } from '../views/thread-detail/SplitPaneHeaderActions.js';
@@ -185,6 +186,7 @@ function DesktopAgentSessionView({
   modal?: boolean;
   mobileTitleInShell?: boolean;
 }) {
+  const basicUi = useBasicUi();
   const pane = useOptionalPaneContext();
   const viewRef = useRef<HTMLElement>(null);
   const panelOwnerId = agentSessionPanelOwnerId(session.id, modal);
@@ -318,6 +320,7 @@ function DesktopAgentSessionView({
     panelBody = (
       <ThreadFilePreviewTab
         threadId={session.id}
+        previewId={closable.id}
         previewRevision={closable.previewRevision}
         path={closable.path}
         openerKey={closable.openerKey}
@@ -407,7 +410,7 @@ function DesktopAgentSessionView({
           <BrowserTabDeck
             browserTabs={panel.state.tabs.filter((tab) => tab.kind === 'browser')}
             activeBrowserTabId={closable?.kind === 'browser' ? closable.id : null}
-            canShowNativeBrowserView={panelOpen && (modal || pane?.isFocused !== false)}
+            canShowNativeBrowserView={!basicUi && panelOpen && (modal || pane?.isFocused !== false)}
             threadId={session.id}
             onUpdate={({ tabId, url, title }) => {
               const nextTitle = title && title.length > 0 ? title : getBrowserUrlHost(url) || 'Browser';

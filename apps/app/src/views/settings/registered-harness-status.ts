@@ -2,6 +2,7 @@ import type { ThreadModelCatalogEntry } from '../../components/thread/pickers/th
 import { emptyModelsHint } from '../../components/thread/pickers/harness-login.js';
 
 export function registeredHarnessStatus(input: {
+  providerId?: string;
   available?: boolean;
   unavailableReason?: string | null;
   installed?: boolean;
@@ -16,7 +17,7 @@ export function registeredHarnessStatus(input: {
   if (input.installed === false) return { tone: 'warn', label: 'Command-line agent not installed' };
   if (input.entry?.modelLoadError) return {
     tone: 'warn',
-    label: `${input.entry.models.length ? 'Previously loaded models · ' : ''}${emptyModelsHint('', input.entry.modelLoadError, input.entry.modelLoadErrorDetail)}`
+    label: `${input.entry.models.length ? 'Previously loaded models · ' : ''}${emptyModelsHint(input.providerId ?? '', input.entry.modelLoadError, input.entry.modelLoadErrorDetail)}`
   };
   if (input.rosterError) return {
     tone: 'warn',

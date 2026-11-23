@@ -167,7 +167,7 @@ it('keeps the editor bootstrap out of the Explorer shell and empty viewer', () =
   expect(shell).not.toContain("import '@/lib/monacoSetup'");
   const viewer = readFileSync(fileURLToPath(new NodeURL('./FileViewer.tsx', import.meta.url)), 'utf8');
   expect(viewer).toContain("lazy(() => import('./ExplorerEditor.js'))");
-  expect(viewer).toContain("lazy(() => import('./MarkdownPreview.js'))");
+  expect(viewer).toContain("lazy(() => import('../markdown/MarkdownDocument.js'))");
   const props = view().props;
   render(<FileViewer {...props} explorerFile={undefined} />);
   expect(screen.getByText('Select a file from the tree to view it.')).toBeTruthy();
@@ -209,14 +209,12 @@ it('loads markdown and diff surfaces only when selected, keeping HEAD failures l
 });
 
 it('keeps editor changes and toolbar actions wired through the lazy editor', async () => {
-  const props = { ...view().props, viewRoot: '/a', editedContent: 'changed', isMarkdown: true, diffAvailable: true, fileResult: { ok: true, content: 'x', bytes: 2500000, truncated: true } };
+  const props = { ...view().props, viewRoot: '/a', editedContent: 'changed', isMarkdown: false, diffAvailable: true, fileResult: { ok: true, content: 'x', bytes: 2500000, truncated: true } };
   await act(async () => { render(<FileViewer {...props} />); });
   await screen.findByTestId('monaco');
   fireEvent.click(screen.getByTitle(platformShortcut('Save (⌘S)')));
-  fireEvent.click(screen.getByTitle('Preview markdown'));
   fireEvent.click(screen.getByTitle('Show diff against HEAD'));
   expect(props.onSave).toHaveBeenCalledOnce();
-  expect(props.onTogglePreview).toHaveBeenCalledOnce();
   expect(props.onToggleDiff).toHaveBeenCalledOnce();
   expect(screen.getByText('truncated · 2MB cap (read-only)')).toBeTruthy();
   act(() => { mocks.onChange(undefined); mocks.onChange('x'); mocks.onChange('new'); });

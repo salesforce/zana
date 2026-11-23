@@ -28,6 +28,19 @@ const JOB_DETAILS_EVENT_TAIL = 25;
 
 type ExecutionProjection = ExecutionBoardSnapshot['execution'];
 
+function durationLabel(ms: number): string {
+  return ms % 60_000 === 0 ? `${ms / 60_000} min` : `${Math.round(ms / 1_000)} s`;
+}
+
+/** One-line effective run limits: concurrent workers plus any claim ceilings the run carries. */
+function limitsSummary(limits: NonNullable<ExecutionProjection['limits']>): string {
+  return [
+    `up to ${limits.maxConcurrent} sessions`,
+    limits.claimWallClockMs === undefined ? undefined : `claim wall-clock ${durationLabel(limits.claimWallClockMs)}`,
+    limits.claimStallMs === undefined ? undefined : `claim stall ${durationLabel(limits.claimStallMs)}`
+  ].filter(Boolean).join(' · ');
+}
+
 /** Identity / lifecycle header block. */
 function jobHeaderLines(projectId: string, execution: ExecutionProjection): string[] {
   const lines: string[] = [];
@@ -46,6 +59,7 @@ function jobHeaderLines(projectId: string, execution: ExecutionProjection): stri
   if (execution.resourceBlock) {
     lines.push(`Resource block: ${execution.resourceBlock.kind} · ${execution.resourceBlock.reason} (at ${formatTimestamp(execution.resourceBlock.blockedAt)})`);
   }
+  if (execution.limits) lines.push(`Limits: ${limitsSummary(execution.limits)}`);
   lines.push(`Telemetry gap count: ${execution.usage?.gapCount ?? 0}`);
   return lines;
 }
@@ -175,6 +189,7 @@ function routeAndFinalLines(execution: ExecutionProjection): string[] {
   const lines: string[] = [];
   const routeFit = execution.routeFitProposal;
   if (routeFit) lines.push(`Route fit: ${routeFit.fit} · ${routeFit.reason} (evaluator ${routeFit.evaluatorVersion}, samples ${routeFit.samples})`);
+  if (execution.failureReason) lines.push(`Failure reason: ${execution.failureReason}`);
   lines.push(`Final summary: ${execution.finalSummary ?? '—'}`);
   return lines;
 }
@@ -536,6 +551,8 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
       </div> : <p>Not assembled.</p>}
       <h4>Route fit</h4>
       {execution.routeFitProposal ? <p>{execution.routeFitProposal.fit} · {execution.routeFitProposal.reason} · inactive proposal ({execution.routeFitProposal.evaluatorVersion})</p> : <p>Not evaluated.</p>}
+      {execution.limits && <p data-testid="execution-limits">Run limits: {limitsSummary(execution.limits)}</p>}
+      {execution.failureReason && <><h4>Failure reason</h4><p>{execution.failureReason}</p></>}
       <h4>Final summary</h4><p>{execution.finalSummary ?? 'Not completed.'}</p>
        <div className="execution-details-actions">
          {!terminal.has(execution.state) && <button className="btn danger" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.stop(projectId, executionId, execution.stateVersion ?? 0))}>Stop Squad run</button>}

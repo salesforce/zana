@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import { Bot, PanelRight } from 'lucide-react';
 import { useCompactLayout } from '../../hooks/useCompactLayout.js';
 import { getBrowserUrlHost } from '../../lib/browser-url.js';
+import { useBasicUi } from '../../lib/basic-ui.js';
 import { ThreadSecondaryPanel } from '../../components/thread/secondary-panel/ThreadSecondaryPanel.js';
 import { ThreadNewTabPage } from '../../components/thread/secondary-panel/ThreadNewTabPage.js';
 import { BrowserTabDeck } from '../../components/thread/secondary-panel/BrowserTabDeck.js';
@@ -158,6 +159,7 @@ function PluginResourceSidePanel({
   connect: (controller: PanelController) => () => void;
   onPresentation: (state: { isOpen: boolean; isMaximized: boolean; widthPx: number }) => void;
 }) {
+  const basicUi = useBasicUi();
   const panel = useSecondaryPanel(ownerId, {
     getContainerWidthPx: () => viewRef.current?.clientWidth ?? 0
   });
@@ -320,7 +322,7 @@ function PluginResourceSidePanel({
           <BrowserTabDeck
             browserTabs={panel.state.tabs.filter((tab) => tab.kind === 'browser')}
             activeBrowserTabId={closable?.kind === 'browser' ? closable.id : null}
-            canShowNativeBrowserView={panelOpen}
+            canShowNativeBrowserView={!basicUi && panelOpen}
             threadId={ownerId}
             onUpdate={({ tabId, url, title }) => {
               const nextTitle = title && title.length > 0 ? title : getBrowserUrlHost(url) || 'Browser';

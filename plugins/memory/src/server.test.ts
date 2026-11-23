@@ -47,6 +47,23 @@ describe('memory plugin server', () => {
   });
   afterEach(() => vi.unstubAllEnvs());
 
+  it('pages exact tagged records from the requested project and global memory', async () => {
+    const host = await loadPlugin();
+    const seed = (name, projectId, tag) => addMemory(host, { name, projectId, scope: projectId ? 'project' : 'global',
+      summary: 'Release digest preferences', tags: [tag] });
+    await seed('other-project', 'other', 'bot:scout');
+    await seed('similar-tag', 'p1', 'bot:scout-ii');
+    for (let i = 0; i < 21; i++) await seed('note-' + i, i % 2 ? 'p1' : undefined, 'bot:scout');
+    const args = { tag: 'bot:scout', projectId: 'p1' };
+    const first = await host.callRpc('listTagged', args) as { memories: Array<{name:string}>; hasMore:boolean };
+    const last = await host.callRpc('listTagged', { ...args, offset: 20 }) as typeof first;
+    expect(first.hasMore).toBe(true);
+    expect(last.hasMore).toBe(false);
+    expect([...first.memories, ...last.memories].map(m => m.name).sort()).toEqual(Array.from({length:21}, (_, i) => 'note-' + i).sort());
+    await expect(host.callRpc('listTagged', { ...args, offset: -1 })).rejects.toThrow('offset');
+    await expect(host.callRpc('listTagged', { tag: 'bot:scout' })).rejects.toThrow('projectId');
+  });
+
   it('registers a CLI and instruction catalog without native agent tools', async () => {
     const harness = await loadPlugin();
     expect(harness.cli?.name).toBe('memory');

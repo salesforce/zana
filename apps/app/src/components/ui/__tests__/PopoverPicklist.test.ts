@@ -89,7 +89,7 @@ describe('placePopoverMenu', () => {
       200
     );
     expect(placed.left).toBe(8);
-    expect(placed.width).toBe(200);
+    expect(placed.width).toBe(164);
   });
 
   it('anchors above when there is not enough room below', () => {

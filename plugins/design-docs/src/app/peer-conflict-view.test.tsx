@@ -165,7 +165,7 @@ describe('peer conflict review', () => {
     const summary = await screen.findByText('1 files need no choice');
     fireEvent.click(summary);
     expect(screen.getByText(/README.md: changed in different places, merged/)).toBeTruthy();
-    expect((screen.getByRole('radio', { name: 'Merge changes' }) as HTMLInputElement).checked).toBe(true);
+    await waitFor(() => expect((screen.getByRole('radio', { name: 'Merge changes' }) as HTMLInputElement).checked).toBe(true));
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Resolve reviewed fork' })); });
     await screen.findByText(/stays in history/);
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Open history' })); });

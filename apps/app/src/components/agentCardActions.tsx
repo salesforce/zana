@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Archive, Puzzle, Trash2 } from 'lucide-react';
 import { product } from '../lib/product-client.js';
-import { useData, useIdleTriage } from '../store.js';
+import { useData, useIdleTriage, useUi } from '../store.js';
 import { cardNeedsAttention, type AgentCard } from './AgentBoard.js';
 import type { Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { profileHasNativeHistory } from '@zana-ai/zcc-domain/launch-provider';
@@ -33,6 +33,48 @@ export interface CardMenu {
   card: AgentCard;
   x: number;
   y: number;
+}
+
+/**
+ * Restart for a Squad worker goes through main so the new process keeps its slot and run binding
+ * (a plain terminal restart would be ignored by the Squad). Main authorizes; this only chooses the
+ * path. `not-squad-worker` (or an IPC failure on a non-worker) falls back to the ordinary restart.
+ */
+export async function restartAgentCard(
+  c: AgentCard,
+  deps: {
+    restartTerminal: (sessionId: string, projectId: string) => unknown;
+    toast: (message: string) => void;
+  }
+): Promise<void> {
+  // Always ask main: the renderer's cohort copy is advisory, main's answer picks the path.
+  let result: Awaited<ReturnType<typeof product.terminals.restartSquadWorker>>;
+  try {
+    result = await product.terminals.restartSquadWorker(c.session.id);
+  } catch {
+    // Main could not answer. A card that claims to be a worker is never turned into a plain terminal.
+    if (c.session.cohort?.role === 'worker') {
+      deps.toast('Could not restart the Squad worker.');
+      return;
+    }
+    await deps.restartTerminal(c.session.id, c.projectId);
+    return;
+  }
+  if (result.ok) return;
+  if (result.reason === 'not-squad-worker') {
+    await deps.restartTerminal(c.session.id, c.projectId);
+    return;
+  }
+  deps.toast(squadRestartRefusal(result));
+}
+
+/** A short, path-free message built from the reason code; main's detail is bounded and path-stripped again here. */
+export function squadRestartRefusal(result: { reason: string; message?: string }): string {
+  const detail = (result.message ?? result.reason)
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/(?:[A-Za-z]:)?[\\/](?:[^\s\\/]+[\\/])+([^\s\\/]*)/g, '$1')
+    .slice(0, 120);
+  return `Could not restart the Squad worker (${result.reason}): ${detail}`;
 }
 
 export interface AgentCardActions {
@@ -279,7 +321,10 @@ export function useAgentCardActions(): {
       ) {
         return;
       }
-      void restartTerminal(c.session.id, c.projectId);
+      void restartAgentCard(c, {
+        restartTerminal,
+        toast: (message) => useUi.getState().pushToast(message, 'error')
+      });
     },
     reconnect: (c) => {
       void reconnectRemote(c.session.id, c.projectId);

@@ -1,23 +1,27 @@
-import { useEffect, useRef, type MouseEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, type MouseEvent, type ReactNode, type RefCallback } from 'react';
 import { handleHttpLinkClick } from '../lib/in-app-browser-link-preference.js';
 import { resolveDocumentLink, scrollToDocumentFragment, type DocumentLink } from './document-links.js';
 
 /** Own native anchor activation in document previews and contenteditable editors. */
 export function DocumentLinkBoundary({
-  documentPath, fragment = '', onOpenDocument, children, className
+  documentPath, fragment = '', onOpenDocument, children, className, interceptLinks = true, elementRef
 }: {
   documentPath: string;
   fragment?: string;
   onOpenDocument?: (link: DocumentLink) => void;
   children: ReactNode;
   className?: string;
+  interceptLinks?: boolean;
+  elementRef?: RefCallback<HTMLDivElement>;
 }) {
   const root = useRef<HTMLDivElement>(null);
+  const attach = useCallback((node: HTMLDivElement | null) => { root.current = node; return elementRef?.(node); }, [elementRef]);
   useEffect(() => {
     if (root.current && fragment) scrollToDocumentFragment(root.current, fragment);
   }, [documentPath, fragment]);
 
   const openLink = (event: MouseEvent<HTMLDivElement>) => {
+    if (!interceptLinks) return;
     if (event.button > 1 || !(event.target instanceof Element)) return;
     const anchor = event.target.closest('a');
     if (!anchor || !event.currentTarget.contains(anchor)) return;
@@ -36,5 +40,5 @@ export function DocumentLinkBoundary({
     else onOpenDocument?.(link);
   };
 
-  return <div ref={root} className={className} onClickCapture={openLink} onAuxClickCapture={openLink}>{children}</div>;
+  return <div ref={attach} className={className} onClickCapture={openLink} onAuxClickCapture={openLink}>{children}</div>;
 }

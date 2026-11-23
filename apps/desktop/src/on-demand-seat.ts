@@ -596,3 +596,102 @@ export function lifecycleRecycleOps<R extends { workers: ReadonlyArray<{ slotId:
     }
   };
 }
+
+// --- Coordinator respawn of a dead worker (execution.worker.respawn) ---
+
+/** `committed` is set once the seat was put back to waiting: from then on the attempt counts against the slot's budget. */
+export type WorkerRespawnResult = { ok: true; sessionId: string } | { ok: false; reason: string; message: string; committed?: true };
+
+interface RespawnSeat { slotId: string; process: TeamWorkerProcessState; sessionId?: string; projectId?: string }
+
+/** Why a seat cannot be respawned on this host (its project is gone, or remote), or undefined when it can. */
+export function workerRespawnUnsupported(
+  seat: { projectId?: string },
+  projects: ReadonlyArray<{ id: string; remote?: unknown }>
+): string | undefined {
+  const project = seat.projectId ? projects.find((candidate) => candidate.id === seat.projectId) : undefined;
+  if (!project) return 'the worker\'s project is no longer registered';
+  return project.remote ? 'remote projects do not support worker respawn' : undefined;
+}
+
+export interface WorkerRespawnDeps<R extends { workers: readonly RespawnSeat[] }> {
+  lifecycle: {
+    get(recordId: string): Promise<R | undefined>;
+    launchIsClosing(recordId: string): Promise<boolean>;
+    reopenExitedWorker(recordId: string, slotId: string): Promise<{ ok: true; record: R } | { ok: false; reason: string }>;
+  };
+  /** Whether the run still has a spawner (false after a restart or once the run ended). */
+  hasSpawner(recordId: string): boolean;
+  /** A reason this seat cannot be respawned on this host (for example a remote project), or undefined. */
+  unsupported?(seat: RespawnSeat): string | undefined;
+  /** Close the old session, idempotently; it has already exited, but its tmux session can outlive the client. */
+  closeSession(sessionId: string): Promise<unknown>;
+  /** True once nothing is left to re-attach to. */
+  sessionGone?(sessionId: string): Promise<boolean>;
+  /** The deferred-seat spawn: the once-only claim, the launch and the bind are its commit points. */
+  spawn(recordId: string, slotId: string): Promise<DeferredSpawnResult>;
+  track(record: R): void;
+  log?(message: string, error?: unknown): void;
+}
+
+/**
+ * Respawn of a worker slot whose session is over. It owns no commit of its own: the seat is put back to waiting
+ * under the lifecycle lock (refused for a closing run), then started through the deferred-seat spawn, whose
+ * claim, spawn gate and bind each re-check the run under the same lock, so a cancel that lands at any point
+ * leaves no live session behind. `launchIsClosing` here is only an early refusal.
+ */
+export function createWorkerRespawner<R extends { workers: readonly RespawnSeat[] }>(deps: WorkerRespawnDeps<R>) {
+  const respawning = new Set<string>();
+  const key = (recordId: string, slotId: string) => `${recordId}:${slotId}`;
+  return {
+    /** True while a respawn of this seat is being started: its launch runs as a respawn, not a first start. */
+    isRespawn(recordId: string, slotId: string): boolean { return respawning.has(key(recordId, slotId)); },
+    async respawn(recordId: string, slotId: string): Promise<WorkerRespawnResult> {
+      const id = key(recordId, slotId);
+      if (respawning.has(id)) return { ok: false, reason: 'busy', message: 'this worker is already being respawned' };
+      respawning.add(id);
+      let committed = false;
+      try {
+        if (!deps.hasSpawner(recordId)) return { ok: false, reason: 'no-spawner', message: 'the app restarted and lost track of this run; resume the run to respawn workers' };
+        if (await deps.lifecycle.launchIsClosing(recordId)) return { ok: false, reason: 'closing', message: 'the run is stopping' };
+        const record = await deps.lifecycle.get(recordId);
+        const seat = record?.workers.find((worker) => worker.slotId === slotId);
+        if (!seat) return { ok: false, reason: 'not-found', message: 'unknown worker slot' };
+        const unsupported = deps.unsupported?.(seat);
+        if (unsupported) return { ok: false, reason: 'unsupported', message: unsupported };
+        if (seat.process !== 'exited' && seat.process !== 'spawn-failed') return { ok: false, reason: 'not-over', message: 'the worker session is still running' };
+        if (seat.sessionId !== undefined) {
+          try {
+            await deps.closeSession(seat.sessionId);
+            if (deps.sessionGone && !await deps.sessionGone(seat.sessionId)) return { ok: false, reason: 'old-session-running', message: 'the old session is still running' };
+          } catch (error) {
+            deps.log?.(`old session of ${recordId}/${slotId} could not be closed for a respawn`, error);
+            return { ok: false, reason: 'old-session-running', message: 'the old session could not be closed' };
+          }
+        }
+        const reopened = await deps.lifecycle.reopenExitedWorker(recordId, slotId);
+        if (!reopened.ok) return { ok: false, reason: reopened.reason, message: reopened.reason === 'closing' ? 'the run is stopping' : `the seat cannot be respawned (${reopened.reason})` };
+        committed = true;
+        deps.track(reopened.record);
+        const started = await deps.spawn(recordId, slotId);
+        if (!started.ok) {
+          // A refusal that may pass leaves the seat waiting: it starts on its own, so it is not a failure to retry.
+          return started.retryable === true
+            ? { ok: false, reason: 'queued', message: `${started.message}; the worker is queued and starts when the machine has room`, committed: true }
+            : { ok: false, reason: 'spawn-failed', message: started.message, committed: true };
+        }
+        // Teardown lists a run's sessions once; a session that came up after the run began closing is closed here.
+        if (await deps.lifecycle.launchIsClosing(recordId)) {
+          try { await deps.closeSession(started.sessionId); } catch (error) { deps.log?.(`respawned session of ${recordId}/${slotId} could not be closed after the run began closing`, error); }
+          return { ok: false, reason: 'closing', message: 'the run stopped while the worker was starting', committed: true };
+        }
+        return { ok: true, sessionId: started.sessionId };
+      } catch (error) {
+        deps.log?.(`respawn of ${recordId}/${slotId} failed`, error);
+        return { ok: false, reason: committed ? 'spawn-failed' : 'error', message: error instanceof Error ? error.message : String(error), ...(committed ? { committed: true as const } : {}) };
+      } finally {
+        respawning.delete(id);
+      }
+    }
+  };
+}

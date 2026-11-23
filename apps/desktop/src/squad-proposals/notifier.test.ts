@@ -1126,3 +1126,25 @@ describe('sendToConversation', () => {
     expect(deps.ptyLive).not.toHaveBeenCalled();
   });
 });
+
+describe('onRunWarning', () => {
+  it('posts one deduped SIGNAL Inbox row naming the run and the warning', async () => {
+    const { deps, notifier } = setup();
+    await notifier.onRunWarning(record(), { slotId: 'slot-1', summary: 'Worker slot-1 exited with code 1', kind: 'worker-exit' });
+    expect(deps.appendInbox).toHaveBeenCalledOnce();
+    expect(deps.appendInbox).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'p1', executionId: 'e1', subject: 'Squad worker needs attention: Ship it', comments: 'Worker slot-1 exited with code 1',
+      dedupeKey: 'squad-worker-warning:e1:1:slot-1:worker-exit', report: true, squadNotice: 'proposal-result'
+    }));
+  });
+
+  it('logs and survives an Inbox failure, and does nothing after dispose', async () => {
+    const { deps, notifier } = setup({ appendInbox: vi.fn(async () => { throw new Error('inbox down'); }) });
+    await expect(notifier.onRunWarning(record(), { slotId: 's', summary: 'x', kind: 'worker-no-turn' })).resolves.toBeUndefined();
+    expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('warning entry failed'), expect.any(Error));
+    notifier.dispose();
+    deps.appendInbox.mockClear();
+    await notifier.onRunWarning(record(), { slotId: 's', summary: 'x', kind: 'worker-no-turn' });
+    expect(deps.appendInbox).not.toHaveBeenCalled();
+  });
+});

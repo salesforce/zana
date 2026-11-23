@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { useHelp } from './components/help/HelpProvider.js';
+import { setBasicUiMode } from './lib/basic-ui.js';
 
 const fixtures = vi.hoisted(() => ({
   compact: false, unread: 0, drawer: vi.fn(),
@@ -41,7 +42,7 @@ vi.mock('./hooks/useRouteState.js', () => ({ useRouteState: () => ({ nav: fixtur
 vi.mock('./hooks/useShellChromeState.js', () => ({ useShellChromeState: () => ({ platform: 'linux' }) }));
 vi.mock('./hooks/useCompactLayout.js', () => ({ useCompactLayout: () => fixtures.compact }));
 vi.mock('./hooks/useAgentCards.js', () => ({ useFavoriteCount: () => 0 }));
-vi.mock('./lib/product-ws.js', () => ({ waitForProductWsOpen: async () => {} }));
+vi.mock('./lib/product-ws.js', () => ({ waitForProductWsOpen: async () => {}, subscribeProductReconnect: () => () => {} }));
 vi.mock('./shortcuts.js', () => ({ installShortcuts: () => () => {} }));
 vi.mock('./stores/agent-board-moves.js', () => ({ installAgentBoardMoves: () => () => {} }));
 vi.mock('./components/thread/secondary-panel/useThreadOpenFileSignal.js', () => ({ installThreadOpenFileSignals: () => () => {} }));
@@ -110,8 +111,67 @@ beforeAll(async () => {
 });
 afterEach(() => {
   cleanup(); localStorage.clear(); fixtures.drawer.mockClear();
+  setBasicUiMode('advanced'); sessionStorage.clear();
   fixtures.pluginChanged = null;
   fixtures.recoverCatalogs.mockClear(); fixtures.recoverStale.mockClear(); fixtures.recoverAfterWake.mockClear(); fixtures.offWake.mockClear(); fixtures.reconcilePlugins.mockClear(); fixtures.unsubscribePlugins.mockClear();
+});
+
+it('switches to Basic and collapses its sidebar without changing the Advanced rail', () => {
+  fixtures.compact = false;
+  const original = store.useUi.getState();
+  store.useUi.setState({ sidebarMode: 'rail', sidebarCollapsed: false });
+  const view = render(<MemoryRouter><App /></MemoryRouter>);
+  const shell = () => view.container.querySelector('.app-shell')!;
+  try {
+    expect(shell().classList.contains('sidebar-is-rail')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Basic view' }));
+    expect(shell().getAttribute('data-ui-mode')).toBe('basic');
+    expect(shell().classList.contains('sidebar-is-rail')).toBe(false);
+    const sidebar = screen.getByTestId('basic-ui-sidebar');
+    expect(sidebar.hidden).toBe(false);
+    expect(view.container.querySelector('.shell-main')!.hasAttribute('inert')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }));
+    expect(sidebar.hidden).toBe(true);
+    expect(shell().classList.contains('sidebar-is-collapsed')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Expand sidebar' }));
+    expect(sidebar.hidden).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Advanced view' }));
+    expect(shell().getAttribute('data-ui-mode')).toBe('advanced');
+    expect(shell().classList.contains('sidebar-is-rail')).toBe(true);
+    expect(store.useUi.getState().sidebarMode).toBe('rail');
+  } finally {
+    view.unmount();
+    store.useUi.setState(original);
+  }
+});
+
+it('opens New chat when switching to Basic from Settings', () => {
+  fixtures.compact = false; fixtures.nav = 'settings';
+  function RouteProbe() { return <output data-testid="basic-handoff-route">{useLocation().pathname}</output>; }
+  const view = render(<MemoryRouter initialEntries={['/settings']}><App /><RouteProbe /></MemoryRouter>);
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Basic view' }));
+    expect(screen.queryByTestId('basic-ui-unsupported')).toBeNull();
+    expect(view.container.querySelector('.shell-main')!.hasAttribute('inert')).toBe(false);
+    expect(screen.getByTestId('basic-handoff-route').textContent).toBe('/');
+  } finally {
+    view.unmount(); fixtures.nav = 'home';
+  }
+});
+
+it('uses the compact drawer controls and closes it when Basic starts a chat', () => {
+  fixtures.compact = true;
+  const view = render(<MemoryRouter><App /></MemoryRouter>);
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Basic view' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open conversations' }));
+    expect(fixtures.drawer).toHaveBeenCalledWith(false);
+    fixtures.drawer.mockClear();
+    fireEvent.click(screen.getByRole('link', { name: 'New chat' }));
+    expect(fixtures.drawer).toHaveBeenCalledWith(false);
+  } finally {
+    view.unmount(); fixtures.compact = false;
+  }
 });
 
 it('keeps a project focus until the project list has loaded, then drops a removed one', () => {

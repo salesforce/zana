@@ -295,7 +295,7 @@ describe('nested live threads', () => {
     expect(rows).toContain('!session.scheduled && <AgentDeleteQuickAction');
     expect(source).toContain('pinDefaultProjectFirst(pinFavoriteProjectsFirst(sorted))');
     expect(source).not.toContain('p.id === selectedId && projectHasNestableSessions(p)');
-    expect(rows).toContain('<ProviderIcon providerId={thread.providerId}');
+    expect(rows).toContain('<ThreadIdentityIcon thread={thread} className="tab-profile-icon"');
     expect(rows).toContain('threadRailStatus');
     expect(rows).toContain('threadRailStatusClass');
     expect(source).toContain('projectRemote={Boolean(p.remote)}');

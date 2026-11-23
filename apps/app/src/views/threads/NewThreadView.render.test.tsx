@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import type { ReactNode } from 'react';
 
@@ -9,7 +9,6 @@ const composer = vi.hoisted(() => ({ props: null as null | Record<string, unknow
 const store = vi.hoisted(() => ({ projects: [{ id: 'p1', name: 'One' }, { id: 'p2', name: 'Two' }] }));
 
 vi.mock('@/store', () => ({ useData: (selector: (s: typeof store) => unknown) => selector(store) }));
-vi.mock('@/components/AuroraGrid', () => ({ AuroraGrid: () => null }));
 vi.mock('./NewChatPanelLayout.js', () => ({ NewChatPanelLayout: ({ children }: { children: (handlers: object) => ReactNode }) => children({ onCreated: () => undefined, onAgentCreated: () => undefined }) }));
 vi.mock('@/components/HomeAgentComposer', () => ({
   HomeAgentComposer: (props: Record<string, unknown>) => { composer.props = props; return <div data-testid="composer" />; }
@@ -19,8 +18,9 @@ vi.mock('@/plugins/PluginNewThreadActions', () => ({
 }));
 
 import { NewThreadView } from './NewThreadView.js';
+import { setBasicUiMode } from '../../lib/basic-ui.js';
 
-afterEach(() => { cleanup(); composer.props = null; });
+afterEach(() => { cleanup(); composer.props = null; setBasicUiMode('advanced'); });
 
 function renderAt(url: string, element = <NewThreadView />) {
   return render(
@@ -34,6 +34,27 @@ function renderAt(url: string, element = <NewThreadView />) {
 }
 
 describe('NewThreadView', () => {
+  it('retains the same project composer and plugin host while Basic hides plugin launchers', () => {
+    renderAt('/projects/p2/threads/new');
+    const input = screen.getByTestId('composer');
+    const actions = screen.getByTestId('actions');
+    const selectedProject = composer.props?.project;
+    expect(document.querySelector('.aurora-grid')).toBeTruthy();
+    act(() => setBasicUiMode('basic'));
+    expect(document.querySelector('.aurora-grid')).toBeNull();
+    expect(screen.getByTestId('composer')).toBe(input);
+    expect(screen.getByTestId('actions')).toBe(actions);
+    expect(actions.parentElement?.hidden).toBe(true);
+    expect(actions.parentElement?.hasAttribute('inert')).toBe(true);
+    expect(composer.props?.project).toBe(selectedProject);
+    expect(composer.props).toMatchObject({ allowLegacyAgent: true, draftScope: 'new-thread', composerProjectId: undefined, initialHostId: undefined });
+    act(() => setBasicUiMode('advanced'));
+    expect(document.querySelector('.aurora-grid')).toBeTruthy();
+    expect(actions.parentElement?.hidden).toBe(false);
+    expect(screen.getByTestId('composer')).toBe(input);
+    expect(composer.props?.project).toMatchObject({ id: 'p2' });
+  });
+
   it('gives the create surface its own draft scope so Home and plugin drafts stay separate', () => {
     renderAt('/threads/new');
     expect(screen.getByTestId('composer')).toBeTruthy();

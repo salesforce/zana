@@ -19,7 +19,7 @@ export function usePluginRuntimeContext(): PluginRuntimeContextValue {
  * a fresh boundary instead of a latched crash from the previous bundle.
  */
 export class PluginSlotBoundary extends Component<
-  { pluginId: string; generation: number; children?: ReactNode },
+  { pluginId: string; generation: number; children?: ReactNode; fallback?: ReactNode },
   { error: Error | null }
 > {
   state = { error: null as Error | null };
@@ -34,6 +34,7 @@ export class PluginSlotBoundary extends Component<
 
   render(): ReactNode {
     if (this.state.error) {
+      if (this.props.fallback !== undefined) return this.props.fallback;
       return (
         <div className="plugin-slot-error" role="alert">
           Plugin {this.props.pluginId} failed to render.

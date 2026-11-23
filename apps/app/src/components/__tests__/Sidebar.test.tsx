@@ -430,6 +430,7 @@ describe('Sidebar shortcut tooltips', () => {
   beforeEach(() => {
     h.state.sidebarCollapsed = false;
     stubKeybindingStorage();
+    vi.stubGlobal('navigator', { platform: 'Linux' });
   });
   afterEach(() => vi.unstubAllGlobals());
 

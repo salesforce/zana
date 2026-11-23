@@ -21,6 +21,14 @@ import { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-
 import type { Project } from '@zana-ai/zcc-domain/product';
 
 describe('sanitizeTeam', () => {
+  it('stores bounded run limits, drops invalid ones and omits the key when none survive', () => {
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], limits: { maxConcurrent: 99, claimStallMs: 120_000, claimWallClockMs: 'bad' } })?.limits)
+      .toEqual({ maxConcurrent: 32, claimStallMs: 120_000 });
+    for (const limits of [undefined, {}, { maxConcurrent: -1 }, 'x']) {
+      expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], limits })).not.toHaveProperty('limits');
+    }
+  });
+
   it('preserves boolean retention and drops omitted or invalid values', () => {
     for (const retainOrchestrator of [true, false]) {
       expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], retainOrchestrator })?.retainOrchestrator).toBe(retainOrchestrator);

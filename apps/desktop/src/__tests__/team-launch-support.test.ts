@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createDesktopNativeRecovery, findProposalExecution, gateInvalidProvidedPlan, recoverSquadStateAtBoot, runSpawnLifecycle, slotRecoveryLaunch,
-  sweepUnretainedSquadWorktrees, teamAdmissionRequirements, splitProposedGoalSources, teamJobFailureResponse, withProposalLaunch
+  sweepUnretainedSquadWorktrees, teamAdmissionRequirements, splitProposedGoalSources, teamJobFailureResponse, withProposalLaunch,
+  allWorkersUnresolvedReasons, unknownPersonaMessage, UnknownPersonaError, admissionSlotRouteFacts
 } from '../team-launch-support.js';
 
 describe('withProposalLaunch', () => {
@@ -325,5 +326,67 @@ describe('runSpawnLifecycle', () => {
   it('wraps in lock when provided', async () => {
     const withSpawnLock = vi.fn(async (fn: () => Promise<number>) => (await fn()) + 10) as never;
     await expect(runSpawnLifecycle({ withSpawnLock }, async () => 1)).resolves.toBe(11);
+  });
+});
+
+describe('allWorkersUnresolvedReasons', () => {
+  const w = (slotId: string, personaId: string) => ({ slotId, personaId, role: 'worker' as const });
+  const o = (personaId: string) => ({ slotId: `orchestrator:${personaId}`, personaId, role: 'orchestrator' as const });
+  it('joins one reason per slot when every worker is unresolved', () => {
+    expect(allWorkersUnresolvedReasons([o('orch'), w('0:a:0', 'a'), w('1:b:0', 'b')], new Set(['orch'])))
+      .toBe(`0:a:0: ${unknownPersonaMessage('a')}; 1:b:0: ${unknownPersonaMessage('b')}`);
+  });
+  it('proceeds when at least one worker resolves, or there are no workers', () => {
+    expect(allWorkersUnresolvedReasons([w('0:a:0', 'a'), w('1:b:0', 'b')], new Set(['b']))).toBeUndefined();
+    expect(allWorkersUnresolvedReasons([o('x')], new Set())).toBeUndefined();
+  });
+  it('in any-miss mode (freeform, Modern parity) refuses on a partial miss and still ignores orchestrators', () => {
+    expect(allWorkersUnresolvedReasons([w('0:a:0', 'a'), w('1:b:0', 'b')], new Set(['b']), 'any'))
+      .toBe(`0:a:0: ${unknownPersonaMessage('a')}`);
+    expect(allWorkersUnresolvedReasons([o('x'), w('1:b:0', 'b')], new Set(['b']), 'any')).toBeUndefined();
+    expect(allWorkersUnresolvedReasons([o('x')], new Set(), 'any')).toBeUndefined();
+  });
+});
+
+describe('UnknownPersonaError', () => {
+  it('names the missing persona in a user-safe message', () => {
+    const error = new UnknownPersonaError(['ghost-worker']);
+    expect(error.safeMessage).toContain('ghost-worker');
+    expect(error.safeMessage).toMatch(/this persona is not available/);
+    expect(error.message).toBe('unknown persona: ghost-worker');
+  });
+
+  it('dedupes, bounds and strips control characters across several personas', () => {
+    const many = ['a', 'b', 'a', 'c', 'd', 'e', 'f', 'g'];
+    const error = new UnknownPersonaError(many);
+    expect(error.safeMessage).toContain('a, b, c, d, e and 2 more');
+    expect(error.safeMessage).toMatch(/these personas are/);
+    const odd = new UnknownPersonaError([`x\u0000\n${'y'.repeat(200)}`]);
+    expect(odd.safeMessage).not.toMatch(/[\u0000-\u001f]/);
+    expect(odd.safeMessage.length).toBeLessThan(260);
+  });
+});
+
+describe('admissionSlotRouteFacts', () => {
+  const base = { slotId: 'worker-1', personaId: 'builtin:software-engineer', provider: 'opencode', level: 'medium' as const };
+
+  it('carries the configured roles so a Required role step routes at launch, not only in preview', async () => {
+    const { evaluateSlotEligibility } = await import('@zana-ai/zcc-server/services/execution/routing-policy');
+    const routing = { requiredRole: 'engineer', minimumLevel: 'medium' as const };
+    const facts = admissionSlotRouteFacts(base, { roles: ['engineer'] });
+    expect(facts.roles).toEqual(['engineer']);
+    expect(evaluateSlotEligibility(routing, facts).status).toBe('PASS');
+    // Without the roles, an unlabeled slot offers only its persona id and the role is a hard miss.
+    const { roles: _dropped, ...withoutRoles } = facts;
+    expect(evaluateSlotEligibility(routing, withoutRoles).hardFailures).toContain('required role missing: engineer');
+  });
+
+  it('ignores a caller-supplied label and roles on the snapshot; only the configured slot counts', () => {
+    const forged = { ...base, label: 'caller-forged', roles: ['reviewer'] };
+    expect(admissionSlotRouteFacts(forged, { label: 'Exact QA', roles: ['engineer'] })).toMatchObject({ label: 'Exact QA', roles: ['engineer'] });
+    const unconfigured = admissionSlotRouteFacts(forged, undefined);
+    expect(unconfigured).not.toHaveProperty('label');
+    expect(unconfigured).not.toHaveProperty('roles');
+    expect(admissionSlotRouteFacts({ slotId: 's', provider: 'p' }, {}).personaId).toBe('');
   });
 });

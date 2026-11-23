@@ -1,6 +1,7 @@
 /** @vitest-environment happy-dom */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
+import { getBasicUiMode, setBasicUiMode } from '../../../lib/basic-ui.js';
 import { binaryPreviewKind, FilePreviewFallback, FilePreviewRevealButton, useFilePreviewReveal } from './FilePreviewReveal.js';
 const mocks = vi.hoisted(() => ({ desktop: vi.fn(), locate: vi.fn(), reveal: vi.fn() }));
 vi.mock('../../../lib/app-surface.js', () => ({ hasDesktopBridge: mocks.desktop }));
@@ -10,12 +11,32 @@ function Preview({ path = 'app.dmg', revision = 0 }: { path?: string; revision?:
   return <><FilePreviewRevealButton state={state} /><FilePreviewFallback path={path} reveal={state} />{state.error && <p role="alert">{state.error}</p>}</>;
 }
 beforeEach(() => {
+  setBasicUiMode('advanced');
   mocks.desktop.mockReturnValue(true); mocks.locate.mockResolvedValue({ ok: true }); mocks.reveal.mockResolvedValue({ ok: true });
   vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.resetAllMocks(); });
+afterEach(() => { cleanup(); setBasicUiMode('advanced'); vi.restoreAllMocks(); vi.resetAllMocks(); });
 
 describe('preview reveal', () => {
+  it('offers a working Basic fallback when the file cannot be revealed locally', async () => {
+    mocks.desktop.mockReturnValue(false);
+    setBasicUiMode('basic');
+    const view = render(<Preview />);
+    expect(view.queryByText(/Copy its path/)).toBeNull();
+    expect(view.getByText('Open Advanced to access this file on the computer where it is stored.')).toBeTruthy();
+    fireEvent.click(view.getByRole('button', { name: 'Open Advanced' }));
+    expect(getBasicUiMode()).toBe('advanced');
+    expect(view.getByText(/Copy its path/)).toBeTruthy();
+  });
+  it('keeps the direct file action in Basic when it is available', async () => {
+    setBasicUiMode('basic');
+    const view = render(<Preview />);
+    await view.findAllByRole('button', { name: 'Show in Finder' });
+    expect(view.queryByRole('button', { name: 'Open Advanced' })).toBeNull();
+    fireEvent.click(view.getAllByRole('button', { name: 'Show in Finder' })[1]);
+    await waitFor(() => expect(mocks.reveal).toHaveBeenCalledOnce());
+    expect(getBasicUiMode()).toBe('basic');
+  });
   it('rechecks a previously missing file when its preview is refreshed', async () => {
     mocks.locate.mockResolvedValueOnce({ ok: false });
     const view = render(<Preview />);

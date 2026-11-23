@@ -63,6 +63,8 @@ database, logs or spawn-plan dumps, they are cleared when the daemon disconnects
 or the plugin is disposed, and a variable the user already set on the machine is
 never overridden.
 
+Pass `deferFirstTurn: true` and omit `prompt` to create an empty thread. The first message starts its provider session.
+
 `sdk.threads.spawn` accepts `hostId`, `serviceTier: "default" | "fast"` and
 `environment: { kind: "unmanaged" | "personal" | "worktree" | "reuse", ... }`.
 The server validates environment choices and authorizes host/project access.
@@ -134,6 +136,8 @@ into `website/lib/plugin-guide/`; do not hand-edit that folder).
 
 ### App shell
 
+- `Markdown` displays a Markdown string from its `content` prop. For an editable form field, pass `editor={{ label, onChange, disabled, placeholder }}`. The Library formatting toolbar edits the draft and `onChange` returns Markdown. The caller owns saving and cancellation. Only `label` and `onChange` are required inside `editor`.
+
 - `navPanel` — sidebar entry + full view. `placement: "extensions"` lists under Plugins; `placement: "unlisted"` is a full `/plugins/<id>/<path>` page with no rail row (open via `toPluginPanel`)
 - `experimental_projectMenuAction` — project-row overflow, or the Projects Organize menu (`placement: "workspace"` means no project is selected; `projectId` is `null`). `toProject` opens a `projectTab`
 - `experimental_createProjectAction` — Add project (+) menu (`openDialog` mounts an optional create wizard; `addProject` registers the folder)
@@ -185,12 +189,14 @@ into `website/lib/plugin-guide/`; do not hand-edit that folder).
 
 - `threadPanelAction` — side-panel tabs. `scopes` default to `["thread"]`; add `"agent-session"` for the CLI-agent inspector and `"plugin-page"` for the side panel beside this plugin's own pages. With `"plugin-page"`, optional `pages` (the `navPanel` / `projectTab` ids) narrows which pages list it. The component's `surface` prop says which panel shows it (absent on older hosts: treat as `"thread"`); `threadId` is empty beside a plugin page. `tabId` names the tab showing it: the same across tab switches, new when a closed tab is opened again, so a component can keep state while switched away and start fresh in a reopened tab. Both this slot and `experimental_newThreadPanelAction` accept an optional `category` label for the New Tab launcher. Omit it to group under the installed plugin’s display name. Categories are collapsible; search matches tool titles and category names across all groups. The optional `icon` is shown beside the tool.
 - `pendingInteraction` — custom in-thread prompt UI (`id` must match `zcc.ui.requestInput` `rendererId`)
+- A `threadPanelAction` may register `experimental_ownedThreadTitle`, a component receiving `{ threadId, title, openPanel }`. It appears in the heading of threads created by that plugin and opens its panel with `openPanel()`. The host omits this action from the general New Tab catalogue. Render `title` when the record no longer exists. The same action can provide `experimental_ownedThreadIcon({ threadId, size, fallback })` for the Advanced project tree and Kanban cards. Render a decorative icon at the requested size, or return the provider icon supplied as `fallback`.
 - `experimental_threadHeaderAction` — action in the thread detail header
 - `experimental_threadList` — replace the thread list in the global and project sidebars (exclusive); projects and CLI Agents remain host-owned
 - `experimental_timelineRenderer` — custom body for a timeline row kind
 - `messageDirective` — render `::name{attr}` leaves in markdown
 - `messageAction` — per-message menu item on the timeline
 - `fileOpener` — open a previewed file by extension
+- `experimental_browserToolbarAction` — control in each thread browser tab toolbar. Props carry `threadId`, `tabId`, `url`, an optional desktop `page` (`evaluate`, `onMessage`) and a thread-scoped `composer` for context badges.
 
 ### Command palette
 
@@ -211,6 +217,11 @@ Headless (no pixels), plus picker chrome:
 - `settings-define` — `zcc.settings.define`
 - `background` — `zcc.background.service` / `schedule`
 - `desktop-browsers` — `zcc.sdk.experimental_desktopBrowsers` (experimental; first-party Browser Automation)
+- `providers` — `zcc.agents.experimental_registerProvider` adds a coding-agent harness (experimental; first-party Claude Code, Codex, Pi, ACP)
+- `hooks` — `zcc.hooks.on` / `onToolPolicy` dispatch admission and native tool policy (see [Platform hooks](#platform-hooks))
+- `server-io` — `rpc`, `http`, `realtime`, `storage`, `process`, `status`, `onDispose`
+- `services` — `zcc.services.provide` / `use` / `has` (experimental, see [Plugin services](#plugin-services-experimental))
+- `remote-hosts` — `zcc.sshConnections.register`, `zcc.remoteEnvironment.provide`, `zcc.host.projectCall`
 - `approvals` — stable `zcc.ui.requestToolApproval({ binding, title, summary?, details?, confirmLabel?, tone?, timeoutMs? })` waits for a main-owned sandboxed sheet from an active registered **server tool**. The host derives plugin/thread/invocation identity; supplied scope is only an assertion and mismatches are refused. Wait is a positive integer, at most five minutes (default five minutes). `requestApproval` and `experimental_requestApproval` are aliases with the same active-invocation restriction. Button flows use `requestApproval(pluginId, request)` from `@zana-ai/zcc-plugin-sdk/app`, without tool scope.
 
 ### Tool Approval
@@ -238,7 +249,7 @@ Thread/project/environment local scope is re-read before requesting, after the w
 Only the authenticated product server can request a tool sheet through main control. Operator/agent control requests and renderer requests for scoped proofs are refused. Missing desktop credential/window, headless/remote/hidden/unresolvable thread, cancellation, timeout, abort and runtime failure never grant approval. Existing provider and local permission checks still apply; this proof does not bypass them. Typed `confirmText` is compared by main. Tests can use `harness.approve(binding)` and an explicit fake-host `requestToolApproval` stub; default fake hosts return `unavailable`.
 
 ### Other Platform Hooks
-- `contentScripts` — `contentScripts.register`; background renderer subscriptions, including optional generic agent activity and own-plugin realtime signals. See [Background activity and sound plugins](#background-activity-and-sound-plugins).
+- `contentScripts` — `contentScripts.register`; background renderer subscriptions, including optional generic agent activity, own-plugin realtime signals and `experimental_setThreadRowStatus` sidebar row status. See [Background activity and sound plugins](#background-activity-and-sound-plugins).
 - `experimental_providerIcon` — picker glyph for a provider id
 
 Registrations replace wholesale per plugin id. Each carries a `generation` used

@@ -37,6 +37,11 @@
       "source": "./src/schedule.ts",
       "default": "./src/schedule.ts"
     },
+    "./persona-validation": {
+      "types": "./src/persona-validation.ts",
+      "source": "./src/persona-validation.ts",
+      "default": "./src/persona-validation.ts"
+    },
     "./persona": {
       "types": "./src/persona.ts",
       "source": "./src/persona.ts",

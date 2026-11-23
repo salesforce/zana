@@ -1,3 +1,4 @@
+import { desktopRpcDigest, signUiSend } from './ui-send-proof.js';
 import { signPeerToolRequest, PEER_TOOL_PATH, PEER_TOOL_PROOF_HEADER } from './peer-tool-proof.js';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1003,6 +1004,15 @@ describe('product HTTP', () => {
     });
     expect(stopped.status).toBe(200);
     expect(stop).toHaveBeenCalledWith('ex-1', undefined, undefined);
+
+    // A Stop whose STOPPED write never landed is a retryable state conflict, not a server error.
+    stop.mockResolvedValueOnce({ ok: false, code: 'STOP_INCOMPLETE', message: 'not stopped yet' });
+    const incomplete = await fetch(`${server.url}api/v1/executions/ex-1/stop`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    });
+    expect(incomplete.status).toBe(409);
 
     const oversized = await fetch(`${server.url}api/v1/teams/launch`, {
       method: 'POST',
@@ -2616,6 +2626,42 @@ describe('product HTTP plugins', () => {
     // Without the flag the Configure page keeps its existing contract.
     const full = await fetch(`${server.url}api/v1/plugin-apps/demo/settings`);
     await expect(full.json()).resolves.toEqual(settings);
+  });
+
+  it('admits desktop-only RPC through a one-time proof scoped to the plugin, method and inputs', async () => {
+    const secret = 'fixture desktop signing key of sufficient length';
+    const args = { count: 1 };
+    const method = 'desktop.edit';
+    server = await startTestProductServer({ dataDir: mkdtempSync(join(tmpdir(), 'zcc-owner-rpc-')), uiSendSecret: secret,
+      origins: { serverPort: 0, devAppPort: 5173 } });
+    const handler = vi.fn(async () => 'ok');
+    server.ctx.plugins = {callRpc:handler} as never;
+    const call = async (proof: string, input = args, id = 'test') => (await fetch(server!.url + 'api/v1/plugin-apps/' + id + '/rpc', {
+      method:'POST', headers:{'content-type':'application/json','x-zcc-desktop-rpc':proof}, body: JSON.stringify({method,args:input})
+    })).status;
+    const digest = desktopRpcDigest(method,args);
+    const proof = signUiSend(secret,'test',digest,Date.now(),'plugin-desktop');
+    expect(await call('')).toBe(403);
+    expect(await call(signUiSend(secret,'test',digest))).toBe(403);
+    expect(await call(proof,{count:2})).toBe(403);
+    expect(await call(proof,args,'other')).toBe(403);
+    expect(await call(proof)).toBe(200);
+    expect(await call(proof)).toBe(403);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('scopes device storage keys to their plugin and requires the protected host key', async () => {
+    let available = true;
+    const root = Buffer.alloc(32, 42);
+    server = await startTestProductServer({dataDir:mkdtempSync(join(tmpdir(), 'zcc-device-store-')),
+      origins:{serverPort:0, devAppPort:5173}, peerKeyProvider:{getKey:async () => available ? Buffer.from(root) : null}});
+    const derive = server.ctx.pluginDeviceKey!;
+    const key = await derive('test');
+    expect(key).toEqual(await derive('test'));
+    expect(key).not.toEqual(root);
+    expect(key).not.toEqual(await derive('other'));
+    available = false;
+    await expect(derive('test')).rejects.toThrow('secure storage');
   });
 
   it('maps expected plugin RPC domain errors to 4xx with a code and leaves other failures legacy', async () => {

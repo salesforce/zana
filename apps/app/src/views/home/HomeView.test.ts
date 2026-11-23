@@ -3,6 +3,7 @@ import { readSourceText } from '../../__tests__/helpers/source-text.js';
 
 const view = readSourceText(new URL('./HomeView.tsx', import.meta.url));
 const css = readSourceText(new URL('../../styles/global.css', import.meta.url));
+const basicCss = readSourceText(new URL('../../components/basic/basic-conversation.css', import.meta.url));
 
 describe('HomeView New Chat surface', () => {
   it('is a composer-only create surface with plugin CTAs under the prompt', () => {
@@ -90,5 +91,10 @@ describe('HomeView New Chat surface', () => {
 
   it('lets the New Chat mention menu open below the prompt', () => {
     expect(css).not.toContain('.home-panel .mention-popover {');
+  });
+
+  it('hides retained Basic homepage plugin sections despite the Advanced flex display', () => {
+    expect(basicCss).toMatch(/\.basic-ui \.home-plugin-sections\[hidden\],[^{]+\{ display: none; \}/);
+    expect(view).toContain('className="home-plugin-sections" hidden={basic} inert={basic || undefined}');
   });
 });

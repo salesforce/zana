@@ -13,6 +13,8 @@ import {
 import { useLaunchModePreference } from '../lib/use-launch-mode-preference.js';
 import { useData, useTeams, useUi } from '../store.js';
 import { useShallow } from 'zustand/react/shallow';
+import { setBasicUiMode, useBasicUi } from '../lib/basic-ui.js';
+import './basic/basic-conversation.css';
 
 export { parseHomeLauncherPreferences } from './home-launcher-preferences.js';
 
@@ -35,6 +37,7 @@ export function HomeAgentComposer({
 }
 
 function HomeComposerContent({ allowLegacyAgent = false, project, onAgentCreated, ...props }: HomeAgentComposerProps) {
+  const basic = useBasicUi();
   const session = useComposerSession();
   const walkthroughHomeMode = useUi((s) => s.walkthroughHomeMode);
   const teams = useTeams(useShallow((s) => s.teams));
@@ -54,6 +57,7 @@ function HomeComposerContent({ allowLegacyAgent = false, project, onAgentCreated
     ? walkthroughHomeMode
     : preferred;
   const showLaunchSwitcher = Boolean(walkthroughHomeMode) || visibleLaunchModeCount(available) > 1;
+  const basicNeedsAdvanced = basic && allowLegacyAgent && kind !== 'thread';
   const [composerProjectId, setComposerProjectId] = useComposerSetting(session, 'projectId', project?.id ?? props.composerProjectId ?? '');
   useEffect(() => {
     if (project?.id) setComposerProjectId(project.id);
@@ -69,6 +73,12 @@ function HomeComposerContent({ allowLegacyAgent = false, project, onAgentCreated
             showTeam={available.showTeam}
           />
         )}
+        {basicNeedsAdvanced ? <section className="basic-composer-handoff" role="status">
+          <h2>Continue this draft in Advanced</h2>
+          <p>This draft uses {kind === 'team' ? 'a Squad' : 'a CLI Agent'}. Open the full workspace to continue with the same draft and settings.</p>
+          <button type="button" className="btn btn-primary" onClick={() => setBasicUiMode('advanced')}>Continue in Advanced</button>
+        </section> : null}
+        <div className="home-composer-retained" hidden={basicNeedsAdvanced} inert={basicNeedsAdvanced || undefined}>
         {allowLegacyAgent && kind === 'agent' ? (
           <LegacyAgentHomeComposer
             onCreated={onAgentCreated}
@@ -92,6 +102,7 @@ function HomeComposerContent({ allowLegacyAgent = false, project, onAgentCreated
             onComposerProjectIdChange={setComposerProjectId}
           />
         )}
+        </div>
       </div>
   );
 }
