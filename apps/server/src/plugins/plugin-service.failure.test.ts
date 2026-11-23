@@ -179,6 +179,29 @@ describe('plugin service responsiveness failures', () => {
     expect(changed).not.toHaveBeenCalled();
   });
 
+  it('skips a queued plugin that became live while earlier plugins were still loading', async () => {
+    const { service: setup, dataDir } = fixture();
+    const dirs: string[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      const dir = join(root(), `p${index}`); mkdirSync(dir); dirs.push(dir);
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: `zcc-plugin-queued-${index}`, version: '0.1.0', engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' }, zcc: { name: `Queued ${index}`, description: 'Queued fixture', branding: { icon: 'Puzzle' }, server: './server.mjs' } }));
+      writeFileSync(join(dir, 'server.mjs'), 'export default function () {}');
+      await setup.install(dir);
+    }
+    setup.stop();
+    state.scanStarted.mockReset(); state.runtimes.length = 0;
+    const deferred = Promise.withResolvers<void>();
+    state.scanGate = deferred.promise;
+    const service = createPluginService({ dataDir, bundledRoot: root() }); services.push(service);
+    const starting = service.start();
+    await vi.waitFor(() => expect(state.scanStarted).toHaveBeenCalledTimes(4));
+    state.scanGate = null;
+    await service.install(dirs[4]);
+    deferred.resolve();
+    await starting;
+    expect(service.snapshot().filter(row => row.status === 'running')).toHaveLength(5);
+  });
+
   it.each(['disable', 'remove'] as const)('does not undo a plugin %s while startup waits on a scan', async (operation) => {
     const { service: setup, plugin, dataDir } = fixture();
     const row = await setup.install(plugin);
