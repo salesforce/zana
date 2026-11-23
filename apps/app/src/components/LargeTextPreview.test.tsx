@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { boundedText, LargeTextPreview } from './LargeTextPreview';
+import { boundedText, isOversizedText, LargeTextPreview, measuredText, TEXT_PREVIEW_RAW_CHARS } from './LargeTextPreview';
 import DiffViewerInner from './DiffViewerInner';
 import { DocContent, MarkdownContent } from './MarkdownContent';
 const copy = vi.hoisted(() => vi.fn());
@@ -31,4 +31,54 @@ it('admits small diffs to virtual rendering and bounds large or many-line diffs'
   view.rerender(<DiffViewerInner {...props} original={'x'.repeat(32_001)} />); expect(screen.getByRole('region', { name: 'Large diff' })).toBeTruthy();
   expect(screen.queryByTestId('diff')).toBeNull();
   view.rerender(<DiffViewerInner {...props} modified={'x\n'.repeat(501)} />); expect(screen.queryByTestId('diff')).toBeNull();
+});
+const inlined = (count: number) => Array.from({ length: count }, (_, i) => `![shot ${i}](data:image/png;base64,${'A'.repeat(90_000)})`).join('\n\n');
+it('measures a small document with inlined images by its own text, not the image payloads', () => {
+  const text = `# Notes
+
+${inlined(8)}
+`;
+  expect(text.length).toBeGreaterThan(700_000);
+  expect(isOversizedText(text)).toBe(false);
+  expect(measuredText(text)).toContain('![shot 7](data:image/png;base64,)');
+  expect(measuredText('plain text')).toBe('plain text');
+  const a = render(<MarkdownContent text={text} />);
+  expect(screen.queryByRole('status')).toBeNull();
+  expect(a.container.querySelectorAll('img')).toHaveLength(8);
+  a.unmount();
+  const b = render(<DocContent content={text} path="notes.md" />);
+  expect(screen.queryByRole('status')).toBeNull();
+  b.unmount();
+});
+it('still caps a genuinely huge document with images and names what was exceeded', () => {
+  const text = `${'word '.repeat(20_000)}
+${inlined(2)}`;
+  expect(isOversizedText(text)).toBe(true);
+  const { container } = render(<MarkdownContent text={text} />);
+  expect(screen.getByRole('status').textContent).toBe('Showing a text preview: this document is over 1,000 lines or 64,000 characters.');
+  expect(container.querySelector('pre')!.textContent!.length).toBeLessThanOrEqual(64_000);
+  expect(isOversizedText('x\n'.repeat(1_001))).toBe(true);
+});
+it('does not strip payloads for other callers: a diff over the cap only by a base64 blob keeps it in the preview', () => {
+  const blob = `data:image/png;base64,${'A'.repeat(40_000)}`;
+  const props = { original: blob, modified: 'b', compactStyles: {}, isDark: false };
+  render(<DiffViewerInner {...props} />);
+  const original = screen.getByRole('region', { name: 'Large diff' }).querySelector('pre')!;
+  expect(original.textContent).toBe(blob);
+  expect(screen.getAllByRole('status')[0].textContent).toBe('Showing a text preview.');
+});
+it('falls back to the preview when inlined images push the raw text over the ceiling, and hides the image data', () => {
+  const text = `# Notes
+
+![big](data:image/png;base64,${'A'.repeat(TEXT_PREVIEW_RAW_CHARS)})
+`;
+  expect(isOversizedText(text)).toBe(true);
+  expect(isOversizedText(text.slice(0, TEXT_PREVIEW_RAW_CHARS - 100))).toBe(false);
+  const { container } = render(<MarkdownContent text={text} />);
+  expect(container.querySelectorAll('img')).toHaveLength(0);
+  expect(screen.getByRole('status').textContent).toBe('Showing a text preview: this document is over 8,000,000 characters including embedded images, which are not shown.');
+  expect(container.querySelector('pre')!.textContent).toBe(`# Notes
+
+![big](data:image/png;base64,)
+`);
 });
