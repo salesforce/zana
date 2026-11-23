@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { DomFindBar } from '../../../../apps/app/src/components/DomFindBar.js';
 import { shortcutForCommand } from '../../../../apps/app/src/lib/keyboard-shortcut-settings.js';
 import { OWN_FIND_ATTRIBUTE } from '../../../../apps/app/src/lib/thread-find.js';
-import { findMatchOffsets, revealMatch, stepIndex } from './editor-find.js';
+import { findMatchOffsets, highlightSegments, revealMatch, stepIndex } from './editor-find.js';
 
 const MAX_SEEDED_QUERY = 200;
 
@@ -73,6 +73,21 @@ export function useEditorFind(textareaRef: RefObject<HTMLTextAreaElement | null>
     }
   };
 
+  // The textarea's own selection is not drawn while focus is in the bar, so the matches are painted on a
+  // backdrop behind the (transparent) textarea, scrolled in step with it.
+  const backdropRef = useRef<HTMLDivElement>(null);
+  const syncScroll = useCallback(() => {
+    if (backdropRef.current && textareaRef.current) backdropRef.current.scrollTop = textareaRef.current.scrollTop;
+  }, [textareaRef]);
+  useLayoutEffect(syncScroll, [syncScroll, open, offsets, current]);
+  const backdrop: ReactNode = open ? (
+    <div ref={backdropRef} className="dd-editor-backdrop" aria-hidden>
+      {highlightSegments(text, offsets, query.length, current).map((segment, position) =>
+        segment.hit ? <mark key={position} className={segment.hit === 'current' ? 'dd-find-hit dd-find-current' : 'dd-find-hit'}>{segment.text}</mark> : segment.text
+      )}
+    </div>
+  ) : null;
+
   const bar: ReactNode = open ? (
     <div className="dd-editor-find">
       <DomFindBar
@@ -88,5 +103,5 @@ export function useEditorFind(textareaRef: RefObject<HTMLTextAreaElement | null>
     </div>
   ) : null;
 
-  return { bar, rootProps: { [OWN_FIND_ATTRIBUTE]: '', onKeyDown } };
+  return { bar, backdrop, active: open, onScroll: syncScroll, rootProps: { [OWN_FIND_ATTRIBUTE]: '', onKeyDown } };
 }

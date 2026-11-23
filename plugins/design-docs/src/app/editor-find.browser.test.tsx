@@ -65,6 +65,24 @@ describe('find in the text editor', () => {
     expect((screen.getByRole('button', { name: 'Next match' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it('paints the matches on a backdrop behind the textarea, current match marked, and syncs its scroll', () => {
+    const input = renderEditor();
+    expect(document.querySelector('.dd-editor-backdrop')).toBeNull();
+    ctrlF(input);
+    type('beta');
+    const backdrop = document.querySelector<HTMLElement>('.dd-editor-backdrop')!;
+    expect(backdrop.textContent).toBe(TEXT);
+    expect(Array.from(backdrop.querySelectorAll('mark')).map((mark) => mark.textContent)).toEqual(['beta', 'beta', 'BETA']);
+    expect(backdrop.querySelectorAll('mark.dd-find-current')).toHaveLength(1);
+    fireEvent.keyDown(findInput(), { key: 'Enter' });
+    expect(backdrop.querySelectorAll('mark')[1].className).toContain('dd-find-current');
+    input.scrollTop = 33;
+    fireEvent.scroll(input);
+    expect(backdrop.scrollTop).toBe(33);
+    fireEvent.keyDown(findInput(), { key: 'Escape' });
+    expect(document.querySelector('.dd-editor-backdrop')).toBeNull();
+  });
+
   it('closes on Escape and returns focus to the editor, keeping the match selected', () => {
     const input = renderEditor();
     ctrlF(input);

@@ -887,6 +887,18 @@ textarea.dd-doc-summary { display: block; }
 .dd-editor { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .dd-editor-body { position: relative; display: flex; flex: 1 1 auto; min-height: 0; }
 .dd-editor-find { display: contents; }
+.dd-editor-field { position: relative; display: flex; flex: 1 1 0; min-width: 0; }
+/* While find is open the matches are painted on a backdrop behind the transparent textarea (a blurred textarea draws no selection). */
+.dd-editor-field-find { background: var(--bg-panel); }
+.dd-editor-split .dd-editor-field-find { background: var(--bg-base); }
+.dd-editor-field-find .dd-editor-input { position: relative; background: transparent; overflow-y: scroll; }
+.dd-editor-backdrop {
+  position: absolute; inset: 0; overflow-y: scroll; overflow-x: hidden; pointer-events: none; scrollbar-color: transparent transparent;
+  padding: 20px 24px 64px; color: transparent; white-space: pre-wrap; overflow-wrap: break-word;
+  font-family: var(--font-mono, ui-monospace, monospace); font-size: 13px; line-height: 1.65; tab-size: 2;
+}
+.dd-find-hit { background: rgba(255, 200, 0, 0.35); color: transparent; border-radius: 2px; }
+.dd-find-current { background: rgba(255, 140, 0, 0.7); }
 /* In split mode the bar sits over the text pane, not the preview. */
 .dd-editor-split .dd-editor-find .dom-find-bar { right: calc(50% + 20px); }
 .dd-editor-input {

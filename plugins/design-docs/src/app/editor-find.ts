@@ -54,3 +54,37 @@ export function revealMatch(textarea: HTMLTextAreaElement, start: number, length
   if (top >= visibleTop && top + lineHeight <= visibleBottom) return;
   textarea.scrollTop = Math.max(0, top - (textarea.clientHeight - lineHeight) / 2);
 }
+
+export interface HighlightSegment {
+  text: string;
+  /** `current` is the match find is on; `match` any other painted match; absent for plain text. */
+  hit?: 'current' | 'match';
+}
+
+/** Matches painted around the current one: a textarea can hold thousands, and only the ones near the view matter. */
+export const MAX_PAINTED_MATCHES = 1500;
+export const PAINT_WINDOW_CHARS = 30_000;
+
+/**
+ * The text split into plain and highlighted runs for the backdrop that sits
+ * behind the textarea. Only matches within a window around the current one
+ * are marked, and at most `MAX_PAINTED_MATCHES`, so a very common query
+ * stays cheap; the text itself is always complete, so line wrapping matches.
+ */
+export function highlightSegments(text: string, offsets: number[], length: number, current: number): HighlightSegment[] {
+  if (current < 0 || length === 0) return [{ text }];
+  const center = offsets[current];
+  const painted = offsets
+    .map((offset, index) => ({ offset, index }))
+    .filter(({ offset }) => Math.abs(offset - center) <= PAINT_WINDOW_CHARS)
+    .slice(0, MAX_PAINTED_MATCHES);
+  const segments: HighlightSegment[] = [];
+  let cursor = 0;
+  for (const { offset, index } of painted) {
+    if (offset > cursor) segments.push({ text: text.slice(cursor, offset) });
+    segments.push({ text: text.slice(offset, offset + length), hit: index === current ? 'current' : 'match' });
+    cursor = offset + length;
+  }
+  if (cursor < text.length) segments.push({ text: text.slice(cursor) });
+  return segments;
+}

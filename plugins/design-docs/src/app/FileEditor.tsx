@@ -182,17 +182,21 @@ export function FileEditor({
       ) : null}
       <div className={`dd-editor-body${split ? ' dd-editor-split' : ''}`}>
         {find.bar}
-        <textarea
-          ref={inputRef}
-          className="dd-editor-input"
-          value={draft}
-          spellCheck={file.kind === 'markdown' || file.kind === 'text'}
-          aria-label={`Edit ${file.path}`}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={onKeyDown}
-          onPaste={onPaste}
-          autoFocus
-        />
+        <div className={`dd-editor-field${find.active ? ' dd-editor-field-find' : ''}`}>
+          {find.backdrop}
+          <textarea
+            ref={inputRef}
+            className="dd-editor-input"
+            value={draft}
+            spellCheck={file.kind === 'markdown' || file.kind === 'text'}
+            aria-label={`Edit ${file.path}`}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={onKeyDown}
+            onPaste={onPaste}
+            onScroll={find.onScroll}
+            autoFocus
+          />
+        </div>
         {split ? <div className="dd-editor-preview">{renderPreview(preview)}</div> : null}
       </div>
       <div className="dd-editor-footer">
