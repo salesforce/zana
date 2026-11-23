@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { test, expect, launchApp, closeApp } from './fixtures/app.js';
+import { snap } from './fixtures/onboarding-snap.js';
 import { startGitDaemon } from './fixtures/git-daemon.js';
 import type { Page } from '@playwright/test';
 
@@ -74,7 +75,7 @@ test('employee setup is non-blocking, checks access, installs an inline bundle a
     await expect(step(win, 'bundle')).toHaveAttribute('data-state', 'todo');
     await expect(wizard(win).getByRole('button', { name: 'Install and continue', exact: true })).toBeVisible();
     await expect(wizard(win)).toContainText('Employee Fixture Tool');
-    await testInfo.attach('companion-bundle', { body: await win.screenshot(), contentType: 'image/png' });
+    await snap(app!.electron, win, testInfo, 'companion-bundle');
     await wizard(win).getByRole('button', { name: 'Install and continue', exact: true }).click();
     await expect(step(win, 'bundle')).toHaveAttribute('data-state', 'done');
     const installed = JSON.parse(readFileSync(join(home, '.zcc/plugins/installed.json'), 'utf8'));
@@ -83,9 +84,10 @@ test('employee setup is non-blocking, checks access, installs an inline bundle a
     await expect(step(win, 'advanced')).toHaveAttribute('data-state', 'todo');
     await expect(win.getByRole('region', { name: 'Basic and Advanced' })).toBeVisible();
     await expect(win.locator('body')).toHaveAttribute('data-onboarding-spotlight', 'interface-mode');
-    await testInfo.attach('companion-coachmark', { body: await win.screenshot(), contentType: 'image/png' });
+    await snap(app!.electron, win, testInfo, 'companion-coachmark');
+    // "Got it" settles the last step, so setup celebrates and closes on its own.
     await win.getByRole('region', { name: 'Basic and Advanced' }).getByRole('button', { name: 'Got it' }).click();
-    await step(win, 'advanced').getByRole('button', { name: /stay in Basic|Done/ }).click();
+    await expect(step(win, 'advanced')).toHaveAttribute('data-state', 'done');
     await expect(wizard(win)).toBeHidden({ timeout: 15_000 });
     const saved = await onboarding(win);
     expect(saved).toMatchObject({ version: 2, audience: 'organization', marketplaceSource: `path:${catalog}`, pluginIds: [id],
@@ -107,7 +109,7 @@ test('finish later minimizes to a sidebar pill that resumes after restart and fr
     let win = app.window;
     await expect(wizard(win)).toBeVisible();
     await win.setViewportSize({ width: 1100, height: 700 });
-    await testInfo.attach('onboarding-companion', { body: await win.screenshot(), contentType: 'image/png' });
+    await snap(app!.electron, win, testInfo, 'onboarding-companion');
     await wizard(win).focus();
     await win.keyboard.press('Escape');
     const pill = win.getByRole('button', { name: /Finish setting up/ });
@@ -178,7 +180,7 @@ esac
     await wizard(win).getByRole('button', { name: 'Sign in with browser', exact: true }).click();
     await expect(wizard(win).getByRole('group', { name: 'One-time sign-in code' })).toContainText('E2E1-CODE');
     await expect(wizard(win).getByRole('button', { name: `Open ${host}` })).toBeVisible();
-    await testInfo.attach('employee-device-code', { body: await win.screenshot(), contentType: 'image/png' });
+    await snap(app!.electron, win, testInfo, 'employee-device-code');
     writeFileSync(join(state, 'approve'), '');
     await expect(step(win, 'workplace')).toHaveAttribute('data-state', 'done', { timeout: 30_000 });
     expect(existsSync(join(state, 'approved'))).toBe(true);

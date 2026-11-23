@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect, launchApp, closeApp } from './fixtures/app.js';
+import { snap } from './fixtures/onboarding-snap.js';
 import { startGitHttpServer } from './fixtures/git-http.js';
 
 const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
@@ -97,7 +98,7 @@ if [ "$1" = get ] && [ "$ZCC_FIXTURE_EXISTING_CREDENTIALS" = 1 ]; then printf 'u
         await expect(wizard).toContainText('Could not access the repository');
         await expect(wizard).not.toContainText('this account can’t read');
         await expect(wizard).not.toContainText('Ask your marketplace administrator');
-        await testInfo.attach('recoverable-git-auth-failure', { body: await win.screenshot(), contentType: 'image/png' });
+        await snap(app!.electron, win, testInfo, 'recoverable-git-auth-failure');
         expect(readFileSync(config, 'utf8')).toBe(originalConfig);
         writeFileSync(activePassword, 'fixture-good');
         await wizard.getByRole('button', { name: 'Retry access check' }).click();
@@ -134,7 +135,7 @@ if [ "$1" = get ] && [ "$ZCC_FIXTURE_EXISTING_CREDENTIALS" = 1 ]; then printf 'u
       expect(readFileSync(config, 'utf8')).toBe(originalConfig);
       await expect(win.locator('body')).not.toContainText('fixture-good');
       await expect(win.locator('body')).not.toContainText('fixture-bad');
-      await testInfo.attach('https-git-onboarding-complete', { body: await win.screenshot(), contentType: 'image/png' });
+      await snap(app!.electron, win, testInfo, 'https-git-onboarding-complete');
     } finally { if (app) await closeApp(app.electron); await git.close(); }
   });
 }
