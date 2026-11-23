@@ -127,6 +127,18 @@ it('retains desktop project auto-selection', () => {
   expect(view.getByRole('textbox')).toBeTruthy();
 });
 
+it('opens both panes in a wide desktop Library when ResizeObserver is unavailable', () => {
+  state.compact = false;
+  vi.stubGlobal('ResizeObserver', undefined);
+  try {
+    const view = render(<MemoryRouter><LibraryView project={project} /></MemoryRouter>);
+    expect(view.getByRole('textbox')).toBeTruthy();
+    expect(view.getByRole('article').textContent).toBe('Readable note content');
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
 it('retains desktop folder toggling and document context actions with native tree buttons', () => {
   state.compact = false;
   const view = render(<MemoryRouter><LibraryPanel /></MemoryRouter>);
