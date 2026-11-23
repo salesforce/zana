@@ -1,6 +1,7 @@
 import { turnScope } from "@zana-ai/zcc-domain/thread-runtime";
 import { describe, expect, it } from "vitest";
 import { groupCompletedTurnMessages } from "../src/completed-turn-grouping.js";
+import { isTimelineTerminalMessage, isTimelineUngroupableMessage } from "../src/timeline-message-helpers.js";
 import type { CompletedTurnMessageGroups } from "../src/completed-turn-grouping.js";
 import type {
   EventProjectionAssistantTextMessage,
@@ -128,6 +129,21 @@ function summarySourceMessageIds(
 }
 
 describe("groupCompletedTurnMessages", () => {
+  it("keeps an owning plugin's scheduled update visible while the agent answers", () => {
+    const update = {
+      ...assistantMessage({ id: "quote", seq: 2 }),
+      pluginId: "quote-source",
+      scope: { kind: "thread" } as const,
+    };
+    expect(isTimelineTerminalMessage(update)).toBe(false);
+    expect(isTimelineUngroupableMessage(update)).toBe(true);
+    const answer = assistantMessage({ id: "answer", seq: 3 });
+    const turn = completedTurn([assistantMessage({ id: "progress", seq: 1 }), update, answer], answer);
+    const groups = groupCompletedTurnMessages(turn);
+    expect(groups.summaryItems).toContainEqual({ kind: "ungrouped-message", message: update });
+    expect(groups.terminalMessages).toEqual([answer]);
+  });
+
   it("unwraps a singleton compaction group after a user message", () => {
     const user = userMessage({ id: "compact-request", seq: 1 });
     const compaction = compactionMessage({ id: "compaction", seq: 2 });
