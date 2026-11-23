@@ -252,6 +252,7 @@ export type {
   PluginThreadCardActionRegistration,
   PluginAgentsBoardActionContext,
   PluginAgentsBoardActionRegistration,
+  PluginAgentsBoardThreadToggleRegistration,
   PluginAgentsViewRegistration,
   PluginAgentsViewProps,
   PluginFleetMember,

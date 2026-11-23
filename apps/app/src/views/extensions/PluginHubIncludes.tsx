@@ -39,6 +39,7 @@ function slotLinesFromSet(set: ReturnType<typeof getPluginRegistrationSets>[numb
   if (set.fileOpeners.length) lines.push(`File openers (${set.fileOpeners.length})`);
   if (set.agentCardActions.length) lines.push(`Agent card actions (${set.agentCardActions.length})`);
   if (set.agentsBoardActions.length) lines.push(`Agents board actions (${set.agentsBoardActions.length})`);
+  if (set.agentsBoardThreadToggles?.length) lines.push(`Agents board toggles (${set.agentsBoardThreadToggles.length})`);
   return lines;
 }
 

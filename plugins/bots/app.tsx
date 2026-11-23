@@ -1173,5 +1173,6 @@ export default definePluginApp((app) => {
     id: 'profile', title: 'Bot profile', icon: 'Bot', layout: 'flush',
     experimental_ownedThreadTitle: BotThreadTitle, experimental_ownedThreadIcon: BotThreadIcon, component: BotThreadProfile
   });
+  app.slots.experimental_agentsBoardThreadToggle({ id: 'threads', title: 'Bots', icon: 'Bot' });
   app.slots.navPanel({ id: 'bots', title: 'Bots', icon: 'Bot', component: BotsPanel, experimental_basicSidebarSection: BasicBots });
 });

@@ -1,10 +1,10 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const fixtures = vi.hoisted(() => ({ slots: [] as any[], view: 'plugin:test/world', last: null as any, executions: [] as any[], inspect: vi.fn(), inspectThread: vi.fn() }));
 vi.mock('@/components/AgentViewToggle', () => ({
-  AgentViewToggle: () => null, ScheduledColumnToggle: () => null,
+  AgentViewToggle: () => null, ScheduledColumnToggle: () => null, PluginThreadToggles: () => null,
   useAgentsBoardView: () => ({ view: fixtures.view, compact: false, pluginViews: fixtures.slots })
 }));
 vi.mock('@/hooks/useEnsureThreads', () => ({ useEnsureThreads: () => {} }));
@@ -155,4 +155,23 @@ it('shows the fairy spinner on Close idle while agents are closing', async () =>
   expect(busy.querySelector('svg.fairy-spinner')).toBeTruthy();
   release();
   await screen.findByRole('button', { name: 'Close 1 idle agents' });
+});
+it('hides threads owned by a plugin with a board toggle until the toggle is on', async () => {
+  const { interpretPluginApp, clearPluginSlots } = await import('@/plugins/plugin-slots');
+  const { definePluginApp } = await import('@zana-ai/zcc-plugin-sdk');
+  const { useAgentsBoardThreadToggles } = await import('@/plugins/agents-board-thread-toggles');
+  interpretPluginApp('owner', definePluginApp((app) => {
+    app.slots.experimental_agentsBoardThreadToggle({ id: 'threads', title: 'Owned' });
+  }));
+  useAgentsBoardThreadToggles.setState({ shown: {} });
+  const thread = (id: string, title: string, originPluginId: string | null) => ({ id, projectId: 'p1', hostId: 'h', environmentId: null, providerId: 'codex', status: 'idle', title, createdAt: 1, cwd: null, branchName: null, isWorktree: false, originPluginId });
+  useThreads.setState({ threads: [thread('t-own', 'Owned thread', 'owner'), thread('t-other', 'Other plugin thread', 'other'), thread('t-user', 'User thread', null)] as any[] });
+  render(<MemoryRouter><AgentsBoard scope={{ kind: 'project', project: projects[0] }} /></MemoryRouter>);
+  await screen.findByRole('button', { name: 'User thread' });
+  expect(screen.getByRole('button', { name: 'Other plugin thread' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Owned thread' })).toBeNull();
+  act(() => useAgentsBoardThreadToggles.getState().setShown('owner', true));
+  expect(await screen.findByRole('button', { name: 'Owned thread' })).toBeTruthy();
+  clearPluginSlots('owner');
+  localStorage.clear();
 });

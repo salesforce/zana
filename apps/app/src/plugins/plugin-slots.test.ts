@@ -17,6 +17,7 @@ import {
   listAgentCardActions,
   listThreadCardActions,
   listAgentsBoardActions,
+  listAgentsBoardThreadToggles,
   listProjectTabs,
   listProjectStatusbarItems,
   listComposerCustomizations,
@@ -75,6 +76,7 @@ describe('plugin slot registry', () => {
           title: 'Board',
           run: () => undefined
         });
+        app.slots.experimental_agentsBoardThreadToggle({ id: 'threads', title: 'Threads', icon: 'Bot' });
         app.slots.projectStatusbarItem({
           id: 'org',
           label: 'prod'
@@ -92,6 +94,7 @@ describe('plugin slot registry', () => {
     expect(listAgentCardActions()).toHaveLength(1);
     expect(listThreadCardActions()).toHaveLength(1);
     expect(listAgentsBoardActions()).toHaveLength(1);
+    expect(listAgentsBoardThreadToggles()).toEqual([expect.objectContaining({ id: 'threads', title: 'Threads', icon: 'Bot' })]);
     expect(listProjectStatusbarItems()).toHaveLength(1);
     expect(listProjectStatusbarItems()).toBe(listProjectStatusbarItems());
     expect(listNavPanels()[0]?.generation).toBe(2);

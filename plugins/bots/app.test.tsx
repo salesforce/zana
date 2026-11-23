@@ -11,7 +11,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock('@zana-ai/zcc-plugin-sdk/app', () => ({
   definePluginApp: (setup: (app: unknown) => void) =>
-    setup({ slots: { settingsSection: (row: unknown) => state.registered.push(row), navPanel: (row: unknown) => state.registered.push(row), threadPanelAction: (row: unknown) => state.registered.push(row) } }),
+    setup({ slots: { settingsSection: (row: unknown) => state.registered.push(row), navPanel: (row: unknown) => state.registered.push(row), threadPanelAction: (row: unknown) => state.registered.push(row), experimental_agentsBoardThreadToggle: (row: unknown) => state.registered.push(row) } }),
   callPluginRpc: (...args: unknown[]) => memoryRpc(...args),
   useRpc: () => state.rpc,
   Markdown: ({ content, editor, className }: import('@zana-ai/zcc-plugin-sdk/app').MarkdownProps) => editor
@@ -47,6 +47,7 @@ afterEach(() => { cleanup(); state.rpc.call.mockReset(); state.navigate.toThread
 it('registers the Bots nav panel', () => {
   expect(state.registered).toEqual(expect.arrayContaining([
     expect.objectContaining({ id: 'bots', title: 'Bots', icon: 'Bot' }),
+    { id: 'threads', title: 'Bots', icon: 'Bot' },
     expect.objectContaining({ id: 'profile', experimental_ownedThreadTitle: BotThreadTitle, experimental_ownedThreadIcon: BotThreadIcon, component: BotThreadProfile })
   ]));
 });

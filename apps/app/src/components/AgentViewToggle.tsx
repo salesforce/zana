@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
-import { listAgentsViews, subscribePluginSlots } from '../plugins/plugin-slots.js';
+import { listAgentsBoardThreadToggles, listAgentsViews, subscribePluginSlots } from '../plugins/plugin-slots.js';
+import { useAgentsBoardThreadToggles } from '../plugins/agents-board-thread-toggles.js';
 import { agentsViewKey, resolveAgentsView } from '../plugins/agents-view-model.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
 import { Calendar, LayoutGrid, List, Workflow } from 'lucide-react';
@@ -96,6 +97,47 @@ export function ScheduledColumnToggle() {
           </span>
         )}
       </button>
+    </div>
+  );
+}
+
+/** Button title / aria for a plugin's show/hide-threads toggle. */
+export function pluginThreadToggleLabel(title: string, shown: boolean): string {
+  return `${shown ? 'Hide' : 'Show'} ${title}`;
+}
+
+/**
+ * One toggle per plugin that registered `experimental_agentsBoardThreadToggle`.
+ * Each shows or hides the threads that plugin created; they start hidden.
+ */
+export function PluginThreadToggles() {
+  const compact = useCompactLayout();
+  const toggles = useSyncExternalStore(subscribePluginSlots, listAgentsBoardThreadToggles, listAgentsBoardThreadToggles);
+  const shown = useAgentsBoardThreadToggles((s) => s.shown);
+  const setShown = useAgentsBoardThreadToggles((s) => s.setShown);
+  if (toggles.length === 0) return null;
+  return (
+    <div className="agents-view-toggle" role="group" aria-label="Plugin threads">
+      {toggles.map((slot) => {
+        const on = Boolean(shown[slot.pluginId]);
+        const Icon = resolveIcon(slot.icon ?? 'Puzzle');
+        const label = pluginThreadToggleLabel(slot.title, on);
+        return (
+          <button
+            key={`${slot.pluginId}/${slot.id}`}
+            type="button"
+            className={`agents-view-toggle-btn ${on ? 'active' : ''}`}
+            data-testid={`agents-board-thread-toggle-${slot.pluginId}-${slot.id}`}
+            onClick={() => setShown(slot.pluginId, !on)}
+            aria-pressed={on}
+            title={label}
+            aria-label={label}
+          >
+            <Icon size={14} />
+            {compact && <span>{slot.title}</span>}
+          </button>
+        );
+      })}
     </div>
   );
 }

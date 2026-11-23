@@ -161,6 +161,7 @@ describe('PluginHubIncludes', () => {
           title: 'Board',
           run: () => undefined
         });
+        app.slots.experimental_agentsBoardThreadToggle({ id: 'threads', title: 'Threads' });
         app.slots.projectStatusbarItem({
           id: 'org',
           label: 'prod'
@@ -184,6 +185,7 @@ describe('PluginHubIncludes', () => {
     );
     expect(screen.getByText('Agent card actions (1)')).toBeTruthy();
     expect(screen.getByText('Agents board actions (1)')).toBeTruthy();
+    expect(screen.getByText('Agents board toggles (1)')).toBeTruthy();
     expect(screen.getByText('Project statusbar (1)')).toBeTruthy();
   });
 
