@@ -94,8 +94,15 @@ describe('failedTurnFromRollout (turn scoping)', () => {
 
   it('caps the lines scanned', () => {
     const filler = line({ type: 'response_item', payload: {} }).repeat(6000);
-    expect(failedTurnFromRollout(buf(started(1) + failed(1) + filler), 0, 0)).toMatchObject({ kind: 'api-error-stop' });
-    expect(failedTurnFromRollout(buf(filler + started(1) + failed(1)), 0, 0)).toBeNull();
+    // Only the newest lines are read: a failure older than the cap is not seen.
+    expect(failedTurnFromRollout(buf(started(1) + failed(1) + filler), 0, 0)).toBeNull();
+    // The newest lines win: a failure after a long run of filler is still seen.
+    expect(failedTurnFromRollout(buf(filler + started(1) + failed(1)), 0, 0)).toMatchObject({ kind: 'api-error-stop' });
+  });
+
+  it('does not report an old failure when a newer turn ends beyond the line cap', () => {
+    const filler = line({ type: 'response_item', payload: {} }).repeat(6000);
+    expect(failedTurnFromRollout(buf(started(1) + failed(1) + filler + started(2) + ok(2)), 0, 0)).toBeNull();
   });
 
   it('a model reply that says "rate limit exceeded" does not match', () => {

@@ -8021,6 +8021,7 @@ teamPlanHandoff = new TeamPlanHandoff({
 const apiErrorDispatchCtx: DispatchCtx = createApiErrorDispatchCtx({
   ptys,
   onTurnFailed: (id) => wrapUpClose.onTurnFailed(id),
+  logError: logMainError,
   routeStop: (id, s, event) => routeApiErrorStop({ service: apiErrorResume, recovery: workerApiErrorRecovery, enabled: () => workerApiErrorRecoveryEnabled(store.getConfig()), agentStatus, logMainError }, id, s, event)
 });
 const apiErrorProducerFor = apiErrorProducerLookup({

@@ -60,6 +60,39 @@ describe('api-error-dispatch', () => {
     forgetSession(ctx, 's1');
   });
 
+  it('keeps checking while the turn is unfinished, so a failure after a long silence is still seen', async () => {
+    const { ctx, calls } = makeCtx();
+    const producer = makeProducer(null);
+    armQuietCheck(ctx, 'sr', producer, ref('sr'));
+    await flush();
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(producer.check).toHaveBeenCalledTimes(3);
+    (producer.check as ReturnType<typeof vi.fn>).mockResolvedValueOnce(event);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(calls).toEqual(['failed:sr', 'route:sr']);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(producer.check).toHaveBeenCalledTimes(4);
+    forgetSession(ctx, 'sr');
+  });
+
+  it('stops rechecking after a bounded number of quiet periods, and when disarmed', async () => {
+    const { ctx } = makeCtx();
+    const producer = makeProducer(null);
+    armQuietCheck(ctx, 'sb', producer, ref('sb'));
+    await flush();
+    await vi.advanceTimersByTimeAsync(100_000);
+    expect(producer.check).toHaveBeenCalledTimes(13);
+    const other = makeProducer(null);
+    armQuietCheck(ctx, 'sd', other, ref('sd'));
+    await flush();
+    await vi.advanceTimersByTimeAsync(1000);
+    disarm(ctx, 'sd');
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(other.check).toHaveBeenCalledTimes(1);
+    forgetSession(ctx, 'sb');
+    forgetSession(ctx, 'sd');
+  });
+
   it('does not dispatch when the producer finds no failure', async () => {
     const { ctx, calls } = makeCtx();
     armQuietCheck(ctx, 's2', makeProducer(null), ref('s2'));

@@ -1,7 +1,7 @@
 import { isRetryableApiErrorKind, type HarnessInteractionEvent } from '@zcc/harness-sdk';
 import { sanitizeApiErrorText } from '../api-error-text.js';
 
-/** Maximum lines examined in one tail, so a hostile or huge rollout cannot pin the event loop. */
+/** Maximum (newest) lines examined in one tail, so a hostile or huge rollout cannot pin the event loop. */
 const MAX_LINES = 5000;
 /** A single rollout line larger than this is skipped rather than parsed. */
 const MAX_LINE_BYTES = 256 * 1024;
@@ -46,18 +46,20 @@ function parseLines(tail: Buffer, startOffset: number): Line[] {
     if (nl === -1) return out;
     pos = nl + 1;
   }
-  let scanned = 0;
-  while (pos < tail.length && scanned < MAX_LINES) {
+  // Newest lines matter most: find every line boundary (cheap), then parse only the last MAX_LINES.
+  const bounds: Array<[number, number]> = [];
+  while (pos < tail.length) {
     let end = tail.indexOf(0x0a, pos);
     if (end === -1) end = tail.length; // a final unterminated line may still be mid-write; parse failure drops it
-    scanned += 1;
-    if (end - pos <= MAX_LINE_BYTES) {
-      try {
-        const value = record(JSON.parse(tail.subarray(pos, end).toString('utf8')));
-        if (value) out.push({ offset: startOffset + pos, value });
-      } catch { /* partial or malformed line */ }
-    }
+    bounds.push([pos, end]);
     pos = end + 1;
+  }
+  for (const [from, to] of bounds.slice(-MAX_LINES)) {
+    if (to - from > MAX_LINE_BYTES) continue;
+    try {
+      const value = record(JSON.parse(tail.subarray(from, to).toString('utf8')));
+      if (value) out.push({ offset: startOffset + from, value });
+    } catch { /* partial or malformed line */ }
   }
   return out;
 }

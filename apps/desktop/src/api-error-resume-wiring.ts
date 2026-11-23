@@ -72,6 +72,8 @@ export interface ApiErrorDispatchWiringDeps<S extends { status: string } = { sta
   onTurnFailed(sessionId: string): void;
   /** Hands a live session's stop to resume rules or Squad worker recovery. */
   routeStop(sessionId: string, session: S, event: ApiErrorStopEvent): void;
+  /** Where an error goes when a message carries one; falls back to the console. */
+  logError?(label: string, error: unknown): void;
 }
 
 /** The dispatch context the neutral seam runs on: liveness, routing and timers come from the host. */
@@ -86,7 +88,11 @@ export function createApiErrorDispatchCtx<S extends { status: string }>(deps: Ap
     },
     setTimer: (fn, ms) => setTimeout(fn, ms),
     clearTimer: (handle) => clearTimeout(handle as NodeJS.Timeout),
-    log: (message, error) => (error === undefined ? console.log(message) : console.log(message, error))
+    log: (message, error) => {
+      if (error === undefined) console.log(message);
+      else if (deps.logError) deps.logError(message, error);
+      else console.log(message, error);
+    }
   };
 }
 

@@ -73,7 +73,11 @@ export function createThreadApiErrorResume(
   const stateOf = (threadId: string): ThreadState => {
     let state = states.get(threadId);
     if (!state) {
-      if (states.size >= MAX_TRACKED_THREADS) states.delete(states.keys().next().value as string);
+      if (states.size >= MAX_TRACKED_THREADS) {
+        const evicted = states.keys().next().value as string;
+        service.forget(evicted); // drop its pending resume too, or it could fire after dispose
+        states.delete(evicted);
+      }
       state = { lastError: null, inputMarker: 0 };
       states.set(threadId, state);
     }
@@ -120,8 +124,10 @@ export function createThreadApiErrorResume(
     const threadId = event.threadId;
     switch (type) {
       case 'provider/error': {
-        const found = apiErrorFromProviderError(event.payload);
-        if (found) stateOf(threadId).lastError = found;
+        // An error the provider is still retrying changes nothing; any final error replaces the last one,
+        // so a terminal error (auth, billing) after a temporary one is not resumed as the temporary one.
+        if (record(event.payload)?.willRetry === true) return;
+        stateOf(threadId).lastError = apiErrorFromProviderError(event.payload);
         return;
       }
       case 'client/turn/requested':

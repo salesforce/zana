@@ -128,6 +128,15 @@ describe('createApiErrorDispatchCtx', () => {
     expect(log).toHaveBeenNthCalledWith(1, 'plain');
     expect(log).toHaveBeenNthCalledWith(2, 'with error', expect.any(Error));
   });
+  it('sends an error to the host error logger when one is given', () => {
+    const logError = vi.fn();
+    const log = vi.spyOn(console, 'log').mockClear();
+    const ctx = createApiErrorDispatchCtx({ ptys: { getSession: () => undefined }, onTurnFailed: vi.fn(), routeStop: vi.fn(), logError });
+    ctx.log('with error', new Error('boom'));
+    ctx.log('plain');
+    expect(logError).toHaveBeenCalledWith('with error', expect.any(Error));
+    expect(log).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('apiErrorProducerLookup', () => {

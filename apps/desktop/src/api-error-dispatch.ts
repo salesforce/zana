@@ -45,7 +45,15 @@ interface Armed {
   session: ApiErrorSessionRef;
   marker: unknown;
   timer: unknown;
+  /** Quiet-period checks that found no finished turn yet. */
+  rechecks: number;
 }
+
+/**
+ * A turn can stay silent for longer than one quiet period (tool approval, a long silent tool).
+ * A check that finds the turn unfinished is repeated, up to this many times, so a later failure is still seen.
+ */
+const MAX_RECHECKS = 12;
 
 const generations = new Map<string, number>();
 const armed = new Map<string, Armed>();
@@ -66,20 +74,32 @@ function schedule(ctx: DispatchCtx, sessionId: string, entry: Armed): void {
   entry.timer = ctx.setTimer(() => {
     if (armed.get(sessionId) !== entry) return;
     armed.delete(sessionId);
-    void runCheck(ctx, sessionId, entry);
+    void runCheck(ctx, sessionId, entry).then((found) => {
+      if (found || entry.rechecks >= MAX_RECHECKS) return;
+      if (generations.get(sessionId) !== entry.generation || !ctx.isLive(sessionId) || armed.has(sessionId)) return;
+      entry.rechecks += 1;
+      armed.set(sessionId, entry);
+      schedule(ctx, sessionId, entry);
+    });
   }, entry.producer.quietMs);
   // Never keep the process alive for a diagnostic check.
   (entry.timer as { unref?: () => void } | undefined)?.unref?.();
 }
 
-async function runCheck(ctx: DispatchCtx, sessionId: string, entry: Armed): Promise<void> {
+/** True when a stop was found (or the check is moot); false means the turn has not failed yet. */
+async function runCheck(ctx: DispatchCtx, sessionId: string, entry: Armed): Promise<boolean> {
   try {
     const event = await entry.producer.check(entry.session, entry.marker);
-    if (generations.get(sessionId) !== entry.generation) return;
-    if (!ctx.isLive(sessionId)) return;
-    if (event?.kind === 'api-error-stop') dispatchApiErrorStop(ctx, sessionId, event as ApiErrorStopEvent);
+    if (generations.get(sessionId) !== entry.generation) return true;
+    if (!ctx.isLive(sessionId)) return true;
+    if (event?.kind === 'api-error-stop') {
+      dispatchApiErrorStop(ctx, sessionId, event as ApiErrorStopEvent);
+      return true;
+    }
+    return false;
   } catch (error) {
     ctx.log(`[api-error-dispatch] check failed session=${sessionId.slice(0, 8)}`, error);
+    return true;
   }
 }
 
@@ -100,7 +120,7 @@ export function armQuietCheck(ctx: DispatchCtx, sessionId: string, producer: Api
       return;
     }
     if (generations.get(sessionId) !== generation || !ctx.isLive(sessionId)) return;
-    const entry: Armed = { generation, producer, session, marker, timer: undefined };
+    const entry: Armed = { generation, producer, session, marker, timer: undefined, rechecks: 0 };
     armed.set(sessionId, entry);
     schedule(ctx, sessionId, entry);
   })();

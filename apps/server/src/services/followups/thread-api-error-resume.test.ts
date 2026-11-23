@@ -194,6 +194,33 @@ describe('createThreadApiErrorResume', () => {
     for (let i = 0; i < 600; i++) emit('client/turn/requested', {}, `t${i}`);
     expect(() => emit('client/turn/requested', {}, 't-last')).not.toThrow();
   });
+
+  it('drops the pending resume of an evicted thread', async () => {
+    const { fail, emit, resume } = setup();
+    fail(); // t1 has a resume pending
+    for (let i = 0; i < 600; i++) emit('client/turn/requested', {}, `other${i}`); // evicts t1
+    resume.dispose();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(h.send).not.toHaveBeenCalled();
+  });
+
+  it('a terminal error after a temporary one is not resumed as the temporary one', async () => {
+    const { emit } = setup();
+    emit('provider/error', { message: 'Server is overloaded', errorInfo: { category: 'overloaded' } });
+    emit('provider/error', { message: 'bad key', errorInfo: { category: 'unauthorized' } });
+    emit('turn/completed', { status: 'failed' });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(h.send).not.toHaveBeenCalled();
+  });
+
+  it('an error the provider is still retrying does not replace the last final error', async () => {
+    const { emit } = setup();
+    emit('provider/error', { message: 'Server is overloaded', errorInfo: { category: 'overloaded' } });
+    emit('provider/error', { message: 'again', willRetry: true, errorInfo: { category: 'unauthorized' } });
+    emit('turn/completed', { status: 'failed' });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(h.send).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('startThreadApiErrorResume', () => {

@@ -3,6 +3,7 @@
 export const MAX_API_ERROR_TEXT = 4096;
 
 // C0 (except tab and newline, which collapse below), DEL, C1 and ANSI CSI/OSC sequences.
+// eslint-disable-next-line no-control-regex
 const ANSI = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[@-Z\\-_]/g;
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
