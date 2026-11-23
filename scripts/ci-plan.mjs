@@ -20,7 +20,10 @@ export function planVerification(paths, forcePreview = false) {
 
 export function runPlan(env, io = { execute: execFileSync, append: appendFileSync, log: console.log }) {
   const base = !env.CI_BASE_SHA || /^0+$/.test(env.CI_BASE_SHA) ? 'HEAD^' : env.CI_BASE_SHA;
-  const paths = io.execute('git', ['diff', '--no-renames', '--name-only', '-z', base, 'HEAD'], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).split('\0').filter(Boolean);
+  // pull_request jobs check out GitHub's synthetic merge ref, so HEAD already includes
+  // main's newer commits. CI_HEAD_SHA names the PR head to diff instead.
+  const head = env.CI_HEAD_SHA || 'HEAD';
+  const paths = io.execute('git', ['diff', '--no-renames', '--name-only', '-z', `${base}...${head}`], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).split('\0').filter(Boolean);
   const plan = planVerification(paths, env.CI_FORCE_PREVIEW === 'true');
   io.log(JSON.stringify(plan));
   for (const [key, value] of Object.entries(plan)) io.append(env.GITHUB_OUTPUT, `${key}=${JSON.stringify(value)}\n`);
