@@ -109,8 +109,14 @@ if [ "$1" = get ] && [ "$ZCC_FIXTURE_EXISTING_CREDENTIALS" = 1 ]; then printf 'u
       await wizard.locator('[data-step="workplace"] .onb-sh').click();
       await wizard.getByRole('button', { name: 'Check access and continue' }).click();
       await expect(wizard.locator('[data-step="workplace"]')).toHaveAttribute('data-state', 'done');
-      await wizard.locator('[data-step="bundle"] .onb-sh').click();
-      await wizard.getByRole('button', { name: 'Install and continue', exact: true }).click();
+      // A finished workplace step opens the bundle step on its own; only expand it if it is still collapsed.
+      const install = wizard.getByRole('button', { name: 'Install and continue', exact: true });
+      const collapsedBundle = wizard.locator('[data-step="bundle"] .onb-sh[aria-expanded="false"]');
+      await expect(async () => {
+        if (await collapsedBundle.isVisible()) await collapsedBundle.click({ timeout: 2_000 });
+        await expect(install).toBeVisible({ timeout: 2_000 });
+      }).toPass({ timeout: 20_000 });
+      await install.click();
       await expect(wizard.locator('[data-step="bundle"]')).toHaveAttribute('data-state', 'done');
       expect(JSON.parse(readFileSync(join(home, '.zcc/plugins/installed.json'), 'utf8')).plugins)
         .toEqual(expect.arrayContaining([expect.objectContaining({ id, version: '1.0.0' })]));

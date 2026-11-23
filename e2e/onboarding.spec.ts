@@ -128,7 +128,8 @@ test('finish later minimizes to a sidebar pill that resumes after restart and fr
     await expect(step(win, 'workplace')).toHaveAttribute('data-state', 'skipped');
     await expect(step(win, 'bundle')).toContainText('Browse');
     await step(win, 'bundle').getByRole('button', { name: 'Skip', exact: true }).click();
-    await step(win, 'advanced').getByRole('button', { name: /stay in Basic|Done/ }).click();
+    // This window is in Advanced (resume() switched it), so "Meet Advanced" is already done and setup closes itself.
+    await expect(step(win, 'advanced')).toHaveAttribute('data-state', 'done');
     await expect(wizard(win)).toBeHidden({ timeout: 15_000 });
     const saved = await onboarding(win);
     expect(saved.steps).toMatchObject({ harness: 'skipped', workplace: 'skipped', bundle: 'skipped', advanced: 'done' });
