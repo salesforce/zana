@@ -36,5 +36,3 @@ packages/host-watcher/test/fork-channel-windows-hide.test.ts
 packages/host-workspace/src/git-windows-hide.test.ts
 packages/plugin-sdk/src/automated-config-lifecycle.windows-junction.test.ts
 plugins/provider-claude-code/src/bridge/__tests__/skill-plugins.windows-junction.test.ts
-plugins/provider-pi/src/bridge/provider-maintenance.windows.test.ts
-plugins/provider-pi/src/bridge/windows-resolver.test.ts
