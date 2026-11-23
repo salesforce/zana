@@ -137,6 +137,17 @@ function MarkdownTaskInput({ node: _node, ...props }: ComponentPropsWithoutRef<'
  */
 type MdNode = { type: string; value?: string; children?: MdNode[] };
 
+type HastNode = { type: string; value?: string; children?: HastNode[] };
+
+function hastText(node: HastNode): string {
+  return node.type === 'text' ? (node.value ?? '') : (node.children ?? []).map(hastText).join('');
+}
+
+/** True when a table's `thead` has no visible text in any cell (`| | |`). */
+function isEmptyHeader(node: HastNode | undefined): boolean {
+  return Boolean(node) && hastText(node as HastNode).trim() === '';
+}
+
 /** An HTML comment is a note for tools (such as `<!-- executable-step -->`), never text for the reader. Code blocks are untouched. */
 function remarkDropHtmlComments() {
   const prune = (node: MdNode): void => {
@@ -379,6 +390,10 @@ export const MarkdownContent = memo(function MarkdownContent({
               <table {...props}>{Children.toArray(children)}</table>
             </div>
           ),
+          // A header row whose cells are all empty (`| | |`) is only an empty
+          // shaded bar: leave it out of the DOM.
+          thead: ({ node, children, ...props }) =>
+            isEmptyHeader(node) ? null : <thead {...props}>{children}</thead>,
           // Intercept ```mermaid fences and render them as diagrams. A
           // non-mermaid fence falls through to the default <pre>. We hook
           // `pre` (not `code`) so the rendered SVG isn't nested inside a
