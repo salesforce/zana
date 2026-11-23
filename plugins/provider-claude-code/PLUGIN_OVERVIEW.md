@@ -11,6 +11,9 @@ Start a thread, pick Claude Code, and let it work in your repository from ZCC. T
 ## Settings
 
 - `Claude Code memory`: let Claude Code read and write its auto-memory.
+- `Claude Code sandbox`: enabled by default for Accept Edits and Approve for me.
+  Turn it off to use Claude Code's own command approvals and sandbox settings.
+  Changes apply on the next turn and preserve the conversation.
 - `Disable provider subagents`: hide the native Task tool so the agent delegates through ZCC.
 - `Disable Workflow tool`: hide the native Workflow tool.
 - `Claude in Chrome`: start Claude Code with the browser tools.
