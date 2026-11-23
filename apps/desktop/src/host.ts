@@ -54,6 +54,7 @@ import { SharedClient, allowsSharedNavigation } from './window/shared-client.js'
 import { createHistoryProviders, invalidateHarnessModelCatalog } from '@zana-ai/zcc-host-daemon/harness/registry';
 import { RendererReadiness } from './window/renderer-readiness.js';
 import { installAppPermissions } from './window/app-permissions.js';
+import { windowMenuTail } from './window/window-menu.js';
 import { runStartupDependencyDoctor } from './startup-dependency-doctor.js';
 /**
  * Compatibility IPC host. Window/tray/updater/preload live alongside this file
@@ -9482,21 +9483,14 @@ function buildAppMenu() {
       ]
     },
     {
-      // macOS appends the open-windows list only to the top-level item whose
-      // role is 'window' (NSApp.windowsMenu); a nested { role: 'window' } item
-      // renders nothing, so the role belongs here, not inside the submenu.
+      // role 'window' makes this the macOS windows menu, which lists open windows.
       label: 'Window',
       role: 'window',
       submenu: [
         { role: 'minimize' },
         companionHost.menuItem(),
         { role: 'zoom' },
-        ...(isMac
-          ? ([
-              { type: 'separator' as const },
-              { role: 'front' as const }
-            ] satisfies Electron.MenuItemConstructorOptions[])
-          : ([{ role: 'close' as const }] satisfies Electron.MenuItemConstructorOptions[]))
+        ...windowMenuTail(isMac)
       ]
     },
     {
