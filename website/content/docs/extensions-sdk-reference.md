@@ -63,6 +63,14 @@ database, logs or spawn-plan dumps, they are cleared when the daemon disconnects
 or the plugin is disposed, and a variable the user already set on the machine is
 never overridden.
 
+Message attribution: `sdk.threads.send` and `sdk.threads.spawn` accept
+`source: { kind: "bot" | "thread" | "user" | "routine" | "job", label, color?, threadId?, detail? }`
+and `agentContext` (hidden model-only header, at most 500 characters). The host
+stamps `pluginId`, validates every field, and records the source on the
+`client/turn/requested` event, so the timeline shows an attributed header instead of a
+user prompt. Attribution cannot be combined with `deferFirstTurn`. Feature-detect
+with `sdk.threads.messageSources === true`.
+
 Pass `deferFirstTurn: true` and omit `prompt` to create an empty thread. The first message starts its provider session.
 
 `sdk.threads.spawn` accepts `hostId`, `serviceTier: "default" | "fast"` and
