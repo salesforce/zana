@@ -10,10 +10,10 @@ export const CLI_COMMANDS: PluginCliCommandInfo[] = [
   { name: 'update', summary: 'Update a bot', usage: 'zcc bots update <bot> [--name ..] [--color ..] [--personality ..] [--project ..] [--provider ..] [--model ..]' },
   { name: 'delete', summary: 'Delete a bot', usage: 'zcc bots delete <bot> [--archive-threads]' },
   { name: 'send', summary: 'Message or assign a task to a bot', usage: 'zcc bots send <bot> <message...>' },
-  { name: 'routine', summary: 'Manage routines', usage: 'zcc bots routine add <bot> --name <n> --cron "<cron>" --prompt "<p>" | update <bot> <routine> [...] | remove <bot> <routine> | run <bot> <routine>' }
+  { name: 'routine', summary: 'Manage routines', usage: 'zcc bots routine add <bot> --name <n> --cron "<cron>" [--kind agent|reminder --prompt "<text>" | --kind price --asset BTC --currencies USD,CHF] | update <bot> <routine> [...] | remove <bot> <routine> | run <bot> <routine>' }
 ];
 
-const FLAG_NAMES = new Set(['color', 'personality', 'project', 'provider', 'model', 'name', 'cron', 'prompt', 'enabled']);
+const FLAG_NAMES = new Set(['color', 'personality', 'project', 'provider', 'model', 'name', 'cron', 'prompt', 'enabled', 'kind', 'asset', 'currencies']);
 const BOOLEAN_FLAGS = new Set(['json', 'archive-threads']);
 
 export interface ParsedArgs {
@@ -73,6 +73,9 @@ function routineInput(flags: Map<string, string>) {
   }
   return {
     ...(flags.has('name') ? { name: flags.get('name') } : {}),
+    ...(flags.has('kind') ? { kind: flags.get('kind') } : {}),
+    ...(flags.has('asset') ? { asset: flags.get('asset') } : {}),
+    ...(flags.has('currencies') ? { currencies: flags.get('currencies')!.split(',') } : {}),
     ...(flags.has('cron') ? { cron: flags.get('cron') } : {}),
     ...(flags.has('prompt') ? { prompt: flags.get('prompt') } : {}),
     ...(enabled !== undefined ? { enabled: enabled === 'true' } : {})
@@ -113,7 +116,7 @@ export async function runCli(service: BotService, argv: string[], ctx: PluginCli
           botLine(bot),
           bot.personality ? `\n${bot.personality}` : '',
           bot.routines.length ? '\nRoutines:' : '',
-          ...bot.routines.map((row) => `  ${row.enabled ? '●' : '○'} ${row.name} (${row.id}) · ${row.cron}`),
+          ...bot.routines.map((row) => `  ${row.enabled ? '●' : '○'} ${row.name} (${row.id}) · ${row.cron} · ${row.kind ?? 'agent'}`),
           jobs.length ? '\nJobs:' : '',
           ...jobs.slice(0, 10).map((job) => `  ${job.status} · ${job.title} (${job.threadId})`)
         ].filter(Boolean);

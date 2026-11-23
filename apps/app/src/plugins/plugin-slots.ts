@@ -15,6 +15,7 @@ import type {
   PluginAgentCardActionRegistration,
   PluginThreadCardActionRegistration,
   PluginAgentsBoardActionRegistration,
+  PluginAgentsBoardThreadToggleRegistration,
   PluginAgentsViewRegistration,
   PluginCommandPaletteActionRegistration,
   PluginMessageDirectiveRegistration,
@@ -77,6 +78,7 @@ function emptySnapshot() {
     agentCardActions: [] as PluginAgentCardActionRegistration[],
     threadCardActions: [] as PluginThreadCardActionRegistration[],
     agentsBoardActions: [] as PluginAgentsBoardActionRegistration[],
+    agentsBoardThreadToggles: [] as PluginAgentsBoardThreadToggleRegistration[],
     agentsViews: [] as PluginAgentsViewRegistration[],
     timelineRenderers: [] as PluginTimelineRendererRegistration[],
     commandPaletteActions: [] as PluginCommandPaletteActionRegistration[],
@@ -114,6 +116,7 @@ function rebuildSnapshot(): void {
     agentCardActions: orderedSets.flatMap((set) => set.agentCardActions),
     threadCardActions: orderedSets.flatMap((set) => set.threadCardActions),
     agentsBoardActions: orderedSets.flatMap((set) => set.agentsBoardActions),
+    agentsBoardThreadToggles: orderedSets.flatMap((set) => set.agentsBoardThreadToggles ?? []),
     agentsViews: orderedSets.flatMap((set) => set.agentsViews),
     timelineRenderers: orderedSets.flatMap((set) => set.timelineRenderers),
     commandPaletteActions: orderedSets.flatMap((set) => set.commandPaletteActions),
@@ -265,6 +268,10 @@ export function listThreadCardActions(): PluginThreadCardActionRegistration[] {
 
 export function listAgentsBoardActions(): PluginAgentsBoardActionRegistration[] {
   return snapshot.agentsBoardActions;
+}
+
+export function listAgentsBoardThreadToggles(): PluginAgentsBoardThreadToggleRegistration[] {
+  return snapshot.agentsBoardThreadToggles;
 }
 
 export function listTimelineRenderers(): PluginTimelineRendererRegistration[] {

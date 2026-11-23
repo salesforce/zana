@@ -4,7 +4,7 @@ import { VaultPanel } from './src/vault/VaultPanel.js';
 import { BotMemory } from './src/BotMemory.js';
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { definePluginApp, Markdown, useRealtime, useRpc, useZccNavigate, type BasicSidebarSectionProps, type PluginOwnedThreadIconProps, type PluginOwnedThreadTitleProps, type PluginThreadPanelProps } from '@zana-ai/zcc-plugin-sdk/app';
-import { BOT_COLORS, botMemoryTag, defaultBotColor, defaultBotShape, describeCron, type BotRoutine, type BotShape } from './src/model.js';
+import { BOT_COLORS, DIRECT_INTERVAL_MINUTES, MIN_ROUTINE_INTERVAL_MINUTES, ROUTINE_KINDS, type RoutineKind, botMemoryTag, defaultBotColor, defaultBotShape, describeCron, type BotRoutine, type BotShape } from './src/model.js';
 import type { BotJobView, BotView } from './src/service.js';
 
 const CHANNEL = 'bots:changed';
@@ -513,7 +513,7 @@ function CreateBot(props: CreateBotProps & { canCancel: boolean }) {
         <BotAvatar bot={preview} size={64} live />
         <div className="bt-hero-text">
           <h2>Create a bot</h2>
-          <p>One persistent thread with a personality. Anyone can message it, routines wake it on a schedule, and it runs heavy work in hidden background jobs.</p>
+          <p>One persistent thread with a personality. Anyone can message it, routines post updates on a schedule, and it runs heavy work in hidden background jobs.</p>
         </div>
       </div>
       <div className="bt-chips"><span className="bt-chip is-warn" title="Bots run without asking for approval">Full access</span></div>
@@ -778,14 +778,14 @@ function Details({ bot, jobs, openLibrary, visible }: {
   }, [rpc, bot.id, scheduleKey, visible]);
   const openChat = useOpenChat();
   const activity = [
-    ...bot.routines.filter(r => r.lastRunAt).map(r => ({ key: 'routine-' + r.id, name: r.name, at: r.lastRunAt!, detail: 'Routine ran', threadId: bot.mainThreadId, title: bot.name })),
+    ...bot.routines.filter(r => r.lastRunAt).map(r => ({ key: 'routine-' + r.id, name: r.name, at: r.lastRunAt!, detail: r.runs?.[0]?.status === 'failed' ? 'Routine failed' : r.runs?.[0]?.status === 'posted' ? 'Posted to main chat' : 'Routine ran', threadId: bot.mainThreadId, title: bot.name })),
     ...(jobs.jobs ?? []).map(j => ({ key: 'job-' + j.threadId, name: j.title, at: j.startedAt, detail: j.archived ? 'Archived job' : 'Job · ' + j.status, threadId: j.threadId, title: j.title }))
   ].sort((a, b) => b.at - a.at).slice(0, 5);
   return <>
     <Section label="Routines" action={!adding && <button className="bt-btn is-sm" onClick={() => setAdding(true)}>＋ Add routine</button>}>
       {bot.routines.map(routine => <RoutineRow key={routine.id} bot={bot} routine={routine} nextRun={nextRuns[routine.id]} />)}
       {!adding && !bot.routines.length && <p className="bt-empty-line">No routines scheduled.</p>}
-      {adding && <AddRoutine bot={bot} onDone={() => setAdding(false)} />}
+      {adding && <RoutineForm bot={bot} onDone={() => setAdding(false)} />}
     </Section>
     <Section label="Recent activity" action={<button className="bt-btn is-ghost is-sm" onClick={openLibrary}>Open library →</button>}>
       {jobs.error && <p className="bt-empty-line">Couldn’t load job activity. {jobs.error}</p>}
@@ -802,6 +802,7 @@ function Details({ bot, jobs, openLibrary, visible }: {
 function RoutineRow({ bot, routine, nextRun }: { bot: BotView; routine: BotRoutine; nextRun?: number | null }) {
   const action = useAction(bot.id);
   const [enabled, setEnabled] = useState(routine.enabled);
+  const [editing, setEditing] = useState(false);
   const [confirming, setConfirming] = useState(false);
   useEffect(() => setEnabled(routine.enabled), [routine.enabled]);
   const labelId = `routine-${bot.id}-${routine.id}`;
@@ -809,20 +810,28 @@ function RoutineRow({ bot, routine, nextRun }: { bot: BotView; routine: BotRouti
     setEnabled(next);
     if (!(await action.run('updateRoutine', { routineId: routine.id, patch: { enabled: next } }))) setEnabled(!next);
   };
+  if (editing) return <RoutineForm bot={bot} routine={routine} onDone={() => { setEditing(false); setConfirming(false); }} />;
   return (
     <div role="group" aria-labelledby={labelId} className="bt-row is-routine">
       <span className="bt-ico" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/></svg></span>
       <span className="bt-grow">
         <span id={labelId}>{routine.name}</span>
+        <span className="bt-sub">{ROUTINE_KINDS[routine.kind ?? 'agent']} · {routine.kind && routine.kind !== 'agent' ? 'No AI' : 'Uses AI each run'}</span>
         <span className="bt-sub">
           {describeCron(routine.cron)} · {routine.lastRunAt ? `last ${new Date(routine.lastRunAt).toLocaleString()}` : 'never run'}
         </span>
+        {!!routine.runs?.length && <details className="bt-sub"><summary>Recent runs</summary>
+          {routine.runs.map((run, index) => <div key={index}><time>{new Date(run.at).toLocaleString()}</time> · {
+            run.status === 'posted' ? 'Posted to main chat' : run.status === 'sent' ? 'AI prompt delivered' : `Failed · ${run.error}`
+          }</div>)}
+        </details>}
         {action.feedback}
       </span>
       {enabled && nextRun && <span className="bt-when">Next run<span className="bt-sub">{new Date(nextRun).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span></span>}
       <span className={confirming || action.busy ? 'bt-rowacts is-pinned' : 'bt-rowacts'}>
         {confirming ? (
           <>
+            <button type="button" className="bt-btn is-sm" disabled={action.busy} onClick={() => setEditing(true)}>Edit routine</button>
             <button type="button" className="bt-btn is-sm is-danger" disabled={action.busy}
               onClick={() => void action.run('removeRoutine', { routineId: routine.id })}>Delete {routine.name}</button>
             <button type="button" className="bt-btn is-ghost is-sm" onClick={() => setConfirming(false)}>Keep</button>
@@ -840,11 +849,12 @@ function RoutineRow({ bot, routine, nextRun }: { bot: BotView; routine: BotRouti
   );
 }
 
-type Frequency = 'weekdays' | 'daily' | 'weekly' | 'hourly' | 'custom';
-const FREQUENCIES: Array<[Frequency, string]> = [['weekdays', 'Weekdays'], ['daily', 'Every day'], ['weekly', 'Weekly'], ['hourly', 'Hourly'], ['custom', 'Custom cron']];
+type Frequency = 'ten' | 'weekdays' | 'daily' | 'weekly' | 'hourly' | 'custom';
+const FREQUENCIES: Array<[Frequency, string]> = [['ten', 'Every 10 minutes'], ['weekdays', 'Weekdays'], ['daily', 'Every day'], ['weekly', 'Weekly'], ['hourly', 'Hourly'], ['custom', 'Custom cron']];
 
 export function cronFor(freq: Frequency, time: string, day: string, custom: string, minuteOfHour = '0'): string {
   const [hour, minute] = /^\d{1,2}:\d{2}$/.test(time) ? time.split(':').map(Number) as [number, number] : [9, 0];
+  if (freq === 'ten') return '*/10 * * * *';
   if (freq === 'weekdays') return `${minute} ${hour} * * 1-5`;
   if (freq === 'daily') return `${minute} ${hour} * * *`;
   if (freq === 'weekly') return `${minute} ${hour} * * ${day}`;
@@ -855,36 +865,52 @@ export function cronFor(freq: Frequency, time: string, day: string, custom: stri
   return custom.trim();
 }
 
-function AddRoutine({ bot, onDone }: { bot: BotView; onDone(): void }) {
+function RoutineForm({ bot, routine, onDone }: { bot: BotView; routine?: BotRoutine; onDone(): void }) {
   const action = useAction(bot.id);
-  const [name, setName] = useState('');
-  const [prompt, setPrompt] = useState('');
-  const [freq, setFreq] = useState<Frequency>('weekdays');
+  const [name, setName] = useState(routine?.name ?? '');
+  const [kind, setKind] = useState<RoutineKind>(routine?.kind ?? 'agent');
+  const [asset, setAsset] = useState(routine?.asset ?? 'BTC');
+  const [currencies, setCurrencies] = useState(routine?.currencies?.join(', ') ?? 'USD, CHF');
+  const [prompt, setPrompt] = useState(routine?.prompt ?? '');
+  const [freq, setFreq] = useState<Frequency>(routine ? 'custom' : 'weekdays');
   const [time, setTime] = useState('08:00');
   const [minute, setMinute] = useState('0');
   const [day, setDay] = useState('1');
-  const [custom, setCustom] = useState('0 9 * * 1-5');
+  const [custom, setCustom] = useState(routine?.cron ?? '0 9 * * 1-5');
   const cron = cronFor(freq, time, day, custom, minute);
   const edit = (setter: (value: string) => void) => (e: { target: { value: string } }) => { setter(e.target.value); action.clearFeedback(); };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (await action.run('addRoutine', { routine: { name, cron, prompt } })) onDone();
+    const fields = kind === 'price' ? { kind, name, cron, asset, currencies: currencies.split(',').map(s => s.trim()) }
+      : { name, cron, prompt, ...(routine || kind !== 'agent' ? { kind } : {}) };
+    const saved = routine ? await action.run('updateRoutine', { routineId: routine.id, patch: fields })
+      : await action.run('addRoutine', { routine: fields });
+    if (saved) onDone();
   };
 
   return (
-    <form aria-label="Add routine" onSubmit={(event) => void submit(event)} style={{ padding: '4px 12px 12px', borderTop: bot.routines.length ? '1px solid var(--border)' : 'none' }}>
+    <form aria-label={routine ? "Edit routine" : "Add routine"} onSubmit={(event) => void submit(event)} style={{ padding: '4px 12px 12px', borderTop: bot.routines.length ? '1px solid var(--border)' : 'none' }}>
       <label className="bt-field settings-field">Name<input value={name} onChange={edit(setName)} placeholder="Morning digest" /></label>
+      <div className="bt-field settings-field">Action
+        <PopoverPicklist ariaLabel="Action" className="bt-picker" value={kind}
+          options={(Object.keys(ROUTINE_KINDS) as RoutineKind[]).map(value => ({ value, label: ROUTINE_KINDS[value] }))}
+          onChange={next => {
+            setKind(next);
+            if (next === 'agent' && freq === 'ten') { setFreq('custom'); setCustom(cron); }
+            action.clearFeedback();
+          }} searchPlaceholder="Search actions" />
+      </div>
       <div className="bt-field settings-field">When
         <PopoverPicklist ariaLabel="When" className="bt-picker" value={freq}
-          options={FREQUENCIES.map(([value, label]) => ({ value, label }))}
+          options={FREQUENCIES.filter(([value]) => value !== 'ten' || kind !== 'agent').map(([value, label]) => ({ value, label }))}
           onChange={setFreq} searchPlaceholder="Search frequencies" />
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
         {freq === 'hourly' && (
           <label className="bt-field settings-field" style={{ flex: 1 }}>Minute past the hour<input type="number" min={0} max={59} value={minute} onChange={edit(setMinute)} /></label>
         )}
-        {freq !== 'custom' && freq !== 'hourly' && (
+        {freq !== 'ten' && freq !== 'custom' && freq !== 'hourly' && (
           <label className="bt-field settings-field" style={{ flex: 1 }}>Around<input type="time" value={time} onChange={edit(setTime)} /></label>
         )}
         {freq === 'weekly' && (
@@ -898,15 +924,21 @@ function AddRoutine({ bot, onDone }: { bot: BotView; onDone(): void }) {
           <label className="bt-field settings-field" style={{ flex: 1 }}>Cron (minute hour day month weekday)<input value={custom} onChange={edit(setCustom)} /></label>
         )}
       </div>
-      <label className="bt-field settings-field">
-        What should it do?
+      {kind === 'price' ? <>
+        <label className="bt-field settings-field">Asset<input value={asset} onChange={edit(setAsset)} placeholder="BTC" /></label>
+        <label className="bt-field settings-field">Quote currencies<input value={currencies} onChange={edit(setCurrencies)} placeholder="USD, CHF" /></label>
+        <p className="bt-note">Coinbase rates. Percentages compare with the previous successful update.</p>
+      </> : <label className="bt-field settings-field">
+        {kind === 'agent' ? 'What should it do?' : 'Message to post'}
         <textarea rows={3} value={prompt} onChange={edit(setPrompt)}
-          placeholder="Summarize what changed since yesterday and flag anything that needs me." />
-      </label>
-      <p className="bt-note">Runs: {describeCron(cron)} (host local time, at most every 15 minutes)</p>
+          placeholder={kind === 'agent' ? 'Summarize what changed since yesterday.' : 'Time for a break.'} />
+      </label>}
+      <p className="bt-note">{describeCron(cron)} (host local time). {kind === 'agent'
+        ? `Uses AI each run. Minimum interval ${MIN_ROUTINE_INTERVAL_MINUTES} minutes.`
+        : `Posts directly to main chat · No AI. Minimum interval ${DIRECT_INTERVAL_MINUTES} minutes.`}</p>
       {action.feedback}
       <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-        <button type="submit" className="bt-btn is-primary is-sm" disabled={action.busy || !name.trim() || !prompt.trim()}>{action.busy ? 'Adding…' : 'Add routine'}</button>
+        <button type="submit" className="bt-btn is-primary is-sm" disabled={action.busy || !name.trim() || (kind === 'price' ? !asset.trim() || !currencies.trim() : !prompt.trim())}>{action.busy ? 'Saving…' : routine ? 'Save routine' : 'Add routine'}</button>
         <button type="button" className="bt-btn is-ghost is-sm" onClick={onDone}>Cancel</button>
       </div>
     </form>
@@ -1173,5 +1205,6 @@ export default definePluginApp((app) => {
     id: 'profile', title: 'Bot profile', icon: 'Bot', layout: 'flush',
     experimental_ownedThreadTitle: BotThreadTitle, experimental_ownedThreadIcon: BotThreadIcon, component: BotThreadProfile
   });
+  app.slots.experimental_agentsBoardThreadToggle({ id: 'threads', title: 'Bots', icon: 'Bot' });
   app.slots.navPanel({ id: 'bots', title: 'Bots', icon: 'Bot', component: BotsPanel, experimental_basicSidebarSection: BasicBots });
 });

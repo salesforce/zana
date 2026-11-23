@@ -1,3 +1,4 @@
+import { jobThreadInstructions, mainThreadInstructions } from './instructions.js';
 import { describe, expect, it } from 'vitest';
 import {
   BotValidationError,
@@ -14,8 +15,6 @@ import {
   inboundDelivery,
   jobDelivery,
   displayLabel,
-  jobThreadInstructions,
-  mainThreadInstructions,
   newBot,
   newRoutine,
   normalizeCron,

@@ -90,6 +90,7 @@ type ClientTurnRequestedArgs = EventFactoryRowOptions & {
   initiator?: ThreadTurnInitiator;
   input?: PromptInput[];
   inputGroups?: PromptInput[][];
+  messageSource?: MessageSource;
   requestId?: ClientTurnRequestId;
   requestMethod?: "thread/start" | "turn/start";
   senderThreadId?: string | null;
@@ -641,6 +642,7 @@ export function createTimelineEventFactory(
           ...(args.inputGroups !== undefined
             ? { inputGroups: args.inputGroups }
             : {}),
+          ...(args.messageSource ? { messageSource: args.messageSource } : {}),
           target: args.target ?? { kind: "new-turn" },
           request: {
             method: args.requestMethod ?? "turn/start",

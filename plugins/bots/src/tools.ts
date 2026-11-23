@@ -1,5 +1,6 @@
+import { toolInstructions } from './instructions.js';
 import type { PluginAgentToolContext, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
-import { BotValidationError, type Bot } from './model.js';
+import { BotValidationError, ROUTINE_KINDS, type Bot } from './model.js';
 import type { Approver, BotService, Sender, ThreadRole } from './service.js';
 
 function record(input: unknown): Record<string, unknown> {
@@ -19,7 +20,7 @@ export function botSummary(bot: Bot) {
     color: bot.color ?? null,
     personality: bot.personality.slice(0, 280),
     mainThreadId: bot.mainThreadId ?? null,
-    routines: bot.routines.map(({ id, name, cron, enabled }) => ({ id, name, cron, enabled }))
+    routines: bot.routines.map(({ id, name, cron, enabled, kind = 'agent' }) => ({ id, name, cron, enabled, kind }))
   };
 }
 
@@ -69,7 +70,7 @@ export function registerBotTools(zcc: Pick<ZccPluginApi, 'agents' | 'ui'>, servi
 
   zcc.agents.registerTool({
     name: 'bot_list',
-    description: 'List the Zana bots: persistent agents with one main thread, a personality, routines and memory. Anyone can message a bot with bot_send.',
+    description: toolInstructions.bot_list,
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     presentation: { label: { pending: 'Listing bots', completed: 'Listed bots' }, icon: { glyph: 'Bot' } },
     execute: async () => (await service.store.list()).map(agentBotSummary)
@@ -77,9 +78,7 @@ export function registerBotTools(zcc: Pick<ZccPluginApi, 'agents' | 'ui'>, servi
 
   zcc.agents.registerTool({
     name: 'bot_send',
-    description:
-      'Send a message or assign a task to a bot (by id or name). It lands in the bot\'s main thread and queues if the bot is busy. ' +
-      'The bot can answer back into this thread with bot_reply. Bots run with full permissions, so the first message from a thread asks the user to approve.',
+    description: toolInstructions.bot_send,
     parameters: {
       type: 'object',
       properties: {
@@ -99,7 +98,7 @@ export function registerBotTools(zcc: Pick<ZccPluginApi, 'agents' | 'ui'>, servi
 
   zcc.agents.registerTool({
     name: 'bot_reply',
-    description: 'Bots only: answer a thread that messaged you (the id in a "[From thread …]" header). Queues if that thread is busy.',
+    description: toolInstructions.bot_reply,
     parameters: {
       type: 'object',
       properties: {
@@ -118,9 +117,7 @@ export function registerBotTools(zcc: Pick<ZccPluginApi, 'agents' | 'ui'>, servi
 
   zcc.agents.registerTool({
     name: 'bot_job_start',
-    description:
-      'Bots only: run a task in a hidden background thread so your main thread stays readable. ' +
-      'The job runs with full permissions and its final answer is posted back to you when it finishes.',
+    description: toolInstructions.bot_job_start,
     parameters: {
       type: 'object',
       properties: {
@@ -136,10 +133,7 @@ export function registerBotTools(zcc: Pick<ZccPluginApi, 'agents' | 'ui'>, servi
 
   zcc.agents.registerTool({
     name: 'bot_routines',
-    description:
-      'List, add, update, remove or run a bot\'s scheduled routines. A routine posts its prompt into the bot\'s main thread on a 5-field cron ' +
-      '(host local time; e.g. "0 9 * * 1-5" = weekdays 09:00; at most every 15 minutes). From a bot main thread, `bot` defaults to yourself ' +
-      'and you can only manage your own routines. From other threads, changes ask the user to approve.',
+    description: toolInstructions.bot_routines,
     parameters: {
       type: 'object',
       properties: {
@@ -148,6 +142,9 @@ export function registerBotTools(zcc: Pick<ZccPluginApi, 'agents' | 'ui'>, servi
         routine: { type: 'string', description: 'Routine id or name (update/remove/run).' },
         name: { type: 'string' },
         cron: { type: 'string' },
+        kind: { type: 'string', enum: Object.keys(ROUTINE_KINDS) },
+        asset: { type: 'string', description: 'Base symbol for price checks, e.g. BTC.' },
+        currencies: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 4, description: 'Quote currencies, e.g. ["USD", "CHF"].' },
         prompt: { type: 'string' },
         enabled: { type: 'boolean' }
       },
@@ -162,7 +159,7 @@ export function registerBotTools(zcc: Pick<ZccPluginApi, 'agents' | 'ui'>, servi
         throw new BotValidationError('action must be list, add, update, remove or run');
       }
       const bot = await service.routineTarget(sender(ctx), ref, args.action !== 'list');
-      const fields = { name: args.name, cron: args.cron, prompt: args.prompt, enabled: args.enabled };
+      const fields = { name: args.name, cron: args.cron, prompt: args.prompt, enabled: args.enabled, kind: args.kind, asset: args.asset, currencies: args.currencies };
       switch (args.action) {
         case 'list':
           return bot.routines;
@@ -180,7 +177,7 @@ export function registerBotTools(zcc: Pick<ZccPluginApi, 'agents' | 'ui'>, servi
 
   zcc.agents.registerTool({
     name: 'bot_create',
-    description: 'Create a new bot when the user asks for one. Give it a clear name and a personality/role description.',
+    description: toolInstructions.bot_create,
     parameters: {
       type: 'object',
       properties: {

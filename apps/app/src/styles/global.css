@@ -36591,6 +36591,73 @@ body.split-frame-guard webview {
   line-height: 1.55;
 }
 
+/* A message no person typed (a bot reply, a routine): attributed, accented,
+   and visibly not one of the user's own prompts. */
+.thread-timeline-row.is-user.is-sourced .thread-timeline-bubble {
+  --message-source-accent: var(--message-source-color, var(--accent));
+  border-color: color-mix(in srgb, var(--message-source-accent) 35%, var(--border));
+  border-left: 3px solid var(--message-source-accent);
+  border-radius: 4px 12px 12px 4px;
+  background: color-mix(in srgb, var(--message-source-accent) 6%, var(--bg-elevated, var(--bg-background)));
+}
+
+.thread-message-source {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--ink-muted, var(--text-muted));
+  min-width: 0;
+}
+
+.thread-message-source-avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--message-source-accent, var(--accent));
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.thread-message-source-label {
+  font-weight: 600;
+  color: var(--ink, var(--text));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+a.thread-message-source-label {
+  text-decoration: none;
+}
+
+a.thread-message-source-label:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.thread-message-source-kind {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--message-source-accent, var(--accent));
+  background: color-mix(in srgb, var(--message-source-accent, var(--accent)) 12%, transparent);
+}
+
+.thread-message-source-detail {
+  flex: none;
+}
+
 .thread-timeline-row .inbox-md h1 { font-size: 20px; }
 .thread-timeline-row .inbox-md h2 { font-size: 18px; }
 .thread-timeline-row .inbox-md h3 { font-size: 16px; }

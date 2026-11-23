@@ -16,8 +16,10 @@ export {
   parseNamespacedGlyph
 } from './bb-thread/plugin-icon.js';
 export {
+  messageSourceSchema,
   systemMessageKindSchema,
   systemMessageSubjectSchema,
+  type MessageSource,
   type SystemMessageKind,
   type SystemMessageSubject
 } from './bb-thread/system-message.js';

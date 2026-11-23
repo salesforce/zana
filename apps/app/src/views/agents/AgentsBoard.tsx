@@ -23,7 +23,8 @@ import { threadIdFromPath } from '@/lib/route-paths';
 import { inspectAgentSession, inspectThread } from '@/lib/inspect-session';
 import { AgentBoardLanes, isReclaimableIdle, type AgentCard } from '@/components/AgentBoard';
 import { modernMemberThreadId, withModernSquadMembers } from '@/lib/modern-squad-members';
-import { AgentViewToggle, ScheduledColumnToggle, useAgentsBoardView } from '@/components/AgentViewToggle';
+import { AgentViewToggle, PluginThreadToggles, ScheduledColumnToggle, useAgentsBoardView } from '@/components/AgentViewToggle';
+import { isThreadHiddenByPluginToggle, useAgentsBoardThreadToggles } from '@/plugins/agents-board-thread-toggles';
 import { SquadFlowView } from '@/views/agents/SquadFlowView';
 import { AgentMonitor } from '@/components/AgentMonitor';
 import { CloseIdleAgentsDialog } from '@/components/CloseIdleAgentsDialog';
@@ -39,7 +40,7 @@ import {
 } from '@/components/fleet-item';
 import { resolveIcon } from '@/lib/resolveIcon';
 import { invokeAgentsBoardAction } from '@/plugins/plugin-agent-actions';
-import { listAgentsBoardActions, subscribePluginSlots } from '@/plugins/plugin-slots';
+import { listAgentsBoardActions, listAgentsBoardThreadToggles, subscribePluginSlots } from '@/plugins/plugin-slots';
 import { openScheduleFromAgents } from '@/components/scheduler/openScheduledLive';
 import { PaneEmptyState } from '@/components/PaneEmptyState';
 import { MobilePageHeader } from '@/components/MobilePageHeader';
@@ -226,6 +227,12 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
     listAgentsBoardActions
   );
   const boardPluginCtx = { projectId: scopedProject?.id ?? null };
+  const threadToggles = useSyncExternalStore(
+    subscribePluginSlots,
+    listAgentsBoardThreadToggles,
+    listAgentsBoardThreadToggles
+  );
+  const shownPluginThreads = useAgentsBoardThreadToggles((s) => s.shown);
 
   const cards = useMemo<AgentCard[]>(() => {
     const byProjectId = new Map(projects.map((p) => [p.id, p]));
@@ -261,8 +268,10 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const fleet = useMemo<FleetItem[]>(() => {
     const byProjectId = new Map(projects.map((p) => [p.id, p]));
     const items: FleetItem[] = cards.map(agentFleetItem);
+    const togglePluginIds = new Set(threadToggles.map((slot) => slot.pluginId));
     for (const thread of threads) {
       if (!isVisibleThread(thread)) continue;
+      if (isThreadHiddenByPluginToggle(thread, togglePluginIds, shownPluginThreads)) continue;
       if (scopedProject && thread.projectId !== scopedProject.id) continue;
       items.push(threadFleetItem(thread, byProjectId.get(thread.projectId)));
     }
@@ -276,7 +285,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
     );
     const memberExecutions = executions.filter((e) => byProjectId.has(e.projectId) && (!scopedProject || e.projectId === scopedProject.id));
     return withModernSquadMembers(items, memberExecutions, personas);
-  }, [cards, threads, projects, scopedProject, scheduledTasks, includeScheduled, executions, personas]);
+  }, [cards, threads, projects, scopedProject, scheduledTasks, includeScheduled, executions, personas, threadToggles, shownPluginThreads]);
 
   const q = isGlobal ? filter.trim().toLowerCase() : '';
   const visibleFleet = q
@@ -342,6 +351,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const secondaryActions = <>
     <AgentViewToggle />
     <ScheduledColumnToggle />
+    <PluginThreadToggles />
     {reclaimableAgents.length > 0 && (
       <button
         type="button"

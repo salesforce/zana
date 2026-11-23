@@ -14,6 +14,7 @@ import {
 import { jsonValueSchema } from "./json-value.js";
 import { clientTurnRequestIdSchema } from "./protocol-ids.js";
 import {
+  messageSourceSchema,
   systemMessageKindSchema,
   systemMessageSubjectSchema,
 } from "./system-message.js";
@@ -27,6 +28,7 @@ export const systemEventTypeValues = [
   // Legacy persisted user-visible system event from a removed runtime path.
   // Retained for read/decode/render compatibility only.
   "system/manager/user_message",
+  "system/plugin/message",
   "system/thread/interrupted",
   "system/operation",
   "system/interaction/lifecycle",
@@ -97,6 +99,8 @@ export const turnRequestEventDataSchema = z.object({
   // projection defaults absent values to `unlabeled` / `null`.
   systemMessageKind: systemMessageKindSchema.optional(),
   systemMessageSubject: systemMessageSubjectSchema.nullable().optional(),
+  /** Display attribution for a plugin-delivered message (e.g. a bot reply). */
+  messageSource: messageSourceSchema.optional(),
   input: z.array(promptInputSchema),
   inputGroups: z.array(z.array(promptInputSchema).min(1)).min(1).optional(),
   target: turnRequestTargetSchema,

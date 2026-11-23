@@ -522,6 +522,16 @@ export interface PluginAgentsBoardActionRegistration extends PluginSlotBase {
   run(context: PluginAgentsBoardActionContext): void | Promise<void>;
 }
 
+/**
+ * Toolbar toggle on the Agents board that shows or hides the threads this
+ * plugin created (`originPluginId` = the plugin). Owned threads stay off the
+ * board until the user turns the toggle on; the choice is remembered.
+ */
+export interface PluginAgentsBoardThreadToggleRegistration extends PluginSlotBase {
+  title: string;
+  icon?: string;
+}
+
 /** Read-only fleet projection shared with the built-in Agents views. */
 export interface PluginFleetMember {
   /** Opaque, kind-qualified key. Pass this to onInspect. */
@@ -882,6 +892,9 @@ export interface PluginAppSlots {
   experimental_agentsBoardAction(
     registration: Omit<PluginAgentsBoardActionRegistration, 'generation' | 'pluginId'>
   ): void;
+  experimental_agentsBoardThreadToggle(
+    registration: Omit<PluginAgentsBoardThreadToggleRegistration, 'generation' | 'pluginId'>
+  ): void;
   experimental_timelineRenderer(
     registration: Omit<PluginTimelineRendererRegistration, 'generation' | 'pluginId' | 'id'>
   ): void;
@@ -928,6 +941,7 @@ export interface PluginRegistrationSet {
   agentCardActions: PluginAgentCardActionRegistration[];
   threadCardActions: PluginThreadCardActionRegistration[];
   agentsBoardActions: PluginAgentsBoardActionRegistration[];
+  agentsBoardThreadToggles: PluginAgentsBoardThreadToggleRegistration[];
   agentsViews: PluginAgentsViewRegistration[];
   timelineRenderers: PluginTimelineRendererRegistration[];
   commandPaletteActions: PluginCommandPaletteActionRegistration[];
@@ -1375,6 +1389,7 @@ export function emptyRegistrationSet(pluginId: string, generation: number): Plug
     agentCardActions: [],
     threadCardActions: [],
     agentsBoardActions: [],
+    agentsBoardThreadToggles: [],
     agentsViews: [],
     timelineRenderers: [],
     commandPaletteActions: [],
@@ -1496,6 +1511,7 @@ export function collectPluginApp(
     agentCardAction: new Set<string>(),
     threadCardAction: new Set<string>(),
     agentsBoardAction: new Set<string>(),
+    agentsBoardThreadToggle: new Set<string>(),
     agentsView: new Set<string>(),
     timelineRenderer: new Set<string>(),
     commandPaletteAction: new Set<string>(),
@@ -1946,6 +1962,20 @@ export function collectPluginApp(
               ? { icon: requireNonEmptyString(kind, 'icon', registration.icon) }
               : {}),
             run: registration.run
+          })
+        );
+      },
+      experimental_agentsBoardThreadToggle: (registration) => {
+        const kind = 'slots.experimental_agentsBoardThreadToggle';
+        const id = requireSlotId(kind, registration.id);
+        requireUniqueId(kind, seen.agentsBoardThreadToggle, id);
+        set.agentsBoardThreadToggles.push(
+          stamp({
+            id,
+            title: requireNonEmptyString(kind, 'title', registration.title),
+            ...(registration.icon !== undefined
+              ? { icon: requireNonEmptyString(kind, 'icon', registration.icon) }
+              : {})
           })
         );
       },

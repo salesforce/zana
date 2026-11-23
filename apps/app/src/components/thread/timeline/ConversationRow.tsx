@@ -1,6 +1,7 @@
 import { validPromptReferences, relocatePromptReferences } from '@zana-ai/zcc-domain/thread-runtime';
 import { peerMessageDisplay } from './peer-message.js';
 import { PeerMessageSource } from './PeerMessageSource.js';
+import { MessageSourceHeader, messageSourceStyle } from './MessageSourceHeader.js';
 import { compactReferenceText, ContextReferenceMessage } from '../../composer/ContextReferenceMessage.js';
 import { memo, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useCompactLayout } from '../../../hooks/useCompactLayout.js';
@@ -38,6 +39,8 @@ import type { PlanExecutionView } from './plan-execution-card.js';
 
 function userRequestLabel(row: Extract<ThreadTimelineViewRow, { kind: 'conversation' }>): string | null {
   if (row.role !== 'user') return null;
+  // The source header already says who sent it; "Steer" would read as yours.
+  if (row.messageSource) return null;
   if (row.systemMessageKind !== 'unlabeled') {
     return row.systemMessageKind.replace(/-/g, ' ');
   }
@@ -93,6 +96,7 @@ export const ConversationRow = memo(function ConversationRow({
   const [lightbox, setLightbox] = useState<{ src: string; name: string } | null>(null);
   const references = useMemo(() => validPromptReferences(row.text ?? '', row.role === 'user' ? row.references : undefined), [row]);
   const peer = peerMessageDisplay(row);
+  const source = row.role === 'user' ? row.messageSource ?? null : null;
   const extracted = useMemo(() => extractInlineThreadImages(compactReferenceText(peer?.text ?? row.text ?? '', references)), [peer?.text, row.text, references]);
   const text = extracted.text.trim();
   // User prompts collapse by rendered height (mobile has its own preview) and
@@ -227,7 +231,8 @@ export const ConversationRow = memo(function ConversationRow({
     });
   return (
     <article
-      className={`thread-timeline-row is-${row.role}${editing ? ' is-editing' : ''}`}
+      className={`thread-timeline-row is-${row.role}${source ? ' is-sourced' : ''}${editing ? ' is-editing' : ''}`}
+      style={source ? messageSourceStyle(source) : undefined}
       data-testid={testId}
       data-row-id={row.id}
       data-thread-search-markdown=""
@@ -239,7 +244,7 @@ export const ConversationRow = memo(function ConversationRow({
         </span>
       ) : null}
       <div className="thread-timeline-bubble">
-        {peer ? <PeerMessageSource peer={peer} /> : null}
+        {source ? <MessageSourceHeader source={source} /> : peer ? <PeerMessageSource peer={peer} /> : null}
         <MobileMessagePreview
           enabled={mobileUser && !editing}
           expanded={expanded}
@@ -412,7 +417,7 @@ export const ConversationRow = memo(function ConversationRow({
           threadId={threadId}
           sourceSeqEnd={row.sourceSeqEnd}
           onCopy={onCopy}
-          onEdit={canEditConversationMessage(row, threadIdle) ? () => {
+          onEdit={!source && canEditConversationMessage(row, threadIdle) ? () => {
             setDraft(row.text ?? '');
             setEditing(true);
           } : undefined}

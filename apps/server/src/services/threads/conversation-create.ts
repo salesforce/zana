@@ -116,6 +116,8 @@ export interface CreateConversationInput {
   automatedSkillIds?: string[];
   /** Who produced the opening prompt; absent means a person. */
   origin?: DispatchOrigin;
+  /** Display attribution for a plugin-delivered opening message. */
+  messageSource?: import('@zana-ai/zcc-domain/thread-runtime').MessageSource;
 }
 
 const THREAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -245,7 +247,8 @@ async function startConversationOnHost(
     model: args.input.model,
     reasoningLevel: args.input.reasoningLevel,
     serviceTier: args.input.serviceTier,
-    acpMode: args.input.acpMode
+    acpMode: args.input.acpMode,
+    ...(args.input.messageSource ? { messageSource: args.input.messageSource } : {})
   });
   const checkpoint = getThreadProvider(providerId)?.capabilities.fork === 'checkpoint'
     ? getLatestConversationCheckpoint(ctx.db, args.thread.id)?.checkpoint

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowRight, ChevronDown, ChevronRight, Folder, Menu, PanelLeft, PanelLeftClose, PanelsTopLeft, Plus, Search, X } from 'lucide-react';
+import { ArrowRight, Menu, PanelLeft, PanelLeftClose, PanelsTopLeft, Plus, Search, X } from 'lucide-react';
 import { ZanaIcon } from '../icons/ZanaIcon.js';
 import { SidebarResizer } from '../SidebarResizer.js';
 import { SidebarFooterSlot } from '../sidebar/SidebarFooterSlot.js';
@@ -13,10 +13,16 @@ import { getScopedProjectId } from '../../lib/windowScope.js';
 import { getNewThreadRoutePath, getRootRoutePath, getThreadRoutePath, threadIdFromPath } from '../../lib/route-paths.js';
 import { isBasicUiRouteSupported, setBasicUiMode, useBasicUi } from '../../lib/basic-ui.js';
 import { threadRailStatus } from '../fleet-item.js';
-import { basicConversationGroups, type BasicConversationGroup } from './basic-conversation-groups.js';
+import { basicConversationRows } from './basic-conversation-rows.js';
+import { BasicConversationMenu, basicConversationViewSummary } from './BasicConversationMenu.js';
+import { useBasicConversationView } from './basic-conversation-view.js';
+import { useArchivedConversations } from './useArchivedConversations.js';
 import { listNavPanels, subscribePluginSlots } from '../../plugins/plugin-slots.js';
 import { PluginSlotBoundary } from '../../plugins/PluginSlotBoundary.js';
 import './basic-ui.css';
+
+/** Conversations shown per page in the Basic sidebar. */
+const PAGE = 30;
 
 function newChatPath(scopedProjectId: string | null) {
   return scopedProjectId ? getNewThreadRoutePath(scopedProjectId) : getRootRoutePath();
@@ -47,44 +53,6 @@ export function BasicShellHeading({ compact, collapsed, onToggleNavigation }: { 
       </button>
     </div>
   </div>;
-}
-
-function BasicProjectConversations({ group, activeId, collapsed, onToggle, scopedProjectId, onNavigate }: {
-  group: BasicConversationGroup;
-  activeId: string | null;
-  collapsed: boolean;
-  onToggle(): void;
-  scopedProjectId: string | null;
-  onNavigate(): void;
-}) {
-  const contentId = useId();
-  const [limit, setLimit] = useState(10);
-  const active = group.threads.find(thread => thread.id === activeId);
-  const expanded = !collapsed;
-  const rows = group.threads.slice(0, limit);
-  // Keep the selected conversation reachable even when it is older than the first page.
-  if (active && !rows.includes(active)) rows.push(active);
-  return <section className="basic-ui-project-group" aria-label={group.name} data-testid={`basic-project-group-${group.projectId}`}>
-    <h3><button type="button" className="basic-ui-project-toggle" aria-label={group.name}
-      aria-expanded={expanded} aria-controls={contentId} onClick={onToggle}>
-      {expanded ? <ChevronDown size={12} aria-hidden="true" /> : <ChevronRight size={12} aria-hidden="true" />}
-      <Folder size={15} aria-hidden="true" />
-      <span className="basic-ui-project-name" title={group.name}>{group.name}</span>
-      <span className="basic-ui-project-count" aria-hidden="true">{group.threads.length}</span>
-    </button></h3>
-    <div id={contentId} className="basic-ui-project-chats" hidden={!expanded}>
-      {rows.map(thread => {
-        const status = threadRailStatus(thread);
-        return <Link key={thread.id} className={`basic-ui-chat-row${activeId === thread.id ? ' is-active' : ''}`}
-          to={getThreadRoutePath(thread.id, scopedProjectId)} onClick={onNavigate} aria-current={activeId === thread.id ? 'page' : undefined}>
-          <span className="basic-ui-chat-name" title={thread.title || 'New conversation'}>{thread.title || 'New conversation'}</span>
-          {status !== 'Idle' && <span className={`basic-ui-chat-status status-${status === 'Working' ? 'working' : 'attention'}`}>{status === 'Needs you' ? 'Needs review' : status}</span>}
-        </Link>;
-      })}
-      {group.threads.length > rows.length && <button type="button" className="basic-ui-more-chats"
-        aria-label={`Show more conversations in ${group.name}`} onClick={() => setLimit(value => value + 50)}>Show more conversations</button>}
-    </div>
-  </section>;
 }
 
 /** Reuses the existing live roster; no second history or execution source. */
@@ -119,32 +87,29 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
     onNavigate();
   };
   const searchRef = useRef<HTMLInputElement>(null);
-  const [limit, setLimit] = useState(50);
-  const [collapsedProjects, setCollapsedProjects] = useState(() => new Set<string>());
-  const [collapsedSearchProjects, setCollapsedSearchProjects] = useState(() => new Set<string>());
+  const [limit, setLimit] = useState(PAGE);
   const updateQuery = (value: string) => {
     setQuery(value);
-    setLimit(50);
-    setCollapsedSearchProjects(new Set());
+    setLimit(PAGE);
   };
-  const searching = Boolean(query.trim());
-  const activeProjectId = threads.find(thread => thread.id === activeId)?.projectId;
-  useEffect(() => {
-    setCollapsedProjects(previous => {
-      if (!activeProjectId || !previous.has(activeProjectId)) return previous;
-      const next = new Set(previous);
-      next.delete(activeProjectId);
-      return next;
-    });
-  }, [activeId, activeProjectId]);
   useEnsureThreads();
-  const groups = useMemo(() => {
+  const view = useBasicConversationView(s => s.view);
+  const archived = useArchivedConversations(view.status !== 'active', scopedProjectId, primaryHostId);
+  const conversations = useMemo(() => {
     const represented = new Set([...sectionThreads].flat());
-    return basicConversationGroups(threads.filter(thread => !represented.has(thread.id)), projects, primaryHostId, query, scopedProjectId);
-  }, [threads, projects, primaryHostId, query, scopedProjectId, sectionThreads]);
-  const visibleGroups = groups.slice(0, limit);
-  const activeGroup = groups.find(group => group.threads.some(thread => thread.id === activeId));
-  if (activeGroup && !visibleGroups.includes(activeGroup)) visibleGroups.push(activeGroup);
+    const live = new Set(threads.map(thread => thread.id));
+    // The live roster wins over a stale archived history row for the same thread.
+    const rows = view.status === 'active' ? threads : [...threads, ...archived.rows.filter(row => !live.has(row.id))];
+    return basicConversationRows(rows.filter(thread => !represented.has(thread.id)), projects, primaryHostId, query, scopedProjectId, view);
+  }, [threads, archived.rows, projects, primaryHostId, query, scopedProjectId, sectionThreads, view]);
+  const viewSummary = basicConversationViewSummary(view);
+  const listLoading = loading || archived.loading;
+  const visible = conversations.slice(0, limit);
+  // Keep the selected conversation reachable even when it is older than the loaded page.
+  const active = conversations.find(row => row.thread.id === activeId);
+  if (active && !visible.includes(active)) visible.push(active);
+  // Projects only label rows; a dedicated project window already names its one project.
+  const showProject = !scopedProjectId;
   return <aside id="basic-conversation-sidebar" className="sidebar basic-ui-sidebar" data-testid="basic-ui-sidebar" aria-label="Conversations" hidden={hidden}>
     <Link className="basic-ui-new-chat" to={newChatPath(scopedProjectId)} onClick={onNavigate}><Plus size={17} aria-hidden="true" />New chat</Link>
     <div className="basic-ui-chat-search list-filter">
@@ -155,7 +120,7 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
       {query && <button type="button" className="list-filter-clear" aria-label="Clear chat search"
         onClick={() => { updateQuery(''); searchRef.current?.focus(); }}><X size={12} aria-hidden="true" /></button>}
     </div>
-    <nav className="basic-ui-conversations" aria-label="Recent conversations" aria-busy={loading}>
+    <nav className="basic-ui-conversations" aria-label="Recent conversations" aria-busy={listLoading}>
       {panels.map(panel => {
         const Section = panel.experimental_basicSidebarSection;
         return Section && <PluginSlotBoundary key={`${panel.pluginId}:${panel.id}:${panel.generation}`}
@@ -164,16 +129,28 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
             openThread={openThread} registerThreads={registerThreads} />
         </PluginSlotBoundary>;
       })}
-      <h2>Conversations</h2>
-      {visibleGroups.map(group => <BasicProjectConversations key={group.projectId} group={group} activeId={activeId}
-        collapsed={(searching ? collapsedSearchProjects : collapsedProjects).has(group.projectId)} onToggle={() => (searching ? setCollapsedSearchProjects : setCollapsedProjects)(previous => {
-          const next = new Set(previous);
-          if (next.has(group.projectId)) next.delete(group.projectId);
-          else next.add(group.projectId);
-          return next;
-        })} scopedProjectId={scopedProjectId} onNavigate={onNavigate} />)}
-      {!groups.length && <p className="basic-ui-sidebar-empty" role="status">{loading ? 'Loading conversations…' : query.trim() ? 'No matching conversations.' : 'Your conversations will appear here.'}</p>}
-      {groups.length > visibleGroups.length && <button type="button" className="basic-ui-more-chats" onClick={() => setLimit(value => value + 50)}>Show more projects</button>}
+      <div className="basic-ui-conversations-heading">
+        <h2>Conversations</h2>
+        {viewSummary && <span className="basic-ui-conversations-filter" data-testid="basic-conversation-filter">{viewSummary}</span>}
+        <BasicConversationMenu />
+      </div>
+      {archived.error && <p className="basic-ui-sidebar-empty" role="alert">Archived conversations could not be loaded.</p>}
+      {visible.map(({ thread, projectName }) => {
+        const status = threadRailStatus(thread);
+        const title = thread.title || 'New conversation';
+        return <Link key={thread.id} className={`basic-ui-chat-row${activeId === thread.id ? ' is-active' : ''}`}
+          to={getThreadRoutePath(thread.id, scopedProjectId)} onClick={onNavigate} aria-current={activeId === thread.id ? 'page' : undefined}
+          aria-label={showProject ? `${title}, ${projectName}` : title} data-testid={`basic-chat-row-${thread.id}`}>
+          <span className="basic-ui-chat-name" title={title}>{title}</span>
+          {(showProject || status !== 'Idle' || thread.archivedAt) && <span className="basic-ui-chat-meta">
+            {showProject && <span className="basic-ui-chat-project" title={projectName}>{projectName}</span>}
+            {thread.archivedAt ? <span className="basic-ui-chat-status">Archived</span> : null}
+            {status !== 'Idle' && <span className={`basic-ui-chat-status status-${status === 'Working' ? 'working' : 'attention'}`}>{status === 'Needs you' ? 'Needs review' : status}</span>}
+          </span>}
+        </Link>;
+      })}
+      {!conversations.length && <p className="basic-ui-sidebar-empty" role="status">{listLoading ? 'Loading conversations…' : query.trim() || viewSummary ? 'No matching conversations.' : 'Your conversations will appear here.'}</p>}
+      {conversations.length > visible.length && <button type="button" className="basic-ui-more-chats" onClick={() => setLimit(value => value + PAGE)}>Show more conversations</button>}
     </nav>
     <SidebarFooterSlot />
     <p className="basic-ui-sidebar-note">More tools are available in Advanced.</p>

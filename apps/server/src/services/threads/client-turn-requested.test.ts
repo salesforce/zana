@@ -23,6 +23,16 @@ describe('appendClientTurnRequested', () => {
     expect(vi.mocked(appendConversationThreadEvent).mock.calls[0]![1].payload).toMatchObject({ initiator: 'agent', senderThreadId: 'sender' });
     vi.mocked(appendConversationThreadEvent).mockClear();
   });
+  it('records plugin message attribution only when one is supplied', () => {
+    vi.mocked(appendConversationThreadEvent).mockClear();
+    const messageSource = { pluginId: 'bots', kind: 'routine' as const, label: 'Digest' };
+    appendClientTurnRequested({ db: {}, hub: { emit: vi.fn() } } as never, { threadId: 't', prompt: ['go'], kind: 'new-turn', messageSource });
+    appendClientTurnRequested({ db: {}, hub: { emit: vi.fn() } } as never, { threadId: 't', prompt: ['go'], kind: 'new-turn' });
+    const [first, second] = vi.mocked(appendConversationThreadEvent).mock.calls.map(call => call[1].payload as Record<string, unknown>);
+    expect(first).toMatchObject({ messageSource });
+    expect(second).not.toHaveProperty('messageSource');
+    vi.mocked(appendConversationThreadEvent).mockClear();
+  });
   it('stores a client/turn/requested event with the user prompt', () => {
     const emit = vi.fn();
     appendClientTurnRequested(

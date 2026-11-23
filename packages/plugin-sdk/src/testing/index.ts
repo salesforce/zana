@@ -182,6 +182,7 @@ export interface FakePluginHostOptions {
     types?: readonly string[];
     order?: 'asc' | 'desc';
   }) => Promise<import('../server.js').PluginSdkThreadEventRow[]>;
+  postThreadMessage?: (args: { threadId: string; text: string }) => Promise<void>;
   sendThread?: (args: import('../server.js').PluginSdkThreadSendArgs) => Promise<{ id: string }>;
   stopThread?: (args: { threadId: string }) => Promise<{ ok: true }>;
   threadOutput?: (args: { threadId: string }) => Promise<import('../server.js').PluginSdkThreadOutput>;
@@ -586,6 +587,7 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
         }
       },
       threads: {
+        messageSources: true,
         async search(args) {
           return invokeSdk('threads.search', undefined, args) as ReturnType<ZccPluginApi['sdk']['threads']['search']>;
         },
@@ -609,6 +611,10 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
             }
             return options.listThreadEvents(args);
           }
+        },
+        async postMessage(args) {
+          if (!options?.postThreadMessage) throw new Error('Thread message posting is unavailable');
+          await options.postThreadMessage(args);
         },
         async send(args) {
           if (!options?.sendThread) {

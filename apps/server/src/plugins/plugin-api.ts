@@ -27,6 +27,7 @@ import {
 import { environmentPullRequest } from '../services/environments/environment-actions.js';
 import { conversationHistoryAsync } from '../services/threads/conversation-history.js';
 import { threadSummary } from './thread-events.js';
+import { parsePluginMessageAttribution, type PluginMessageAttribution } from './plugin-message-source.js';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { parsePluginLinkNote } from '../services/peers/plugin-link-notes.js';
@@ -319,7 +320,7 @@ export function createPluginApi(
     onNeedsConfiguration?: (message: string) => void;
     /** `zcc.status` calls: a message marks the plugin, `null` clears its mark. Falls back to `onNeedsConfiguration`. */
     onPluginStatus?: (message: string | null) => void;
-    spawnThread?: (args: PluginSdkThreadSpawnArgs & { pluginId: string }) => Promise<{ id: string }>;
+    spawnThread?: (args: Omit<PluginSdkThreadSpawnArgs, 'source' | 'agentContext'> & { pluginId: string } & PluginMessageAttribution) => Promise<{ id: string }>;
     getThread?: (args: { pluginId: string; threadId: string }) => Promise<PluginSdkThreadSummary | null>;
     listThreadEvents?: (args: {
       pluginId: string;
@@ -328,13 +329,14 @@ export function createPluginApi(
       types?: readonly string[];
       order?: 'asc' | 'desc';
     }) => Promise<PluginSdkThreadEventRow[]>;
+    postThreadMessage?: (args: { pluginId: string; threadId: string; text: string }) => Promise<void>;
     sendThread?: (args: {
       pluginId: string;
       threadId: string;
       prompt: string;
       visibility?: 'visible' | 'agent-only';
       mode?: 'start' | 'auto' | 'steer' | 'queue-if-active' | 'steer-if-active';
-    }) => Promise<{ id: string }>;
+    } & PluginMessageAttribution) => Promise<{ id: string }>;
     stopThread?: (args: { pluginId: string; threadId: string }) => Promise<{ ok: true }>;
     threadOutput?: (args: { pluginId: string; threadId: string }) => Promise<PluginSdkThreadOutput>;
     defaultExecutionOptions?: (args: { pluginId: string; threadId: string }) => Promise<PluginSdkExecutionOptions>;
@@ -1286,6 +1288,7 @@ export function createPluginApi(
         }
       },
       threads: {
+        messageSources: true,
         search: async (args) => {
           assertLive();
           if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
@@ -1310,12 +1313,16 @@ export function createPluginApi(
           const deferFirstTurn = args.deferFirstTurn === true;
           if (deferFirstTurn && args.prompt !== undefined) throw new Error('omit prompt when deferring the first turn');
           if (!deferFirstTurn && !prompt.trim()) throw new Error('prompt is required');
+          const attribution = parsePluginMessageAttribution(pluginId, args);
+          if (deferFirstTurn && (attribution.messageSource || attribution.agentContext)) {
+            throw new Error('omit source and agentContext when deferring the first turn');
+          }
           const spawnProviderId = typeof args?.providerId === 'string' && args.providerId.trim() ? args.providerId.trim() : undefined;
           const spawnHarness = args?.harness !== undefined && args?.harness !== null ? parseSpawnHarness(args.harness) : undefined;
           return options.spawnThread({
             pluginId,
             projectId,
-            ...(deferFirstTurn ? { deferFirstTurn: true } : { prompt }),
+            ...(deferFirstTurn ? { deferFirstTurn: true } : { prompt, ...attribution }),
             ...(spawnProviderId ? { providerId: spawnProviderId } : {}),
             ...(spawnHarness ? { harness: spawnHarness } : {}),
             ...(typeof args?.parentThreadId === 'string' && args.parentThreadId.trim()
@@ -1364,6 +1371,15 @@ export function createPluginApi(
             });
           }
         },
+        postMessage: async (args) => {
+          assertLive();
+          if (!options?.postThreadMessage) throw new Error('Thread message posting is unavailable');
+          const threadId = typeof args?.threadId === 'string' ? args.threadId.trim() : '';
+          if (!threadId) throw new Error('threadId is required');
+          const text = typeof args?.text === 'string' ? args.text.trim() : '';
+          if (!text || text.length > 8000) throw new Error('Message must be 1 to 8000 characters');
+          await options.postThreadMessage({ pluginId, threadId, text });
+        },
         send: async (args) => {
           assertLive();
           if (!options?.sendThread) {
@@ -1388,7 +1404,8 @@ export function createPluginApi(
             threadId,
             prompt,
             ...(visibility ? { visibility } : {}),
-            ...(mode ? { mode } : {})
+            ...(mode ? { mode } : {}),
+            ...parsePluginMessageAttribution(pluginId, args)
           });
         },
         stop: async (args) => {

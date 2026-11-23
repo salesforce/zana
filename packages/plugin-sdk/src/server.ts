@@ -385,7 +385,31 @@ export interface PluginSdkThreadEventListArgs {
   order?: 'asc' | 'desc';
 }
 
-export interface PluginSdkThreadSendArgs {
+/**
+ * Who a plugin-delivered message shows as in the thread (for example a bot
+ * reply). The host stamps the calling plugin's id; this is display only.
+ */
+export interface PluginSdkMessageSource {
+  kind: 'bot' | 'thread' | 'user' | 'routine' | 'job';
+  /** Up to 80 characters. */
+  label: string;
+  /** `#rrggbb` accent. */
+  color?: string;
+  /** Thread the label links to. */
+  threadId?: string;
+  /** Short verb shown after the label, such as `replied`. Up to 80 characters. */
+  detail?: string;
+}
+
+/** Sender attribution shared by `threads.send` and `threads.spawn`. */
+export interface PluginSdkMessageAttribution {
+  /** Renders the message as coming from this source instead of the user. */
+  source?: PluginSdkMessageSource;
+  /** Header the agent reads before the prompt; hidden from the thread view. Up to 500 characters. */
+  agentContext?: string;
+}
+
+export interface PluginSdkThreadSendArgs extends PluginSdkMessageAttribution {
   threadId: string;
   prompt: string;
   visibility?: 'visible' | 'agent-only';
@@ -395,7 +419,7 @@ export interface PluginSdkThreadSendArgs {
 /** How `threads.spawn` picks a harness when no `providerId` is given. */
 export type PluginSdkThreadSpawnHarness = 'project-default';
 
-export interface PluginSdkThreadSpawnArgs {
+export interface PluginSdkThreadSpawnArgs extends PluginSdkMessageAttribution {
   projectId: string;
   /** Required unless deferFirstTurn creates an empty conversation. */
   prompt?: string;
@@ -527,6 +551,10 @@ export interface PluginSdkThreads {
   events: {
     list(args: PluginSdkThreadEventListArgs): Promise<PluginSdkThreadEventRow[]>;
   };
+  /** Append a display-only message to a thread created by this plugin. Starts no model turn. */
+  postMessage?(args: { threadId: string; text: string }): Promise<void>;
+  /** True when `send` / `spawn` honor `source` and `agentContext`. Older hosts drop them. */
+  readonly messageSources?: true;
   send(args: PluginSdkThreadSendArgs): Promise<{ id: string }>;
   stop(args: PluginSdkThreadIdArgs): Promise<{ ok: true }>;
   output(args: PluginSdkThreadIdArgs): Promise<PluginSdkThreadOutput>;

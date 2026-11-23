@@ -671,6 +671,7 @@ function convertMessage(
           senderThreadId: message.senderThreadId,
           systemMessageKind: message.systemMessageKind,
           systemMessageSubject: message.systemMessageSubject,
+          ...(message.messageSource ? { messageSource: message.messageSource } : {}),
           turnRequest: message.turnRequest,
         },
       ];
@@ -1061,6 +1062,7 @@ function convertSteerMessage(
     senderThreadId: message.senderThreadId,
     systemMessageKind: message.systemMessageKind,
     systemMessageSubject: message.systemMessageSubject,
+    ...(message.messageSource ? { messageSource: message.messageSource } : {}),
     turnRequest: message.turnRequest,
   };
 }

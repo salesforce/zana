@@ -359,9 +359,44 @@ test('Basic sidebar opens bot conversations and leaves Advanced navigation intac
   await page.getByTestId('nav-agents').click();
   const cards = page.locator('.agent-card.is-thread');
   const botCard = cards.filter({ hasText: (await readThread()).title });
+  // Bot threads stay off the Agents board until the Bots toggle shows them.
+  await expect(botCard).toHaveCount(0);
+  const showBots = page.getByTestId('agents-board-thread-toggle-bots-threads');
+  await expect(showBots).toHaveAttribute('aria-pressed', 'false');
+  await showBots.click();
+  await expect(showBots).toHaveAttribute('aria-pressed', 'true');
   await expect(botCard.locator('.agent-card-icon .bt-av')).toHaveAttribute('data-shape', shape!);
   expect(await botCard.locator('.bt-body > g').first().evaluate(avatarColor)).toBe(color);
   const regularCard = cards.filter({ hasText: 'Ordinary conversation' });
   await expect(regularCard.locator('.agent-card-icon svg')).toBeVisible();
   await expect(regularCard.locator('.bt-av')).toHaveCount(0);
+});
+
+test('a ten-minute direct routine posts in the main chat without starting a provider turn', async ({ app, home }) => {
+  const page = app.window;
+  const rpc = async (method: string, args: Record<string, unknown>) => {
+    const res = await page.request.post(new URL('/api/v1/plugin-apps/bots/rpc', page.url()).href, { data: { method, args } });
+    expect(res.ok(), await res.text()).toBe(true);
+    return (await res.json()).value;
+  };
+  const path = join(home, 'routine-project');
+  mkdirSync(path);
+  const res = await page.request.post(new URL('/api/v1/projects', page.url()).href, { data: { path } });
+  const projectId = (await res.json()).project.id;
+  const bot = 'Desk clock';
+  await rpc('create', { name: bot, projectId, providerId: 'fake' });
+  await rpc('addRoutine', { bot, routine: { name: 'Stretch', kind: 'reminder', cron: '*/10 * * * *', prompt: 'Take a stretch break.', enabled: false } });
+  const { threadId } = await rpc('runRoutine', { bot, routineId: 'stretch' });
+  await route(page, '/threads/' + threadId);
+  const transcript = page.getByTestId('thread-timeline');
+  await expect(transcript.getByText('Take a stretch break.', { exact: true })).toHaveCount(1);
+  await rpc('runRoutine', { bot, routineId: 'stretch' });
+  await expect(transcript.getByText('Take a stretch break.', { exact: true })).toHaveCount(2);
+  await page.reload();
+  await expect(transcript.getByText('Take a stretch break.', { exact: true })).toHaveCount(2);
+  const api = new URL('/api/v1/threads/' + threadId, page.url()).href;
+  const { thread } = await (await page.request.get(api)).json();
+  expect(thread).toMatchObject({ status: 'idle', providerThreadId: null });
+  const { events } = await (await page.request.get(api + '/events')).json();
+  expect(events.filter((event: { type: string }) => event.type === 'client/turn/requested')).toHaveLength(0);
 });

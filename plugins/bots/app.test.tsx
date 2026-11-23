@@ -11,7 +11,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock('@zana-ai/zcc-plugin-sdk/app', () => ({
   definePluginApp: (setup: (app: unknown) => void) =>
-    setup({ slots: { settingsSection: (row: unknown) => state.registered.push(row), navPanel: (row: unknown) => state.registered.push(row), threadPanelAction: (row: unknown) => state.registered.push(row) } }),
+    setup({ slots: { settingsSection: (row: unknown) => state.registered.push(row), navPanel: (row: unknown) => state.registered.push(row), threadPanelAction: (row: unknown) => state.registered.push(row), experimental_agentsBoardThreadToggle: (row: unknown) => state.registered.push(row) } }),
   callPluginRpc: (...args: unknown[]) => memoryRpc(...args),
   useRpc: () => state.rpc,
   Markdown: ({ content, editor, className }: import('@zana-ai/zcc-plugin-sdk/app').MarkdownProps) => editor
@@ -47,6 +47,7 @@ afterEach(() => { cleanup(); state.rpc.call.mockReset(); state.navigate.toThread
 it('registers the Bots nav panel', () => {
   expect(state.registered).toEqual(expect.arrayContaining([
     expect.objectContaining({ id: 'bots', title: 'Bots', icon: 'Bot' }),
+    { id: 'threads', title: 'Bots', icon: 'Bot' },
     expect.objectContaining({ id: 'profile', experimental_ownedThreadTitle: BotThreadTitle, experimental_ownedThreadIcon: BotThreadIcon, component: BotThreadProfile })
   ]));
 });
@@ -236,20 +237,20 @@ it('edits routines with human-readable schedules, confirmations and switches', a
   const form = screen.getByRole('form', { name: 'Add routine' });
   fireEvent.change(within(form).getByPlaceholderText('Morning digest'), { target: { value: 'New' } });
   fireEvent.change(within(form).getByPlaceholderText(/Summarize what changed/), { target: { value: 'go' } });
-  expect(within(form).getByText(/Runs: Weekdays around 8:00 AM/)).toBeTruthy();
+  expect(within(form).getByText(/Weekdays around 8:00 AM/)).toBeTruthy();
   function pick(field: string, choice: string) {
     fireEvent.click(within(form).getByRole('button', { name: field }));
     fireEvent.click(screen.getByRole('option', { name: choice }));
   }
   pick('When', 'Weekly');
   pick('Day', 'Friday');
-  expect(within(form).getByText(/Runs: Fridays around 8:00 AM/)).toBeTruthy();
+  expect(within(form).getByText(/Fridays around 8:00 AM/)).toBeTruthy();
   pick('When', 'Hourly');
   fireEvent.change(within(form).getByLabelText('Minute past the hour'), { target: { value: '20' } });
-  expect(within(form).getByText(/Runs: Every hour at :20/)).toBeTruthy();
+  expect(within(form).getByText(/Every hour at :20/)).toBeTruthy();
   pick('When', 'Custom cron');
   fireEvent.change(within(form).getByDisplayValue('0 9 * * 1-5'), { target: { value: '0 8 * * *' } });
-  expect(within(form).getByText(/Runs: Every day around 8:00 AM/)).toBeTruthy();
+  expect(within(form).getByText(/Every day around 8:00 AM/)).toBeTruthy();
   pick('When', 'Every day');
   fireEvent.change(within(form).getByDisplayValue('08:00'), { target: { value: '07:15' } });
   state.rpc.call.mockRejectedValueOnce(new Error('routines can run at most every 15 minutes'));
@@ -695,4 +696,24 @@ it('recovers a failed profile lookup and never shows another thread’s profile'
   view.rerender(<BotThreadProfile {...props} threadId="other" />);
   expect(screen.queryByRole('heading', { name: 'Scout' })).toBeNull();
   await screen.findByText('This conversation no longer belongs to a bot.');
+});
+
+it('converts an existing AI prompt to a ten-minute price check in place', async () => {
+  route({ list: () => [scout], updateRoutine: () => scout });
+  render(<BotsPanel />);
+  const group = await screen.findByRole('group', { name: 'Digest' });
+  fireEvent.click(within(group).getByRole('button', { name: 'More actions for Digest' }));
+  fireEvent.click(within(group).getByText('Edit routine'));
+  const form = within(screen.getByRole('form', { name: 'Edit routine' }));
+  fireEvent.click(form.getByRole('button', { name: 'Action' }));
+  fireEvent.click(screen.getByRole('option', { name: 'Price check' }));
+  fireEvent.click(form.getByRole('button', { name: 'When' }));
+  fireEvent.click(screen.getByRole('option', { name: 'Every 10 minutes' }));
+  expect(form.getByText(/Posts directly to main chat/)).toBeTruthy();
+  fireEvent.change(form.getByLabelText('Asset'), { target: { value: 'ETH' } });
+  fireEvent.change(form.getByLabelText('Quote currencies'), { target: { value: 'USD, EUR' } });
+  fireEvent.click(form.getByRole('button', { name: 'Save routine' }));
+  await waitFor(() => expect(state.rpc.call).toHaveBeenCalledWith('updateRoutine', { bot: 'scout', routineId: 'digest', patch: {
+    name: 'Digest', kind: 'price', cron: '*/10 * * * *', asset: 'ETH', currencies: ['USD', 'EUR']
+  } }));
 });
