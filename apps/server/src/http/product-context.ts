@@ -6,6 +6,7 @@ import { closeThreadReads } from '../services/threads/thread-reads.js';
 import { closeQueuedMessages } from '../services/threads/queued-messages.js';
 import { previewService, disposePreviews } from '../services/previews/preview-service.js';
 import { disposeThreadWrapUps } from '../services/threads/thread-wrap-up.js';
+import { disposeThreadApiErrorResume, startThreadApiErrorResume } from '../services/followups/thread-api-error-resume.js';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -738,6 +739,7 @@ export function createProductHttpContext(
       closeThreadReads(dataDir); closeQueuedMessages(dataDir);
       disposePreviews(ctx);
       disposeThreadWrapUps(ctx);
+      disposeThreadApiErrorResume(ctx);
       disposeEnvironmentRetireTimers(ctx);
       stopHistoryMaintenance();
       ctx.cliCallbacks?.dispose();
@@ -794,5 +796,6 @@ export function createProductHttpContext(
   peerInvitations?.start();
   if (peerLinks) void peerLinks.start().catch(warnPeer('links start'));
   void remoteProjectReconciler.request();
+  startThreadApiErrorResume(ctx);
   return ctx;
 }

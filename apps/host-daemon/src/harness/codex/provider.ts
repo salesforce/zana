@@ -78,6 +78,7 @@ import { enumerateCodexUserMcpServers } from './user-mcp-servers.js';
 import { overlayDiscoveredModels } from '../discovered-model-evidence.js';
 import { codexLegacyRouting } from './legacy-routing.js';
 import { codexInteractionHook } from './interaction-hooks.js';
+import { createCodexApiErrorProducer } from './api-error-producer.js';
 import { buildCodexHookSpecs, renderHookOverrides, tomlBasic } from './hook-trust-specs.js';
 import { resolveHarnessCommand, verificationSearchPath } from '../harness-command.js';
 import { CODEX_BYPASS_HOOK_TRUST_FLAG, codexHookStateArgs, type CodexHookTrustMode } from './hook-trust.js';
@@ -156,8 +157,9 @@ const CODEX_ADAPTER: TrustedHarnessAdapter = {
     ],
     terminatesAtDoubleDash: true
   },
-  // No failure event in Codex's hook schema (checked 0.166.0); see #649.
-  status: { mode: 'output-activity', apiErrorSignal: 'none', interactionHook: codexInteractionHook },
+  // Codex has no failure hook (checked 0.171.0): a failed turn is read from its rollout instead (#649).
+  // The hook itself never claims an api-error-stop; the producer is the only source.
+  status: { mode: 'output-activity', apiErrorSignal: 'sdk-events', interactionHook: codexInteractionHook, apiErrorProducer: createCodexApiErrorProducer() },
   legacyRouting: codexLegacyRouting,
   evidence: [
     codexEvidence('codex.facet.opening-prompt', 'local', 'CLI binds opening prompt at spawn.'),

@@ -109,7 +109,13 @@ describe('trusted harness adapter contract', () => {
       expect(claude.status?.interactionHook).toBeTypeOf('function');
     });
 
-    it.each(['codex', 'opencode', 'cursor', 'pi', 'grok', 'mastracode', 'afcode'])('declares none for %s', (id) => {
+    it('declares sdk-events with a producer for Codex, whose hook never claims an API-error stop', () => {
+      const codex = registeredAdapters().find(({ adapter }) => adapter.descriptor.id === 'codex')!.adapter;
+      expect(codex.status?.apiErrorSignal).toBe('sdk-events');
+      expect(codex.status?.apiErrorProducer).toBeDefined();
+    });
+
+    it.each(['opencode', 'cursor', 'pi', 'grok', 'mastracode', 'afcode'])('declares none for %s', (id) => {
       const adapter = registeredAdapters().find((provider) => provider.adapter.descriptor.id === id)?.adapter;
       expect(adapter, id).toBeDefined();
       expect(adapter!.status?.apiErrorSignal).toBe('none');

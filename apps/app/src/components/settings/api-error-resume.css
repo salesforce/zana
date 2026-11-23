@@ -12,14 +12,19 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
 }
+/* One divider per rule, so wrapped fields still read as a single row. */
 .api-error-resume-row {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   gap: 8px 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
 }
+.api-error-resume-row:first-child { padding-top: 0; }
+.api-error-resume-row:last-child { border-bottom: 0; }
 .api-error-resume-row label,
 .api-error-resume-check label {
   display: flex;

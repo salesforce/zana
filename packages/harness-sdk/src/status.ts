@@ -27,6 +27,28 @@ export function isRetryableApiErrorKind(kind: string): boolean {
   return RETRYABLE_KINDS.has(kind);
 }
 
+/** What the host knows about a session when it asks a producer to look. Harness-specific fields ride along untyped. */
+export type ApiErrorSessionRef = {
+  readonly id: string;
+  readonly cwd: string;
+  readonly createdAt?: number;
+} & Readonly<Record<string, unknown>>;
+
+/**
+ * A producer of `api-error-stop` for a harness that has no failure hook and posts no body.
+ * The host arms it at turn start and, after a quiet period, asks it once whether the turn failed.
+ */
+export interface ApiErrorProducer {
+  /** Milliseconds with no hook callback and no PTY output before the one check. */
+  readonly quietMs: number;
+  /** Record where this turn begins (an opaque marker); called at turn start. */
+  markTurnStart(session: ApiErrorSessionRef): Promise<unknown> | unknown;
+  /** Inspect the turn that began at `marker`; null when it did not end on an API error. */
+  check(session: ApiErrorSessionRef, marker: unknown): Promise<HarnessInteractionEvent | null>;
+  /** Release any per-session state. */
+  release(sessionId: string): void;
+}
+
 export interface HarnessStatusAdapter {
   readonly mode: HarnessStatusMode;
   /** Explicit declaration of how this harness reports API-error stops. */
@@ -34,4 +56,6 @@ export interface HarnessStatusAdapter {
   detectBlockedPrompt?(recentText: string): boolean;
   /** Normalize a native hook payload. Pending input outlives terminal repaints. */
   interactionHook?(body: string): HarnessInteractionEvent | null;
+  /** Body-less producer for harnesses with no failure hook; see `ApiErrorProducer`. */
+  readonly apiErrorProducer?: ApiErrorProducer;
 }

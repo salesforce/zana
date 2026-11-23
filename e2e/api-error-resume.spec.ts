@@ -170,7 +170,7 @@ test('Settings → Agents adds a suggested rule and checks an error against it',
     await win.getByTestId('settings-nav-agents').click();
     // #649: the help text is harness neutral and the section says which installed agents it covers.
     const help = win.locator('#settings-anchor-api-error-resume .settings-section-help');
-    await expect(help).toHaveText(/Covers CLI Agent tabs, Squad engineers and scheduled runs for agents that report API errors\./);
+    await expect(help).toHaveText(/Off by default\.$/);
     await expect(help).not.toContainText('Claude Code');
     const descriptors = await win.evaluate(() => window.cc.harness.descriptors());
     const installed = descriptors.filter((d) => d.agentDefaultEligible && d.availability.installed && d.availability.enabled && d.apiErrorResume);
@@ -191,7 +191,7 @@ test('Settings → Agents adds a suggested rule and checks an error against it',
     await expect(win.getByText(/Matches rule 1: Zana would send “continue” after 30 s\./)).toBeVisible({ timeout: 15_000 });
     // The fields follow the app theme (not the native white control): the same
     // fill and text colour as the other Settings fields, in light and dark.
-    const fields = ['When the error matches (rule 1)', 'Send (rule 1)', 'After (seconds) (rule 1)', 'Messages before stopping', 'Error text to check'];
+    const fields = ['When the error matches (rule 1)', 'Send this message (rule 1)', 'After (seconds) (rule 1)', 'Messages before stopping', 'Error text to check'];
     for (const theme of ['dark', 'light'] as const) {
       await win.evaluate((theme) => window.cc.config.set({ theme }), theme);
       await expect(win.locator('html')).toHaveAttribute('data-theme', theme);

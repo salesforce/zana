@@ -3,6 +3,7 @@ import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import {
   API_ERROR_RESUME_DEFAULTS,
   API_ERROR_RESUME_SUGGESTIONS,
+  API_ERROR_RESUME_SUGGESTION_HINTS,
   apiErrorResumeRuleKey,
   isValidResumePattern,
   normalizeApiErrorResume,
@@ -151,12 +152,13 @@ function RuleRow({ rule, n, error, apply, onRemove }: {
         Regex
       </label>
       <label>
-        Send
+        Send this message
         <input
           type="text"
           className="settings-input"
           maxLength={D.maxMessageChars}
-          aria-label={`Send (rule ${n})`}
+          aria-label={`Send this message (rule ${n})`}
+          placeholder={D.message}
           value={rule.message}
           onChange={(e) => apply(rule.id, { message: e.target.value }, false)}
           onBlur={() => apply(rule.id, {}, true)}
@@ -206,10 +208,14 @@ function RuleList({ rows, apply, addRule, removeRule }: ReturnType<typeof useRes
         {suggestions.map((s) => (
           <button key={s.match} type="button" className="settings-btn" disabled={full} onClick={() => addRule(s)}>
             + {s.match}
+            {API_ERROR_RESUME_SUGGESTION_HINTS[s.match!] && (
+              <span className="settings-help api-error-resume-hint"> ({API_ERROR_RESUME_SUGGESTION_HINTS[s.match!]})</span>
+            )}
           </button>
         ))}
       </div>
       {full && <p className="settings-help">You can have up to {D.maxRules} rules.</p>}
+      <p className="settings-help">The “Send this message” text is typed into the agent as if you sent it. “continue” works for most agents.</p>
       <p className="settings-help">Zana only sends the message if you haven't typed in that agent since the error.</p>
       <p className="settings-help">Only add errors that clear up by themselves. Sign-in, billing and “request too large” errors fail again if the agent just carries on.</p>
     </div>
