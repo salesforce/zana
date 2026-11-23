@@ -60,15 +60,22 @@ export function inboxShortTitle(entry: InboxEntry, max = 120): string {
   return inboxPrimaryTitle(entry).slice(0, max);
 }
 
+const TABLE_SEPARATOR_LINE = /^\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/;
+
+/** A GFM table row (`| a | b |`) or its `|---|---|` separator; not a readable one-liner. */
+function isMarkdownTableLine(line: string): boolean {
+  return line.trimStart().startsWith('|') || TABLE_SEPARATOR_LINE.test(line);
+}
+
 /**
- * Build a compact preview from comments/docs.
+ * Build a compact preview from comments/docs. Markdown table rows are skipped.
  */
 export function inboxPreview(entry: InboxEntry): string {
   const c = (entry.comments ?? '').trim();
-  if (c) {
-    const firstLine = c.split('\n').find((l) => l.trim().length > 0) ?? '';
-    return mdToPlainText(firstLine);
-  }
+  const firstLine = c.split('\n').find((l) => l.trim().length > 0 && !isMarkdownTableLine(l));
+  if (firstLine) return mdToPlainText(firstLine);
+  // A table-only comment has no one-line summary: fall through to docs / nothing.
+  if (c && !entry.docs?.length) return '';
   if (entry.docs && entry.docs.length > 0) {
     const d = entry.docs[0];
     if (d) {
