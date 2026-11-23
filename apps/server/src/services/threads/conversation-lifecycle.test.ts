@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   getThreadProvider,
@@ -665,7 +666,7 @@ describe('conversation lifecycle', () => {
       command: expect.objectContaining({
         type: 'turn.submit',
         input: [
-          { type: 'localImage', path: '/tmp/zcc-data/attachments/proj-1/shot.png' }
+          { type: 'localImage', path: resolve('/tmp/zcc-data/attachments/proj-1/shot.png') }
         ]
       })
     }));
