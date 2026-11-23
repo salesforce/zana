@@ -100,6 +100,18 @@ describe('ThreadPluginTab', () => {
     expect(renderToStaticMarkup(<ThreadPluginTab moduleId="example" actionId="inspect" projectId={null} />)).toContain('no owner');
   });
 
+  it('opens a scoped project tab from the launcher but keeps parameterized links in the action', () => {
+    projects.current = [{ id: 'p1' }];
+    projects.actions = [{
+      pluginId: 'example', id: 'document', title: 'Notes', generation: 1, projectTabShortcut: true,
+      component: () => <output>Document reader</output>
+    }];
+    const props = { moduleId: 'example', actionId: 'document', projectId: 'p1' };
+    expect(renderToStaticMarkup(<ThreadPluginTab {...props} params={null} />)).toContain('plugin</div>');
+    expect(renderToStaticMarkup(<ThreadPluginTab {...props} params={{ path: 'file.md' }} />)).toContain('Document reader');
+    expect(renderToStaticMarkup(<ThreadPluginTab {...props} projectId={null} />)).toContain('Project is unavailable');
+  });
+
   it('shows a placeholder when the project is missing', () => {
     projects.current = [];
     const html = renderToStaticMarkup(

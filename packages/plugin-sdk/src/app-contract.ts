@@ -334,6 +334,9 @@ export interface PluginOwnedThreadIconProps {
 }
 
 export interface PluginThreadPanelActionRegistration extends PluginSlotBase {
+  /** Offer the plugin’s project tab in the dock Add menu. Opens without params browse
+   * that tab, while parameterized links still render the action component. */
+  projectTabShortcut?: boolean;
   /** Decorative icon for threads owned by this plugin in the project tree and on Kanban cards. */
   experimental_ownedThreadIcon?: ComponentType<PluginOwnedThreadIconProps>;
   /** Open from the owning thread's heading instead of the general New Tab catalogue. */
@@ -1729,6 +1732,7 @@ export function collectPluginApp(
         set.threadPanelActions.push(
           stamp({
             id,
+            ...(registration.projectTabShortcut === true ? { projectTabShortcut: true } : {}),
             title: requireNonEmptyString(kind, 'title', registration.title),
             ...(category ? { category } : {}),
             ...(registration.icon !== undefined

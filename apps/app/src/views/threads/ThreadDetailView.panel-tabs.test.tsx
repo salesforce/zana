@@ -39,6 +39,8 @@ vi.mock('../../components/thread/secondary-panel/ThreadTerminalTab.js',() => ({T
 vi.mock('../../components/thread/secondary-panel/ThreadPluginTab.js',() => ({ThreadPluginTab:(props:any) => <div data-testid="tab-ThreadPluginTab" data-props={JSON.stringify(props,(_k,v) => typeof v === 'function' ? undefined : v)} onClick={() => props.onTabStateChange({ place: 3 })}/>}));
 vi.mock('../../components/thread/secondary-panel/ThreadExplorerTab.js',() => ({ThreadExplorerTab:(props:any) => <div data-testid="tab-ThreadExplorerTab" data-props={JSON.stringify(props,(_k,v) => typeof v === 'function' ? undefined : v)}/>}));
 vi.mock('../../components/thread/secondary-panel/ThreadInboxTab.js',() => ({ThreadInboxTab:(props:any) => <div data-testid="tab-ThreadInboxTab" data-props={JSON.stringify(props,(_k,v) => typeof v === 'function' ? undefined : v)}/>}));
+import { definePluginApp } from '@zana-ai/zcc-plugin-sdk/app';
+import { clearPluginSlots, interpretPluginApp } from '../../plugins/plugin-slots.js';
 import { ThreadDetail } from './ThreadDetailView.js';
 import { getBasicUiMode, setBasicUiMode } from '../../lib/basic-ui.js';
 afterEach(() => {cleanup();setBasicUiMode('advanced');vi.clearAllMocks();h.dockEnabled=false;h.basicCompact=false;h.bottomProps=null;h.browserProps=[];localStorage.clear();});
@@ -280,4 +282,33 @@ it('opens new-tab thread-storage matches as storage previews and records them as
   expect(h.addTab).toHaveBeenLastCalledWith({ kind: 'storage-preview', title: 'report.html', path: 'out/report.html' });
   expect(localStorage.length).toBeGreaterThan(0);
   expect(Object.values({ ...localStorage }).join('')).toContain('out/report.html');
+});
+
+it('quick-add shows registered project shortcuts for threads and reuses the tab in its dock', async () => {
+  h.dockEnabled = true;
+  h.state = { tabs: [], isOpen: true, isMaximized: false, activeId: 'info', widthPx: 320 };
+  h.get.mockResolvedValue({ thread: { id: 'a', title: 'Project shortcuts', status: 'idle', projectId: 'p' } });
+  h.timeline.mockResolvedValue({ rows: [], maxSeq: 0, status: 'idle' });
+  const component = () => null;
+  interpretPluginApp('example', definePluginApp(app => {
+    app.slots.threadPanelAction({ id: 'browse', title: 'Documents', component, projectTabShortcut: true });
+    app.slots.threadPanelAction({ id: 'other', title: 'Other', component });
+    app.slots.threadPanelAction({ id: 'cli', title: 'CLI', component, projectTabShortcut: true, scopes: ['agent-session'] });
+  }));
+  const content = () => <MemoryRouter><ThreadDetail threadId="a" /></MemoryRouter>;
+  const view = render(content());
+  try {
+    await waitFor(() => expect(h.panelProps.projectShortcuts.map((item: { label: string }) => item.label)).toEqual(['Documents']));
+    act(() => h.panelProps.projectShortcuts[0].run());
+    const added = h.addTab.mock.lastCall?.[0];
+    expect(added).toMatchObject({ kind: 'plugin', moduleId: 'example', actionId: 'browse', title: 'Documents' });
+    h.state = { ...h.state, tabs: [added], activeId: added.id };
+    view.rerender(content());
+    act(() => h.panelProps.projectShortcuts[0].run());
+    expect(h.addTab).toHaveBeenCalledOnce();
+    expect(h.activateTab).toHaveBeenLastCalledWith(added.id);
+  } finally {
+    view.unmount();
+    clearPluginSlots('example');
+  }
 });

@@ -65,7 +65,10 @@ export function ThreadPluginTab({
     return <p className="thread-detail-empty" data-testid="thread-plugin-tab-unavailable">{threadAction.title} is not available in this panel.</p>;
   }
 
-  if (threadAction || composeAction) {
+  // A menu launch has no document context. Use the same scoped project tab
+  // as the project sidebar, including for tabs restored from an older version.
+  const opensProjectTab = threadAction?.projectTabShortcut && params == null;
+  if (!opensProjectTab && (threadAction || composeAction)) {
     const action = threadAction ?? composeAction!;
     const ThreadPanel = threadAction?.component;
     const ComposePanel = composeAction?.component;
@@ -104,7 +107,7 @@ export function ThreadPluginTab({
     return <p className="thread-detail-empty">Project is unavailable for this panel.</p>;
   }
   return (
-    <div className="thread-plugin-tab" data-testid="thread-plugin-tab">
+    <div className={opensProjectTab ? 'thread-plugin-tab is-flush' : 'thread-plugin-tab'} data-testid="thread-plugin-tab">
       <ProjectExtensionTab moduleId={moduleId} project={project} />
     </div>
   );
