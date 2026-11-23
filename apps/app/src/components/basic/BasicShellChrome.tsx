@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, ChevronDown, ChevronRight, Folder, Menu, PanelLeft, PanelLeftClose, PanelsTopLeft, Plus, Search, X } from 'lucide-react';
 import { ZanaIcon } from '../icons/ZanaIcon.js';
 import { SidebarResizer } from '../SidebarResizer.js';
+import { SidebarFooterSlot } from '../sidebar/SidebarFooterSlot.js';
 import { useMobileNavDismiss } from '../mobile-nav-context.js';
 import { useData } from '../../store.js';
 import { useThreads } from '../../thread-store.js';
@@ -174,6 +175,7 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
       {!groups.length && <p className="basic-ui-sidebar-empty" role="status">{loading ? 'Loading conversations…' : query.trim() ? 'No matching conversations.' : 'Your conversations will appear here.'}</p>}
       {groups.length > visibleGroups.length && <button type="button" className="basic-ui-more-chats" onClick={() => setLimit(value => value + 50)}>Show more projects</button>}
     </nav>
+    <SidebarFooterSlot />
     <p className="basic-ui-sidebar-note">More tools are available in Advanced.</p>
     {!dismissMobileNav && <SidebarResizer />}
   </aside>;

@@ -171,3 +171,14 @@ it.each([true, false])('keeps the session choice when storage writes fail (previ
   fireEvent.click(master());
   expect(master().getAttribute('aria-pressed')).toBe(String(saved));
 });
+
+it('holds the tips invitation while first-run setup is pending, open or minimized', async () => {
+  const { useOnboarding } = await import('../onboarding/onboarding-store.js');
+  act(() => { useOnboarding.setState({ open: true }); });
+  render(<Page />);
+  expect(screen.queryByRole('button', { name: /Need a few tips/ })).toBeNull();
+  const input = screen.getByLabelText('Draft');
+  act(() => { useOnboarding.setState({ open: false }); });
+  expect(invite()).toBeTruthy();
+  expect(screen.getByLabelText('Draft')).toBe(input);
+});

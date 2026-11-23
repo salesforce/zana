@@ -1,7 +1,7 @@
 import { sanitizeStoredTrustedPreviewFolders } from '../config/trusted-preview-folders.js';
 import { normalizeAgentSoundVolume, normalizeNotificationSoundProvider } from '@zana-ai/zcc-domain/product';
 import { isAgentsViewId, PROJECT_EXPANDED_CAP } from '@zana-ai/zcc-domain/product';
-import { onboardingProgressSchema } from '@zana-ai/zcc-domain/onboarding';
+import { parseOnboardingProgress } from '@zana-ai/zcc-domain/onboarding';
 import { projectConfigCompatibility } from '@zana-ai/zcc-domain/harness-config-compatibility';
 import { normalizeThreadProviderDefault, threadProviderIdForHarnessFamily } from '@zana-ai/zcc-domain/launch-provider';
 import { isNotificationLevel, isOwnNotificationLevel, isProjectIcon } from '@zana-ai/zcc-domain';
@@ -1017,8 +1017,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   ) {
     normalized.lastSeenVersion = input.lastSeenVersion.trim();
   }
-  const onboarding = onboardingProgressSchema.safeParse(input.onboarding);
-  if (onboarding.success) normalized.onboarding = onboarding.data;
+  // Accept v1 or v2 progress; always store v2.
+  const onboarding = parseOnboardingProgress(input.onboarding);
+  if (onboarding) normalized.onboarding = onboarding;
   if (typeof input.walkthroughCompleted === 'boolean') {
     normalized.walkthroughCompleted = input.walkthroughCompleted;
   }

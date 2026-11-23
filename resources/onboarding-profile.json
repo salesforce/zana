@@ -4,5 +4,6 @@
   "question": "Are you a Salesforce employee?",
   "prerequisite": "Connect to the Salesforce VPN to access the internal marketplace. Your corporate Git sign-in must also have access.",
   "marketplaceSource": "git:https://git.soma.salesforce.com/chatbots/zana-internal-marketplace.git",
-  "gitAuth": { "host": "git.soma.salesforce.com", "method": "gh-device" }
+  "gitAuth": { "host": "git.soma.salesforce.com", "method": "gh-device" },
+  "identityHint": { "emailDomains": ["salesforce.com"] }
 }
