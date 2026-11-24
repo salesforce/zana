@@ -1,4 +1,5 @@
 import { isRetryableApiErrorKind, type HarnessInteractionEvent } from '@zcc/harness-sdk';
+import { classifyApiError } from '../api-error-kind.js';
 import { sanitizeApiErrorText } from '../api-error-text.js';
 
 /** Maximum (newest) lines examined in one tail, so a hostile or huge rollout cannot pin the event loop. */
@@ -14,7 +15,7 @@ function record(value: unknown): Record<string, unknown> | null {
  * Map `codex_error_info` (a name string, or `{ name: { http_status_code } }`) into the shared kinds.
  * Only observed shapes are mapped; anything else is `unknown`, which is retried.
  */
-export function mapCodexErrorInfo(info: unknown): string {
+export function mapCodexErrorInfo(info: unknown, text?: string): string {
   let name: string | undefined;
   let status: number | undefined;
   if (typeof info === 'string') name = info;
@@ -31,7 +32,8 @@ export function mapCodexErrorInfo(info: unknown): string {
   if (name === 'internal_server_error') return 'server_error';
   if (name === 'response_too_many_failed_attempts' && status === 429) return 'rate_limit';
   if (name === 'http_connection_failed' && status === 401) return 'authentication_failed';
-  return 'unknown';
+  // Unmapped name: classify from the HTTP status and message with the shared rules (503/529, rate-limit text, ...).
+  return classifyApiError({ status, text });
 }
 
 interface Line { offset: number; value: Record<string, unknown> }
@@ -94,6 +96,7 @@ export function failedTurnFromRollout(
   for (let i = complete.index + 1; i < lines.length; i++) if (payloadOf(lines[i], 'task_started')) return null;
   const error = record(complete.payload.error);
   if (!error) return null;
-  const kind = mapCodexErrorInfo(error.codex_error_info);
-  return { kind: 'api-error-stop', error: kind, text: sanitizeApiErrorText(error.message), retryable: isRetryableApiErrorKind(kind) };
+  const text = sanitizeApiErrorText(error.message);
+  const kind = mapCodexErrorInfo(error.codex_error_info, text);
+  return { kind: 'api-error-stop', error: kind, text, retryable: isRetryableApiErrorKind(kind) };
 }

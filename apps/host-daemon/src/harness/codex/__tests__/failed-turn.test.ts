@@ -17,14 +17,32 @@ describe('mapCodexErrorInfo', () => {
     ['internal_server_error', 'server_error'],
     [{ response_too_many_failed_attempts: { http_status_code: 429 } }, 'rate_limit'],
     [{ http_connection_failed: { http_status_code: 401 } }, 'authentication_failed'],
-    [{ response_too_many_failed_attempts: { http_status_code: 500 } }, 'unknown'],
-    [{ http_connection_failed: { http_status_code: 502 } }, 'unknown'],
+    // Unmapped names fall back to the shared status/text classifier.
+    [{ response_too_many_failed_attempts: { http_status_code: 500 } }, 'server_error'],
+    [{ http_connection_failed: { http_status_code: 502 } }, 'server_error'],
+    [{ http_connection_failed: { http_status_code: 503 } }, 'server_error'],
+    [{ http_connection_failed: { http_status_code: 529 } }, 'overloaded'],
+    [{ http_connection_failed: { http_status_code: 403 } }, 'authentication_failed'],
+    [{ something_new: { http_status_code: 429 } }, 'rate_limit'],
     [{ response_too_many_failed_attempts: {} }, 'unknown'],
     ['something_new', 'unknown'],
-    [{ something_new: { http_status_code: 429 } }, 'unknown'],
     [null, 'unknown'], [undefined, 'unknown'], [[], 'unknown'], [{}, 'unknown'], [7, 'unknown']
   ])('maps %j to %s', (info, kind) => {
     expect(mapCodexErrorInfo(info)).toBe(kind);
+  });
+
+  it.each([
+    ['rate_limit_exceeded', 'Rate limit reached for gpt-5', 'rate_limit'],
+    ['something_new', 'You exceeded your current quota, check billing', 'quota_exceeded'],
+    ['something_new', 'unexpected status 401 Unauthorized', 'authentication_failed'],
+    ['something_new', 'Service Unavailable', 'server_error'],
+    ['something_new', 'nothing recognisable', 'unknown']
+  ])('classifies unmapped %j with text %j as %s', (info, text, kind) => {
+    expect(mapCodexErrorInfo(info, text)).toBe(kind);
+  });
+
+  it('a mapped name wins over message text', () => {
+    expect(mapCodexErrorInfo('server_overloaded', 'unauthorized')).toBe('overloaded');
   });
 });
 
