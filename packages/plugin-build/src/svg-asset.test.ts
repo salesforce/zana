@@ -235,9 +235,40 @@ describe("assertValidPluginLogoSvg (SVG logos and provider icons, at build)", ()
       '<svg xmlns="http://www.w3.org/2000/svg"><image href="javascript:alert(1)"/></svg>',
       /must not contain a javascript: URL in <image href>/,
     ],
+    [
+      "a vbscript: href",
+      '<svg xmlns="http://www.w3.org/2000/svg"><a href="vbscript:msgbox(1)"><path d="M0 0"/></a></svg>',
+      /must not contain a vbscript: URL in <a href>/,
+    ],
+    [
+      "a data:text/html href",
+      '<svg xmlns="http://www.w3.org/2000/svg"><a href="data:text/html,&lt;script&gt;1&lt;/script&gt;"><path d="M0 0"/></a></svg>',
+      /must not contain a data: URL in <a href>/,
+    ],
+    [
+      "a data:image/svg+xml href, which can carry script",
+      '<svg xmlns="http://www.w3.org/2000/svg"><image href="data:image/svg+xml;base64,PHN2Zy8+"/></svg>',
+      /must not contain a data: URL in <image href>/,
+    ],
+    [
+      "a data: href with leading whitespace and mixed case",
+      '<svg xmlns="http://www.w3.org/2000/svg"><image href="  DaTa:text/html,x"/></svg>',
+      /must not contain a data: URL in <image href>/,
+    ],
   ])("refuses %s and opens with the subject", (_case, svg, expected) => {
     expect(() => assertValidPluginLogoSvg(encode(svg), LOGO)).toThrow(expected);
     expect(() => assertValidPluginLogoSvg(encode(svg), LOGO)).toThrow(LOGO);
+  });
+
+  it("keeps raster data: images, which carry no script", () => {
+    expect(() =>
+      assertValidPluginLogoSvg(
+        encode(
+          '<svg xmlns="http://www.w3.org/2000/svg"><image href="data:image/png;base64,iVBORw0KGgo="/></svg>',
+        ),
+        LOGO,
+      ),
+    ).not.toThrow();
   });
 
   it("finds a script vector behind a legacy doctype and behind malformed markup", () => {

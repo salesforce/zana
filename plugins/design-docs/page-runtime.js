@@ -584,6 +584,13 @@
   var REPORT_DELAY_MS = 150;
   var WINDOW_EVENTS = /^(load|unload|beforeunload|resize|scroll|hashchange|popstate|message|pageshow|pagehide|online|offline|storage|focus|blur|error)$/;
   var OPENABLE = /^(https?|mailto):$/;
+  function isPageOriginUri(uri) {
+    try {
+      return new URL(uri).origin === PAGE_ORIGIN;
+    } catch {
+      return false;
+    }
+  }
   var HIGHLIGHT_CSS = `::highlight(${COMMENT_HIGHLIGHT}) { background-color: rgba(212, 160, 23, 0.28); text-decoration: underline 2px rgb(212, 160, 23); }
 ::highlight(${FOCUS_HIGHLIGHT}) { background-color: rgba(212, 160, 23, 0.55); }`;
   function record2(value) {
@@ -786,7 +793,7 @@
       report({ kind: "error", message: `Unhandled promise rejection: ${reason instanceof Error ? reason.message : String(reason)}`, source: config.path });
     });
     doc.addEventListener("securitypolicyviolation", (event) => {
-      if (frame && event.effectiveDirective === "script-src-attr" || event.blockedURI.startsWith(PAGE_ORIGIN)) return;
+      if (frame && event.effectiveDirective === "script-src-attr" || isPageOriginUri(event.blockedURI)) return;
       const blocked = event.blockedURI || "inline code";
       report({
         kind: "blocked",
@@ -1066,6 +1073,7 @@ ${entry.code}
       if (!href) return () => navigate({ path: config.path, hash: null }, { newTab });
       const url = absoluteUrl(href);
       if (!url) return null;
+      if (url.protocol === "data:" || url.protocol === "vbscript:") return null;
       if (url.protocol === "javascript:") {
         return frame ? () => addScript(safeDecode(url.href.slice("javascript:".length)), `${config.path} (javascript: link)`) : null;
       }
