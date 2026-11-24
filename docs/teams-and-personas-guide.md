@@ -580,7 +580,7 @@ goal" is refused; the agent proposes a plan it has written and checked instead
 
 ### Unit checkpoints
 
-Each Squad unit gets a git-based checkpoint when it completes or fails: a patch per changed file against the checkout's HEAD, captured from the working tree by diffing against the state recorded at claim time. This includes edits made by shell commands, not only the agent's file-edit tools. A failed unit's own edits are restored when it is safe (files no other unit touched and that were clean at claim time); everything else is left for the owner. No commits, stashes or branches are created.
+Each Squad unit gets a git-based checkpoint when it completes or fails: a patch per changed file against the checkout's HEAD, captured from the working tree by diffing against the state recorded at claim time. Edits made by shell commands are recorded too, but they are inferred rather than seen, so they are report-only: listed for the owner and never restored. A failed unit's own file-edit-tool writes are restored when it is safe (files no other unit touched and that were clean at claim time); everything else is left for the owner. No commits, stashes or branches are created.
 
 When a checkpoint is partial or cannot be taken, the run's Inbox gets a "Squad checkpoint needs review" row, one per unit (`id: title`). Turn the feature off in **Settings > Squads > Advanced > Checkpoint each unit** (default on, `squadUnitCheckpointsEnabled`).
 
