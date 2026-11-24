@@ -674,6 +674,20 @@ describe('quiet AI routines', () => {
   });
 });
 
+describe('bot-to-bot work', () => {
+  it('never asks a person when one bot tries to change another', async () => {
+    const { harness, call, approval } = await load();
+    await harness.callRpc('create', { name: 'Scout' });
+    await harness.callRpc('create', { name: 'Owl' });
+    const { threadId } = await harness.callRpc('send', { bot: 'owl', message: 'hi' }) as { threadId: string };
+    await expect(call('bot_routines', { action: 'add', bot: 'scout', name: 'D', cron: '0 9 * * *', prompt: 'go' }, threadId))
+      .rejects.toThrow('message that bot with bot_send');
+    const cli = await harness.runCli(['update', 'scout', '--personality', 'x'], { threadId });
+    expect(cli.stderr).toContain('message Scout with bot_send');
+    expect(approval.asked).toHaveLength(0);
+  });
+});
+
 describe('zcc bots from a thread shell', () => {
   it('needs an existing manage grant to change another bot', async () => {
     const { harness, call, approval } = await load();

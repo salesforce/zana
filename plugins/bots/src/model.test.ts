@@ -201,6 +201,16 @@ describe('generic bot guidelines', () => {
     expect(main.indexOf('Be chatty.')).toBeLessThan(main.indexOf('Bot guidelines'));
   });
 
+  it('never routes bot-to-bot work to a person', () => {
+    expect(guidelinesBlock()).toContain('Never involve a person in work that comes from another bot');
+    expect(mainThreadInstructions(base())).toContain('never waits on a person');
+    for (const text of [jobThreadInstructions(base()), routineThreadInstructions(base())]) {
+      expect(text).toContain('without asking anyone questions or requesting approval');
+      expect(text).not.toContain('human decision');
+    }
+    expect(toolInstructions.bot_send).toContain('without asking the user');
+  });
+
   it('tells a bot not to repeat a reply in its main thread', () => {
     expect(mainThreadInstructions(base())).toContain('Never paste the reply again here');
     expect(toolInstructions.bot_reply).toContain('never a second copy');

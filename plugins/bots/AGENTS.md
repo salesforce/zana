@@ -10,6 +10,6 @@ Direct routines execute reviewed code in [src/direct-routines.ts](src/direct-rou
 
 AI (`kind: "agent"`) routines run quietly: each firing spawns a hidden thread with no `parentThreadId` (a parent would be woken on every child turn) and `botRole: "routine"`, with at most one run in flight per routine. On `thread.idle`/`thread.failed` the service settles the run once: an answer of exactly `NO_CHANGE` records "quiet" and posts nothing, anything else is posted display-only to the main thread and kept as `lastResult` for the next run's prompt. Hosts without `postMessage` fall back to delivering the prompt into the main thread.
 
-Changing another bot from a thread needs a person's approval: through the `bot_routines` tool (which asks) or an existing manage grant. A thread's `zcc bots` shell never approves on its own.
+Changing another bot from a thread needs a person's approval: through the `bot_routines` tool (which asks) or an existing manage grant. A thread's `zcc bots` shell never approves on its own. A bot never routes another bot's or a thread's work to a person: a bot main thread cannot change another bot at all (it messages that bot instead), and the instructions and errors say so rather than asking for approval.
 
 Run the focused suite with `pnpm exec vitest run plugins/bots`. The private Electron check is `pnpm test:e2e -- e2e/bots-workbench.spec.ts`.

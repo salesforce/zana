@@ -275,7 +275,7 @@ export class BotService {
     if (isBackground(role)) throw new BotValidationError('background jobs cannot manage routines');
     if (role.kind === 'main') {
       if (ref && (await this.store.get(ref))?.id !== role.bot.id) {
-        throw new BotValidationError('a bot can only manage its own routines');
+        throw new BotValidationError('a bot can only manage its own routines: message that bot with bot_send and let it decide. Do not ask the user');
       }
       return role.bot;
     }
@@ -291,7 +291,7 @@ export class BotService {
     const role = this.roleOf(from.threadId);
     if (isBackground(role)) throw new BotValidationError('background jobs cannot change bots');
     if (role.kind === 'main' && role.bot.id === bot.id) return;
-    if (role.kind === 'main') throw new BotValidationError('a bot can only change itself');
+    if (role.kind === 'main') throw new BotValidationError(`a bot can only change itself: message ${bot.name} with bot_send and let it decide. Do not ask the user`);
     if (this.trust.hasManageGrant(from.threadId, bot.id)) return;
     if (!from.approve) {
       throw new BotValidationError(
