@@ -1,6 +1,7 @@
 import { PopoverPicklist } from '@zana-ai/zcc-ui/popover-picklist';
-import { ChevronDown, Pin } from 'lucide-react';
+import { ChevronDown, Pin, Plus } from 'lucide-react';
 import { VaultPanel } from './src/vault/VaultPanel.js';
+import { Section, botSectionCss } from './src/BotSection.js';
 import { BotMemory } from './src/BotMemory.js';
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { definePluginApp, Markdown, useRealtime, useRpc, useZccNavigate, type BasicSidebarSectionProps, type PluginOwnedThreadIconProps, type PluginOwnedThreadTitleProps, type PluginThreadPanelProps } from '@zana-ai/zcc-plugin-sdk/app';
@@ -32,7 +33,7 @@ const NOTICE_MS = 4_000;
 const CSS = `
 .bt-root{container-type:inline-size;line-height:1.5;background:var(--bg-panel);display:flex;height:100%;min-height:0;font-size:13px;color:var(--text-primary)}
 .bt-layout{display:grid;width:100%;min-height:0;grid-template-columns:170px minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
-.bt-root button{font:inherit;color:inherit}
+.bt-root :where(button){font:inherit;color:inherit}
 .bt-root :focus-visible{outline:2px solid var(--accent-blue);outline-offset:2px}
 .bt-list{min-width:0;background:var(--bg-base);border-right:1px solid var(--border);padding:8px;overflow:auto;display:flex;flex-direction:column;gap:2px}
 .bt-list-head{display:flex;align-items:center;justify-content:space-between;padding:4px 4px 8px}
@@ -45,8 +46,9 @@ const CSS = `
 .bt-dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:1px;background:var(--text-dim,#6e7681)}
 .bt-dot[data-state="working"]{background:var(--success,#3fb950);box-shadow:0 0 0 3px color-mix(in srgb,var(--success,#3fb950) 20%,transparent)}
 .bt-dot[data-state="missing"],.bt-dot[data-state="unknown"]{background:var(--accent-gold,#d4a017)}
-.bt-main{min-height:0;flex:1;min-width:0;overflow:auto}
-.bt-inner{padding:22px clamp(16px,3%,40px) 48px}
+.bt-main{min-height:0;flex:1;min-width:0;overflow:auto;scrollbar-gutter:stable both-edges}
+.bt-page{container:bot-page / inline-size;box-sizing:content-box;max-width:880px;margin-inline:auto;padding:0 clamp(12px,3%,32px) 48px}
+.bt-page>.bt-hero{padding-top:22px}
 .bt-hero{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
 .bt-hero-text{flex:1;min-width:180px}
 .bt-hero h2{margin:0;font-size:23px;letter-spacing:-.035em;font-weight:600}
@@ -58,35 +60,18 @@ const CSS = `
 .bt-tabs{display:flex;gap:16px;margin-top:18px;border-bottom:1px solid var(--border)}
 .bt-tabs button{border:0;background:transparent;padding:8px 0;cursor:pointer;color:var(--text-muted);border-bottom:2px solid transparent;margin-bottom:-1px}
 .bt-tabs button[aria-selected="true"]{color:var(--text-primary);border-bottom-color:var(--accent-blue);font-weight:500}
-.bt-sec{margin-top:18px}
-.bt-sec h3{font-size:15px;font-weight:600;margin:0}
-.bt-card{border:1px solid var(--border);border-radius:8px;background:var(--bg-panel)}
-.bt-row{display:flex;align-items:center;gap:12px;padding:10px 12px;width:100%;box-sizing:border-box}
-.bt-row+.bt-row,.bt-row+form,.bt-card>p+.bt-row{border-top:1px solid var(--border)}
-button.bt-row{border:0;background:transparent;text-align:left;cursor:pointer}
-button.bt-row:hover{background:var(--bg-hover)}
-.bt-row+button.bt-row{border-top:1px solid var(--border)}
 .bt-grow{flex:1;min-width:0}
-.bt-sub{display:block;font-size:12px;color:var(--text-muted)}
- .bt-rowacts{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.bt-routine-actions{display:flex;align-items:center;gap:12px;max-width:100%}
+.bt-rowacts{display:flex;align-items:center;gap:4px;flex-wrap:wrap;min-width:0}
 .bt-row.is-routine{flex-wrap:wrap}
 .bt-when{text-align:right;font-size:12px;color:var(--text-muted)}
 .bt-row.is-routine .bt-grow{flex:1 1 130px}
-.bt-ico{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;flex:none;background:var(--bg-elevated);color:var(--text-muted);font-size:12px}
-.bt-btn{border:1px solid var(--border);background:var(--bg-panel);border-radius:6px;padding:4px 10px;cursor:pointer;white-space:nowrap}
-.bt-btn:hover:not(:disabled){background:var(--bg-hover)}
-.bt-btn:disabled{opacity:.5;cursor:default}
-.bt-btn.is-primary{background:var(--accent-blue);border-color:var(--accent-blue);color:#fff}
-.bt-btn.is-ghost{border-color:transparent;background:transparent}
-.bt-btn.is-danger{color:var(--danger,#f85149)}
-.bt-btn.is-sm{padding:2px 8px;font-size:12px}
 .bt-sw{width:30px;height:18px;border-radius:999px;border:0;background:var(--border-strong,#4a4c57);position:relative;cursor:pointer;flex:none;padding:0}
 .bt-sw::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.25)}
 .bt-sw[aria-checked="true"]{background:var(--accent-blue)}
 .bt-sw[aria-checked="true"]::after{left:14px}
 .bt-sw:disabled{cursor:progress;opacity:.7}
-.bt-personality-field.bt-row,.bt-personality-field.bt-field{display:grid;gap:8px;grid-template-columns:minmax(0,1fr)}
-.bt-field>.bt-picker{width:100%;margin-top:4px}
+.bt-personality-field.bt-field{display:grid;gap:8px;grid-template-columns:minmax(0,1fr)}
 .bt-field{display:block;margin-top:10px;color:var(--text-muted);font-size:12px}
 .bt-field > :is(input,textarea,select){display:block;width:100%;margin-top:4px;font-size:13px}
 .bt-colors{display:flex;gap:6px}
@@ -95,8 +80,6 @@ button.bt-row:hover{background:var(--bg-hover)}
 .bt-colors.is-lg button{width:20px;height:20px}
 .bt-note{font-size:12px;color:var(--text-muted);margin:6px 0 0}
 .bt-alert{font-size:12px;color:var(--danger,#f85149);margin:6px 0 0}
-.bt-start{margin-top:18px;padding:14px;border:1px dashed var(--border-strong,var(--border));border-radius:8px}
-.bt-start textarea{width:100%;min-height:72px;margin-top:8px}
 .bt-create{max-width:520px;margin:0 auto;padding:28px 20px}
 .bt-empty{padding:24px;color:var(--text-muted)}
 .bt-av{position:relative;display:inline-block;flex:none}
@@ -115,30 +98,31 @@ button.bt-row:hover{background:var(--bg-hover)}
 @keyframes bt-look{0%,22%,100%{transform:translate(0,0)}30%,48%{transform:translate(6px,-1px)}56%,74%{transform:translate(-5px,1px)}}
 @keyframes bt-blink{0%,90%,100%{transform:scaleY(1)}94%{transform:scaleY(.1)}}
 @media (prefers-reduced-motion:reduce){.bt-av *{animation:none!important}}
-.bt-topline,.bt-section-head,.bt-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.bt-section-head{justify-content:space-between;margin:0 0 8px}
-.bt-topline{border-bottom:1px solid var(--border);padding:9px 24px;color:var(--text-muted);font-size:12px}
+.bt-topline,.bt-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.bt-topline{border-bottom:1px solid var(--border);padding-block:9px;color:var(--text-muted);font-size:12px;overflow-wrap:anywhere}
 .bt-meta{font-size:12px;color:var(--text-muted)}
-.bt-settings-panel{max-width:720px}
-.bt-settings-panel .bt-row{padding:10px 12px}
 .bt-settings-panel fieldset{border:0;min-width:0;padding:0;margin:0}
 .bt-savebar{position:sticky;bottom:0;z-index:2;display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;
   margin-top:16px;padding:10px 12px;border:1px solid var(--border);border-radius:9px;background:var(--bg-panel);box-shadow:0 2px 12px rgb(0 0 0 / .12)}
 .bt-savebar .bt-note,.bt-savebar .bt-alert{margin:0}
 .bt-savebar-message{flex:1 1 120px;min-width:0;font-size:12px;color:var(--text-muted)}
 .bt-savebar-actions{display:flex;gap:6px}
-.bt-settings-panel .bt-sec+.bt-sec{margin-top:20px}
-.bt-settings-panel .bt-row > :is(input,select,textarea,.bt-picker){width:min(55%,310px);box-sizing:border-box}
-.bt-root .bt-field :is(input,select,textarea),.bt-start textarea{box-sizing:border-box}
-.bt-sec .bt-memory{padding:10px 14px}
-.bt-memory+.bt-memory{border-top:1px solid var(--border)}
-.bt-memory summary{cursor:pointer}.bt-memory p{white-space:pre-wrap;overflow-wrap:anywhere}
-.bt-empty-line{margin:0;padding:12px;color:var(--text-muted)}
+.bt-root .bt-field :is(input,select,textarea){box-sizing:border-box}
+.bt-memory summary{display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer}
+.bt-memory summary::-webkit-details-marker{display:none}
+.bt-memory summary::after{content:"";width:6px;height:6px;flex:none;border-right:1.5px solid var(--text-muted);border-bottom:1.5px solid var(--text-muted);transform:rotate(-45deg);margin-right:3px}
+.bt-memory[open]>summary::after{transform:rotate(45deg)}
+.bt-memory p{white-space:pre-wrap;overflow-wrap:anywhere}
 .bt-grow,.bt-hero-text,.bt-memory{overflow-wrap:anywhere}
 .bt-root .settings-field{margin-bottom:0}
 @container (max-width:700px){.bt-layout{grid-template-columns:135px minmax(0,1fr)}.bt-list-head{flex-wrap:wrap}.bt-when{text-align:left}.bt-row.is-routine .bt-grow{flex-basis:55%}}
-@container (max-width:520px){.bt-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}.bt-root .bt-list{max-height:110px;flex-direction:row;align-items:center;overflow:auto;border-right:0;border-bottom:1px solid var(--border)}.bt-list .bt-item{width:auto;flex:none}.bt-list-head{flex:none;gap:4px}.bt-inner{padding:16px 12px 32px}.bt-row{flex-wrap:wrap}.bt-settings-panel .bt-row > :is(input,select,textarea,.bt-picker){width:100%}.bt-colors{flex-wrap:wrap}}
+@container (max-width:520px){.bt-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}.bt-root .bt-list{max-height:110px;flex-direction:row;align-items:center;overflow:auto;border-right:0;border-bottom:1px solid var(--border)}.bt-list .bt-item{width:auto;flex:none}.bt-list-head{flex:none;gap:4px}.bt-page{padding-bottom:32px}.bt-page>.bt-hero{padding-top:16px}.bt-row{flex-wrap:wrap}.bt-colors{flex-wrap:wrap}}
 .bt-root code{font-size:12px}
+@container bot-page (max-width:540px){
+  .bt-row.is-routine{display:grid;grid-template-columns:minmax(0,1fr);gap:8px}
+  .bt-routine-actions{justify-content:space-between}
+}
+${botSectionCss}
 `;
 
 const BODY: Record<BotShape, ReactNode> = {
@@ -195,15 +179,6 @@ function BotListIdentity({ bot, live, statusId, children }: { bot: BotView; live
       <small id={statusId}><span className="bt-dot" data-state={state} />{STATE_LABEL[state]}{children}</small>
     </span>
   </>;
-}
-
-function Section({ label, children, action }: { label: string; children: ReactNode; action?: ReactNode }) {
-  return (
-    <section className="bt-sec" aria-label={label}>
-      <div className="bt-section-head"><h3>{label}</h3>{action}</div>
-      <div className="bt-card">{children}</div>
-    </section>
-  );
 }
 
 function Switch({ on, label, disabled, onChange }: { on: boolean; label: string; disabled?: boolean; onChange(next: boolean): void }) {
@@ -610,17 +585,10 @@ const profileCss = `
 .bt-thread-title:focus-visible{outline:2px solid var(--accent-blue);outline-offset:-2px}
 .bt-thread-title>span:not(.bt-av){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bt-thread-title>svg{flex:none;color:var(--text-muted)}
-.bt-profile .bt-inner{padding:22px clamp(14px,5%,32px) 36px}
-.bt-profile .bt-hero{flex-direction:column;text-align:center;gap:10px}
-.bt-profile .bt-hero-text{min-width:0;width:100%}
-.bt-profile .bt-title{justify-content:center}
-.bt-profile .bt-personality{overflow-wrap:anywhere;margin:6px 0;color:var(--text-muted)}
+.bt-profile .bt-page{padding-bottom:36px}
+.bt-profile .bt-hero-text{min-width:0}
+.bt-profile .bt-personality{overflow-wrap:anywhere}
 .bt-profile .bt-personality :is(ul,ol,blockquote,pre){text-align:start}
-.bt-profile .bt-tabs{justify-content:center}
-.bt-profile .bt-hero.is-editing{flex-direction:row;text-align:left;gap:12px}
-.bt-profile .bt-hero.is-editing .bt-title{justify-content:flex-start}
-.bt-profile .bt-hero.is-editing h2{font-size:18px}
-.bt-profile .bt-settings-panel{margin-inline:auto}
 `;
 
 export function BotThreadIcon({ threadId, size, fallback }: PluginOwnedThreadIconProps) {
@@ -667,17 +635,15 @@ function BotPage({ bot, onDeleted, profile = false, active = true }: {
   const projectName = catalog.data?.projects.find((row) => row.id === bot.projectId)?.name ?? (catalog.data || catalog.error ? bot.projectId : '…');
 
   return (
-    <>
+    <div className="bt-page">
       {!profile && <div className="bt-topline">Bots <span aria-hidden="true">/</span> {bot.name}</div>}
-      <div className="bt-inner">
-      <header className={profile && tab === 'settings' ? 'bt-hero is-editing' : 'bt-hero'}>
-        <BotAvatar bot={bot} size={profile && tab !== 'settings' ? 58 : 44} live={active} />
+      <header className="bt-hero">
+        <BotAvatar bot={bot} size={44} live={active} />
         <div className="bt-hero-text">
           <div className="bt-title"><h2>{bot.name}</h2>
             <span className="bt-chip"><span className="bt-dot" data-state={state} />{STATE_LABEL[state]}
               {bot.activeJobs ? ` · ${bot.activeJobs} background job${bot.activeJobs === 1 ? '' : 's'}` : ''}</span>
           </div>
-          {profile && tab !== 'settings' && bot.personality && <Markdown className="bt-personality" content={bot.personality} />}
           <span className="bt-meta">{projectName} · <span className="bt-chip is-warn" title="Bots run without asking for approval">Full access</span></span>
         </div>
         {!profile && <div className="bt-actions">
@@ -704,6 +670,7 @@ function BotPage({ bot, onDeleted, profile = false, active = true }: {
       <div role="tabpanel" id={`${tabsId}-panel-details`} aria-labelledby={`${tabsId}-tab-details`} hidden={tab !== 'details'}>
         {!profile && !hasThread && <StartConversation bot={bot} state={state} onStarted={(threadId) => openChat(bot, threadId)} />}
         <Details bot={bot} jobs={jobs} openLibrary={() => setTab('library')} visible={active && tab === 'details'} />
+        {profile && bot.personality && <Section label="Personality and role"><Markdown className="bt-inset bt-personality" content={bot.personality} /></Section>}
       </div>
       <div role="tabpanel" id={`${tabsId}-panel-library`} aria-labelledby={`${tabsId}-tab-library`} hidden={tab !== 'library'}>
         <Library bot={bot} jobsState={jobs} visible={active && tab === 'library'} />
@@ -714,7 +681,7 @@ function BotPage({ bot, onDeleted, profile = false, active = true }: {
       <div role="tabpanel" id={`${tabsId}-panel-settings`} aria-labelledby={`${tabsId}-tab-settings`} className="bt-settings-panel" hidden={tab !== 'settings'}>
         <Settings bot={bot} onDeleted={onDeleted} visible={active && tab === 'settings'} />
       </div>
-    </div></>
+    </div>
   );
 }
 
@@ -724,7 +691,7 @@ function StartConversation({ bot, state, onStarted }: { bot: BotView; state: Bot
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   if (state === 'unknown') {
-    return <p role="status" className="bt-start bt-note">Can&apos;t reach {bot.name}&apos;s thread right now. It will reappear when the host responds.</p>;
+    return <Section label="Conversation"><p role="status" className="bt-empty-line">Can&apos;t reach {bot.name}&apos;s thread right now. It will reappear when the host responds.</p></Section>;
   }
   const start = async (event: FormEvent) => {
     event.preventDefault();
@@ -741,17 +708,19 @@ function StartConversation({ bot, state, onStarted }: { bot: BotView; state: Bot
     }
   };
   return (
-    <form className="bt-start settings-field" aria-label={`Start ${bot.name}`} onSubmit={(event) => void start(event)}>
-      <span className="bt-note" style={{ margin: 0 }}>
-        {state === 'missing'
+    <Section label="Conversation">
+      <form className="bt-form settings-field" aria-label={`Start ${bot.name}`} onSubmit={(event) => void start(event)}>
+        <p className="bt-empty-line">{state === 'missing'
           ? `${bot.name}'s main thread was deleted. Your next message starts a fresh main thread; routines and memory are kept.`
-          : `${bot.name} has no thread yet. The first message wakes it up and opens the chat beside this page.`}
-      </span>
-      <textarea aria-label={`Message ${bot.name}`} value={text}
-        onChange={(e) => { setText(e.target.value); setError(''); }} placeholder="Introduce yourself and tell me what you can do." />
-      {error && <p role="alert" className="bt-alert">{error}</p>}
-      <button type="submit" className="bt-btn is-primary" disabled={busy || !text.trim()} style={{ marginTop: 8 }}>{busy ? 'Starting…' : 'Start conversation'}</button>
-    </form>
+          : `${bot.name} has no thread yet. The first message wakes it up and opens the chat beside this page.`}</p>
+        <label className="bt-form-row">Message
+          <textarea aria-label={`Message ${bot.name}`} value={text} rows={3}
+            onChange={(e) => { setText(e.target.value); setError(''); }} placeholder="Introduce yourself and tell me what you can do." />
+        </label>
+        {error && <p role="alert" className="bt-empty-line bt-alert">{error}</p>}
+        <div className="bt-form-footer"><button type="submit" className="bt-btn is-primary" disabled={busy || !text.trim()}>{busy ? 'Starting…' : 'Start conversation'}</button></div>
+      </form>
+    </Section>
   );
 }
 
@@ -782,7 +751,7 @@ function Details({ bot, jobs, openLibrary, visible }: {
     ...(jobs.jobs ?? []).map(j => ({ key: 'job-' + j.threadId, name: j.title, at: j.startedAt, detail: j.archived ? 'Archived job' : 'Job · ' + j.status, threadId: j.threadId, title: j.title }))
   ].sort((a, b) => b.at - a.at).slice(0, 5);
   return <>
-    <Section label="Routines" action={!adding && <button className="bt-btn is-sm" onClick={() => setAdding(true)}>＋ Add routine</button>}>
+    <Section label="Routines" action={!adding && <button className="bt-btn is-sm" onClick={() => setAdding(true)}><Plus size={14} aria-hidden="true" />Add routine</button>}>
       {bot.routines.map(routine => <RoutineRow key={routine.id} bot={bot} routine={routine} nextRun={nextRuns[routine.id]} />)}
       {!adding && !bot.routines.length && <p className="bt-empty-line">No routines scheduled.</p>}
       {adding && <RoutineForm bot={bot} onDone={() => setAdding(false)} />}
@@ -792,7 +761,7 @@ function Details({ bot, jobs, openLibrary, visible }: {
       {!activity.length && !jobs.error && <p className="bt-empty-line">{jobs.jobs ? 'No recent activity.' : 'Loading activity…'}</p>}
       {visible && activity.map(row => <button className="bt-row" key={row.key} disabled={!row.threadId}
         onClick={() => row.threadId && openChat({ name: row.title }, row.threadId)}>
-        <span className="bt-grow">{row.name}<span className="bt-sub">{row.detail}</span></span>
+        <span className="bt-grow"><span className="bt-row-title">{row.name}</span><span className="bt-sub">{row.detail}</span></span>
         <time className="bt-sub" dateTime={new Date(row.at).toISOString()}>{new Date(row.at).toLocaleString()}</time>
       </button>)}
     </Section>
@@ -827,9 +796,8 @@ function RoutineRow({ bot, routine, nextRun }: { bot: BotView; routine: BotRouti
   if (editing) return <RoutineForm bot={bot} routine={routine} onDone={() => { setEditing(false); setConfirming(false); }} />;
   return (
     <div role="group" aria-labelledby={labelId} className="bt-row is-routine">
-      <span className="bt-ico" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/></svg></span>
       <span className="bt-grow">
-        <span id={labelId}>{routine.name}</span>
+        <span className="bt-row-title" id={labelId}>{routine.name}</span>
         <span className="bt-sub">{ROUTINE_KINDS[routine.kind ?? 'agent']} · {routine.kind && routine.kind !== 'agent' ? 'No AI' : 'Uses AI each run'}</span>
         <span className="bt-sub">
           {describeCron(routine.cron)} · {routine.lastRunAt ? `last ${new Date(routine.lastRunAt).toLocaleString()}` : 'never run'}
@@ -842,23 +810,25 @@ function RoutineRow({ bot, routine, nextRun }: { bot: BotView; routine: BotRouti
         {action.feedback}
       </span>
       {enabled && nextRun && <span className="bt-when">Next run<span className="bt-sub">{new Date(nextRun).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span></span>}
-      <span className={confirming || action.busy ? 'bt-rowacts is-pinned' : 'bt-rowacts'}>
-        {confirming ? (
-          <>
-            <button type="button" className="bt-btn is-sm" disabled={action.busy} onClick={() => setEditing(true)}>Edit routine</button>
-            <button type="button" className="bt-btn is-sm is-danger" disabled={action.busy}
-              onClick={() => void action.run('removeRoutine', { routineId: routine.id })}>Delete {routine.name}</button>
-            <button type="button" className="bt-btn is-ghost is-sm" onClick={() => setConfirming(false)}>Keep</button>
-          </>
-        ) : (
-          <>
-            <button type="button" className="bt-btn is-sm" disabled={action.busy}
-              onClick={() => void action.run('runRoutine', { routineId: routine.id }, `Ran ${routine.name}`)}>Run now</button>
-            <button type="button" className="bt-btn is-ghost is-sm" aria-label={`More actions for ${routine.name}`} aria-expanded={false} onClick={() => setConfirming(true)}>•••</button>
-          </>
-        )}
-      </span>
-      <Switch on={enabled} label={`Enable ${routine.name}`} disabled={action.busy} onChange={(next) => void toggle(next)} />
+      <div className="bt-routine-actions">
+        <span className="bt-rowacts">
+          {confirming ? (
+            <>
+              <button type="button" className="bt-btn is-sm" disabled={action.busy} onClick={() => setEditing(true)}>Edit routine</button>
+              <button type="button" className="bt-btn is-sm is-danger" disabled={action.busy}
+                onClick={() => void action.run('removeRoutine', { routineId: routine.id })}>Delete {routine.name}</button>
+              <button type="button" className="bt-btn is-ghost is-sm" onClick={() => setConfirming(false)}>Keep</button>
+            </>
+          ) : (
+            <>
+              <button type="button" className="bt-btn is-sm" disabled={action.busy}
+                onClick={() => void action.run('runRoutine', { routineId: routine.id }, `Ran ${routine.name}`)}>Run now</button>
+              <button type="button" className="bt-btn is-ghost is-sm" aria-label={`More actions for ${routine.name}`} aria-expanded={false} onClick={() => setConfirming(true)}>•••</button>
+            </>
+          )}
+        </span>
+        <Switch on={enabled} label={`Enable ${routine.name}`} disabled={action.busy} onChange={(next) => void toggle(next)} />
+      </div>
     </div>
   );
 }
@@ -904,9 +874,9 @@ function RoutineForm({ bot, routine, onDone }: { bot: BotView; routine?: BotRout
   };
 
   return (
-    <form aria-label={routine ? "Edit routine" : "Add routine"} onSubmit={(event) => void submit(event)} style={{ padding: '4px 12px 12px', borderTop: bot.routines.length ? '1px solid var(--border)' : 'none' }}>
-      <label className="bt-field settings-field">Name<input value={name} onChange={edit(setName)} placeholder="Morning digest" /></label>
-      <div className="bt-field settings-field">Action
+    <form aria-label={routine ? "Edit routine" : "Add routine"} onSubmit={(event) => void submit(event)} className="bt-form settings-field">
+      <label className="bt-form-row">Name<input value={name} onChange={edit(setName)} placeholder="Morning digest" /></label>
+      <div className="bt-form-row">Action
         <PopoverPicklist ariaLabel="Action" className="bt-picker" value={kind}
           options={(Object.keys(ROUTINE_KINDS) as RoutineKind[]).map(value => ({ value, label: ROUTINE_KINDS[value] }))}
           onChange={next => {
@@ -915,45 +885,43 @@ function RoutineForm({ bot, routine, onDone }: { bot: BotView; routine?: BotRout
             action.clearFeedback();
           }} searchPlaceholder="Search actions" />
       </div>
-      <div className="bt-field settings-field">When
+      <div className="bt-form-row">When
         <PopoverPicklist ariaLabel="When" className="bt-picker" value={freq}
           options={FREQUENCIES.filter(([value]) => value !== 'ten' || kind !== 'agent').map(([value, label]) => ({ value, label }))}
           onChange={setFreq} searchPlaceholder="Search frequencies" />
       </div>
-      <div style={{ display: 'flex', gap: 8 }}>
-        {freq === 'hourly' && (
-          <label className="bt-field settings-field" style={{ flex: 1 }}>Minute past the hour<input type="number" min={0} max={59} value={minute} onChange={edit(setMinute)} /></label>
-        )}
-        {freq !== 'ten' && freq !== 'custom' && freq !== 'hourly' && (
-          <label className="bt-field settings-field" style={{ flex: 1 }}>Around<input type="time" value={time} onChange={edit(setTime)} /></label>
-        )}
-        {freq === 'weekly' && (
-          <div className="bt-field settings-field" style={{ flex: 1 }}>Day
-            <PopoverPicklist ariaLabel="Day" className="bt-picker" value={day}
-              options={['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((label, index) => ({ value: String(index), label }))}
-              onChange={setDay} searchPlaceholder="Search days" />
-          </div>
-        )}
-        {freq === 'custom' && (
-          <label className="bt-field settings-field" style={{ flex: 1 }}>Cron (minute hour day month weekday)<input value={custom} onChange={edit(setCustom)} /></label>
-        )}
-      </div>
+      {freq === 'hourly' && (
+        <label className="bt-form-row">Minute past the hour<input type="number" min={0} max={59} value={minute} onChange={edit(setMinute)} /></label>
+      )}
+      {freq !== 'ten' && freq !== 'custom' && freq !== 'hourly' && (
+        <label className="bt-form-row">Around<input type="time" value={time} onChange={edit(setTime)} /></label>
+      )}
+      {freq === 'weekly' && (
+        <div className="bt-form-row">Day
+          <PopoverPicklist ariaLabel="Day" className="bt-picker" value={day}
+            options={['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((label, index) => ({ value: String(index), label }))}
+            onChange={setDay} searchPlaceholder="Search days" />
+        </div>
+      )}
+      {freq === 'custom' && (
+        <label className="bt-form-row">Cron (minute hour day month weekday)<input value={custom} onChange={edit(setCustom)} /></label>
+      )}
       {kind === 'price' ? <>
-        <label className="bt-field settings-field">Asset<input value={asset} onChange={edit(setAsset)} placeholder="BTC" /></label>
-        <label className="bt-field settings-field">Quote currencies<input value={currencies} onChange={edit(setCurrencies)} placeholder="USD, CHF" /></label>
-        <p className="bt-note">Coinbase rates. Percentages compare with the previous successful update.</p>
-      </> : <label className="bt-field settings-field">
+        <label className="bt-form-row">Asset<input value={asset} onChange={edit(setAsset)} placeholder="BTC" /></label>
+        <label className="bt-form-row">Quote currencies<input value={currencies} onChange={edit(setCurrencies)} placeholder="USD, CHF" /></label>
+        <p className="bt-empty-line">Coinbase rates. Percentages compare with the previous successful update.</p>
+      </> : <label className="bt-form-row">
         {kind === 'agent' ? 'What should it do?' : 'Message to post'}
         <textarea rows={3} value={prompt} onChange={edit(setPrompt)}
           placeholder={kind === 'agent' ? 'Summarize what changed since yesterday.' : 'Time for a break.'} />
       </label>}
-      <p className="bt-note">{describeCron(cron)} (host local time). {kind === 'agent'
+      <p className="bt-empty-line">{describeCron(cron)} (host local time). {kind === 'agent'
         ? `Uses AI each run. Minimum interval ${MIN_ROUTINE_INTERVAL_MINUTES} minutes.`
         : `Posts directly to main chat · No AI. Minimum interval ${DIRECT_INTERVAL_MINUTES} minutes.`}</p>
       {action.feedback}
-      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-        <button type="submit" className="bt-btn is-primary is-sm" disabled={action.busy || !name.trim() || (kind === 'price' ? !asset.trim() || !currencies.trim() : !prompt.trim())}>{action.busy ? 'Saving…' : routine ? 'Save routine' : 'Add routine'}</button>
-        <button type="button" className="bt-btn is-ghost is-sm" onClick={onDone}>Cancel</button>
+      <div className="bt-form-footer">
+        <button type="button" className="bt-btn is-ghost" onClick={onDone}>Cancel</button>
+        <button type="submit" className="bt-btn is-primary" disabled={action.busy || !name.trim() || (kind === 'price' ? !asset.trim() || !currencies.trim() : !prompt.trim())}>{action.busy ? 'Saving…' : routine ? 'Save routine' : 'Add routine'}</button>
       </div>
     </form>
   );
@@ -1054,29 +1022,29 @@ function Settings({ bot, onDeleted, visible }: { bot: BotView; onDeleted(): void
       <form id={formId} className="settings-field" onSubmit={(event) => void save(event)} aria-label="Bot settings">
         <fieldset disabled={action.busy}>
           <Section label="Identity">
-            <div className="bt-row">
+            <div className="bt-form-row">
               <span className="bt-grow">Color</span>
               <ColorPicker value={form.color} savedColor={saved.color} onChange={color => update({ color })} />
             </div>
-            <div className="bt-row">
+            <div className="bt-form-row">
               <span className="bt-grow">Name</span>
               <input aria-label="Name" value={form.name} onChange={set('name')} />
             </div>
-            <div className="bt-row bt-personality-field">
+            <div className="bt-form-row bt-personality-field">
               <span>Personality and role<span className="bt-sub">Applies from the next turn</span></span>
               {visible && <PersonalityEditor value={form.personality} disabled={action.busy} onChange={personality => update({ personality })} />}
             </div>
           </Section>
           <Section label="Provider and model">
-            {catalog.error && <p role="alert" className="bt-alert" style={{ padding: '8px 12px 0', margin: 0 }}>Couldn&apos;t load providers: {catalog.error}</p>}
-            <div className="bt-row">
+            {catalog.error && <p role="alert" className="bt-empty-line bt-alert">Couldn&apos;t load providers: {catalog.error}</p>}
+            <div className="bt-form-row">
               <span className="bt-grow">Provider<span className="bt-sub">Applies when a new main thread starts</span></span>
               <PopoverPicklist ariaLabel="Provider" className="bt-picker" value={form.providerId}
                 options={[{ value: '', label: 'Project default' }, ...providers.map(row => ({ value: row.id, label: row.name }))]}
                 onChange={providerId => { setEditingModel(false); update({ providerId, model: '' }); }}
                 searchPlaceholder="Search providers" />
             </div>
-            <div className="bt-row">
+            <div className="bt-form-row">
               <span className="bt-grow">
                 Model
                 {data?.modelError && <span className="bt-sub">Models unavailable: {data.modelError}</span>}
@@ -1090,13 +1058,13 @@ function Settings({ bot, onDeleted, visible }: { bot: BotView; onDeleted(): void
                 }}
                 searchPlaceholder="Search models" />
             </div>
-            {editingModel && <div className="bt-row">
+            {editingModel && <div className="bt-form-row">
               <span className="bt-grow">Model ID</span>
               <input aria-label="Model ID" value={form.model} onChange={set('model')} autoFocus />
             </div>}
           </Section>
           <Section label="Project and access">
-            <div className="bt-row">
+            <div className="bt-form-row">
               <span className="bt-grow">Project</span>
               <PopoverPicklist
                 ariaLabel="Project"
@@ -1109,7 +1077,7 @@ function Settings({ bot, onDeleted, visible }: { bot: BotView; onDeleted(): void
                 emptyHint="No matching projects"
               />
             </div>
-            <div className="bt-row"><span className="bt-grow">Access</span><span className="bt-chip is-warn">Full · runs without asking</span></div>
+            <div className="bt-form-row"><span className="bt-grow">Access</span><span className="bt-chip is-warn">Full · runs without asking</span></div>
           </Section>
         </fieldset>
       </form>
@@ -1136,7 +1104,7 @@ function DeleteBot({ bot, onDeleted }: { bot: BotView; onDeleted(): void }) {
   if (!confirming) {
     return (
       <Section label="Danger zone">
-        <div className="bt-row">
+        <div className="bt-form-row">
           <span className="bt-grow">Delete {bot.name}<span className="bt-sub">Its routines stop immediately.</span></span>
           <button type="button" className="bt-btn is-danger" onClick={() => setConfirming(true)}>Delete bot…</button>
         </div>
@@ -1190,14 +1158,13 @@ function Library({ bot, visible, jobsState }: { bot: BotView; visible: boolean; 
   return (
     <>
       <Section label="Background jobs">
-        {error && <p role="alert" className="bt-alert" style={{ padding: '8px 12px', margin: 0 }}>{error}</p>}
-        {jobs === null && !error && <p role="status" className="bt-note" style={{ padding: '10px 12px', margin: 0 }}>Loading jobs…</p>}
-        {jobs?.length === 0 && <p role="status" className="bt-note" style={{ padding: '10px 12px', margin: 0 }}>No background jobs yet.</p>}
+        {error && <p role="alert" className="bt-empty-line bt-alert">{error}</p>}
+        {jobs === null && !error && <p role="status" className="bt-empty-line">Loading jobs…</p>}
+        {jobs?.length === 0 && <p role="status" className="bt-empty-line">No background jobs yet.</p>}
         {jobs?.map((job) => (
           <button key={job.threadId} type="button" className="bt-row" onClick={() => openChat({ name: job.title }, job.threadId)}>
-            <span className="bt-ico" aria-hidden="true">{ACTIVE_JOB.has(job.status) ? '…' : '✓'}</span>
             <span className="bt-grow">
-              {job.title}
+              <span className="bt-row-title">{job.title}</span>
               <span className="bt-sub">{job.archived ? 'archived' : job.status} · {new Date(job.startedAt).toLocaleString()}</span>
             </span>
             <span style={muted} aria-hidden="true">›</span>
@@ -1210,8 +1177,6 @@ function Library({ bot, visible, jobsState }: { bot: BotView; visible: boolean; 
     </>
   );
 }
-
-const ACTIVE_JOB = new Set(['active', 'starting', 'stopping']);
 
 export default definePluginApp((app) => {
   app.slots.settingsSection({ id: 'vault', title: 'Vault', component: () => <VaultPanel /> });
