@@ -1,4 +1,5 @@
 import { handleThreadPeerReviewApi } from './thread-peer-review-api.js';
+import { threadSenderAttribution, withSenderContext } from './thread-sender-source.js';
 import { desktopRpcDigest } from './ui-send-proof.js';
 import { handlePeerToolsApi } from './peer-tools-api.js';
 import { listNativeCapabilities } from "../services/skills/native-capabilities.js";
@@ -2463,6 +2464,7 @@ export async function handleProductHttp(
         acpMode?: unknown;
         permissionMode?: unknown;
         pageContext?: unknown;
+        fromThreadId?: unknown;
       };
       const mode = body.mode === 'start' || body.mode === 'auto' || body.mode === 'steer'
         || body.mode === 'queue-if-active' || body.mode === 'steer-if-active'
@@ -2473,7 +2475,8 @@ export async function handleProductHttp(
         if (!target) throw new ThreadCreateError(404, 'thread-not-found', 'Conversation is not registered');
         // An existing conversation can be opened beside another plugin's page;
         // its immutable creation origin does not own the current surrounding view.
-        const input = await withPluginPageContext(ctx.plugins, body.input ?? body.text, body.pageContext, { projectId: target.projectId });
+        const sender = threadSenderAttribution(ctx.db, body.fromThreadId, 'messaged', target.id);
+        const input = await withPluginPageContext(ctx.plugins, withSenderContext(body.input ?? body.text, sender), body.pageContext, { projectId: target.projectId });
         const thread = await sendConversationTurn(ctx, id!, input, mode, {
           permissionMode: body.permissionMode === 'accept-edits' || body.permissionMode === 'auto' || body.permissionMode === 'full'
             ? body.permissionMode : undefined,
@@ -2481,7 +2484,7 @@ export async function handleProductHttp(
           reasoningLevel: parseReasoningLevel(body.reasoningLevel),
           serviceTier: typeof body.serviceTier === 'string' ? body.serviceTier : undefined,
           acpMode: typeof body.acpMode === 'string' ? body.acpMode : undefined
-        });
+        }, sender.messageSource ? { messageSource: sender.messageSource } : {});
         sendJson(response, 200, { ok: true, thread: conversationThreadView(ctx, thread) });
       } catch (error) {
         if (error instanceof ThreadCreateError) {
@@ -2509,7 +2512,9 @@ export async function handleProductHttp(
       }
       try {
         const pluginPanel = resolvePluginPanelBinding(body, ctx.plugins);
-        const promptInput = await withPluginPageContext(ctx.plugins, body.input ?? body.prompt, body.pageContext, {
+        // Another agent thread started this one: show who, like a bot message.
+        const sender = threadSenderAttribution(ctx.db, body.fromThreadId, 'started this thread');
+        const promptInput = await withPluginPageContext(ctx.plugins, withSenderContext(body.input ?? body.prompt, sender), body.pageContext, {
           projectId: typeof body.projectId === 'string' ? body.projectId : '',
           expectedPluginId: pluginPanel?.originPluginId ?? (typeof body.originPluginId === 'string' ? body.originPluginId : undefined)
         });
@@ -2518,6 +2523,7 @@ export async function handleProductHttp(
           providerId: typeof body.providerId === 'string' ? body.providerId : 'claude-code',
           input: flattenThreadInput(body.input ?? body.prompt),
           promptInput,
+          ...(sender.messageSource ? { messageSource: sender.messageSource } : {}),
           hostId: typeof body.hostId === 'string' ? body.hostId : undefined,
           id: typeof body.id === 'string' ? body.id : undefined,
           environment: environmentChoice?.data,

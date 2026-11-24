@@ -197,3 +197,20 @@ describe('provider plugin startup', () => {
     }
   });
 });
+
+describe('conversation titles', () => {
+  it('names a thread from visible text, not an agent-only sender header', async () => {
+    const namer = { request: vi.fn(), reserve: vi.fn() };
+    (ctx as unknown as { threadTitleNamer: typeof namer }).threadTitleNamer = namer;
+    const thread = await createConversationFromRequest(ctx, {
+      id: threadId, projectId: 'p', providerId: 'test-provider', input: ['Read and execute the brief'],
+      promptInput: [
+        { type: 'text', text: '[From thread Release planner (abc)]', mentions: [], visibility: 'agent-only' },
+        { type: 'text', text: 'Read and execute the brief', mentions: [] }
+      ],
+      permissionMode: 'full'
+    } as never);
+    expect(thread.title).toBe('Read and execute the brief');
+    expect(namer.request).toHaveBeenCalledWith(thread.id, 'Read and execute the brief');
+  });
+});

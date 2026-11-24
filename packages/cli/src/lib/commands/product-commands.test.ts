@@ -51,6 +51,32 @@ describe('product API command groups', () => {
     expect(shown.stdout).toContain('thr-1');
   });
 
+  it('names the calling thread on spawn and tell so the receiver can show the sender', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchImpl = router({
+      'POST /api/v1/threads': (_url, init) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        return jsonResponse(201, { thread: { ...sampleThread, status: 'starting' } });
+      },
+      'POST /api/v1/threads/thr-1/send': (_url, init) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        return { thread: sampleThread };
+      }
+    });
+    const previous = process.env.ZCC_THREAD_ID;
+    process.env.ZCC_THREAD_ID = 'thr-sender';
+    try {
+      await runCli(['node', 'zcc', 'thread', 'spawn', '--project', 'proj-1', '--prompt', 'go'], { fetchImpl });
+      await runCli(['node', 'zcc', 'thread', 'tell', 'thr-1', 'hi'], { fetchImpl });
+      delete process.env.ZCC_THREAD_ID;
+      await runCli(['node', 'zcc', 'thread', 'tell', 'thr-1', 'from', 'operator'], { fetchImpl });
+    } finally {
+      if (previous === undefined) delete process.env.ZCC_THREAD_ID;
+      else process.env.ZCC_THREAD_ID = previous;
+    }
+    expect(bodies.map(body => body.fromThreadId)).toEqual(['thr-sender', 'thr-sender', undefined]);
+  });
+
   it('spawns, tells, waits, and stops a thread', async () => {
     let status = 'active';
     let told = '';

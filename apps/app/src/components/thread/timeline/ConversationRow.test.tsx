@@ -543,12 +543,30 @@ describe('ConversationRow preview buttons', () => {
   });
 });
 
-it('renders an attributed peer message body without exposing its transport envelope', () => {
-  render(<ConversationRow row={{ ...userRow, initiator: 'agent', senderThreadId: 'source',
-    text: '[zcc message from thread:source; hops:1; kind:thread]\nPeer: Reviewer\nPlease inspect the parser.' }} />);
-  expect(screen.getByRole('link', { name: 'Reviewer' }).getAttribute('href')).toBe('/threads/source');
-  expect(screen.getByText('Please inspect the parser.')).toBeTruthy();
-  expect(screen.queryByText(/hops:1/)).toBeNull();
+describe('ConversationRow peer messages', () => {
+  afterEach(() => { cleanup(); });
+  it('renders an attributed peer message body without exposing its transport envelope', () => {
+    render(<ConversationRow row={{ ...userRow, initiator: 'agent', senderThreadId: 'source',
+      text: '[zcc message from thread:source; hops:1; kind:thread]\nPeer: Reviewer\nPlease inspect the parser.' }} />);
+    expect(screen.getByRole('link', { name: 'Reviewer' }).getAttribute('href')).toBe('/threads/source');
+    expect(screen.getByText('Please inspect the parser.')).toBeTruthy();
+    expect(screen.queryByText(/hops:1/)).toBeNull();
+    // Same bot-style header as plugin-attributed messages.
+    const header = screen.getByTestId('thread-message-source');
+    expect(header.dataset.sourceKind).toBe('thread');
+    expect(header.querySelector('.thread-message-source-detail')?.textContent).toBe('messaged');
+    expect(screen.queryByTestId('thread-peer-message-source')).toBeNull();
+    expect(screen.queryByTestId('thread-message-request-label')).toBeNull();
+  });
+
+  it('renders a CLI Agent peer message with the bot-style header and no thread link', () => {
+    const { container } = render(<ConversationRow row={{ ...userRow, initiator: 'agent', senderThreadId: 'cli-1',
+      text: '[zcc message from thread:cli-1; hops:1; kind:cli-agent]\nPeer: Builder\nDone.' }} />);
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(container.querySelector('.thread-message-source-label')?.textContent).toBe('Builder');
+    expect(container.querySelector('.thread-message-source-detail')?.textContent).toBe('CLI Agent');
+    expect(container.querySelector('.thread-timeline-row')?.className).toContain('is-sourced');
+  });
 });
 
 describe('ConversationRow message source', () => {

@@ -63,7 +63,8 @@ export class ThreadHandle {
           acpMode: opts?.acpMode,
           reasoningLevel: opts?.reasoningLevel,
           serviceTier: opts?.serviceTier,
-          permissionMode: opts?.permissionMode
+          permissionMode: opts?.permissionMode,
+          fromThreadId: callerThreadId()
         }
       }
     );
@@ -118,6 +119,12 @@ export type LaunchContext = {
   tagged?: boolean;
 };
 
+/** The thread this process runs in, so the receiver can show who sent the message. */
+export function callerThreadId(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const id = (env.ZCC_THREAD_ID ?? env.BB_THREAD_ID)?.trim();
+  return id ? id : undefined;
+}
+
 function isTagged(ctx: LaunchContext): boolean {
   return ctx.tagged !== false;
 }
@@ -146,7 +153,8 @@ export async function spawnThread(
         title: tagged ? liveTitle(ctx.runId, spec.title) : spec.title,
         parentThreadId: spec.parentThreadId,
         visibility: spec.visibility ?? (tagged ? 'hidden' : 'visible'),
-        origin: 'sdk'
+        origin: 'sdk',
+        fromThreadId: callerThreadId()
       }
     }
   );

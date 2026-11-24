@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { callerThreadId } from './threads.js';
 import { ControlError, exitCodeForControlError } from './errors.js';
 import { ProductHttpClient, probeHealth } from './http.js';
 import { resolveConnect } from './connect.js';
@@ -150,6 +151,13 @@ describe('resolveConnect', () => {
 });
 
 describe('threads and wait', () => {
+  it('reads the calling thread from the session environment', () => {
+    expect(callerThreadId({ ZCC_THREAD_ID: ' thr-a ' })).toBe('thr-a');
+    expect(callerThreadId({ BB_THREAD_ID: 'thr-b' })).toBe('thr-b');
+    expect(callerThreadId({ ZCC_THREAD_ID: '  ' })).toBeUndefined();
+    expect(callerThreadId({})).toBeUndefined();
+  });
+
   it('spawns hidden tagged threads and waits until idle', async () => {
     const dataDir = tmpData();
     let status = 'active';
