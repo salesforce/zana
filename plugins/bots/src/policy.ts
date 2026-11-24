@@ -1,13 +1,11 @@
 /**
- * In-memory trust state for agent-to-bot traffic. Bots run with full
- * permissions, so who may reach them from an agent turn is gated here:
+ * Bounded, in-memory trust state for agent-to-bot traffic:
  *
- * - grants: a human approved "thread T may <action> bot B" for a while;
+ * - grants: a thread has temporary approval to change a particular bot;
  * - reply allowances: a bot may answer a thread only after it messaged that bot;
  * - a sliding-window rate limit on agent-originated deliveries per sender/bot pair.
  *
- * Everything is bounded and forgotten on restart, which only means a human is
- * asked again. Human-originated traffic (Bots panel, `zcc bots` CLI) bypasses it.
+ * State resets on restart. Human-originated traffic (Bots panel, `zcc bots` CLI) bypasses it.
  */
 
 export const GRANT_TTL_MS = 8 * 60 * 60_000;
@@ -24,22 +22,22 @@ function prune<V>(map: Map<string, V>, alive: (value: V) => boolean): void {
 }
 
 export class TrustLedger {
-  private readonly grants = new Map<string, number>();
+  private readonly manageGrants = new Map<string, number>();
   private readonly replies = new Map<string, { expiresAt: number; left: number }>();
   private readonly deliveries = new Map<string, number[]>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
-  hasGrant(threadId: string, botId: string, action: string): boolean {
-    const expiresAt = this.grants.get(`${action}|${threadId}|${botId}`);
+  hasManageGrant(threadId: string, botId: string): boolean {
+    const expiresAt = this.manageGrants.get(`${threadId}|${botId}`);
     return expiresAt !== undefined && expiresAt > this.now();
   }
 
-  grant(threadId: string, botId: string, action: string): void {
-    const key = `${action}|${threadId}|${botId}`;
-    this.grants.delete(key);
-    this.grants.set(key, this.now() + GRANT_TTL_MS);
-    prune(this.grants, (expiresAt) => expiresAt > this.now());
+  grantManage(threadId: string, botId: string): void {
+    const key = `${threadId}|${botId}`;
+    this.manageGrants.delete(key);
+    this.manageGrants.set(key, this.now() + GRANT_TTL_MS);
+    prune(this.manageGrants, (expiresAt) => expiresAt > this.now());
   }
 
   /** `threadId` messaged `botId`; the bot may now answer it a few times. */

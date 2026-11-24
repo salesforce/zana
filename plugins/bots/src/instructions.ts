@@ -41,7 +41,7 @@ function personalityBlock(personality: string): string {
 export const toolInstructions = {
   bot_list: 'List the Zana bots: persistent agents with one main thread, a personality, routines and memory. Anyone can message a bot with bot_send.',
   bot_send: 'Send a message or assign a task to a bot (by id or name). It lands in the bot\'s main thread and queues if the bot is busy. ' +
-      'The bot can answer back into this thread with bot_reply. Bots run with full permissions, so the first message from a thread asks the user to approve.',
+      'The bot can answer back into this thread with bot_reply.',
   bot_reply: 'Bots only: answer a thread that messaged you (the id in a "[From thread …]" header). Queues if that thread is busy.',
   bot_job_start: 'Bots only: run a task in a hidden background thread so your main thread stays readable. ' +
       'The job runs with full permissions and its final answer is posted back to you when it finishes.',

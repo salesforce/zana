@@ -27,13 +27,12 @@ const LAST_TICK_KEY = 'routines:lastTickAt';
 
 export type BotsApi = Pick<ZccPluginApi, 'sdk' | 'realtime' | 'log' | 'pluginId'>;
 
-/** Ask the human to approve an agent-originated action; resolves true only on approval. */
-export type Approver = (request: { action: 'send' | 'manage'; bot: Bot; summary: string }) => Promise<boolean>;
+/** Ask the human to approve a change to a bot or its routines. */
+export type Approver = (request: { bot: Bot; summary: string }) => Promise<boolean>;
 
 /**
  * Who is asking. `user` is a human surface (Bots panel, a terminal `zcc bots`).
- * `agent` is a thread turn: a tool call, or `zcc bots` run from a thread shell
- * (which has no approver, so it only uses grants a human already gave).
+ * `agent` is a tool call or `zcc bots` run from a thread shell.
  */
 export type Sender = { kind: 'user'; via: string } | { kind: 'agent'; threadId: string; approve?: Approver };
 
@@ -221,11 +220,7 @@ export class BotService {
     return { bot: updated, threadId: spawned.id, created: true };
   }
 
-  /**
-   * Message a bot. Humans always get through. Agent turns are rate limited and
-   * need a human approval (remembered for a while per thread and bot) because
-   * the bot runs with full permissions; background jobs cannot message bots.
-   */
+  /** Message a bot. Agent deliveries are rate limited, and background jobs cannot send them. */
   async send(ref: string, message: string, from: Sender) {
     const bot = await this.requireBot(ref);
     const text = validatePrompt(message, 'message');
@@ -238,25 +233,12 @@ export class BotService {
     if (!this.trust.takeDelivery(from.threadId, bot.id)) {
       throw new BotValidationError(`too many messages to ${bot.name} from this thread; try again later`);
     }
-    await this.authorize(from, 'send', bot, `Let this thread message ${bot.name}. The bot runs with full permissions in its project.`);
     const source = role.kind === 'main'
       ? { kind: 'bot' as const, bot: role.bot, threadId: from.threadId }
       : { kind: 'thread' as const, threadId: from.threadId, title: await this.titleOf(from.threadId) };
     const result = await this.openMainThread(bot.id, inboundDelivery(text, source));
     this.trust.allowReply(bot.id, from.threadId);
     return result;
-  }
-
-  private async authorize(from: Extract<Sender, { kind: 'agent' }>, action: 'send' | 'manage', bot: Bot, summary: string): Promise<void> {
-    if (this.trust.hasGrant(from.threadId, bot.id, action)) return;
-    const approved = from.approve ? await from.approve({ action, bot, summary }) : false;
-    if (!approved) {
-      throw new BotValidationError(
-        `not approved: a person must allow this thread to ${action === 'send' ? 'message' : 'change'} ${bot.name}. ` +
-        'Ask them to approve the request, or to do it from the Bots panel.'
-      );
-    }
-    this.trust.grant(from.threadId, bot.id, action);
   }
 
   /**
@@ -286,7 +268,15 @@ export class BotService {
     if (role.kind === 'job') throw new BotValidationError('background jobs cannot change bots');
     if (role.kind === 'main' && role.bot.id === bot.id) return;
     if (role.kind === 'main') throw new BotValidationError('a bot can only change itself');
-    await this.authorize(from, 'manage', bot, `Let this thread change ${bot.name}: its personality, settings and routines. The bot runs with full permissions.`);
+    if (this.trust.hasManageGrant(from.threadId, bot.id)) return;
+    const summary = `Let this thread change ${bot.name}: its personality, settings and routines. The bot runs with full permissions.`;
+    if (!(await from.approve?.({ bot, summary }))) {
+      throw new BotValidationError(
+        `not approved: a person must allow this thread to change ${bot.name}. ` +
+        'Ask them to approve the request, or to do it from the Bots panel.'
+      );
+    }
+    this.trust.grantManage(from.threadId, bot.id);
   }
 
   /** A bot answering a thread that messaged it recently. */

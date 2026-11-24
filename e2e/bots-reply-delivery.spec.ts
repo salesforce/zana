@@ -33,7 +33,7 @@ function toolCaller(page: Page, home: string) {
   };
 }
 
-test('a bot reply steers into the running turn, then starts a turn when idle, and renders attributed', async ({ app, home }, testInfo) => {
+test('first bot contact sends without approval and replies reach running and idle threads with attribution', async ({ app, home }, testInfo) => {
   test.setTimeout(240_000);
   const page = app.window;
   const toggle = page.getByRole('switch', { name: 'Bots', exact: true });
@@ -65,16 +65,14 @@ test('a bot reply steers into the running turn, then starts a turn when idle, an
   await expect.poll(async () => (await thread(a)).status, { timeout: 30_000 }).toBe('active');
   await route(page, '/threads/' + a);
 
-  // A messages the bot (a person approves), which opens the bot thread B and unlocks bot_reply.
+  // First contact opens bot thread B and unlocks bot_reply.
   const call = toolCaller(page, home);
-  const sent = call(a, 'bot_send', { bot: 'Demo Tester', message: 'Please say hi.' });
-  // The approval is a main-owned sheet window, not part of the page.
-  const sheets = () => app.electron.windows().filter(w => w !== page && w.url().startsWith('data:text/html'));
-  await expect.poll(() => sheets().length, { timeout: 30_000 }).toBe(1);
-  await sheets()[0]!.getByRole('button', { name: 'Allow', exact: true }).click();
-  const sendResult = await sent;
+  const sendResult = await call(a, 'bot_send', { bot: 'Demo Tester', message: 'Please say hi.' });
   expect(sendResult.success, sendResult.text).toBe(true);
-  const b = JSON.parse(sendResult.text).threadId as string;
+  expect(app.electron.windows().filter(w => w !== page && w.url().startsWith('data:text/html'))).toHaveLength(0);
+  const delivery = JSON.parse(sendResult.text) as { threadId: string; createdMainThread: boolean };
+  expect(delivery.createdMainThread).toBe(true);
+  const b = delivery.threadId;
 
   // B replies while A's turn is still running.
   expect((await thread(a)).status).toBe('active');

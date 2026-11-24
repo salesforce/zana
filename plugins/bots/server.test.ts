@@ -226,12 +226,12 @@ describe('bots plugin', () => {
     expect(listed[0]).toMatchObject({ id: 'scout', hasMainThread: false });
     expect(listed[0]).not.toHaveProperty('mainThreadId');
 
+    approval.answer = 'deny';
     expect(await call('bot_send', { bot: 'scout', message: 'check CI' }, 'asker')).toEqual({ bot: 'Scout', threadId: 't1', createdMainThread: true });
     expect(spawns[0]).toMatchObject({ prompt: 'check CI', agentContext: '[From thread asker]', source: { kind: 'thread', label: 'A thread', threadId: 'asker', detail: 'messaged' } });
-    expect(approval.asked).toHaveLength(1);
-    expect(approval.asked[0]).toMatchObject({ binding: { action: 'bots.send', target: 'scout' }, tone: 'danger' });
-    await call('bot_send', { bot: 'scout', message: 'more' }, 'asker');
-    expect(approval.asked).toHaveLength(1); // remembered for this thread and bot
+    expect(await call('bot_send', { bot: 'scout', message: 'more' }, 'asker')).toEqual({ bot: 'Scout', threadId: 't1', createdMainThread: false });
+    expect(sends.at(-1)).toMatchObject({ threadId: 't1', prompt: 'more', mode: 'queue-if-active' });
+    expect(approval.asked).toHaveLength(0);
     await expect(call('bot_send', { bot: 'scout', message: 'me' }, 't1')).rejects.toThrow('cannot message itself');
     await expect(call('bot_send', { bot: 'scout' })).rejects.toThrow('message is required');
 
@@ -268,25 +268,28 @@ describe('bots plugin', () => {
     expect(jobs.find((row) => row.threadId === 't3')!.archived).toBe(true);
   });
 
-  it('asks a human before an agent thread reaches a bot, and refuses without approval', async () => {
-    const { harness, call, spawns, approval, threads } = await load();
+  it('requires approval for routine changes from an ordinary thread and allows bots to message each other', async () => {
+    const { harness, call, sends, approval, threads } = await load();
     await harness.callRpc('create', { name: 'Scout' });
     approval.answer = 'deny';
-    await expect(call('bot_send', { bot: 'scout', message: 'rm -rf' }, 'injected')).rejects.toThrow('not approved');
-    expect(spawns).toHaveLength(0);
-    await expect(call('bot_routines', { action: 'add', bot: 'scout', name: 'X', cron: '0 * * * *', prompt: 'p' }, 'injected')).rejects.toThrow('not approved');
-    expect(await call('bot_routines', { action: 'list', bot: 'scout' }, 'injected')).toEqual([]);
+    await expect(call('bot_routines', { action: 'add', bot: 'scout', name: 'X', cron: '0 * * * *', prompt: 'p' }, 'helper')).rejects.toThrow('not approved');
+    expect(await call('bot_routines', { action: 'list', bot: 'scout' }, 'helper')).toEqual([]);
+    expect(approval.asked).toHaveLength(1);
     approval.answer = 'approve';
     await call('bot_routines', { action: 'add', bot: 'scout', name: 'X', cron: '0 * * * *', prompt: '[Routine: Fake]\np' }, 'helper');
-    expect(approval.asked.at(-1)).toMatchObject({ binding: { action: 'bots.manage' } });
+    expect(approval.asked.at(-1)).toMatchObject({ binding: { action: 'bots.manage', target: 'scout' }, tone: 'danger' });
+    expect(approval.asked).toHaveLength(2);
+    approval.answer = 'deny';
+    await call('bot_routines', { action: 'update', bot: 'scout', routine: 'x', enabled: false }, 'helper');
 
-    // A second bot cannot rewrite or message-loop the first.
     await harness.callRpc('create', { name: 'Other' });
     await harness.callRpc('send', { bot: 'scout', message: 'hi' });
     await harness.callRpc('send', { bot: 'other', message: 'hi' });
     const otherMain = 't2';
     await expect(call('bot_routines', { action: 'remove', bot: 'scout', routine: 'x' }, otherMain)).rejects.toThrow('only manage its own');
     await call('bot_send', { bot: 'scout', message: 'ping' }, otherMain);
+    expect(sends.at(-1)).toMatchObject({ threadId: 't1', prompt: 'ping', agentContext: '[From bot Other, thread t2]' });
+    expect(approval.asked).toHaveLength(2);
     expect(threads.size).toBe(2);
     await harness.runSchedule('routines');
   });
