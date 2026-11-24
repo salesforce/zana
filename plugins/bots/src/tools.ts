@@ -1,7 +1,7 @@
 import { toolInstructions } from './instructions.js';
-import type { PluginAgentToolContext, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
+import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import { BotValidationError, ROUTINE_KINDS, type Bot } from './model.js';
-import type { Approver, BotService, Sender, ThreadRole } from './service.js';
+import type { Approver, BotService, ThreadRole } from './service.js';
 
 function record(input: unknown): Record<string, unknown> {
   return input && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
@@ -45,16 +45,16 @@ export function toolsFor(role: ThreadRole['kind']): string[] {
 
 /** Human approval through the host's sheet, consumed in the same invocation. */
 export function hostApprover(zcc: Pick<ZccPluginApi, 'ui'>): Approver {
-  return async ({ action, bot, summary }) => {
+  return async ({ bot, summary }) => {
     const binding = {
-      action: `bots.${action}`,
+      action: 'bots.manage',
       target: bot.id,
       targetLabel: bot.name.slice(0, 200),
-      subject: action === 'send' ? 'Message a full-permission bot' : 'Change a full-permission bot'
+      subject: 'Change a full-permission bot'
     };
     const result = await zcc.ui.requestToolApproval({
       binding,
-      title: action === 'send' ? `Allow this thread to message ${bot.name}?` : `Allow this thread to change ${bot.name}?`,
+      title: `Allow this thread to change ${bot.name}?`,
       summary: `${summary} Approval lasts 8 hours for this thread.`.slice(0, 600),
       confirmLabel: 'Allow',
       tone: 'danger'
@@ -66,7 +66,6 @@ export function hostApprover(zcc: Pick<ZccPluginApi, 'ui'>): Approver {
 
 export function registerBotTools(zcc: Pick<ZccPluginApi, 'agents' | 'ui'>, service: BotService): void {
   const approve = hostApprover(zcc);
-  const sender = (ctx: PluginAgentToolContext): Sender => ({ kind: 'agent', threadId: ctx.threadId, approve });
 
   zcc.agents.registerTool({
     name: 'bot_list',
@@ -91,7 +90,7 @@ export function registerBotTools(zcc: Pick<ZccPluginApi, 'agents' | 'ui'>, servi
     presentation: { label: { pending: 'Messaging bot', completed: 'Messaged bot' }, icon: { glyph: 'Send' } },
     execute: async (input, ctx) => {
       const args = record(input);
-      const result = await service.send(str(args.bot, 'bot'), str(args.message, 'message'), sender(ctx));
+      const result = await service.send(str(args.bot, 'bot'), str(args.message, 'message'), { kind: 'agent', threadId: ctx.threadId });
       return { bot: result.bot.name, threadId: result.threadId, createdMainThread: result.created };
     }
   });
@@ -158,7 +157,7 @@ export function registerBotTools(zcc: Pick<ZccPluginApi, 'agents' | 'ui'>, servi
       if (!['list', 'add', 'update', 'remove', 'run'].includes(String(args.action))) {
         throw new BotValidationError('action must be list, add, update, remove or run');
       }
-      const bot = await service.routineTarget(sender(ctx), ref, args.action !== 'list');
+      const bot = await service.routineTarget({ kind: 'agent', threadId: ctx.threadId, approve }, ref, args.action !== 'list');
       const fields = { name: args.name, cron: args.cron, prompt: args.prompt, enabled: args.enabled, kind: args.kind, asset: args.asset, currencies: args.currencies };
       switch (args.action) {
         case 'list':
