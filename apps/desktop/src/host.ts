@@ -1787,6 +1787,7 @@ function transcriptRefForSession(session: TerminalSession) {
     claudeSessionId: session.claudeSessionId,
     codexSessionId: session.codexSessionId,
     openCodeSessionId: session.openCodeSessionId,
+    nativeConversationId: session.nativeConversationId,
     createdAt: session.createdAt,
     ...(remote ? { remote } : {})
   };

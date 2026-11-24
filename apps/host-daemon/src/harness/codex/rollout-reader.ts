@@ -20,7 +20,7 @@ export interface RolloutTail {
  * Open a rollout the way an untrusted path deserves: no symlink follow, regular files only, and the real path
  * must sit under the resolver root. Returns null for anything else. Never throws.
  */
-async function openConfined(path: string, root: string) {
+export async function openConfined(path: string, root: string) {
   let handle;
   try {
     handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
