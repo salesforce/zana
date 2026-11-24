@@ -60,6 +60,7 @@ import type {
   UserMcpEnumeration
 } from '../launch-provider.js';
 import { enumerateOpenCodeUserMcpServers } from './user-mcp-servers.js';
+import { createOpenCodeApiErrorProducer } from './api-error-producer.js';
 
 import { BaseLaunchProvider } from '../base-provider.js';
 import { mergeOpenCodeGatePlugin, openCodeNativeToolGateSource } from './native-tool-gate.js';
@@ -165,7 +166,9 @@ const OPENCODE_ADAPTER: TrustedHarnessAdapter = {
   },
   status: {
     mode: 'screen-scan',
-    apiErrorSignal: 'none',
+    // Covers failures OpenCode gives up on (it retries 429/503/529 forever and persists nothing for them).
+    apiErrorSignal: 'screen-scan',
+    apiErrorProducer: createOpenCodeApiErrorProducer(),
     detectBlockedPrompt(recentText) {
       const t = recentText.toLowerCase();
       return (

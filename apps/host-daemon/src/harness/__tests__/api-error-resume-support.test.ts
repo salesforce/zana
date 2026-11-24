@@ -32,7 +32,11 @@ describe('harnessAdapterDescriptors apiErrorResume', () => {
     expect(byId('pi')?.apiErrorResume).toBe('supported');
   });
 
-  it.each(['opencode', 'cursor', 'grok', 'mastracode', 'afcode'])('marks %s unsupported', (id) => {
+  it('marks OpenCode supported (database reader)', () => {
+    expect(byId('opencode')?.apiErrorResume).toBe('supported');
+  });
+
+  it.each(['cursor', 'grok', 'mastracode', 'afcode'])('marks %s unsupported', (id) => {
     expect(byId(id)?.apiErrorResume).toBe('unsupported');
   });
 
