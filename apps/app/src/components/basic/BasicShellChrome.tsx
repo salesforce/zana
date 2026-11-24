@@ -13,6 +13,7 @@ import { getScopedProjectId } from '../../lib/windowScope.js';
 import { getNewThreadRoutePath, getRootRoutePath, getThreadRoutePath, threadIdFromPath } from '../../lib/route-paths.js';
 import { isBasicUiRouteSupported, setBasicUiMode, useBasicUi } from '../../lib/basic-ui.js';
 import { threadRailStatus } from '../fleet-item.js';
+import { isUnreadThread } from '../../lib/unread-threads.js';
 import { basicConversationRows } from './basic-conversation-rows.js';
 import { BasicConversationMenu, basicConversationViewSummary } from './BasicConversationMenu.js';
 import { useBasicConversationView } from './basic-conversation-view.js';
@@ -138,13 +139,17 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
       {visible.map(({ thread, projectName }) => {
         const status = threadRailStatus(thread);
         const title = thread.title || 'New conversation';
-        return <Link key={thread.id} className={`basic-ui-chat-row${activeId === thread.id ? ' is-active' : ''}`}
+        // A live status already signals new activity; "Unread" covers finished, unseen replies.
+        const unread = status === 'Idle' && activeId !== thread.id && !thread.archivedAt && isUnreadThread(thread);
+        const label = [title, showProject ? projectName : null, unread ? 'unread' : null].filter(Boolean).join(', ');
+        return <Link key={thread.id} className={`basic-ui-chat-row${activeId === thread.id ? ' is-active' : ''}${unread ? ' is-unread' : ''}`}
           to={getThreadRoutePath(thread.id, scopedProjectId)} onClick={onNavigate} aria-current={activeId === thread.id ? 'page' : undefined}
-          aria-label={showProject ? `${title}, ${projectName}` : title} data-testid={`basic-chat-row-${thread.id}`}>
+          aria-label={label} data-testid={`basic-chat-row-${thread.id}`}>
           <span className="basic-ui-chat-name" title={title}>{title}</span>
-          {(showProject || status !== 'Idle' || thread.archivedAt) && <span className="basic-ui-chat-meta">
+          {(showProject || status !== 'Idle' || thread.archivedAt || unread) && <span className="basic-ui-chat-meta">
             {showProject && <span className="basic-ui-chat-project" title={projectName}>{projectName}</span>}
             {thread.archivedAt ? <span className="basic-ui-chat-status">Archived</span> : null}
+            {unread && <span className="basic-ui-chat-status status-unread" data-testid={`basic-chat-unread-${thread.id}`}>Unread</span>}
             {status !== 'Idle' && <span className={`basic-ui-chat-status status-${status === 'Working' ? 'working' : 'attention'}`}>{status === 'Needs you' ? 'Needs review' : status}</span>}
           </span>}
         </Link>;

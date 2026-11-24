@@ -116,6 +116,38 @@ describe('Basic conversation navigation', () => {
     expect(screen.getByRole('status').textContent).toBe('No matching conversations.');
   });
 
+  it('marks finished conversations with unseen replies as Unread, except the open, live or archived ones', () => {
+    data.threads = [
+      thread('new', { lastReadSeq: 3, maxSeq: 5 }),
+      thread('read', { lastReadSeq: 5, maxSeq: 5 }),
+      thread('never', { lastReadSeq: null, maxSeq: 2 }),
+      thread('open', { lastReadSeq: 1, maxSeq: 5 }),
+      thread('live', { status: 'active', lastReadSeq: 1, maxSeq: 5 })
+    ];
+    sidebar('/threads/open');
+    const row = screen.getByTestId('basic-chat-row-new');
+    expect(row.className).toContain('is-unread');
+    expect(row.getAttribute('aria-label')).toBe('Chat new, Personal, unread');
+    expect(within(row).getByText('Unread')).toBeTruthy();
+    for (const id of ['read', 'never', 'open']) {
+      expect(screen.queryByTestId(`basic-chat-unread-${id}`)).toBeNull();
+      expect(screen.getByTestId(`basic-chat-row-${id}`).className).not.toContain('is-unread');
+    }
+    expect(screen.queryByTestId('basic-chat-unread-live')).toBeNull();
+    expect(within(screen.getByTestId('basic-chat-row-live')).getByText('Working')).toBeTruthy();
+  });
+
+  it('shows Unread even inside a project window where no project label is rendered', () => {
+    data.scoped = 'p1';
+    data.threads = [thread('new', { lastReadSeq: 0, maxSeq: 1 }), thread('archived', { archivedAt: 1, lastReadSeq: 0, maxSeq: 1 })];
+    useBasicConversationView.setState({ view: { ...DEFAULT_BASIC_CONVERSATION_VIEW, status: 'all' } });
+    archive.history.mockResolvedValue([]);
+    sidebar('/projects/p1/threads/new2');
+    expect(screen.getByTestId('basic-chat-row-new').getAttribute('aria-label')).toBe('Chat new, unread');
+    expect(screen.getByTestId('basic-chat-unread-new')).toBeTruthy();
+    expect(screen.queryByTestId('basic-chat-unread-archived')).toBeNull();
+  });
+
   it('pages one flat list and keeps an older active conversation visible', () => {
     data.threads = Array.from({ length: 41 }, (_, i) => thread(String(i), { updatedAt: 100 - i, projectId: i % 2 ? 'p2' : 'p1' }));
     sidebar('/threads/40');

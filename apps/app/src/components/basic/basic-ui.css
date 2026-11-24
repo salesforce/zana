@@ -54,6 +54,8 @@
 /* Mirrors the advanced rail (.agents-row-working / .agents-row-needs-you). */
 .basic-ui-chat-status.status-working { font-weight: 650; color: var(--accent-gold, #ae8b4c); animation: nav-badge-pulse 1.1s ease-in-out infinite; }
 .basic-ui-chat-status.status-attention { font-weight: 650; color: var(--danger, #c4473a); }
+.basic-ui-chat-status.status-unread { font-weight: 650; color: var(--accent, #3b82f6); }
+.basic-ui-chat-row.is-unread .basic-ui-chat-name { font-weight: 650; }
 @media (prefers-reduced-motion: reduce) { .basic-ui-chat-status.status-working { animation: none; } }
 .basic-ui-sidebar-empty, .basic-ui-sidebar-note { margin: 10px; color: var(--text-muted); font-size: 11px; line-height: 1.8; }
 .basic-ui-sidebar-note { margin-top: 18px; font-size: 10px; }

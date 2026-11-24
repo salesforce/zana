@@ -244,6 +244,15 @@ export function ThreadTimeline({
     clearTransientScrollbarScrolling(paneRef.current, scrollbarIdleRef);
   }, []);
 
+  // A timeline that fits (or is already pinned) never scrolls, so opening it
+  // or receiving a reply at the bottom must count as reading it.
+  const latestRowId = viewRows.at(-1)?.id;
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (!pane || !latestRowId || !isNearBottom(pane)) return;
+    onReachedBottom?.();
+  }, [threadId, latestRowId, onReachedBottom]);
+
   const onScroll = useCallback(() => {
     const pane = paneRef.current;
     if (!pane) return;
