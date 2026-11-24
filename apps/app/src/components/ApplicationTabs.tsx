@@ -32,6 +32,13 @@ import {
   type ClosedApplicationTab,
   type PluginApplicationTab
 } from '../lib/application-tabs.js';
+import { isCompactViewport } from '../hooks/useIsCompactViewport.js';
+import { getBasicUiMode } from '../lib/basic-ui.js';
+import { beginNativeTabPaneDrag } from '../lib/split-drag/nativeTabDrag.js';
+import { routedPaneDrop } from '../lib/split-drag/routedPaneDrop.js';
+import { GLOBAL_SPLIT_SCOPE_KEY, projectSplitScopeKey } from '../lib/split-layout/scope.js';
+import { useSplitWorkspace } from '../lib/split-layout/store.js';
+import { paneContentForPathname } from '../lib/split-layout/splitThreadNavigation.js';
 import { isListedAgent } from '../lib/agent-tab-status.js';
 import { resumingAgents } from '../lib/agent-tab-resume.js';
 import { pluginTabPath } from '../lib/plugin-tab-route.js';
@@ -212,13 +219,42 @@ export function ApplicationTabs({
           ? setupPath(tab.setupId)
           : (pluginTabPath(tab) ?? currentPath.current);
   // Opening a pinned item happens under the project it was pinned in.
+  const selectPluginProject = (tab: PluginApplicationTab) => {
+    resolve(tab);
+    if (!scope && useUi.getState().selectedProjectId !== tab.projectId)
+      useUi.getState().selectProject(tab.projectId);
+  };
   const activate = (tab: ApplicationTab) => {
-    if (tab.kind === 'plugin') {
-      resolve(tab);
-      if (!scope && useUi.getState().selectedProjectId !== tab.projectId)
-        useUi.getState().selectProject(tab.projectId);
-    }
+    if (tab.kind === 'plugin') selectPluginProject(tab);
     void navigate(path(tab));
+  };
+  const beginPaneDrag = (id: string) => {
+    const workspace = document.querySelector<HTMLElement>('.split-workspace');
+    if (!workspace || isCompactViewport() || getBasicUiMode() === 'basic') return;
+    const tab = open.find((row) => applicationTabId(row) === id);
+    if (!tab || tab.kind === 'setup') return;
+    // Use the destination's route scope, even if this tab was originally
+    // opened via a project rail and is now being dragged onto a global view.
+    const { scopeKey } = useSplitWorkspace.getState();
+    const global = scopeKey === GLOBAL_SPLIT_SCOPE_KEY;
+    if (!global && scopeKey !== projectSplitScopeKey(tab.projectId)) return;
+    const projectId = global ? null : tab.projectId;
+    let href;
+    if (tab.kind === 'thread') href = getThreadRoutePath(tab.threadId, projectId);
+    else if (tab.kind === 'agent') href = getAgentSessionRoutePath(tab.sessionId, projectId);
+    else {
+      if (!global || getItemState(tab) === 'unavailable') return;
+      href = pluginTabPath(tab);
+    }
+    if (!href) return;
+    const content = paneContentForPathname(href);
+    if (!content) return;
+    const drop = routedPaneDrop(content, location.pathname, (route, options) => {
+      if (tab.kind === 'plugin') selectPluginProject(tab);
+      // Pinned items can share the same plugin pane but address different subpaths.
+      void navigate(tab.kind === 'plugin' ? href : route, options);
+    });
+    return beginNativeTabPaneDrag(workspace, drop);
   };
   const archive = (thread: ThreadListItem) => {
     const current =
@@ -495,6 +531,7 @@ export function ApplicationTabs({
       onSelect={select}
       onClose={close}
       onHover={hover}
+      onBeginPaneDrag={beginPaneDrag}
       onMove={(id, to) => useApplicationTabs.getState().moveTab(id, to)}
       locationKey={location.pathname + location.search + location.hash}
       onNewThread={

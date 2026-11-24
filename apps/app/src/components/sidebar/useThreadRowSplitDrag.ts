@@ -3,29 +3,13 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useIsCompactViewport } from '../../hooks/useIsCompactViewport.js';
 import {
   beginSplitDrag,
-  decideThreadDrop,
   shouldEngageSidebarSplitDrag,
   type SplitDragFallbackTarget
 } from '../../lib/split-drag/index.js';
-import {
-  countPanes,
-  findPane,
-  findPaneByContent,
-  listPanes,
-  MAX_PANES,
-  replacePaneContent,
-  setFocus,
-  splitPane,
-  type PaneContent,
-  type SplitLayout
-} from '../../lib/split-layout/index.js';
+import { listPanes, type PaneContent, type SplitLayout } from '../../lib/split-layout/index.js';
 import { openRoutedPaneInSplit } from '../../lib/split-layout/openThreadInSplit.js';
-import {
-  createSinglePaneLayout,
-  focusedPaneRoute,
-  paneContentForPathname,
-  paneContentRoute
-} from '../../lib/split-layout/splitThreadNavigation.js';
+import { paneContentRoute } from '../../lib/split-layout/splitThreadNavigation.js';
+import { routedPaneDrop } from '../../lib/split-drag/routedPaneDrop.js';
 import { POST_DRAG_CLICK_SUPPRESS_MS } from '../../lib/suppress-post-drag-click.js';
 import { useSplitWorkspace } from '../../lib/split-layout/store.js';
 import { useData, useUi } from '../../store.js';
@@ -73,7 +57,6 @@ export function usePaneContentSplitDrag({
         : null;
       if (interactiveChild && interactiveChild !== event.currentTarget) return;
       suppressClickRef.current = false;
-      const startScope = useSplitWorkspace.getState().scopeKey;
       const rowEl = event.currentTarget;
       const sidebarEl = rowEl.closest(SIDEBAR_SELECTOR);
       const sidebarRightEdge = (sidebarEl ?? rowEl).getBoundingClientRect().right;
@@ -118,53 +101,7 @@ export function usePaneContentSplitDrag({
             y,
             sidebarRightEdge
           }),
-        decide: (paneId, zone) => {
-          if (useSplitWorkspace.getState().scopeKey !== startScope) return null;
-          const layout = useSplitWorkspace.getState().layout ?? startLayout;
-          if (layout === null) {
-            return decideThreadDrop({ zone, threadAlreadyOpen: false, atMaxPanes: false });
-          }
-          const alreadyOpen = findPaneByContent(layout.root, paneContent) !== null;
-          const target = findPane(layout.root, paneId);
-          return decideThreadDrop({
-            zone,
-            threadAlreadyOpen: alreadyOpen,
-            atMaxPanes: countPanes(layout.root) >= MAX_PANES,
-            emptyTarget: target?.content.kind === 'empty'
-          });
-        },
-        onDrop: (target) => {
-          if (useSplitWorkspace.getState().scopeKey !== startScope) return;
-          const stored = useSplitWorkspace.getState().layout ?? startLayout;
-          const keep = stored === null ? paneContentForPathname(pathname) : null;
-          const layout = stored ?? (keep === null ? null : createSinglePaneLayout(keep));
-          if (layout === null) {
-            openRoutedPaneInSplit({
-              navigate,
-              content: paneContent,
-              isCompact: false,
-              currentPathname: pathname
-            });
-            return;
-          }
-          const existing = findPaneByContent(layout.root, paneContent);
-          if (existing !== null) {
-            const next = setFocus(layout, existing.paneId);
-            if (next !== layout) useSplitWorkspace.getState().setLayout(next);
-            const route = focusedPaneRoute(next);
-            if (route) navigate(route, { replace: true });
-            return;
-          }
-          const paneId =
-            findPane(layout.root, target.paneId) !== null ? target.paneId : layout.focusedPaneId;
-          const next =
-            target.zone === 'center'
-              ? replacePaneContent(layout, paneId, paneContent)
-              : splitPane(layout, paneId, target.zone, paneContent);
-          if (next !== layout) useSplitWorkspace.getState().setLayout(next);
-          const route = focusedPaneRoute(next);
-          if (route) navigate(route);
-        },
+        ...routedPaneDrop(paneContent, pathname, navigate),
         onEnd: () => {
           suppressClickRef.current = true;
           suppressClickUntil.current = Date.now() + POST_DRAG_CLICK_SUPPRESS_MS;

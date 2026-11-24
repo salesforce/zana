@@ -40,6 +40,7 @@ export function ApplicationTabBar({
   onSelect,
   onClose,
   onMove,
+  onBeginPaneDrag,
   onNewThread,
   onReopen,
   onHover,
@@ -50,6 +51,7 @@ export function ApplicationTabBar({
   onSelect(id: string): void;
   onClose(ids: string[]): void;
   onMove(id: string, targetId: string): void;
+  onBeginPaneDrag(id: string): (() => void) | undefined;
   onNewThread?: () => void;
   onReopen?: () => void;
   onHover?(id: string): void;
@@ -67,6 +69,12 @@ export function ApplicationTabBar({
   const strip = useRef<HTMLDivElement>(null);
   const menu = useRef<HTMLDetailsElement>(null);
   const dragging = useRef<string | null>(null);
+  const endPaneDrag = useRef<(() => void) | undefined>(undefined);
+  const finishDrag = useCallback(() => {
+    endPaneDrag.current?.();
+    endPaneDrag.current = undefined;
+    dragging.current = null;
+  }, []);
   const activeId = tabs.find((tab) => tab.active)?.id;
   const order = tabs.map((tab) => tab.id).join('\n');
   useEffect(() => {
@@ -74,6 +82,7 @@ export function ApplicationTabBar({
       ?.querySelector<HTMLElement>('[aria-selected="true"]')
       ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
   }, [activeId, order]);
+  useLayoutEffect(() => finishDrag, [finishDrag, locationKey, order]);
   useLayoutEffect(() => {
     if (menu.current) menu.current.open = false;
     setContextMenu(null);
@@ -190,8 +199,10 @@ export function ApplicationTabBar({
               aria-expanded={contextMenu?.id === tab.id}
               draggable
               onDragStart={(event) => {
+                finishDrag();
                 dragging.current = tab.id;
-                event.dataTransfer.setData('text/plain', tab.id);
+                endPaneDrag.current = onBeginPaneDrag(tab.id);
+                event.dataTransfer.setData('application/x-zcc-application-tab', tab.id);
                 event.dataTransfer.effectAllowed = 'move';
               }}
               onDragOver={(event) => {
@@ -200,11 +211,9 @@ export function ApplicationTabBar({
               onDrop={(event) => {
                 event.preventDefault();
                 if (dragging.current) onMove(dragging.current, tab.id);
-                dragging.current = null;
+                finishDrag();
               }}
-              onDragEnd={() => {
-                dragging.current = null;
-              }}
+              onDragEnd={finishDrag}
               onKeyDown={(event) => {
                 if (
                   event.key !== 'ContextMenu' &&
