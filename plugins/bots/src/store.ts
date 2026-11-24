@@ -151,6 +151,14 @@ export class BotStore {
     return this.mutate(ref, bot => ({ ...bot, mainThreadId: threadId, updatedAt: this.now() }));
   }
 
+  clearRoleChanged(ref: string): Promise<Bot> {
+    return this.mutate(ref, bot => {
+      if (!bot.roleChanged) return bot;
+      delete bot.roleChanged;
+      return bot;
+    });
+  }
+
   clearMainThread(ref: string, deletedId: string): Promise<Bot> {
     return this.mutate(ref, bot => {
       if (bot.mainThreadId !== deletedId) return bot;

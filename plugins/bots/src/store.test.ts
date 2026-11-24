@@ -74,6 +74,10 @@ describe('BotStore', () => {
     const { store, map } = makeStore({ 'bots:v1': [{ ...bot, avatar: '🦉' }] });
     expect(await store.list()).toEqual([bot]);
     await store.update(bot.id, { name: 'Scout' });
+    // A rename with a live main thread flags the role change until it is delivered.
+    expect(map.get('bots:v1')).toEqual([{ ...bot, name: 'Scout', updatedAt: 100, roleChanged: true }]);
+    await store.clearRoleChanged(bot.id);
+    await store.clearRoleChanged(bot.id);
     expect(map.get('bots:v1')).toEqual([{ ...bot, name: 'Scout', updatedAt: 100 }]);
   });
 

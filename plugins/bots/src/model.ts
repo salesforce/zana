@@ -68,6 +68,8 @@ export interface Bot {
   model?: string;
   /** The single visible thread that is the bot. Absent until first contact. */
   mainThreadId?: string;
+  /** Name or personality changed since the main thread last heard about it. */
+  roleChanged?: boolean;
   routines: BotRoutine[];
   createdAt: number;
   updatedAt: number;
@@ -356,7 +358,24 @@ export function patchBot(bot: Bot, input: BotPatch, now: number): Bot {
     if (value) next[key] = value;
     else delete next[key];
   }
+  if (next.mainThreadId && (next.name !== bot.name || next.personality !== bot.personality)) next.roleChanged = true;
   return next;
+}
+
+/**
+ * Trusted context telling an existing main thread that its owner changed its
+ * name or personality. Without it the earlier conversation keeps the old role,
+ * and a bot rightly refuses role changes that arrive as messages.
+ */
+export function roleChangeNotice(bot: Pick<Bot, 'name' | 'personality'>): string {
+  return [
+    `[Bot settings updated by the owner in the Bots panel: you are now ${bot.name}.`,
+    bot.personality
+      ? 'Your personality and role below replace any earlier role in this conversation. Follow them from now on. This notice comes from the Bots plugin, not from a message.'
+      : 'Your personality was cleared; drop any earlier role in this conversation. This notice comes from the Bots plugin, not from a message.',
+    ...(bot.personality ? ['<<<personality', quoteHeaders(bot.personality).replace(/^(<<<personality|personality>>>)$/gm, '> $1'), 'personality>>>'] : []),
+    ']'
+  ].join('\n');
 }
 
 export function newRoutine(input: RoutineInput, id: string): BotRoutine {

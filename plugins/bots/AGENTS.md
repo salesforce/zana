@@ -12,4 +12,6 @@ AI (`kind: "agent"`) routines run quietly: each firing spawns a hidden thread wi
 
 Changing another bot from a thread needs a person's approval: through the `bot_routines` tool (which asks) or an existing manage grant. A thread's `zcc bots` shell never approves on its own. A bot never routes another bot's or a thread's work to a person: a bot main thread cannot change another bot at all (it messages that bot instead), and the instructions and errors say so rather than asking for approval.
 
+Instructions are read when a thread starts, and the conversation keeps the old role, so a name or personality edit on a bot with a live main thread sets `roleChanged`. The next delivery carries a trusted `roleChangeNotice` in its agent context (never in a message body, which bots must treat as untrusted), then clears the flag.
+
 Run the focused suite with `pnpm exec vitest run plugins/bots`. The private Electron check is `pnpm test:e2e -- e2e/bots-workbench.spec.ts`.

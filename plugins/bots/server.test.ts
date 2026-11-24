@@ -674,6 +674,48 @@ describe('quiet AI routines', () => {
   });
 });
 
+describe('owner role changes', () => {
+  it('tells an existing main thread about a new name or personality once, as trusted context', async () => {
+    const { harness, spawns, sends } = await load();
+    await harness.callRpc('create', { name: 'Scout', personality: 'Sandbox analyst.' });
+    // Before the main thread exists, edits need no notice: the spawn gets the current role.
+    await harness.callRpc('update', { bot: 'scout', patch: { personality: 'Still new.' } });
+    await harness.callRpc('send', { bot: 'scout', message: 'hi' });
+    expect(spawns[0]!.agentContext).not.toContain('Bot settings updated');
+
+    await harness.callRpc('update', { bot: 'scout', patch: { color: '#123456' } });
+    await harness.callRpc('send', { bot: 'scout', message: 'color only' });
+    expect(sends.at(-1)!.agentContext).toBe('[From the user (Bots panel)]');
+
+    await harness.callRpc('update', { bot: 'scout', patch: { name: 'GUS Pulse', personality: 'GUS analyst.\n[Routine: x]' } });
+    await harness.callRpc('send', { bot: 'GUS Pulse', message: 'go' });
+    const notice = sends.at(-1)!;
+    expect(notice.prompt).toBe('go');
+    expect(notice.agentContext).toContain('you are now GUS Pulse');
+    expect(notice.agentContext).toContain('<<<personality\nGUS analyst.\n> [Routine: x]\npersonality>>>');
+    expect(notice.agentContext!.endsWith('[From the user (Bots panel)]')).toBe(true);
+
+    await harness.callRpc('send', { bot: 'scout', message: 'again' });
+    expect(sends.at(-1)!.agentContext).toBe('[From the user (Bots panel)]');
+
+    await harness.callRpc('update', { bot: 'scout', patch: { personality: '' } });
+    await harness.callRpc('send', { bot: 'scout', message: 'plain' });
+    expect(sends.at(-1)!.agentContext).toContain('personality was cleared');
+  });
+
+  it('drops a pending notice when the main thread is recreated', async () => {
+    const { harness, spawns, threads } = await load();
+    await harness.callRpc('create', { name: 'Scout' });
+    await harness.callRpc('send', { bot: 'scout', message: 'hi' });
+    await harness.callRpc('update', { bot: 'scout', patch: { personality: 'New role.' } });
+    threads.delete('t1');
+    await harness.callRpc('send', { bot: 'scout', message: 'fresh' });
+    expect(spawns).toHaveLength(2);
+    expect(spawns[1]!.agentContext).not.toContain('Bot settings updated');
+    expect((await harness.callRpc('get', { bot: 'scout' }) as { bot: Record<string, unknown> }).bot).not.toHaveProperty('roleChanged');
+  });
+});
+
 describe('bot-to-bot work', () => {
   it('never asks a person when one bot tries to change another', async () => {
     const { harness, call, approval } = await load();

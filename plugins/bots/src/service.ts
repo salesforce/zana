@@ -7,6 +7,7 @@ import {
   isNoChange,
   routineRunDelivery,
   jobDelivery,
+  roleChangeNotice,
   replyDelivery,
   routineDelivery,
   validatePrompt,
@@ -226,7 +227,11 @@ export class BotService {
     const existing = bot.mainThreadId ? await this.thread(bot.mainThreadId) : null;
     if (existing && existing.deletedAt == null) {
       if (existing.archivedAt != null) await this.zcc.sdk.threads.unarchive({ threadId: existing.id });
-      if (delivery) await this.zcc.sdk.threads.send({ threadId: existing.id, ...this.wire(delivery), mode: 'queue-if-active' });
+      if (delivery) {
+        const message = bot.roleChanged ? { ...delivery, agentContext: `${roleChangeNotice(bot)}\n${delivery.agentContext}` } : delivery;
+        await this.zcc.sdk.threads.send({ threadId: existing.id, ...this.wire(message), mode: 'queue-if-active' });
+        if (bot.roleChanged) return { bot: await this.store.clearRoleChanged(bot.id), threadId: existing.id, created: false };
+      }
       return { bot, threadId: existing.id, created: false };
     }
     const spawned = await this.zcc.sdk.threads.spawn({
@@ -239,6 +244,7 @@ export class BotService {
       ...(bot.model ? { model: bot.model } : {}),
       pluginMetadata: { botId: bot.id, botRole: 'main' }
     });
+    if (bot.roleChanged) await this.store.clearRoleChanged(bot.id);
     const updated = await this.store.setMainThread(bot.id, spawned.id);
     this.changed(bot.id);
     return { bot: updated, threadId: spawned.id, created: true };
