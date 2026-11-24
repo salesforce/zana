@@ -97,9 +97,15 @@ export function proxyToNext(request, response, origin) {
   }
   const headers = { ...request.headers };
   delete headers.connection;
+  // Host and port come only from the configured origin; the request target
+  // contributes the path and query, so it can never select the upstream host.
+  const base = new URL(origin);
   const upstream = httpRequest(
-    target,
     {
+      protocol: base.protocol,
+      hostname: base.hostname,
+      port: base.port,
+      path: `${target.pathname}${target.search}`,
       method: request.method,
       headers
     },

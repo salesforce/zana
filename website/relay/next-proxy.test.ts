@@ -50,9 +50,16 @@ describe('next-proxy helpers', () => {
     });
 
     it('never resolves to a different origin, even after dot-segment normalization', () => {
-      for (const target of ['/.//evil.example/x', '/a/..//evil.example/x', '/%2F%2Fevil.example/x']) {
+      const expected: Array<[string, string]> = [
+        ['/.//evil.example/x', '//evil.example/x'],
+        ['/a/..//evil.example/x', '//evil.example/x'],
+        ['/%2F%2Fevil.example/x', '/%2F%2Fevil.example/x']
+      ];
+      for (const [target, pathname] of expected) {
         const resolved = resolveNextTarget(target, origin);
-        if (resolved) expect(resolved.origin).toBe('http://127.0.0.1:4322');
+        expect(resolved).not.toBeNull();
+        expect(resolved?.origin).toBe(origin);
+        expect(resolved?.pathname).toBe(pathname);
       }
     });
   });
@@ -93,6 +100,8 @@ describe('next-proxy helpers', () => {
         )
       );
       expect(statuses[0]).toBe(400);
+      // Dot-segment form is origin-form: proxied to Next, never to the other host.
+      expect(statuses[1]).toBe(200);
       expect(evilHits).toBe(0);
     } finally {
       await new Promise<void>((resolve) => evil.close(() => resolve()));
