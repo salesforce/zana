@@ -22,6 +22,9 @@ vi.mock('./thread/pickers/ProviderIcon.js', () => ({ ProviderIcon: ({ providerId
 vi.mock('./listpane/FocusedProjectMenu.js', () => ({
   FocusedProjectMenu: ({ project }: { project: Project }) => <div role="group" aria-label={`Project menu for ${project.name}`} />
 }));
+import { useSplitWorkspace } from '../lib/split-layout/store.js';
+import { createSinglePaneLayout } from '../lib/split-layout/splitThreadNavigation.js';
+import { listPanes } from '../lib/split-layout/ops.js';
 import { useData, useUi, useAgentStatus } from '../store.js';
 import { resumingAgents } from '../lib/agent-tab-resume.js';
 import { useThreads } from '../thread-store.js';
@@ -44,6 +47,7 @@ const tabs = () => screen.getAllByRole('tab');
 
 beforeEach(() => {
   useApplicationTabs.setState({ open: [], closed: [], initializedScope: undefined });
+  useSplitWorkspace.setState({ layout: null, scopeKey: 'global', scopes: {} });
   useSetupPages.setState({ pages: [] });
   h.panels = [{ pluginId: 'test-plugin', id: 'docs' }];
   h.rpc.mockReset().mockResolvedValue({ available: true }); h.select.mockReset();
@@ -500,7 +504,7 @@ it('reorders mixed tabs from their menus and by dragging without navigating or l
   openActions('Connect a machine'); action('Move tab right');
   const transfer = { setData: vi.fn(), effectAllowed: '' };
   fireEvent.dragStart(tabs()[1]!, { dataTransfer: transfer });
-  expect(transfer.setData).toHaveBeenCalledWith('text/plain', 'setup:machine');
+  expect(transfer.setData).toHaveBeenCalledWith('application/x-zcc-application-tab', 'setup:machine');
   fireEvent.dragOver(tabs()[2]!); fireEvent.drop(tabs()[2]!); fireEvent.dragEnd(tabs()[1]!);
   expect(tabs()[2]!.getAttribute('aria-label')).toBe('Connect a machine');
   expect(useSetupPages.getState().pages).toHaveLength(1);
@@ -811,4 +815,102 @@ it('closing an agent tab keeps the process running and offers reopen for a live 
   fireEvent.click(screen.getAllByRole('button', { name: /Close/ }).find(b => b.closest('[data-tab-id="agent:s1"]') || b.getAttribute('aria-label')?.includes('Agent one'))!);
   expect(h.closeTerminal).not.toHaveBeenCalled();
   expect(useApplicationTabs.getState().closed.map(applicationTabId)).toEqual(['agent:s1']);
+});
+
+
+function mountDropTarget() {
+  const { container } = render(<div className="split-workspace"><div data-split-pane-id="pane-1"><textarea /></div></div>);
+  const pane = container.querySelector<HTMLElement>('[data-split-pane-id]')!;
+  vi.spyOn(pane, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 100, 500, 300));
+  const child = pane.querySelector('textarea')!;
+  const dataTransfer = { setData: vi.fn(), effectAllowed: '', dropEffect: '' };
+  const start = (tab: HTMLElement) => fireEvent.dragStart(tab, { dataTransfer });
+  const event = (type: string, x: number, y: number) => {
+    const drag = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y });
+    Object.defineProperty(drag, 'dataTransfer', { value: dataTransfer });
+    return fireEvent(child, drag);
+  };
+  return { start, event, child, dataTransfer, workspace: pane.parentElement! };
+}
+
+it('previews the edge under the pointer, splits at release and focuses an already visible tab', () => {
+  mount(); visit('/threads/b'); visit('/threads/a');
+  const { start, event, child, dataTransfer } = mountDropTarget();
+  const layout = createSinglePaneLayout({ kind: 'thread', threadId: 'a', projectId: null });
+  useSplitWorkspace.setState({ layout });
+  const order = [...tabs()];
+  const childDrop = vi.fn();
+  child.addEventListener('drop', childDrop);
+  start(order[1]!);
+  expect(event('dragover', 110, 250)).toBe(false);
+  expect(document.querySelector('.split-drag-overlay-label')?.textContent).toBe('Split left');
+  expect(dataTransfer.dropEffect).toBe('move');
+  fireEvent(child, new MouseEvent('dragleave', { bubbles: true, relatedTarget: child.parentElement }));
+  expect(document.querySelector<HTMLElement>('.split-drag-overlay')?.style.display).toBe('block');
+  fireEvent.dragLeave(child, { relatedTarget: null });
+  expect(document.querySelector<HTMLElement>('.split-drag-overlay')?.style.display).toBe('none');
+  event('dragover', 350, 115);
+  expect(document.querySelector('.split-drag-overlay-label')?.textContent).toBe('Split top');
+  event('drop', 350, 390);
+  expect(childDrop).not.toHaveBeenCalled();
+  const after = useSplitWorkspace.getState().layout!;
+  expect(after.root).toMatchObject({ type: 'split', dir: 'col' });
+  expect(listPanes(after.root).map(p => p.content)).toEqual([
+    { kind: 'thread', threadId: 'a', projectId: null }, { kind: 'thread', threadId: 'b', projectId: null }
+  ]);
+  expect(tabs()).toEqual(order);
+  expect(screen.getByTestId('route').textContent).toBe('/threads/b');
+  expect(document.querySelector('.split-drag-overlay')).toBeNull();
+  start(order[0]!);
+  event('dragover', 590, 250);
+  expect(document.querySelector('.split-drag-overlay-label')?.textContent).toContain('Already open');
+  event('drop', 590, 250);
+  expect(useSplitWorkspace.getState().layout?.root).toBe(after.root);
+  expect(screen.getByTestId('route').textContent).toBe('/threads/a');
+});
+
+it('cancels tab drops on dragend and navigation and ignores unsupported and external drags', () => {
+  mount(); openMachineSetup(); visit('/threads/a');
+  const { start, event, workspace } = mountDropTarget();
+  start(tabs()[1]!);
+  expect(event('dragover', 590, 250)).toBe(true);
+  fireEvent.dragEnd(tabs()[1]!);
+  start(tabs()[0]!);
+  fireEvent.dragOver(workspace);
+  event('dragover', 590, 250);
+  useSplitWorkspace.setState({ scopeKey: 'project:q' });
+  expect(event('dragover', 590, 250)).toBe(true);
+  expect(event('drop', 590, 250)).toBe(true);
+  useSplitWorkspace.setState({ scopeKey: 'global' });
+  fireEvent.dragEnd(tabs()[0]!);
+  expect(event('drop', 590, 250)).toBe(true);
+  start(tabs()[0]!);
+  visit('/settings');
+  expect(document.querySelector('.split-drag-overlay')).toBeNull();
+  expect(event('drop', 590, 250)).toBe(true);
+  expect(useSplitWorkspace.getState().layout).toBeNull();
+});
+
+it('uses the destination scope for a CLI agent and preserves project layout isolation', () => {
+  mount('/sessions/s1'); visit('/threads/b'); visit('/projects/p/threads/a');
+  useSplitWorkspace.setState({ scopeKey: 'project:p', layout: createSinglePaneLayout({ kind: 'thread', threadId: 'a', projectId: 'p' }) });
+  const { start, event } = mountDropTarget();
+  start(tabs()[1]!);
+  expect(event('dragover', 590, 250)).toBe(true);
+  fireEvent.dragEnd(tabs()[1]!);
+  start(tabs()[0]!);
+  event('drop', 350, 250);
+  expect(useSplitWorkspace.getState().layout?.root).toMatchObject({ content: { kind: 'agent-session', sessionId: 's1', projectId: 'p' } });
+  expect(screen.getByTestId('route').textContent).toBe('/projects/p/sessions/s1');
+});
+
+it('opens a pinned item at its own subpath in the existing plugin pane', () => {
+  seed(pin('one'), pin('two')); mountAt('/plugins/test-plugin/docs/one');
+  useSplitWorkspace.setState({ layout: createSinglePaneLayout({ kind: 'plugin-panel', pluginId: 'test-plugin', panelPath: 'docs', subPath: 'one' }) });
+  const { start, event } = mountDropTarget();
+  start(tabs()[1]!);
+  event('drop', 590, 250);
+  expect(h.select).toHaveBeenCalledWith('p');
+  expect(screen.getByTestId('route').textContent).toBe('/plugins/test-plugin/docs/two');
+  expect(listPanes(useSplitWorkspace.getState().layout!.root)).toHaveLength(1);
 });
