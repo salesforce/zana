@@ -5,6 +5,7 @@ import {
   bindWheelZoom,
   MAX_RENDERER_ZOOM_FACTOR,
   MIN_RENDERER_ZOOM_FACTOR,
+  WHEEL_ZOOM_COALESCE_MS,
   steppedZoomLevel,
   zoomFactorFromLevel,
   zoomLevelFromFactor,
@@ -127,19 +128,27 @@ describe('zoomMenuItems on macOS', () => {
 });
 
 describe('bindWheelZoom', () => {
-  function wheelSource(factor = DEFAULT_RENDERER_ZOOM_FACTOR, destroyed = false) {
+  function wheelSource(factor = DEFAULT_RENDERER_ZOOM_FACTOR, options: { destroyed?: boolean; platform?: NodeJS.Platform } = {}) {
     const { target, factor: current } = fakeTarget(factor);
+    let clock = 1_000;
     let listener: ((event: unknown, direction: 'in' | 'out') => void) | undefined;
     const source: WheelZoomSource = {
       ...target.webContents,
-      isDestroyed: () => destroyed,
+      isDestroyed: () => options.destroyed ?? false,
       on: (_event, fn) => {
         listener = fn;
         return source;
       }
     };
-    bindWheelZoom(source);
-    return { wheel: (direction: 'in' | 'out') => listener?.({}, direction), current };
+    bindWheelZoom(source, { platform: options.platform ?? 'win32', now: () => clock });
+    return {
+      wheel: (direction: 'in' | 'out', advanceMs = WHEEL_ZOOM_COALESCE_MS) => {
+        clock += advanceMs;
+        listener?.({}, direction);
+      },
+      current,
+      subscribed: () => listener !== undefined
+    };
   }
 
   it('steps one menu step per notch, in and out', () => {
@@ -148,6 +157,15 @@ describe('bindWheelZoom', () => {
     expect(current()).toBeCloseTo(DEFAULT_RENDERER_ZOOM_FACTOR * 1.2 ** 0.5, 4);
     wheel('out');
     expect(current()).toBeCloseTo(DEFAULT_RENDERER_ZOOM_FACTOR, 4);
+  });
+
+  it('coalesces a burst of reports into one step, then steps again after the window', () => {
+    const { wheel, current } = wheelSource();
+    wheel('in');
+    for (let i = 0; i < 5; i++) wheel('in', 10);
+    expect(current()).toBeCloseTo(DEFAULT_RENDERER_ZOOM_FACTOR * 1.2 ** 0.5, 4);
+    wheel('in');
+    expect(current()).toBeCloseTo(DEFAULT_RENDERER_ZOOM_FACTOR * 1.2, 4);
   });
 
   it('stops at the zoom range limits', () => {
@@ -160,8 +178,18 @@ describe('bindWheelZoom', () => {
   });
 
   it('ignores a request after the window is destroyed', () => {
-    const { wheel, current } = wheelSource(DEFAULT_RENDERER_ZOOM_FACTOR, true);
+    const { wheel, current } = wheelSource(DEFAULT_RENDERER_ZOOM_FACTOR, { destroyed: true });
     wheel('in');
     expect(current()).toBeCloseTo(DEFAULT_RENDERER_ZOOM_FACTOR, 4);
+  });
+
+  it('keeps macOS on main: no listener, no wheel zoom', () => {
+    const { subscribed, current } = wheelSource(DEFAULT_RENDERER_ZOOM_FACTOR, { platform: 'darwin' });
+    expect(subscribed()).toBe(false);
+    expect(current()).toBeCloseTo(DEFAULT_RENDERER_ZOOM_FACTOR, 4);
+  });
+
+  it('binds on Linux like Windows', () => {
+    expect(wheelSource(DEFAULT_RENDERER_ZOOM_FACTOR, { platform: 'linux' }).subscribed()).toBe(true);
   });
 });

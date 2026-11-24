@@ -98,14 +98,38 @@ export interface WheelZoomSource extends ZoomTarget {
 }
 
 /**
+ * Smallest gap between two wheel zoom steps. Chromium can report several
+ * `zoom-changed` for one notch, and smooth wheels and precision touchpads
+ * (a Windows touchpad pinch arrives as Ctrl+wheel) report them continuously,
+ * so uncoalesced each report would be a full ~9.5% step.
+ */
+export const WHEEL_ZOOM_COALESCE_MS = 100;
+
+export interface WheelZoomOptions {
+  platform?: NodeJS.Platform;
+  now?: () => number;
+}
+
+/**
  * Applies Ctrl+mouse wheel zoom. Chromium reports the request through
  * `zoom-changed` but leaves applying it to the host, so without this the wheel
- * did nothing. One notch is one menu step, with the same range, and the level
- * is stored per origin like the menu zoom, so every window shares it.
+ * did nothing. One step is the menu step with the same range, at most one per
+ * `WHEEL_ZOOM_COALESCE_MS`. The level is stored per origin like the menu zoom,
+ * so every window shares it.
+ *
+ * macOS keeps main's behaviour (no wheel zoom): there Ctrl+scroll is the OS
+ * accessibility zoom and it is not known whether Chromium reports the
+ * combination, and this was only exercised on Windows.
  */
-export function bindWheelZoom(contents: WheelZoomSource): void {
+export function bindWheelZoom(contents: WheelZoomSource, options: WheelZoomOptions = {}): void {
+  const { platform = process.platform, now = Date.now } = options;
+  if (platform === 'darwin') return;
+  let lastStepAt = Number.NEGATIVE_INFINITY;
   contents.on('zoom-changed', (_event, direction) => {
     if (contents.isDestroyed()) return;
+    const at = now();
+    if (at - lastStepAt < WHEEL_ZOOM_COALESCE_MS) return;
+    lastStepAt = at;
     contents.setZoomLevel(steppedZoomLevel(contents.getZoomLevel(), direction === 'in' ? 1 : -1));
   });
 }

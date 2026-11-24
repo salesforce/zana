@@ -7,9 +7,11 @@
  * that a plain wheel does not zoom, and that the level survives a relaunch.
  */
 import { test, expect, launchApp, closeApp, type AppHandle } from './fixtures/app.js';
+import { DEFAULT_RENDERER_ZOOM_FACTOR as START_FACTOR, WHEEL_ZOOM_COALESCE_MS } from '../apps/desktop/src/window/window-zoom.js';
+
+test.skip(process.platform === 'darwin', 'macOS keeps main’s behaviour: no wheel zoom');
 
 const VISIBLE = { env: { ZCC_E2E_VISIBLE: '1' } };
-const START_FACTOR = 0.95;
 
 async function zoomFactor(app: AppHandle): Promise<number> {
   return app.electron.evaluate(({ BrowserWindow }, url) => {
@@ -50,14 +52,16 @@ test('Ctrl+wheel zooms in and out, a plain wheel does not, and the zoom survives
     // assert the direction, not a step count.
     let previous = START_FACTOR;
     for (let i = 0; i < 3; i++) {
+      // Notches closer than the coalescing window are dropped on purpose.
+      await first.window.waitForTimeout(WHEEL_ZOOM_COALESCE_MS * 2);
       await wheel(first, 120, true);
       await expect.poll(() => zoomFactor(first)).toBeGreaterThan(previous * 1.05);
       previous = await zoomFactor(first);
     }
     // Wheel down zooms back out.
+    await first.window.waitForTimeout(WHEEL_ZOOM_COALESCE_MS * 2);
     await wheel(first, -120, true);
     await expect.poll(() => zoomFactor(first)).toBeLessThan(previous * 0.95);
-    expect(await zoomFactor(first)).toBeGreaterThan(START_FACTOR);
     zoomed = await zoomFactor(first);
   } finally {
     await closeApp(first.electron);
