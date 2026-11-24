@@ -3,7 +3,7 @@ import { homedir, tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { acquireSnapshotSlot, changedPaths, configuredAliases, createPhaseTimer, githubRepository, parseTuples, prepareTinynodReview, runFastVerification, runFullVerification, runPrePush, runPrePushWithReview, selectPush, selectedTestFiles, snapshotCacheRoot, snapshotKey, spawnCommand, windowsPnpm, withSnapshot, withTestTimeoutScale } from './pre-push-verification.mjs';
+import { acquireSnapshotSlot, changedPaths, configuredAliases, createPhaseTimer, githubRepository, parseTuples, prepareTinynodReview, runFastVerification, runFullVerification, runPrePush, runPrePushWithReview, selectPush, selectedTestFiles, snapshotCacheRoot, snapshotKey, spawnCommand, sweepStaleTempClones, windowsPnpm, withSnapshot, withTestTimeoutScale } from './pre-push-verification.mjs';
 
 // Spy on spawnSync while keeping real spawning, so tests can check what the hook starts.
 vi.mock('node:child_process', async (importOriginal) => {
@@ -101,6 +101,75 @@ it('handles new branches and deletion-only pushes conservatively', () => {
   expect(selectPush({ tuples: [fresh], remoteUrl: 'https://github.com/salesforce/zana', ...services(['docs/readme.md']) })).toMatchObject({ action: 'skip' });
   expect(selectPush({ tuples: [fresh], remoteUrl: 'https://github.com/salesforce/zana', ...services(), hasObject: () => false })).toMatchObject({ action: 'full', reason: expect.stringContaining('origin/main') });
   expect(selectPush({ tuples: [{ ...feature, localOid: '0'.repeat(40) }], remoteUrl: 'https://github.com/salesforce/zana', ...services() })).toMatchObject({ action: 'skip', reason: 'ref deletion only' });
+});
+
+const FORK = 'https://github.com/example-fork/zana';
+const UPSTREAM = 'https://github.com/salesforce/zana';
+const ZERO = '0'.repeat(40);
+
+it('skips deletion-only pushes for any remote, including a fork', () => {
+  const deletion = { localRef: '(delete)', localOid: ZERO, remoteRef: 'refs/heads/feature', remoteOid: BASE };
+  expect(selectPush({ tuples: [deletion], remoteUrl: FORK, ...services() })).toMatchObject({ action: 'skip', reason: 'ref deletion only' });
+  expect(selectPush({ tuples: [deletion], remoteUrl: FORK, ...services(), windows: true })).toMatchObject({ action: 'skip' });
+  expect(selectPush({ tuples: [{ ...deletion, remoteRef: 'refs/heads/main' }], remoteUrl: UPSTREAM, ...services() })).toMatchObject({ action: 'skip' });
+});
+
+describe('windows pushes use the change-aware fast path', () => {
+  const win = (overrides = {}, tuples = [feature]) => selectPush({ tuples, remoteUrl: FORK, ...services(['apps/server/src/a.ts', 'apps/server/src/a.ts']), windows: true, ...overrides });
+
+  it('keeps full verification off Windows and selects fast against origin/main on Windows', () => {
+    expect(selectPush({ tuples: [feature], remoteUrl: FORK, ...services() })).toMatchObject({ action: 'full' });
+    expect(win()).toEqual({ action: 'fast', reason: expect.stringContaining('not verified GitHub'), paths: ['apps/server/src/a.ts'], oid: OID, base: BASE, feature: true });
+  });
+
+  it('covers protected refs and unknown refs, and records why full was chosen', () => {
+    expect(win({ remoteUrl: UPSTREAM }, [{ ...feature, remoteRef: 'refs/heads/main' }])).toMatchObject({ action: 'fast', reason: expect.stringContaining('protected ref') });
+    expect(win({ remoteUrl: UPSTREAM }, [{ ...feature, remoteRef: 'refs/changes/1' }])).toMatchObject({ action: 'fast', reason: expect.stringContaining('unknown ref') });
+  });
+
+  it('ignores a deletion that rides along with one pushed commit', () => {
+    const deletion = { localRef: '(delete)', localOid: ZERO, remoteRef: 'refs/heads/old', remoteOid: BASE };
+    expect(win({}, [feature, deletion])).toMatchObject({ action: 'fast', oid: OID });
+  });
+
+  it('stays on full verification when no safe selection exists', () => {
+    const other = { ...feature, localOid: 'c'.repeat(40), remoteRef: 'refs/heads/other' };
+    expect(win({ remoteUrl: UPSTREAM }, [feature, other])).toMatchObject({ action: 'full', reason: expect.stringContaining('multiple') });
+    expect(win({ hasObject: () => false })).toMatchObject({ action: 'full' });
+    expect(win({ mergeBase: () => null })).toMatchObject({ action: 'full' });
+    expect(win({ changed: () => [] })).toMatchObject({ action: 'full' });
+  });
+
+  it('is chosen from the platform passed to runPrePush', () => {
+    const select = vi.fn(() => ({ action: 'skip', reason: 'x' }));
+    const input = `refs/heads/feature ${OID} refs/heads/feature ${BASE}
+`;
+    runPrePush({ input, remoteUrl: FORK, root: process.cwd(), log: () => {}, error: () => {}, select, platform: 'win32' });
+    runPrePush({ input, remoteUrl: FORK, root: process.cwd(), log: () => {}, error: () => {}, select, platform: 'linux' });
+    expect(select.mock.calls.map(([args]) => (args as { windows: boolean }).windows)).toEqual([true, false]);
+  });
+});
+
+describe('sweepStaleTempClones', () => {
+  const OLD = 7 * 60 * 60 * 1000;
+
+  it('removes only old pre-push clones and leaves other temp folders alone', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sweep-test-'));
+    const make = (name: string, ageMs: number) => {
+      mkdirSync(join(dir, name));
+      const when = new Date(Date.now() - ageMs);
+      utimesSync(join(dir, name), when, when);
+    };
+    make('zana-pre-push-AbC123', OLD);
+    make('zana-pre-push-hooks-xYz789', OLD);
+    make('zana-pre-push-fresh1', 60_000);
+    make('zana-pre-push-keep', OLD);
+    make('unrelated-folder', OLD);
+    writeFileSync(join(dir, 'zana-pre-push-file12'), 'x');
+    expect(sweepStaleTempClones({ dir, log: () => {} })).toBe(2);
+    expect(readdirSync(dir).sort()).toEqual(['unrelated-folder', 'zana-pre-push-file12', 'zana-pre-push-fresh1', 'zana-pre-push-keep']);
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 it('runs snapshot verification once per selected pushed oid and surfaces failures', () => {

@@ -52,6 +52,15 @@ stamps live in `.git/pre-push-verified`. Protected refs and unsafe push shapes
 run `full`. CI remains merge authority and always runs full unit and affected
 E2E suites.
 
+Deleting a remote branch sends no commits, so a deletion-only push skips
+verification for any remote. On Windows the full suite cannot pass (hundreds of
+tests need POSIX tools or hit file-locking differences), so a push that would run
+`full` (a fork remote, a protected ref, an unknown ref) instead gets the
+change-aware fast path against `origin/main`'s merge base. It stays on `full`
+when no single pushed commit or non-empty diff can be selected. Temp clones named
+`zana-pre-push-*` that are over six hours old are removed when a fresh snapshot
+is made.
+
 The snapshot is a cached clone when one is free. Each repository keeps up to two
 per Node ABI, platform, and architecture under the user cache directory
 (`~/Library/Caches/zana-pre-push` on macOS), each held under an exclusive lock.

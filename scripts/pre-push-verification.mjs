@@ -105,8 +105,29 @@ function inertDocs(paths) {
  * Pure selection policy. `hasObject`, `mergeBase`, and `isAncestor` are injected
  * so tests can exercise force/new-branch behavior without a network or repo.
  */
-export function selectPush({ tuples, remoteUrl, aliases = {}, hasObject, mergeBase, isAncestor, changed }) {
+export function selectPush({ tuples, remoteUrl, aliases = {}, hasObject, mergeBase, isAncestor, changed, windows = false }) {
   if (!tuples?.length) return { action: 'abort', reason: 'missing or malformed pre-push ref tuples' };
+  // A deletion sends no commits, so it never needs tests, whatever the remote is.
+  if (tuples.every((tuple) => ZERO_OID.test(tuple.localOid))) return { action: 'skip', reason: 'ref deletion only', paths: [] };
+  const selection = selectByPolicy({ tuples, remoteUrl, aliases, hasObject, mergeBase, isAncestor, changed });
+  return windows && selection.action === 'full' ? windowsFastSelection(selection, { tuples, hasObject, mergeBase, changed }) : selection;
+}
+
+/**
+ * Windows cannot pass verify:full (hundreds of POSIX-only tests), so a push the
+ * policy would send to full verification gets the change-aware fast path against
+ * origin/main instead. Anything it cannot select safely stays on the full path.
+ */
+function windowsFastSelection(full, { tuples, hasObject, mergeBase, changed }) {
+  const oids = [...new Set(tuples.filter((tuple) => !ZERO_OID.test(tuple.localOid)).map((tuple) => tuple.localOid))];
+  if (oids.length !== 1 || !hasObject('origin/main')) return full;
+  const base = mergeBase('origin/main', oids[0]);
+  const paths = base ? [...new Set(changed(base, oids[0]))].sort() : [];
+  if (!paths.length) return full;
+  return { action: 'fast', reason: `windows change-aware verification (${full.reason})`, paths, oid: oids[0], base, feature: true };
+}
+
+function selectByPolicy({ tuples, remoteUrl, aliases, hasObject, mergeBase, isAncestor, changed }) {
   if (!githubRepository(remoteUrl, aliases)) return { action: 'full', reason: 'remote is not verified GitHub salesforce/zana' };
   const paths = new Set();
   const oids = new Set();
@@ -129,7 +150,6 @@ export function selectPush({ tuples, remoteUrl, aliases = {}, hasObject, mergeBa
     }
     oids.add(tuple.localOid);
   }
-  if (!oids.size) return { action: 'skip', reason: 'ref deletion only', paths: [] };
   if (oids.size !== 1) return { action: 'full', reason: 'multiple distinct pushed commits require separate snapshots', oids: [...oids] };
   if (bases.size !== 1) return { action: 'full', reason: 'multiple remote bases require full verification', oids: [...oids] };
   const resultPaths = [...paths].sort();
@@ -496,7 +516,31 @@ function verifyInSlot(slot, { oid, prepare, log }, verify) {
   }
 }
 
+const STALE_CLONE_MS = 6 * 60 * 60 * 1000;
+const TEMP_CLONE = /^zana-pre-push-(?:hooks-)?[A-Za-z0-9]{6}$/;
+
+/**
+ * A hook killed mid-run (agent timeout, Ctrl+C) leaves its temp clone, about
+ * 2 GB with node_modules. Drop clones old enough that no live run can own them.
+ * Best effort: a clone that is still locked is left for the next push.
+ */
+export function sweepStaleTempClones({ dir = tmpdir(), now = Date.now(), log = console.log } = {}) {
+  let removed = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (!entry.isDirectory() || !TEMP_CLONE.test(entry.name) || now - statSync(path).mtimeMs < STALE_CLONE_MS) continue;
+    try {
+      rmSync(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+      removed += 1;
+    } catch (cause) {
+      log(`pre-push: could not remove stale temp clone ${entry.name}: ${cause.message}`);
+    }
+  }
+  return removed;
+}
+
 function verifyFresh({ oid, prepare, log }, verify) {
+  sweepStaleTempClones({ log });
   const snapshot = mkdtempSync(join(tmpdir(), 'zana-pre-push-'));
   try {
     log(`pre-push: snapshot ${oid.slice(0, 12)} in ${snapshot}`);
@@ -813,7 +857,7 @@ function createReviewSession({ a, target, root, common, lock, developerOrigin, e
   };
 }
 
-export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, root = process.cwd(), log = console.log, error = console.error, select = selectPush, verify = runFullVerification, fastVerify = runFastVerification, run = spawnCommand, review = () => null } = {}) {
+export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, platform = process.platform, root = process.cwd(), log = console.log, error = console.error, select = selectPush, verify = runFullVerification, fastVerify = runFastVerification, run = spawnCommand, review = () => null } = {}) {
   if (!remoteUrl) {
     error('pre-push: Git did not provide remote URL; aborting push.');
     return 1;
@@ -832,6 +876,7 @@ export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, root = 
     aliases,
     ...checks,
     changed: (base, oid) => changedPaths(base, oid, runGit),
+    windows: platform === 'win32',
   });
   log(`pre-push: ${selection.action}; ${selection.reason}`);
   if (selection.paths?.length) log(`pre-push: selected paths:\n${selection.paths.map((path) => `  ${path}`).join('\n')}`);
