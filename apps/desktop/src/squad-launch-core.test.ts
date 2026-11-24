@@ -245,6 +245,7 @@ describe('launchSquad', () => {
   it('squadLimitsPolicy maps each limit and ignores invalid input', () => {
     expect(squadLimitsPolicy({ maxConcurrent: 3 })).toEqual({ maxConcurrent: 3 });
     expect(squadLimitsPolicy({ claimWallClockMs: 120_000, claimStallMs: 60_000 })).toEqual({ maxClaimWallClockMs: 120_000, maxClaimStallMs: 60_000 });
+    expect(squadLimitsPolicy({ claimOutputCeilingMs: 600_000 })).toEqual({ maxClaimOutputOnlyMs: 600_000 });
     expect(squadLimitsPolicy('nope')).toEqual({});
     expect(squadLimitsPolicy({ maxConcurrent: 0 })).toEqual({});
   });

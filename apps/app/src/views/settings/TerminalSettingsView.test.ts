@@ -81,6 +81,15 @@ describe('Config pages are searchable (values, options, synonyms)', () => {
     expect(valueOf('global.theme', { theme: 'bogus' })).toBeUndefined();
   });
 
+  it('reads the Squads Advanced values: reminder window and unit checkpoints', () => {
+    const valueOf = (id: string, c: Record<string, unknown>) => getStaticEntries().find((e) => e.id === id)?.value?.(cfg(c));
+    expect(valueOf('squads.blocker-reminder.minutes', {})).toBe('Default (30 minutes)');
+    expect(valueOf('squads.blocker-reminder.minutes', { executionBlockerReminderMs: 0 })).toBe('Off');
+    expect(valueOf('squads.blocker-reminder.minutes', { executionBlockerReminderMs: 15 * 60_000 })).toBe('15 minutes');
+    expect(valueOf('squads.unit-checkpoints', {})).toBe('On');
+    expect(valueOf('squads.unit-checkpoints', { squadUnitCheckpointsEnabled: false })).toBe('Off');
+  });
+
   it('never defines a value on a secret-looking Config entry', () => {
     const config = getStaticEntries().filter((e) => /^(global|composer|keyboard|inbox|browser|terminal|editor|prompts)\./.test(e.id));
     expect(config.length).toBeGreaterThan(40);

@@ -20,7 +20,8 @@ const h = vi.hoisted(() => ({
   reviewIds: new Set<string>(),
   executionStores: [] as any[],
   executionDeps: null as any,
-  remoteLocalIo: [] as string[]
+  remoteLocalIo: [] as string[],
+  restartProbe: null as any
 }));
 
 vi.mock('node:fs/promises', async original => {
@@ -48,10 +49,11 @@ vi.mock('@zana-ai/zcc-host-daemon/pty', () => ({
     setMcpBaseUrl() {}
     setProjectRoots() {}
     setRulesResolver() {}
-    getSession(id: string) { return h.sessions.get(id) ?? null; }
+    getSession(id: string) { return h.sessions.get(id); }
     reply(id: string, text: string) { if (h.replyThrows) throw new Error('pty gone'); h.replies.push([id, text]); return true; }
     list() { return [...h.sessions.values()]; }
     on() { return this; }
+    off() { return this; }
   },
   isClaudeProfile: () => false
 }));
@@ -105,6 +107,23 @@ vi.mock('electron', () => ({
   ipcMain: { handle: () => {}, on: () => {} }, dialog: {}, shell: {}, screen: {},
   Menu: { setApplicationMenu: () => {}, buildFromTemplate: () => ({}) },
   nativeImage: { createFromPath: () => ({}) }, powerMonitor: { on: () => {} }
+}));
+vi.mock('../squad-worker-card-restart.js', () => ({
+  // Probe: walk every dependency the host wires, so the wiring itself is exercised without a live worker.
+  restartSquadWorkerForOwner: async (deps: any, recordId: string, slotId: string) => {
+    h.restartProbe = {
+      session: deps.getSession('probe'),
+      records: await deps.listLifecycleRecords(),
+      closing: await deps.launchIsClosing(recordId),
+      execution: await deps.getExecution('p1', 'e-probe'),
+      terminal: [deps.isTerminalExecutionState('COMPLETED'), deps.isTerminalExecutionState('RUNNING')],
+      respawnExited: await deps.respawnExited(recordId, slotId),
+      restart: await deps.restart('probe', { maySpawn: async () => true }).catch((error: Error) => ({ threw: error.message })),
+      worker: await deps.getWorker?.(recordId, slotId),
+      respawnSeat: await deps.respawnSeat?.(recordId, slotId)
+    };
+    return { ok: true };
+  }
 }));
 vi.mock('../updater.js', () => ({ createUpdater: () => ({}) }));
 vi.mock('../test-tap.js', () => ({ record: () => {}, recordLog: () => {}, isEnabled: () => false, enable: () => {}, drain: () => ({ entries: [], cursor: 0 }), snapshot: () => ({ entries: [] }), reset: () => {} }));
@@ -1064,5 +1083,117 @@ describe('named-check host shutdown', () => {
       expect(await pending).toMatchObject({ status: 'cancelled' });
       await expect(host.runSquadNamedCheck(record, 'check:slow')).rejects.toThrow('closed');
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('recordClaimWriteFromSettledEvent', () => {
+  const worker = { projectId: 'p1', cohort: { executionId: 'e1', role: 'worker', slotId: 'w1' } };
+  const body = (extra: Record<string, unknown> = {}) => JSON.stringify({ tool_name: 'Write', tool_input: { file_path: 'a.txt' }, hook_event_name: 'PostToolUse', ...extra });
+  const service = () => ({ recordWorkerToolEvent: vi.fn().mockResolvedValue(undefined) });
+
+  it('records the settled write on the live worker claim, keyed by its session', async () => {
+    const svc = service();
+    await host.recordClaimWriteFromSettledEvent(svc as never, worker, 'p1', body(), 's1');
+    expect(svc.recordWorkerToolEvent).toHaveBeenCalledWith('e1', 'w1', { toolName: 'Write', input: { file_path: 'a.txt' }, failed: false, sessionId: 's1' });
+  });
+
+  it('marks a failed tool and omits the session when none is given', async () => {
+    const svc = service();
+    await host.recordClaimWriteFromSettledEvent(svc as never, worker, 'p1', body({ hook_event_name: 'PostToolUseFailure' }));
+    expect(svc.recordWorkerToolEvent).toHaveBeenCalledWith('e1', 'w1', { toolName: 'Write', input: { file_path: 'a.txt' }, failed: true });
+  });
+
+  it.each([
+    ['no session', null, 'p1'],
+    ['another project', worker, 'other'],
+    ['no cohort', { projectId: 'p1' }, 'p1'],
+    ['a non-worker role', { projectId: 'p1', cohort: { executionId: 'e1', role: 'orchestrator', slotId: 'o' } }, 'p1'],
+    ['no slot', { projectId: 'p1', cohort: { executionId: 'e1', role: 'worker' } }, 'p1']
+  ])('ignores %s', async (_name, session, projectId) => {
+    const svc = service();
+    await host.recordClaimWriteFromSettledEvent(svc as never, session as never, projectId, body(), 's1');
+    expect(svc.recordWorkerToolEvent).not.toHaveBeenCalled();
+  });
+
+  it('ignores a body that is not a JSON object', async () => {
+    const svc = service();
+    await host.recordClaimWriteFromSettledEvent(svc as never, worker, 'p1', 'not json');
+    await host.recordClaimWriteFromSettledEvent(svc as never, worker, 'p1', 'null');
+    expect(svc.recordWorkerToolEvent).not.toHaveBeenCalled();
+  });
+
+  it('never rejects when recording fails, asynchronously or synchronously', async () => {
+    const rejecting = { recordWorkerToolEvent: vi.fn().mockRejectedValue(new Error('store down')) };
+    await expect(host.recordClaimWriteFromSettledEvent(rejecting as never, worker, 'p1', body())).resolves.toBeUndefined();
+    const throwing = { recordWorkerToolEvent: vi.fn(() => { throw new Error('boom'); }) };
+    await expect(host.recordClaimWriteFromSettledEvent(throwing as never, worker, 'p1', body())).resolves.toBeUndefined();
+  });
+});
+
+describe('judgePlanFindings step titles', () => {
+  const plan = { workUnits: [{ id: 'write', title: 'Write output', prompt: 'x' }], findings: [{ severity: 'warning' as const, requirement: 'roster' as never, stepId: 'write', message: 'm' }, { severity: 'warning' as const, requirement: 'roster' as never, message: 'no step' }] };
+
+  it('names a finding by its step title without a Squad, and leaves step-less findings alone', async () => {
+    const { findings } = await host.judgePlanFindings('p1', undefined, plan);
+    expect(findings.find((finding) => finding.stepId === 'write')).toMatchObject({ stepTitle: 'Write output' });
+    expect(findings.find((finding) => !finding.stepId)).not.toHaveProperty('stepTitle');
+  });
+
+  it('names findings and bindings by step title against a Squad roster', async () => {
+    h.projects = [{ id: 'p1', path: h.root, name: 'Repo' }];
+    h.teams = [{ id: 'team1', name: 'Team', orchestratorPersonaId: 'orch', slots: [{ personaId: 'orch', initialTask: '' }] }];
+    const blocking = { ...plan, findings: plan.findings.map((finding) => ({ ...finding, severity: 'blocking' as const })) };
+    const { findings, bindings } = await host.judgePlanFindings('p1', 'team1', blocking);
+    expect(findings.filter((finding) => finding.stepId === 'write').every((finding) => finding.stepTitle === 'Write output')).toBe(true);
+    expect(bindings.every((binding: { stepId?: string; stepTitle?: string }) => !binding.stepId || binding.stepTitle === 'Write output')).toBe(true);
+  });
+});
+
+describe('Squad execution service wiring', () => {
+  it('names a persona for notices, and has no name for an unknown one', () => {
+    expect(h.executionDeps.personaName('orch')).toBe('Orch');
+    expect(h.executionDeps.personaName('ghost')).toBeUndefined();
+  });
+
+  it('reads the blocker reminder window from config; 0 disables, unset leaves the default', () => {
+    expect(h.executionDeps.blockerReminderMs()).toBeUndefined();
+    h.config = { executionBlockerReminderMs: 120_000 };
+    expect(h.executionDeps.blockerReminderMs()).toBe(120_000);
+    h.config = { executionBlockerReminderMs: 0 };
+    expect(h.executionDeps.blockerReminderMs()).toBe(0);
+  });
+
+  it('leaves the idle and heartbeat windows at the service default outside a fault build', () => {
+    expect(h.executionDeps.idleNoticeWindowMs()).toBeUndefined();
+    expect(h.executionDeps.heartbeatWarnWindowMs()).toBeUndefined();
+  });
+
+  it('checkpoints units unless the setting is explicitly off', () => {
+    expect(h.executionDeps.unitCheckpointsEnabled()).toBe(true);
+    h.config = { squadUnitCheckpointsEnabled: false };
+    expect(h.executionDeps.unitCheckpointsEnabled()).toBe(false);
+  });
+
+  it('waits for a worker session to leave the pty table, and times out for one that stays', async () => {
+    expect(await h.executionDeps.waitForWorkerSessionExit('gone', 50)).toBe(true);
+    h.sessions.set('stuck', pty({ id: 'stuck' }));
+    expect(await h.executionDeps.waitForWorkerSessionExit('stuck', 30)).toBe(false);
+  });
+
+  it('wires the owner restart through the card-restart path with real fences', async () => {
+    h.restartProbe = null;
+    await expect(h.executionDeps.restartWorker('no-such-launch', 'w1')).resolves.toEqual({ ok: true });
+    expect(h.restartProbe).toMatchObject({ terminal: [true, false], respawnExited: { ok: false } });
+    expect(h.restartProbe.session ?? null).toBeNull();
+    expect(h.restartProbe.execution).toBeUndefined();
+    expect(h.restartProbe.worker).toBeUndefined();
+    expect(h.restartProbe.respawnSeat).toMatchObject({ ok: false });
+  });
+
+  it('hands the launch identity of a known execution to the restart fences', async () => {
+    for (const created of h.executionStores) vi.spyOn(created, 'getInProject').mockResolvedValue({ state: 'RUNNING', callerPrincipalId: 'caller', teamLaunchRequestId: 'req' } as never);
+    h.restartProbe = null;
+    await h.executionDeps.restartWorker('no-such-launch', 'w1');
+    expect(h.restartProbe.execution).toEqual({ state: 'RUNNING', callerPrincipalId: 'caller', teamLaunchRequestId: 'req' });
   });
 });

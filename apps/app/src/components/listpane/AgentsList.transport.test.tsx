@@ -124,6 +124,36 @@ describe('AgentsListPane squad transport', () => {
     expect(document.body.textContent).not.toContain('owner Fix auth');
   });
 
+  it('shows a worker\'s claim liveness on its row, flags a stale one, and keeps exited or claimless seats plain', async () => {
+    const now = Date.now();
+    const assignment = (slotId: string, progressAt: number) => ({ slotId, state: 'CLAIMED', claimedAt: progressAt, progressAt, turnCount: 2 });
+    (window as unknown as { cc: { executionBoard: { listProject: ReturnType<typeof vi.fn> } } }).cc.executionBoard.listProject
+      .mockResolvedValue({ executions: [{ ...execution('e-x', 'cli', 'Live job'), work: { assignments: [assignment('fresh', now - 60_000), assignment('old', now - 20 * 60_000)] } }] });
+    const session = (id: string, slotId: string, title: string, status = 'running') => ({
+      id, title, status, profile: 'claude', createdAt: now - 1000,
+      cohort: { cohortId: 'c1', teamId: 'cli', teamName: 'CLI squad', role: 'worker', slotId, slotLabel: title, executionId: 'e-x' }
+    });
+    h.terminals = { p: [
+      { ...session('o1', 'orch', 'Lead'), cohort: { cohortId: 'c1', teamId: 'cli', teamName: 'CLI squad', role: 'orchestrator', slotLabel: 'Lead', executionId: 'e-x' } },
+      session('w1', 'fresh', 'Fresh worker'), session('w2', 'old', 'Old worker'), session('w3', 'idle', 'Idle worker'), session('w4', 'fresh', 'Gone worker', 'exited')
+    ] };
+    render(<MemoryRouter><AgentsListPane /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText('Fresh worker')).toBeTruthy());
+    const rowOf = (label: string) => screen.getByText(label).closest('button')!;
+    const fresh = rowOf('Fresh worker').querySelector('[data-testid="squad-worker-visibility"]')!;
+    expect(fresh.getAttribute('data-stale')).toBe('false');
+    expect(fresh.textContent).toContain('2 turns');
+    expect(fresh.className).not.toContain('is-stale');
+    const old = rowOf('Old worker').querySelector('[data-testid="squad-worker-visibility"]')!;
+    expect(old.getAttribute('data-stale')).toBe('true');
+    expect(old.className).toContain('is-stale');
+    expect(old.textContent).toContain('(stale)');
+    expect(rowOf('Idle worker').querySelector('[data-testid="squad-worker-visibility"]')).toBeNull();
+    expect(rowOf('Gone worker').querySelector('[data-testid="squad-worker-visibility"]')).toBeNull();
+    // No owner recorded: no owner line.
+    expect(screen.queryByTestId('squad-owner')).toBeNull();
+  });
+
   it('groups Modern squad members like a CLI squad and drops them from the thread list', async () => {
     (window as unknown as { cc: { executionBoard: { listProject: ReturnType<typeof vi.fn> } } }).cc.executionBoard.listProject
       .mockResolvedValue({ executions: [{
