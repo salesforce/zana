@@ -76,6 +76,8 @@ beforeEach(() => {
   validateProviderModelSelection.mockReset();
   harnessVerify.mockReset();
   harnessVerify.mockResolvedValue([]);
+  getPrimaryHost.mockReset();
+  getPrimaryHost.mockReturnValue({ id: 'local-host' });
 });
 
 describe('productPluginSpawnRouting', () => {
@@ -233,15 +235,24 @@ describe('plugin-keyed harness overrides', () => {
     return { ctx: ctx as never, raw: ctx, global, perProject };
   }
 
-  it('descriptors use the project host, an explicit host, or primary host for Default scope', async () => {
+  it('descriptors use project or explicit hosts without reading primary host', async () => {
     const { ctx } = overrideCtx();
     const hub = (ctx as { hostHub: unknown }).hostHub;
     await pluginHarnessDescriptors(ctx, { projectId: 'p1' });
     expect(harnessDescriptors).toHaveBeenLastCalledWith(hub, 'h1');
     await pluginHarnessDescriptors(ctx, { projectId: 'p1', hostId: 'h2' });
     expect(harnessDescriptors).toHaveBeenLastCalledWith(hub, 'h2');
+    expect(getPrimaryHost).not.toHaveBeenCalled();
+  });
+
+  it('uses primary host for Default-scope descriptors and tolerates no primary host', async () => {
+    const { ctx } = overrideCtx();
+    const hub = (ctx as { hostHub: unknown }).hostHub;
     await pluginHarnessDescriptors(ctx);
     expect(harnessDescriptors).toHaveBeenLastCalledWith(hub, 'local-host');
+    getPrimaryHost.mockReturnValue(undefined);
+    await pluginHarnessDescriptors(ctx);
+    expect(harnessDescriptors).toHaveBeenLastCalledWith(hub, undefined);
     await expect(pluginHarnessDescriptors(ctx, { projectId: 'nope' })).rejects.toThrow('unknown project');
   });
 

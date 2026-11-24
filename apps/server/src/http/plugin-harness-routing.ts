@@ -258,8 +258,8 @@ export async function pluginHarnessDescriptors(
   const project = input.projectId ? resolveScope(ctx, { kind: 'project', projectId: input.projectId }) : undefined;
   const hostId = typeof input.hostId === 'string' ? input.hostId : undefined;
   // Default-scope plugin settings belong to this computer, never an arbitrary connected host.
-  const defaultHostId = getPrimaryHost(ctx.db)?.id;
-  return harnessDescriptors(ctx.hostHub, hostId ?? (project?.kind === 'project' ? project.project.hostId : defaultHostId));
+  const selectedHostId = hostId ?? (project?.kind === 'project' ? project.project.hostId : undefined);
+  return harnessDescriptors(ctx.hostHub, selectedHostId ?? getPrimaryHost(ctx.db)?.id);
 }
 
 /**

@@ -14,6 +14,8 @@ import type { DocActor, PeerConflictChoices, PeerResolutionChoice } from '../sha
 
 type ReceiverFence = Pick<PluginPeerRequest, 'signal' | 'scope' | 'grantEpoch' | 'commitSync'>;
 
+const CHUNKS_PER_HEARTBEAT_YIELD = 16;
+
 /** Platform authenticates pair/capability; DD verifies store, roster and payload. */
 export class DesignDocPeerService {
   private running: Promise<SyncSummary> | null = null;
@@ -211,9 +213,9 @@ export class DesignDocPeerService {
     }
     const intents = this.sync.readyIntents(local.repoId);
     for (const [intentIndex, intent] of intents.entries()) {
-      if (this.abort.signal.aborted || this.sync.isRetiringReplica(local.repoId, local.replicaId)) break;
       // Local peers can answer through the bridge without returning to the worker event loop. Split backlog work into turns.
       if (intentIndex > 0) await this.yieldToHeartbeat();
+      if (this.abort.signal.aborted || this.sync.isRetiringReplica(local.repoId, local.replicaId)) break;
       attempted++;
       try {
         const member = this.sync.members(local.repoId).find((item) => item.replicaId === intent.memberReplicaId);
@@ -254,7 +256,7 @@ export class DesignDocPeerService {
               if (!missing.chunks.length) break;
               for (const [chunkIndex, chunk] of missing.chunks.entries()) {
                 await peers.call(member.machineId, 'chunk', this.sync.outgoingChunk(transfer, chunk.blobHash, chunk.index), options);
-                if ((chunkIndex + 1) % 16 === 0) await this.yieldToHeartbeat();
+                if ((chunkIndex + 1) % CHUNKS_PER_HEARTBEAT_YIELD === 0) await this.yieldToHeartbeat();
               }
               if (window === maximumWindows - 1) throw new PeerProtocolError('limit', 'missing chunk windows did not converge');
             }
