@@ -25,7 +25,7 @@ Handed to `export default function plugin(zcc)`.
 | `host.projectCall` | Project-bound host RPC routed to the project's machine (see Platform hooks) |
 | `ui.requestToolApproval` / `ui.consumeApproval` | Await main's approval sheet in an active server tool; verify and burn its scoped proof (see `approvals`) |
 | `status.needsConfiguration` / `configured` | Mark the plugin "Needs configuration" in the Plugins hub (e.g. until the user signs in), and clear it once set up; both apply live without a reload |
-| `sdk.threads` / `sdk.files` / `sdk.environments` / `sdk.providers` | Product SDK: attributed spawn with host, environment and service tier; thread metadata; confined host file read/write; environment PR lookup; provider models discovered on the selected host |
+| `sdk.threads` / `sdk.files` / `sdk.environments` / `sdk.providers` | Product SDK: attributed spawn with host, environment and service tier; thread metadata; scoped `threads.interactions.list/resolve` for externally relayed human approval decisions; confined host file read/write; environment PR lookup; provider models discovered on the selected host |
 | `sdk.system.defaultHost()` | Primary enrolled host ID, or `null` when none is configured |
 | `http.route` | Authenticated plugin HTTP routes; request `headers` and bounded `rawBody` preserve uploaded bytes; response `body` accepts a string or `Uint8Array` |
 | `sdk.hosts.list({ signal? })` | Read enrolled machine IDs and names; credentials and connection metadata are excluded. Use an exact ID when machine names are ambiguous. |
@@ -70,6 +70,25 @@ stamps `pluginId`, validates every field, and records the source on the
 `client/turn/requested` event, so the timeline shows an attributed header instead of a
 user prompt. Attribution cannot be combined with `deferFirstTurn`. Feature-detect
 with `sdk.threads.messageSources === true`.
+
+Thread approval relay: `sdk.threads.interactions.list({ threadId })` lists safe
+pending/resolving projections for a conversation whose stored `originPluginId`
+matches this plugin. `resolve({ threadId, interactionId, resolution, actor })`
+returns the authoritative projection, using the lifecycle's exact permission
+validation and idempotent resolution. Pass an explicitly authenticated external
+human as `actor: { kind: 'plugin-relayed-human', pluginId: zcc.pluginId, externalUser }`;
+the accepted actor and decision are durably audited on the thread. The plugin
+owns external signature verification, account authorization and click binding.
+This actor conveys no native human proof. Human-required/native-sheet plugin
+forms are refused with `native_confirmation_required`; questions and custom
+forms are unsupported. Metadata does not grant control of a user-created or
+another plugin's thread. Detect per-thread support with
+`sdk.capabilities.forThread({ threadId })`: descriptor `thread-interactions`
+must be available, and `sdk.threads.interactions` must exist on older hosts.
+This descriptor is separate from the plugin UI `interactions` descriptor.
+Expected errors carry `name: 'PluginThreadInteractionError'`, `code` and `status`;
+match those fields across workers. Full fields, grant construction and error
+codes are in the [server SDK reference](../apps/server/src/plugins/builtin-skills/zcc-plugin-authoring/references/server-sdk.md).
 
 Pass `deferFirstTurn: true` and omit `prompt` to create an empty thread. The first message starts its provider session.
 

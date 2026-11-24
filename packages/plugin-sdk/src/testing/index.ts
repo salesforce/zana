@@ -587,6 +587,16 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
         }
       },
       threads: {
+        interactions: {
+          async list(args) {
+            assertLive();
+            return invokeSdk('threads.interactions.list', () => [], args) as ReturnType<ZccPluginApi['sdk']['threads']['interactions']['list']>;
+          },
+          async resolve(args) {
+            assertLive();
+            return invokeSdk('threads.interactions.resolve', undefined, args) as ReturnType<ZccPluginApi['sdk']['threads']['interactions']['resolve']>;
+          }
+        },
         messageSources: true,
         async search(args) {
           return invokeSdk('threads.search', undefined, args) as ReturnType<ZccPluginApi['sdk']['threads']['search']>;

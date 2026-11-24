@@ -16,6 +16,7 @@ import {
   type ProjectIcon
 } from '@zana-ai/zcc-domain';
 import { capabilityRegistry, terminalCapabilityKey } from './capability-registry.js';
+import { createPluginThreadInteractions } from './plugin-thread-interactions.js';
 import { readHostFile, writeHostFile } from '../http/files-via-host.js';
 import { readPluginProjectFile, writePluginProjectFile } from '../http/plugin-project-files.js';
 import {
@@ -704,12 +705,20 @@ export function createPluginApi(
    * a plugin/renderer can pick WHICH thread to ask about but cannot make a
    * capability answer `available: true` that main's wiring doesn't back.
    */
-  function capabilityDescriptors(key: import('@zana-ai/zcc-domain').CapabilitySurfaceKey | null): CapabilityDescriptor[] {
+  function capabilityDescriptors(key: import('@zana-ai/zcc-domain').CapabilitySurfaceKey | null, thread?: ReturnType<typeof getConversationThread>): CapabilityDescriptor[] {
     return [
       ...capabilityRegistry.describe(key).map(row => row.id === 'interactions' && row.available
         && !(key?.surface === 'pty' ? options?.requestPluginInteraction : options?.upsertInteraction)
         ? { id: row.id, available: false, reason: 'Interaction host wiring unavailable' } : row),
-      options?.hostCall ? { id: 'project-rpc', available: true } : { id: 'project-rpc', available: false, reason: 'Project RPC host wiring unavailable' }
+      options?.hostCall ? { id: 'project-rpc', available: true } : { id: 'project-rpc', available: false, reason: 'Project RPC host wiring unavailable' },
+      {
+        id: 'thread-interactions',
+        ...(options?.productContext?.pendingInteractions
+          ? thread && thread.originPluginId === pluginId
+            ? { available: true }
+            : { available: false, reason: 'Requires a conversation created by this plugin' }
+          : { available: false, reason: 'Thread interaction host wiring unavailable' })
+      }
     ];
   }
 
@@ -725,6 +734,7 @@ export function createPluginApi(
     openCopy: (file) => backupCopyHandle(createSqliteDatabase(file))
   });
 
+  const threadInteractions = createPluginThreadInteractions(pluginId, options?.productContext);
   const api: ZccPluginApi = {
     sshConnections: {
       register(provider) {
@@ -1288,6 +1298,10 @@ export function createPluginApi(
         }
       },
       threads: {
+        interactions: {
+          list: async (args) => { assertLive(); return threadInteractions.list(args); },
+          resolve: async (args) => { assertLive(); return threadInteractions.resolve(args); }
+        },
         messageSources: true,
         search: async (args) => {
           assertLive();
@@ -1876,7 +1890,7 @@ export function createPluginApi(
           }
           const key = thread ? { surface: 'modern' as const, harness: thread.providerId, headless: false, hookBase: true }
             : session ? terminalCapabilityKey(session) : null;
-          return { capabilities: capabilityDescriptors(key) };
+          return { capabilities: capabilityDescriptors(key, thread) };
         },
         forExecution: async ({ executionId }) => {
           assertLive();

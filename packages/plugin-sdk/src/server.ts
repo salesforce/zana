@@ -20,8 +20,14 @@ import type {
   DispatchAdmissionContract,
   PluginCapabilityIntrospection,
   PluginInteractions,
+  PluginThreadInteractions,
   ProjectTabAvailabilityContract,
   ToolSettledContract
+} from './contracts.js';
+export { PluginThreadInteractionError } from './contracts.js';
+export type {
+  PluginRelayedHumanActor, PluginThreadInteraction, PluginThreadInteractionErrorCode,
+  PluginThreadInteractionResolution, PluginThreadInteractions
 } from './contracts.js';
 
 import type { PluginDatabaseBackup, PluginDatabaseBackupOptions } from './database-backup.js';
@@ -543,6 +549,8 @@ export interface PluginSdkQueuedMessage {
 }
 
 export interface PluginSdkThreads {
+  /** Check sdk.capabilities.forThread for `thread-interactions` before using on older hosts. */
+  readonly interactions: PluginThreadInteractions;
   spawn(args: PluginSdkThreadSpawnArgs): Promise<{ id: string }>;
   get(args: { threadId: string }): Promise<PluginSdkThreadSummary | null>;
   list(args?: PluginSdkThreadListArgs): Promise<PluginSdkThreadSummary[]>;

@@ -15,6 +15,7 @@ import {
   type ThreadEvent
 } from '@zana-ai/zcc-domain/thread-runtime';
 import type { ProductHub } from '../../http/product-hub.js';
+import type { PluginRelayedHumanActor } from '@zana-ai/zcc-plugin-sdk';
 
 function emitStoredEvent(hub: ProductHub, stored: ConversationThreadEventRow): void {
   hub.emit('threads:event', {
@@ -43,6 +44,18 @@ function appendEvent(
 
 function providerScope(interaction: ProviderPendingInteraction) {
   return turnScope(interaction.turnId);
+}
+
+/** Durable attribution for an accepted relay, separate from native human proofs. */
+export function appendPluginRelayedInteractionAudit(
+  db: ZccDatabase, hub: ProductHub, interaction: PendingInteraction, actor: PluginRelayedHumanActor
+): void {
+  appendEvent(db, hub, {
+    type: 'system/operation', threadId: interaction.threadId, scope: threadScope(),
+    operation: 'interaction_resolution', status: 'resolving', operationId: interaction.id,
+    message: 'Approval decision relayed by plugin',
+    metadata: { actor: { ...actor }, resolution: interaction.resolution }
+  });
 }
 
 export function appendPendingInteractionTimelineEvent(
