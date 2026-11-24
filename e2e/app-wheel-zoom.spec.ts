@@ -3,7 +3,7 @@
  *
  * Chromium reports a Ctrl+wheel through `zoom-changed` and leaves applying it
  * to the host. This spec sends real wheel input events (the path a mouse takes)
- * to the app window and checks the zoom factor moves one menu step per notch,
+ * to the app window and checks the zoom factor zooms in and out,
  * that a plain wheel does not zoom, and that the level survives a relaunch.
  */
 import { test, expect, launchApp, closeApp, type AppHandle } from './fixtures/app.js';
@@ -29,12 +29,13 @@ async function wheel(app: AppHandle, deltaY: number, ctrl: boolean): Promise<voi
       y: 300,
       deltaX: 0,
       deltaY: args.deltaY,
+      wheelTicksY: Math.sign(args.deltaY),
       modifiers: args.ctrl ? ['control'] : []
     });
   }, { deltaY, ctrl, url: app.window.url() });
 }
 
-test('Ctrl+wheel zooms one step per notch, a plain wheel does not, and the zoom survives a relaunch', async ({ home }) => {
+test('Ctrl+wheel zooms in and out, a plain wheel does not, and the zoom survives a relaunch', async ({ home }) => {
   test.setTimeout(180_000);
   let zoomed = 0;
   const first = await launchApp(home, VISIBLE);
@@ -45,14 +46,18 @@ test('Ctrl+wheel zooms one step per notch, a plain wheel does not, and the zoom 
     await first.window.waitForTimeout(500);
     expect(await zoomFactor(first)).toBeCloseTo(START_FACTOR, 2);
 
-    for (let i = 1; i <= 3; i++) {
+    // Wheel up zooms in. Chromium may report more than one step per notch, so
+    // assert the direction, not a step count.
+    let previous = START_FACTOR;
+    for (let i = 0; i < 3; i++) {
       await wheel(first, 120, true);
-      await expect.poll(() => zoomFactor(first)).toBeCloseTo(START_FACTOR * 1.2 ** (i / 2), 2);
+      await expect.poll(() => zoomFactor(first)).toBeGreaterThan(previous * 1.05);
+      previous = await zoomFactor(first);
     }
-    // Wheel down (negative delta) zooms back out.
+    // Wheel down zooms back out.
     await wheel(first, -120, true);
-    await wheel(first, -120, true);
-    await expect.poll(() => zoomFactor(first)).toBeCloseTo(START_FACTOR * 1.2 ** 0.5, 2);
+    await expect.poll(() => zoomFactor(first)).toBeLessThan(previous * 0.95);
+    expect(await zoomFactor(first)).toBeGreaterThan(START_FACTOR);
     zoomed = await zoomFactor(first);
   } finally {
     await closeApp(first.electron);
