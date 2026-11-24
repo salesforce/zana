@@ -143,6 +143,11 @@ export type {
 } from './server.js';
 
 export type { JsonValue } from './json-value.js';
+export { PluginThreadInteractionError } from './contracts.js';
+export type {
+  PluginRelayedHumanActor, PluginThreadInteraction, PluginThreadInteractionErrorCode,
+  PluginThreadInteractionResolution, PluginThreadInteractions
+} from './contracts.js';
 export type {
   CapabilityIntrospectionContract,
   DispatchAdmissionContract,
