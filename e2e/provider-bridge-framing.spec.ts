@@ -1,7 +1,8 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, delimiter, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test, expect } from './fixtures/app.js';
+import { canObserveSigterm, writeFakeCli } from './fixtures/fake-cli.js';
 import { fixtureProcessState } from './fixtures/process-state.js';
 import { waitForThreadProvider } from './fixtures/thread-providers.js';
 
@@ -41,13 +42,13 @@ test.use({
       requestLogPath: join(home, 'codex-framing-requests.log'), messageText: REPLY,
       processLogPath: join(home, 'codex-framing-process.log'),
     }));
-    writeFileSync(join(bin, 'codex'), `#!${process.execPath}\n
+    writeFakeCli(bin, 'codex', `
 if (process.argv.includes('--version')) { console.log('codex-cli 0.153.4'); process.exit(0); }
 if (!process.argv.includes('app-server')) process.exit(64);
 process.argv = [process.execPath, ${JSON.stringify(fixture)}, ${JSON.stringify(script)}];
 import(${JSON.stringify(new URL('../plugins/provider-codex/src/bridge/fake-codex-app-server.mjs', import.meta.url).href)});
-`, { mode: 0o700 });
-    writeFileSync(join(bin, 'opencode'), `#!${process.execPath}\n
+`);
+    writeFakeCli(bin, 'opencode', `
 if (process.argv.includes('--version')) { console.log('opencode 1.18.10'); process.exit(0); }
 if (!process.argv.includes('acp')) process.exit(64);
 process.env.FAKE_ACP_LAUNCH_LOG = ${JSON.stringify(join(home, 'acp-framing-launch.log'))};
@@ -56,8 +57,8 @@ await import(${JSON.stringify(new URL('../plugins/provider-acp/src/bridge/fake-a
 const { writeFileSync } = await import('node:fs');
 process.removeAllListeners('SIGTERM');
 process.on('SIGTERM', () => { writeFileSync(${JSON.stringify(join(home, 'acp-framing-signal.log'))}, 'SIGTERM'); });
-`, { mode: 0o700 });
-    await use({ PATH: `${bin}:${process.env.PATH ?? ''}`, ZDOTDIR: home, ZCC_PROVIDER_BRIDGE_RECORD_DIR: join(home, 'framing-recordings') });
+`);
+    await use({ PATH: `${bin}${delimiter}${process.env.PATH ?? ''}`, ZDOTDIR: home, ZCC_PROVIDER_BRIDGE_RECORD_DIR: join(home, 'framing-recordings') });
   },
 });
 
@@ -167,7 +168,13 @@ test('Stop reaps a SIGTERM-resistant ACP child through the built provider', asyn
     await expect(app.window.getByTestId('thread-timeline')).toContainText('MCP: tool', { timeout: 30_000 });
     expect(pids().some(alive)).toBe(true);
     await app.window.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect.poll(() => existsSync(join(app.home, 'acp-framing-signal.log')), { timeout: 10_000 }).toBe(true);
+    // POSIX delivers a catchable SIGTERM, so the fake agent records it and then
+    // resists. Windows maps every kill signal to TerminateProcess: the child ends
+    // at once and no handler runs, so the marker cannot exist there. The reaping
+    // assertion below is the same on both platforms.
+    if (canObserveSigterm()) {
+      await expect.poll(() => existsSync(join(app.home, 'acp-framing-signal.log')), { timeout: 10_000 }).toBe(true);
+    }
     await expect.poll(() => pids().filter(alive), { timeout: 10_000 }).toEqual([]);
   } finally {
     for (const pid of pids().filter(alive)) process.kill(pid, 'SIGKILL');
@@ -296,7 +303,7 @@ try {
   const context = JSON.parse(readFileSync(contextFile, 'utf8')) as { tempDir: string; dataDir: string; pluginId: string };
   expect(context.dataDir).toBe(root);
   expect(context.pluginId).toBe('recording-probe');
-  expect(context.tempDir.startsWith(`${scratch}/`)).toBe(true);
+  expect(context.tempDir.startsWith(`${scratch}${sep}`)).toBe(true);
   expect(existsSync(context.tempDir)).toBe(false);
   expect(readdirSync(scratch)).toEqual([]);
   expect(processRunning(result.workerPid)).toBe(false);
