@@ -65,6 +65,15 @@ describe('normalizeCron', () => {
     expect(normalizeCron('0,30 8-10 * * *')).toBe('0,30 8,9,10 * * *');
   });
 
+  it('expands stepped ranges', () => {
+    expect(normalizeCron('0 8-20/2 * * 1-5')).toBe('0 8,10,12,14,16,18,20 * * 1,2,3,4,5');
+    expect(normalizeCron('0 9-20/4 * * *')).toBe('0 9,13,17 * * *');
+    expect(normalizeCron('0-45/15 * * * *')).toBe('0,15,30,45 * * * *');
+    expect(() => normalizeCron('0 8-20/0 * * *')).toThrow('invalid cron field');
+    expect(() => normalizeCron('0 20-8/2 * * *')).toThrow('reversed');
+    expect(() => normalizeCron('0 8-30/2 * * *')).toThrow('invalid cron field');
+  });
+
   it.each([
     ['0 9 * *', '5 fields'],
     ['0 9 * * 5-1', 'reversed'],

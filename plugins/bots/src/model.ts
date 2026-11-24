@@ -196,13 +196,15 @@ export function normalizeCron(value: unknown): string {
   const normalized = fields.map((field, index) => {
     const range = CRON_RANGES[index]!;
     const tokens = field.split(',').flatMap((token) => {
-      const match = /^(\d+)-(\d+)$/.exec(token);
+      // Ranges, with an optional step (`8-20/2`), are expanded to explicit lists.
+      const match = /^(\d+)-(\d+)(?:\/(\d+))?$/.exec(token);
       if (!match) return [token];
       const from = Number(match[1]);
       const to = Number(match[2]);
+      const step = match[3] === undefined ? 1 : Number(match[3]);
       if (from > to) throw new BotValidationError(`cron range ${token} is reversed`);
-      if (from < range[0] || to > range[1]) throw new BotValidationError(`invalid cron field "${field}"`);
-      return Array.from({ length: to - from + 1 }, (_, offset) => String(from + offset));
+      if (from < range[0] || to > range[1] || step < 1) throw new BotValidationError(`invalid cron field "${field}"`);
+      return Array.from({ length: Math.floor((to - from) / step) + 1 }, (_, offset) => String(from + offset * step));
     });
     for (const token of tokens) {
       if (!validCronToken(token, range)) throw new BotValidationError(`invalid cron field "${field}"`);
