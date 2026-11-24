@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { captureStablePluginToolApprovalIdentity, isPluginToolApprovalScopeLive, parsePluginApprovalBinding, parsePluginToolApprovalRequest, type PluginApprovalResult, type PluginToolApprovalIdentity, type PluginToolApprovalRequest, type PluginToolApprovalScope } from '../http/plugin-approval-proof.js';
 import { validatePluginHostValue } from './plugin-host-rpc.js';
 import { searchPluginInbox, readPluginInbox } from './plugin-inbox.js';
-import { completePluginAssistant } from './plugin-assistant.js';
+import { completePluginAssistant, listDesktopAssistantModels } from './plugin-assistant.js';
 import {
   isProjectIcon,
   spawnEnvironmentChoiceSchema,
@@ -921,6 +921,13 @@ export function createPluginApi(
         }
       },
       assistant: {
+        localModels: async () => {
+          assertLive();
+          if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
+          const result = await listDesktopAssistantModels(options.productContext);
+          assertLive();
+          return result;
+        },
         complete: async (args) => {
           assertLive();
           if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');

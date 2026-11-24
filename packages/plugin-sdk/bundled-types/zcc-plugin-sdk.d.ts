@@ -257,9 +257,19 @@ export interface PluginSdkInboxReport extends PluginSdkInboxEntry {
   content: string;
   truncated: boolean;
 }
+export interface PluginAssistantModelChoice { providerId: string; modelId: string }
+export interface PluginAssistantModel extends PluginAssistantModelChoice { providerLabel: string; modelLabel: string }
+export interface PluginAssistantLocalModels { defaultModel: PluginAssistantModel | null; models: PluginAssistantModel[] }
 export interface PluginSdkAssistant {
+  /** Models with authenticated, text-only support on the machine running this desktop app. */
+  localModels?(): Promise<PluginAssistantLocalModels>;
   /** Bounded text-only inference, without agent tools or Project access. */
-  complete(args: { instructions: string; prompt: string; signal?: AbortSignal }): Promise<{ text: string }>;
+  complete(args: {
+    instructions: string;
+    prompt: string;
+    signal?: AbortSignal;
+    desktop?: { model?: PluginAssistantModelChoice; preferredDefault?: PluginAssistantModelChoice };
+  }): Promise<{ text: string }>;
 }
 
 export type PluginSdk = ZccPluginApi['sdk'];
@@ -1027,6 +1037,9 @@ declare module '@zana-ai/zcc-plugin-sdk/app' {
     toProject(projectId: string, options?: { tabId?: string; inMainWindow?: boolean }): void;
     toPluginPanel(path: string, options?: { subPath?: string; replace?: boolean }): void;
     toCompose(options?: { initialPrompt?: string; focusPrompt?: boolean }): void;
+    openProviderSetup?(): boolean;
+    onProviderChange?(callback: () => void): () => void;
+    readProviderModelPreference?(providerId: string, offeredModels: readonly string[]): string | undefined;
     supportsContextReferences?: true;
     addThreadContext?(reference: ContextReference): boolean;
     openPanelAgent(options: ZccPanelAgentOptions): boolean;

@@ -1,7 +1,6 @@
 import { fixedNavShortcutKey } from '../lib/keyboard-shortcut-settings.js';
 import { History } from 'lucide-react';
 import { useConversationHistory } from './history/history-store.js';
-import { navPanelListsInSidebar } from '@zana-ai/zcc-plugin-sdk';
 import { useMemo, useSyncExternalStore, type ReactNode } from 'react';
 import {
   Blocks,
@@ -39,7 +38,7 @@ import {
   SidebarRail,
   type SidebarRailItem
 } from './SidebarRail.js';
-import { listNavPanels, subscribePluginSlots } from '../plugins/plugin-slots.js';
+import { listNavPanels, listSidebarNavPanels, subscribePluginSlots } from '../plugins/plugin-slots.js';
 import { PluginSlotBoundary } from '../plugins/PluginSlotBoundary.js';
 import type { PaneContent } from '../lib/split-layout/types.js';
 
@@ -100,10 +99,7 @@ export function Sidebar({ railVariant = 'expanded' }: { railVariant?: 'expanded'
     () => new Set(navPanels.map((panel) => panel.pluginId)),
     [navPanels]
   );
-  const pluginPanels = useMemo(
-    () => navPanels.filter((panel) => navPanelListsInSidebar(panel.placement)),
-    [navPanels]
-  );
+  const pluginPanels = useSyncExternalStore(subscribePluginSlots, listSidebarNavPanels, listSidebarNavPanels);
   const extraItems = useMemo(() => {
     const extras: NavEntry[] = [];
     if (followUpsEnabled) extras.push(followupsNavItem);

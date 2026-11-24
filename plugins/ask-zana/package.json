@@ -1,0 +1,21 @@
+{
+  "name": "@zcc-ext/ask-zana",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Search Zana help and ask questions about using Zana.",
+  "engines": {
+    "zcc": ">=1.0.0",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "scripts": {
+    "build": "node --import tsx ../../packages/plugin-build/scripts/build-app.mjs ."
+  },
+  "zcc": {
+    "name": "Ask Zana",
+    "description": "Search Zana help and ask questions about using Zana.",
+    "branding": { "icon": "CircleHelp" },
+    "app": "./app.tsx",
+    "server": "./server.ts"
+  }
+}

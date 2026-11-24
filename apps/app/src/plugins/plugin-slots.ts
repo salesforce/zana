@@ -91,10 +91,12 @@ function emptySnapshot() {
 function rebuildSnapshot(): void {
   const orderedSets = [...sets.values()].sort((a, b) => a.pluginId.localeCompare(b.pluginId));
   const navPanels = orderedSets.flatMap((set) => set.navPanels);
+  const sidebarNavPanels = navPanels.filter((panel) => navPanelListsInSidebar(panel.placement))
+    .sort((a, b) => (a.sidebarOrder ?? 0) - (b.sidebarOrder ?? 0));
   snapshot = {
     sets: orderedSets,
     navPanels,
-    sidebarNavPanels: navPanels.filter((panel) => navPanelListsInSidebar(panel.placement)),
+    sidebarNavPanels,
     extensionsHubPanels: navPanels.filter((panel) => navPanelListsInExtensionsHub(panel.placement)),
     homepageSections: orderedSets.flatMap((set) => set.homepageSections),
     settingsSections: orderedSets.flatMap((set) => set.settingsSections),

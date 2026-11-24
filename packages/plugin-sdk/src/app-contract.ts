@@ -50,6 +50,8 @@ export interface PluginNavPanelRegistration extends PluginSlotBase {
    * from `sidebarFooterAction` / `commandPaletteAction` via `toPluginPanel`.
    */
   placement?: PluginNavPanelPlacement;
+  /** Lower values sort earlier among plugin rows. Defaults to zero. */
+  sidebarOrder?: number;
   component: ComponentType<PluginNavPanelProps>;
   experimental_sidebarAccessory?: ComponentType;
   experimental_basicSidebarSection?: ComponentType<BasicSidebarSectionProps>;
@@ -1049,6 +1051,12 @@ export interface ZccNavigate {
   toProject(projectId: string, options?: ZccNavigateToProjectOptions): void;
   toPluginPanel(path: string, options?: { subPath?: string; replace?: boolean }): void;
   toCompose(options?: { initialPrompt?: string; focusPrompt?: boolean }): void;
+  /** Open the existing AI Harness settings on the desktop. False where unavailable. */
+  openProviderSetup?(): boolean;
+  /** Refresh provider-dependent views after host, configuration or model changes. */
+  onProviderChange?(callback: () => void): () => void;
+  /** Resolve the device's remembered model against the models the host offered. */
+  readProviderModelPreference?(providerId: string, offeredModels: readonly string[]): string | undefined;
   /**
    * Open one of this plugin's thread-panel actions beside the conversation.
    * `threadId` hints which conversation owns the panel when the URL does not.
@@ -1599,6 +1607,7 @@ export function collectPluginApp(
             icon: requireNonEmptyString(kind, 'icon', registration.icon),
             path,
             ...(registration.placement ? { placement: registration.placement } : {}),
+            ...(Number.isFinite(registration.sidebarOrder) ? { sidebarOrder: registration.sidebarOrder } : {}),
             component: requireComponent(kind, 'component', registration.component),
             ...(registration.experimental_basicSidebarSection ? { experimental_basicSidebarSection: registration.experimental_basicSidebarSection } : {}),
             ...(registration.experimental_sidebarAccessory

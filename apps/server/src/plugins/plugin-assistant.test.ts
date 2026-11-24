@@ -5,7 +5,7 @@ vi.mock('@zana-ai/zcc-llm', () => ({
     run = run;
   }
 }));
-import { completePluginAssistant } from './plugin-assistant.js';
+import { completePluginAssistant, listDesktopAssistantModels } from './plugin-assistant.js';
 const ctx = () =>
   ({
     config: {
@@ -75,4 +75,99 @@ it('rejects invalid/oversized input and honors cancellation before and after inf
   await expect(
     completePluginAssistant(ctx(), { ...input, signal: later.signal })
   ).rejects.toThrow();
+});
+
+const desktop = vi.hoisted(() => ({
+  host: vi.fn(),
+  provider: vi.fn(),
+  readiness: vi.fn(),
+  catalog: vi.fn()
+}));
+vi.mock('@zana-ai/zcc-db', () => ({ getHost: desktop.host }));
+vi.mock('../http/provider-readiness-api.js', () => ({ getProviderReadiness: desktop.readiness }));
+vi.mock('../services/threads/thread-provider-catalog.js', () => ({
+  getThreadProvider: desktop.provider,
+  bridgeLaunchForProvider: () => ({ providerId: 'claude-code' })
+}));
+
+const model = (id: string, isDefault = false) => ({
+  id, model: id, displayName: id, isDefault, supportedReasoningEfforts: []
+});
+const models = [model('first', true), model('second')];
+const provider = { id: 'claude-code', displayName: 'Claude Code', models: { scope: 'host' } };
+const first = { providerId: 'claude-code', providerLabel: 'Claude Code', modelId: 'first', modelLabel: 'first' };
+const second = { providerId: 'claude-code', modelId: 'second' };
+
+function desktopContext() {
+  const config = { defaultThreadProviderId: 'claude-code' };
+  return {
+    ctx: {
+      desktopHostId: () => 'this-mac',
+      config: { getConfig: () => config },
+      modelCatalogs: { read: desktop.catalog }
+    } as unknown as import('../http/product-context.js').ProductHttpContext,
+    config
+  };
+}
+
+beforeEach(() => {
+  desktop.host.mockReset().mockReturnValue({ enrollmentCapability: 'execution', homeDir: '/this-mac' });
+  desktop.provider.mockReset().mockReturnValue(provider);
+  desktop.readiness.mockReset().mockResolvedValue({ providerId: 'claude-code', hostId: 'this-mac',
+    result: { supported: true, health: { status: 'ready' } } });
+  desktop.catalog.mockReset().mockResolvedValue({ models, selectedOnlyModels: [], modelLoadError: null });
+});
+
+it('validates readiness and model inventory on the attested desktop even with another host enrolled', async () => {
+  const { ctx } = desktopContext();
+  expect(await listDesktopAssistantModels(ctx)).toMatchObject({ defaultModel: first, models: [first, second] });
+  expect(desktop.readiness).toHaveBeenCalledWith(ctx, 'claude-code', 'this-mac');
+  expect(desktop.catalog).toHaveBeenCalledWith(expect.objectContaining({ hostId: 'this-mac', cwd: '/this-mac' }));
+  await completePluginAssistant(ctx, { ...input, desktop: { model: second } });
+  expect(desktop.catalog).toHaveBeenLastCalledWith(expect.objectContaining({ requiredModel: 'second' }));
+  expect(run).toHaveBeenCalledWith(expect.objectContaining({ model: 'second', isolated: true, disableTools: true }));
+});
+
+it('re-resolves the shared default and never silently substitutes for an explicit model', async () => {
+  const { ctx, config } = desktopContext();
+  await completePluginAssistant(ctx, { ...input, desktop: {} });
+  expect(run).toHaveBeenLastCalledWith(expect.objectContaining({ model: 'first' }));
+  desktop.catalog.mockResolvedValue({ models: [model('second', true)], selectedOnlyModels: [], modelLoadError: null });
+  await completePluginAssistant(ctx, { ...input, desktop: {} });
+  expect(run).toHaveBeenLastCalledWith(expect.objectContaining({ model: 'second' }));
+  await expect(completePluginAssistant(ctx, { ...input, desktop: { model: { providerId: 'claude-code', modelId: 'first' } } })).rejects.toThrow('unavailable');
+  config.defaultThreadProviderId = 'codex';
+  await expect(completePluginAssistant(ctx, { ...input, desktop: {} })).rejects.toThrow('unavailable');
+  expect(run).toHaveBeenCalledTimes(2);
+});
+
+it('applies the remembered model only within the current default provider and inventory', async () => {
+  const { ctx, config } = desktopContext();
+  await completePluginAssistant(ctx, { ...input, desktop: { preferredDefault: second } });
+  expect(run).toHaveBeenLastCalledWith(expect.objectContaining({ model: 'second' }));
+  await completePluginAssistant(ctx, { ...input, desktop: {
+    preferredDefault: { ...second, modelId: 'removed' }
+  } });
+  expect(run).toHaveBeenLastCalledWith(expect.objectContaining({ model: 'first' }));
+  config.defaultThreadProviderId = 'codex';
+  await expect(completePluginAssistant(ctx, { ...input, desktop: { preferredDefault: second } }))
+    .rejects.toThrow('unavailable');
+  expect(run).toHaveBeenCalledTimes(2);
+});
+
+it('stays offline without local identity, with only remote credentials, or if discovery fails', async () => {
+  const { ctx } = desktopContext();
+  const unavailable = { defaultModel: null, models: [] };
+  const missingHost = { ...ctx, desktopHostId: undefined };
+  expect(await listDesktopAssistantModels(missingHost)).toEqual(unavailable);
+  expect(desktop.readiness).not.toHaveBeenCalled();
+  desktop.readiness.mockResolvedValueOnce({ providerId: 'claude-code', hostId: 'remote',
+    result: { supported: true, health: { status: 'ready' } } });
+  expect(await listDesktopAssistantModels(ctx)).toEqual(unavailable);
+  desktop.readiness.mockResolvedValueOnce({ providerId: 'claude-code', hostId: 'this-mac',
+    result: { supported: true, health: { status: 'unauthenticated' } } });
+  expect(await listDesktopAssistantModels(ctx)).toEqual(unavailable);
+  expect(desktop.catalog).not.toHaveBeenCalled();
+  desktop.catalog.mockRejectedValueOnce(new Error('unreachable'));
+  expect(await listDesktopAssistantModels(ctx)).toEqual(unavailable);
 });

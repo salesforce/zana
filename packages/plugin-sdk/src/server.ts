@@ -692,9 +692,32 @@ export interface PluginSdkInboxReport extends PluginSdkInboxEntry {
   content: string;
   truncated: boolean;
 }
+export interface PluginAssistantModelChoice {
+  providerId: string;
+  modelId: string;
+}
+
+export interface PluginAssistantModel extends PluginAssistantModelChoice {
+  providerLabel: string;
+  modelLabel: string;
+}
+
+export interface PluginAssistantLocalModels {
+  defaultModel: PluginAssistantModel | null;
+  models: PluginAssistantModel[];
+}
+
 export interface PluginSdkAssistant {
+  /** Models with authenticated, text-only support on the machine running this desktop app. */
+  localModels?(): Promise<PluginAssistantLocalModels>;
   /** Bounded text-only inference, without agent tools or Project access. */
-  complete(args: { instructions: string; prompt: string; signal?: AbortSignal }): Promise<{ text: string }>;
+  complete(args: {
+    instructions: string;
+    prompt: string;
+    signal?: AbortSignal;
+    /** Omit the model to resolve the shared desktop default at dispatch. */
+    desktop?: { model?: PluginAssistantModelChoice; preferredDefault?: PluginAssistantModelChoice };
+  }): Promise<{ text: string }>;
 }
 
 export interface PluginSdkProject {

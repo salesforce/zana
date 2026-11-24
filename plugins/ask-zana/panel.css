@@ -1,0 +1,111 @@
+.ask-zana-panel {
+  height: 100%;
+  min-width: 0;
+  overflow: auto;
+  color: var(--text-primary, inherit);
+}
+
+.ask-zana-content {
+  max-width: 700px;
+  margin: 0 auto;
+  padding: clamp(20px, 5vw, 58px) clamp(14px, 4vw, 32px) 36px;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+}
+
+.ask-zana-title, .ask-zana-input-row, .ask-zana-form-footer, .ask-zana-actions, .ask-zana-model {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ask-zana-title, .ask-zana-form-footer {
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+.ask-zana-title h1 {
+  margin: 0;
+  font-size: clamp(24px, 4vw, 36px);
+  letter-spacing: -.035em;
+  line-height: 1.13;
+}
+
+.ask-zana-intro, .ask-zana-query, .ask-zana-active, .ask-zana-form-footer, .ask-zana-status {
+  color: var(--text-secondary, inherit);
+}
+
+.ask-zana-intro { margin: 9px 0 22px; }
+.ask-zana-panel button, .ask-zana-panel select, .ask-zana-panel input { font: inherit; }
+.ask-zana-panel button, .ask-zana-model select, .ask-zana-guide summary { cursor: pointer; }
+.ask-zana-panel button:disabled, .ask-zana-panel select:disabled { cursor: default; opacity: .55; }
+
+.ask-zana-form, .ask-zana-result {
+  border: 1px solid var(--border, #42424a);
+  border-radius: 12px;
+  background: var(--bg-surface, transparent);
+}
+
+.ask-zana-form { padding: 10px; }
+.ask-zana-form:focus-within { border-color: var(--accent, #6d9fd6); }
+
+.ask-zana-input-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 6px;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+}
+
+.ask-zana-panel :is(button, input, select, summary, a):focus-visible {
+  outline: 2px solid var(--accent, #6d9fd6);
+  outline-offset: 2px;
+}
+
+.ask-zana-form-footer {
+  margin-top: 8px;
+  padding: 8px 4px 1px;
+  border-top: 1px solid var(--border, #42424a);
+  font-size: 12px;
+}
+
+.ask-zana-model { flex-wrap: wrap; min-width: 0; }
+.ask-zana-model select { max-width: min(100%, 235px); }
+
+.ask-zana-model select, .ask-zana-panel .ask-zana-quiet, .ask-zana-examples button {
+  padding: 6px 9px;
+  border: 1px solid var(--border, #42424a);
+  border-radius: 7px;
+  color: inherit;
+  background: var(--bg-elevated, transparent);
+}
+
+.ask-zana-panel .ask-zana-quiet { font-size: 12px; }
+.ask-zana-actions { flex-wrap: wrap; }
+
+.ask-zana-panel .ask-zana-primary {
+  padding: 7px 11px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--accent, #75a9e5);
+  color: var(--accent-foreground, #111927);
+  font-weight: 650;
+}
+
+.ask-zana-link { border: 0; padding: 3px; background: transparent; color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.ask-zana-examples { display: grid; gap: 7px; margin-top: 16px; }
+.ask-zana-examples button { padding: 10px 12px; text-align: left; }
+.ask-zana-examples button:hover, .ask-zana-quiet:hover { background: var(--bg-hover, var(--bg-surface, transparent)); }
+.ask-zana-result { margin-top: 14px; padding: 14px; line-height: 1.55; }
+.ask-zana-result h2 { margin: 0; font-size: 15px; }
+.ask-zana-result h3 { margin: 10px 0 3px; font-size: 13px; }
+.ask-zana-result p { margin: 4px 0 8px; }
+.ask-zana-answer { white-space: pre-wrap; }
+.ask-zana-turns { margin-bottom: 16px; }
+.ask-zana-guide { margin-top: 8px; }
+.ask-zana-guide summary, .ask-zana-guide a { color: var(--accent, #75a9e5); }
+.ask-zana-guide ol { margin: 4px 0 8px; padding-left: 23px; }
+.ask-zana-guide li + li { margin-top: 4px; }
+.ask-zana-status { margin: 14px 0; }

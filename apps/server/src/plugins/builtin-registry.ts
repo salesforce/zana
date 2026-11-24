@@ -24,6 +24,13 @@ export const BUILTIN_PLUGINS: BundledPluginDefinition[] = [
     category: 'Context & knowledge'
   },
   {
+    name: 'ask-zana',
+    pluginId: 'ask-zana',
+    autoInstall: true,
+    defaultEnabled: true,
+    category: 'Context & knowledge'
+  },
+  {
     name: 'provider-claude-code',
     pluginId: 'provider-claude-code',
     autoInstall: true,

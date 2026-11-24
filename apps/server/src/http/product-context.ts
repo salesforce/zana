@@ -110,6 +110,8 @@ export interface ProductTerminalRecord extends TerminalSession {
 }
 
 export interface ProductHttpContext {
+  /** Host identity attested by the desktop supervisor, independent of the Project or primary host. */
+  desktopHostId?: () => string | null;
   helpVideos?: HelpVideoCatalogueService;
   /** Onboarding browser Git sign-in (host comes from the onboarding profile only). */
   onboardingGitAuth?: OnboardingGitAuthService;

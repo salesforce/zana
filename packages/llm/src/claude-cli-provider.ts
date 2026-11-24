@@ -39,7 +39,8 @@ export class ClaudeCliProvider implements LlmProvider {
     const model = req.model?.trim() || undefined;
     const args = ['--print'];
     if (req.disableTools) args.push('--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--no-session-persistence', '--settings', '{"disableAllHooks":true}');
-    if (model) args.push('--model', resolveModelAlias(model));
+    if (req.isolated) args.push('--safe-mode', '--no-chrome');
+    if (model) args.push('--model', req.isolated ? model : resolveModelAlias(model));
     // `--system-prompt` REPLACES Claude Code's default agentic system prompt —
     // critical for a sub-agent-style micro-call. `--append-system-prompt` (the
     // wrong choice here) only adds to the full agentic prompt, so the model

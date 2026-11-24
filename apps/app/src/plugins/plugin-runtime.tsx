@@ -21,6 +21,7 @@ import { useRouteState } from '../hooks/useRouteState.js';
 import {
   getPluginSettingsRoutePath,
   getProjectRoutePath,
+  getSettingsTabRoutePath,
   getThreadRoutePath,
   NEW_THREAD_ROUTE_PATH
 } from '../lib/route-paths.js';
@@ -45,6 +46,8 @@ import { requestPluginPanelAgent } from './plugin-panel-agent.js';
 import { requestPluginPageContext, requestPluginPanelScope, requestPluginPanelTool, usePluginPagePanel, usePluginPagePanelOpen, usePluginPagePublicationScope } from './plugin-page-panel.js';
 import { resolveThreadPanelOwnerId, useThreadPanelOwnerId } from './thread-panel-owner.js';
 import { subscribeProductEvent } from '../lib/product-ws.js';
+import { hasDesktopBridge } from '../lib/app-surface.js';
+import { remapMovingAlias, rememberedSelectionFor } from '../components/thread/pickers/composer-selection-preference.js';
 import { isPluginTabPinned, pinPluginTab, subscribePluginPins, unpinPluginTab, updatePluginPinnedItem } from './plugin-pinned-tabs.js';
 import { deepLinksFor } from './plugin-deep-links.js';
 import { HarnessRoutingEditor } from '../views/settings/HarnessRoutingEditor.js';
@@ -230,6 +233,20 @@ function useZccNavigateImpl(): ZccNavigate {
         if (options?.focusPrompt) params.set('focus', '1');
         const query = params.toString();
         go(query ? `${NEW_THREAD_ROUTE_PATH}?${query}` : NEW_THREAD_ROUTE_PATH);
+      },
+      openProviderSetup() {
+        if (!hasDesktopBridge()) return false;
+        go(getSettingsTabRoutePath('harness'));
+        return true;
+      },
+      onProviderChange(callback) {
+        const unsubscribe = ['config:changed', 'hosts:changed', 'provider-model-catalog:changed']
+          .map((type) => subscribeProductEvent(type, callback));
+        return () => unsubscribe.forEach((dispose) => dispose());
+      },
+      readProviderModelPreference(providerId, offeredModels) {
+        const remembered = rememberedSelectionFor(providerId)?.model;
+        return remembered ? remapMovingAlias(remembered, offeredModels) : undefined;
       },
       openInWindow(projectId: string, options?: { tabId?: string; resourceId?: string }) {
         const tab = detachableProjectTab(pluginId, options?.tabId);

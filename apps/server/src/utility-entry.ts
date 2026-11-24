@@ -134,6 +134,7 @@ async function handleRuntimeMessage(message: ServerRuntimeInbound): Promise<void
         projects: projects ?? undefined,
         projectSettings: projectSettings ?? undefined
       });
+      product.desktopHostId = () => localProductHostId;
       productHub = product.hub;
       productContext = product;
       product.teamOps = createTeamOpsViaControl(message.dataDir);
