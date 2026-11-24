@@ -27,6 +27,7 @@ import { getPluginSettingsRoutePath } from '../lib/route-paths.js';
 import { titleWithFixedShortcut, titleWithShortcut } from '../lib/keyboard-shortcut-settings.js';
 import { appNavigate } from '../lib/app-navigate.js';
 import { SidebarResizer } from './SidebarResizer.js';
+import { NewWindowButton } from './sidebar/NewWindowButton.js';
 import { SidebarFooterSlot } from './sidebar/SidebarFooterSlot.js';
 import {
   SortableNavItem,
@@ -101,7 +102,7 @@ export function SidebarRail({
   trailingIds = [],
   items,
   header,
-  utilityStart,
+  newWindowProjectId,
   settingsRoutePath,
   railVariant = 'expanded'
 }: {
@@ -112,7 +113,7 @@ export function SidebarRail({
   trailingIds?: readonly string[];
   items: readonly SidebarRailItem[];
   header?: ReactNode;
-  utilityStart?: ReactNode;
+  newWindowProjectId?: string;
   /** Overrides remembered global settings for a project-scoped rail. */
   settingsRoutePath?: string;
   /** Icon-only 52px rail. Ignored in the mobile drawer. */
@@ -298,7 +299,7 @@ export function SidebarRail({
         onCollapseBehaviorChange={(b) => useUi.getState().setSidebarCollapseBehavior(b)} />}
       {storageKey !== PROJECT_NAV_ORDER_KEY && <SidebarFooterSlot />}
       <div className="sidebar-utility-bar" aria-label="Sidebar utilities">
-        {utilityStart}
+        <NewWindowButton projectId={newWindowProjectId} />
         <Link
           to={settingsRoutePath ?? routeMemory.settingsRoutePath}
           className={`sidebar-utility-button sidebar-utility-button--settings ${nav === 'settings' ? 'active' : ''}`}

@@ -69,8 +69,8 @@ const isConversation = (
   tab: ApplicationTab
 ): tab is ThreadApplicationTab | AgentApplicationTab =>
   tab.kind === 'thread' || tab.kind === 'agent';
-const storageKey = (scope: string | null) =>
-  `zcc.application-tabs.v1:${scope ?? 'main'}`;
+// sessionStorage already isolates native windows. Back changes the scope of the same window.
+const WINDOW_TABS_KEY = 'zcc.application-tabs.v2';
 // Hard bound on what restore will parse: thread rows plus the plugin row budget.
 const MAX_SAVED_CHARS = 128_000 + MAX_PLUGIN_ROWS_CHARS;
 const MAX_ID_CHARS = 128;
@@ -233,7 +233,7 @@ export function readApplicationTabs(
 ): ApplicationTabsState {
   let saved: string | null = null;
   try {
-    saved = storage.getItem(storageKey(scope));
+    saved = storage.getItem(WINDOW_TABS_KEY) ?? storage.getItem(`zcc.application-tabs.v1:${scope ?? 'main'}`);
   } catch {
     /* Storage can be disabled. */
   }
@@ -264,7 +264,6 @@ export function readApplicationTabs(
 }
 export function saveApplicationTabs(
   storage: Pick<Storage, 'setItem'>,
-  scope: string | null,
   state: ApplicationTabsState
 ) {
   const rows = (tabs: ApplicationTab[]): object[] =>
@@ -292,7 +291,7 @@ export function saveApplicationTabs(
     );
   try {
     storage.setItem(
-      storageKey(scope),
+      WINDOW_TABS_KEY,
       JSON.stringify({ open: rows(state.open), closed: rows(state.closed) })
     );
   } catch {

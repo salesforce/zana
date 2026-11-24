@@ -19,7 +19,7 @@ const h = vi.hoisted(() => ({
     exitProjectFocus: vi.fn()
   },
   data: { goalsEnabled: false, followUpsEnabled: false, suggestionsEnabled: false },
-  showInMainWindow: vi.fn(async () => true),
+  leaveProject: vi.fn(async () => true),
   noTabs: [] as never[],
   noModules: [] as never[],
   noAvailability: {},
@@ -49,7 +49,7 @@ vi.mock('../../plugins/plugin-slots', () => ({
   listProjectTabs: () => h.noTabs,
   projectTabView: () => ''
 }));
-vi.mock('../../plugins/plugin-view-windows', () => ({ showInMainWindow: h.showInMainWindow }));
+vi.mock('../../lib/product-client', () => ({ product: { windows: { leaveProject: h.leaveProject } } }));
 vi.mock('../../lib/resolveIcon', () => ({ resolveIcon: () => () => null }));
 vi.mock('../../hooks/useProjectTabAvailability', () => ({ useProjectTabAvailability: () => h.noAvailability }));
 vi.mock('../../hooks/useCompactLayout', () => ({ useCompactLayout: () => false }));
@@ -82,15 +82,15 @@ afterEach(() => {
 });
 
 describe('ProjectScopedNav Back', () => {
-  it('shows all projects in the main window from a locked project window', () => {
+  it('shows all projects in the invoking project window', () => {
     renderAt('/projects/proj-1/agents', 'window');
-    expect(h.showInMainWindow).toHaveBeenCalledWith('/agents');
+    expect(h.leaveProject).toHaveBeenCalledWith('projects');
     expect(h.state.exitProjectFocus).not.toHaveBeenCalled();
   });
 
-  it('returns to Global settings in the main window from project settings', () => {
+  it('returns to global settings in the invoking project window', () => {
     renderAt('/projects/proj-1/settings', 'window');
-    expect(h.showInMainWindow).toHaveBeenCalledWith('/settings');
+    expect(h.leaveProject).toHaveBeenCalledWith('settings');
   });
 
   it('exits project focus in place in the main window', () => {
@@ -98,6 +98,6 @@ describe('ProjectScopedNav Back', () => {
     renderAt('/projects/proj-1/agents', 'focus', onBack);
     expect(h.state.exitProjectFocus).toHaveBeenCalledTimes(1);
     expect(onBack).toHaveBeenCalledTimes(1);
-    expect(h.showInMainWindow).not.toHaveBeenCalled();
+    expect(h.leaveProject).not.toHaveBeenCalled();
   });
 });

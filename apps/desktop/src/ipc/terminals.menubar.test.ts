@@ -12,7 +12,7 @@ function deps(session: { projectId: string } | null = null) {
     ensureMainWindowReady: vi.fn().mockResolvedValue(true),
     openMenubarThread: vi.fn().mockResolvedValue({ ok: true }),
     logMainError: vi.fn(),
-    safeSend: vi.fn(),
+    sendToMainWindow: vi.fn().mockResolvedValue(true),
     menubar: { hide: vi.fn() }
   };
 }
@@ -41,8 +41,8 @@ describe('focusMenubarAgent', () => {
   it('authorizes legacy CLI focus against main session state', async () => {
     const value = deps({ projectId: 'p1' });
     await focusMenubarAgent(value, 'cli', 's1', 'wrong');
-    expect(value.safeSend).not.toHaveBeenCalled();
+    expect(value.sendToMainWindow).not.toHaveBeenCalled();
     await focusMenubarAgent(value, 'cli', 's1', 'p1');
-    expect(value.safeSend).toHaveBeenCalledWith('app:focusSession', 's1', 'p1');
+    expect(value.sendToMainWindow).toHaveBeenCalledWith('app:focusSession', 's1', 'p1');
   });
 });

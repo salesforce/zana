@@ -1,3 +1,4 @@
+import { hasDesktopBridge } from './app-surface.js';
 import { getAgentSessionRoutePath, getThreadRoutePath } from './route-paths.js';
 import { keepsProjectFocusRail } from './shellLayout.js';
 import { getScopedProjectId } from './windowScope.js';
@@ -68,8 +69,9 @@ export function inspectThread(
 export function threadOpenListener(navigate: { current: InspectNavigate }): (payload: unknown) => void {
   return (payload) => {
     if (!payload || typeof payload !== 'object') return;
-    const event = payload as { type?: unknown; threadId?: unknown; projectId?: unknown; file?: unknown; terminal?: unknown };
+    const event = payload as { type?: unknown; targetWindow?: unknown; threadId?: unknown; projectId?: unknown; file?: unknown; terminal?: unknown };
     if (event.type !== 'thread-open' || event.file || event.terminal) return;
+    if (event.targetWindow === 'main' && (!hasDesktopBridge() || window.cc.windows?.secondary)) return;
     if (typeof event.threadId !== 'string' || typeof event.projectId !== 'string') return;
     useUi.getState().enterProjectFocus(event.projectId);
     inspectThread(event.threadId, event.projectId, navigate.current);

@@ -644,6 +644,8 @@ export const IPC = {
    */
   windows: {
     openProject: 'windows:openProject',
+    openNew: 'windows:openNew',
+    leaveProject: 'windows:leaveProject',
     openPluginView: 'windows:openPluginView',
     closePluginView: 'windows:closePluginView',
     pluginViewCloseReady: 'windows:pluginViewCloseReady',

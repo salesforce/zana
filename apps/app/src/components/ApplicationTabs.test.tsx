@@ -517,7 +517,7 @@ it('keeps setup tabs available when thread tabs are disabled and restores only c
   expect(tabs()).toHaveLength(1);
   expect(h.load).not.toHaveBeenCalled();
   expect(screen.queryByRole('button', { name: 'New thread' })).toBeNull();
-  expect(sessionStorage.getItem('zcc.application-tabs.v1:main')).not.toContain('machine');
+  expect(sessionStorage.getItem('zcc.application-tabs.v2')).not.toContain('machine');
   view.unmount();
   useApplicationTabs.setState({ open: [], closed: [], initializedScope: undefined });
   useSetupPages.setState({ pages: [] });

@@ -1457,6 +1457,9 @@ const api: CcApi = {
     runSchedule: (taskId: string) => ipcRenderer.invoke(IPC.companion.runSchedule, taskId)
   },
   windows: {
+    secondary: process.argv.includes('--zcc-secondary-window'),
+    openNew: (projectId?: string) => ipcRenderer.invoke(IPC.windows.openNew, projectId),
+    leaveProject: (destination: 'projects' | 'settings') => ipcRenderer.invoke(IPC.windows.leaveProject, destination),
     openProject: (projectId: string) =>
       ipcRenderer.invoke(IPC.windows.openProject, projectId),
     openPluginView: (target: PluginViewTarget) =>

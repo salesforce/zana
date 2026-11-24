@@ -160,7 +160,7 @@ describe('menubar thread source', () => {
     getConversationThread.mockReturnValue(view({}));
     expect(value.open('t1', 'p1')).toEqual({ ok: true });
     expect(emit).toHaveBeenCalledWith('threads:open', {
-      type: 'thread-open', threadId: 't1', projectId: 'p1', split: 'right', file: null
+      type: 'thread-open', targetWindow: 'main', threadId: 't1', projectId: 'p1', split: 'right', file: null
     });
 
     getConversationThread.mockReturnValue(view({ archivedAt: 2 }));

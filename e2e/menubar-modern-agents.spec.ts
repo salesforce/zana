@@ -37,20 +37,23 @@ test('modern thread appears in popover and opens through authoritative route', a
     return false;
   }, thread.id), { timeout: 20_000 }).toBe(true);
 
-  await app.window.setViewportSize({ width: 380, height: 560 });
-  await app.window.goto(new URL('?surface=popover', app.window.url()).href);
-  const row = app.window.locator('.mbp-row', { hasText: 'Popover modern agent' });
+  const newWindow = async () => {
+    const opened = app.electron.waitForEvent('window');
+    await app.window.evaluate(() => window.cc.windows.openNew());
+    return opened;
+  };
+  const observer = await newWindow();
+  await observer.getByTestId('nav-inbox').click();
+  const inboxUrl = observer.url();
+  const popover = await newWindow();
+  await popover.setViewportSize({ width: 380, height: 560 });
+  await popover.goto(new URL('?surface=popover', app.window.url()).href);
+  const row = popover.locator('.mbp-row', { hasText: 'Popover modern agent' });
   await expect(row).toBeVisible({ timeout: 20_000 });
   await expect(row.locator('.mbp-fav')).toHaveCount(0);
-  await expect(app.window.locator('.mbp-stat').filter({ hasText: 'working' }).locator('.mbp-stat-value')).not.toHaveText('0');
+  await expect(popover.locator('.mbp-stat').filter({ hasText: 'working' }).locator('.mbp-stat-value')).not.toHaveText('0');
 
-  await app.window.goto(new URL('/', app.window.url()).href);
-  await expect(app.window.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
-  await expect.poll(async () => {
-    await app.window.evaluate(({ id, projectId }) => window.cc.menubar.focusAgent('thread', id, projectId), {
-      id: thread.id,
-      projectId: project.id
-    });
-    return app.window.evaluate(() => window.location.href);
-  }).toContain(thread.id);
+  await row.getByRole('button', { name: 'Open in project' }).click();
+  await expect(app.window).toHaveURL(new RegExp(`/threads/${thread.id}(?:$|\\?)`));
+  await expect(observer).toHaveURL(inboxUrl);
 });

@@ -25,7 +25,7 @@ interface MenubarFocusDeps {
   ensureMainWindowReady(): Promise<boolean>;
   openMenubarThread(agentId: string, projectId: string): Promise<{ ok: boolean; reason?: string } | null | undefined>;
   logMainError(context: string, error: unknown): void;
-  safeSend(channel: string, ...args: unknown[]): void;
+  sendToMainWindow(channel: string, ...args: unknown[]): Promise<boolean>;
   menubar?: { hide(): void } | null;
 }
 
@@ -53,7 +53,7 @@ export async function focusMenubarAgent(
   if (!session || session.projectId !== projectId) return;
   deps.menubar?.hide();
   deps.showMainWindow();
-  deps.safeSend('app:focusSession', agentId, projectId);
+  await deps.sendToMainWindow('app:focusSession', agentId, projectId);
 }
 
 /** Maps the named launch input onto `launchAuthorizedTerminal`'s positional signature. */
@@ -514,12 +514,12 @@ export function registerTerminalsIpc(): void {
   );
   safeProductHandle(
     IPC.menubar.open,
-    (view: 'dashboard' | 'agents' | 'settings' | 'scheduler') => {
+    async (view: 'dashboard' | 'agents' | 'settings' | 'scheduler') => {
       ctx.menubar?.hide();
       ctx.showMainWindow();
-      if (view === 'agents') ctx.safeSend('app:openAgents');
-      else if (view === 'settings') ctx.safeSend('app:openSettings');
-      else if (view === 'scheduler') ctx.safeSend('app:openScheduler');
+      if (view === 'agents') await ctx.sendToMainWindow('app:openAgents');
+      else if (view === 'settings') await ctx.sendToMainWindow('app:openSettings');
+      else if (view === 'scheduler') await ctx.sendToMainWindow('app:openScheduler');
       // 'dashboard' just shows the window (its default view).
     },
     () => undefined

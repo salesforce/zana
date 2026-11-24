@@ -1,3 +1,4 @@
+import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { MachineProjectAddMenu } from '../setup/MachineProjectAddMenu.js';
 import { useSetupNavigation } from '../setup/useSetupNavigation.js';
 import { useHosts } from '../../hooks/useHosts.js';
@@ -109,6 +110,11 @@ function placeFixedMenu(
   el.style.right = 'auto';
   el.style.bottom = 'auto';
   el.style.zIndex = '20';
+}
+
+function threadOnMachine(thread: ThreadListItem, project: Project, machine?: MachineProjectGroup): boolean {
+  return !machine || !isScratchWorkspaceProject(project) || thread.hostId === machine.hostId
+    || (machine.primary && !thread.hostId);
 }
 
 interface RailGroup {
@@ -252,19 +258,21 @@ export function ProjectsList({
     }
     return map;
   }, [threads]);
-  const railThreadsByProject = useMemo(() => {
-    const grouped = new Map<string, typeof threads>();
+  const visibleThreadsByProject = useMemo(() => {
+    const grouped = new Map<string, ThreadListItem[]>();
     for (const thread of threads) {
-      const list = grouped.get(thread.projectId) ?? [];
-      list.push(thread);
-      grouped.set(thread.projectId, list);
+      if (thread.archivedAt || thread.visibility === 'hidden') continue;
+      const list = grouped.get(thread.projectId);
+      if (list) list.push(thread);
+      else grouped.set(thread.projectId, [thread]);
     }
-    const map = new Map<string, typeof threads>();
-    for (const [projectId, list] of grouped) {
-      map.set(projectId, railThreadsForProject(list));
-    }
-    return map;
+    return grouped;
   }, [threads]);
+  const railThreadsByProject = useMemo(() => {
+    const grouped = new Map<string, ThreadListItem[]>();
+    for (const [id, list] of visibleThreadsByProject) grouped.set(id, railThreadsForProject(list));
+    return grouped;
+  }, [visibleThreadsByProject]);
 
   const [dropOver, setDropOver] = useState(false);
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -489,10 +497,11 @@ export function ProjectsList({
     let source = sortedProjects;
     if (hideIdleProjects) source = source.filter((p) => projectHasRunningAgents(p));
     const items: FlatRailItem[] = [];
+    const threadRows = q ? visibleThreadsByProject : railThreadsByProject;
     for (const project of source) {
       const projectMatches = !q || composerProjectLabel(project).toLowerCase().includes(q)
         || project.name.toLowerCase().includes(q);
-      for (const thread of railThreadsByProject.get(project.id) ?? []) {
+      for (const thread of threadRows.get(project.id) ?? []) {
         if (!projectMatches && !threadTitle(thread).toLowerCase().includes(q)) continue;
         items.push({ kind: 'thread', project, thread, at: thread.updatedAt ?? thread.createdAt });
       }
@@ -507,7 +516,7 @@ export function ProjectsList({
       }
     }
     return items.sort((a, b) => b.at - a.at);
-  }, [agentsOnly, filter, sortedProjects, hideIdleProjects, railThreadsByProject, terminals, liveThreadsByProject, projectNavigationOrganization]);
+  }, [agentsOnly, filter, sortedProjects, hideIdleProjects, railThreadsByProject, visibleThreadsByProject, terminals, liveThreadsByProject, projectNavigationOrganization]);
 
   // Keep every project in one uninterrupted tree. Display order stays stable
   // from the persisted project ordering or the selected sort preference.
@@ -519,13 +528,25 @@ export function ProjectsList({
   useEffect(() => {
     if (legacyPrimaryKey && legacyPrimaryKey in collapsedSections) migrateSectionKey(legacyPrimaryKey, machineSectionKey({ id: 'local', primary: true }));
   }, [legacyPrimaryKey, collapsedSections, migrateSectionKey]);
+  // Search the full visible roster. The idle-row limit only applies while browsing.
+  const titleMatches = useMemo(() => {
+    const matches = new Map<string, ThreadListItem[]>();
+    const query = filter.trim().toLowerCase();
+    if (!inSidebar || !query || agentsOnly) return matches;
+    for (const [id, list] of visibleThreadsByProject) {
+      const rows = list.filter(thread => threadTitle(thread).toLowerCase().includes(query));
+      if (rows.length) matches.set(id, rows);
+    }
+    return matches;
+  }, [inSidebar, agentsOnly, filter, visibleThreadsByProject]);
+
   const railGroups = useMemo<RailGroup[]>(() => {
     if (!inSidebar || scopedProjectId) return [{ projects: visibleProjects }];
     return machineGroups.map(machine => ({ machine, projects: machine.projects.filter(project =>
       (!hideIdleProjects || project.id === selectedId || (!isScratchWorkspaceProject(project) ? projectHasRunningAgents(project) : (liveThreadsByProject.get(project.id) ?? []).some(thread => thread.hostId === machine.hostId || (machine.primary && !thread.hostId)) || (machine.primary && projectRailTerminals(terminals[project.id]).length > 0)))
-      && machineProjectMatches(machine, project, filter)
+      && (machineProjectMatches(machine, project, filter) || titleMatches.get(project.id)?.some(thread => threadOnMachine(thread, project, machine)))
     ) })).filter(group => !filter.trim() || group.projects.length > 0);
-  }, [inSidebar, scopedProjectId, visibleProjects, machineGroups, filter, hideIdleProjects, selectedId, terminals, liveThreadsByProject]);
+  }, [inSidebar, scopedProjectId, visibleProjects, machineGroups, filter, hideIdleProjects, selectedId, terminals, liveThreadsByProject, titleMatches]);
   const openMachineThread = (group: MachineProjectGroup, project: Project) => {
     navigate(newThreadLocationPath({ projectId: project.id, hostId: group.hostId }));
     dismissMobileNav?.();
@@ -711,14 +732,17 @@ export function ProjectsList({
     const labelClass = sortable ? 'project-label project-label--sortable' : 'project-label';
     const scratch = isScratchWorkspaceProject(p);
     const projectedDefault = scratch && !!group.machine && !group.machine.primary && p.hostId !== group.machine.hostId;
+    const titleOnly = !!group.machine && !machineProjectMatches(group.machine, p, filter);
     const liveList = projectNavigationSessions(
-      projectedDefault ? [] : projectRailTerminals(terminals[p.id]),
+      projectedDefault || titleOnly ? [] : projectRailTerminals(terminals[p.id]),
       projectNavigationOrganization
     );
-    const railThreads = (railThreadsByProject.get(p.id) ?? []).filter(thread => !scratch || !group.machine
-      || thread.hostId === group.machine.hostId || (group.machine.primary && !thread.hostId));
+    const matches = (titleMatches.get(p.id) ?? []).filter(thread => threadOnMachine(thread, p, group.machine));
+    const browsing = railThreadsByProject.get(p.id) ?? [];
+    const candidates = matches.length && !titleOnly ? [...new Set([...browsing, ...matches])] : browsing;
+    const railThreads = titleOnly ? matches : candidates.filter(thread => threadOnMachine(thread, p, group.machine));
     const disclosureId = projectRailDisclosureId(p, group.machine);
-    const expanded = disclosure.isExpanded(disclosureId, liveList.length + railThreads.length > 0);
+    const expanded = matches.length > 0 || disclosure.isExpanded(disclosureId, liveList.length + railThreads.length > 0);
     const nestedCount = liveList.length + railThreads.length;
     const displayName = composerProjectLabel(p);
     return (
@@ -804,6 +828,7 @@ export function ProjectsList({
                     className={`project-tree-chevron ${expanded ? 'expanded' : ''}`}
                     aria-label={`${expanded ? 'Collapse' : 'Expand'} sessions for ${displayName}`}
                     aria-expanded={expanded}
+                    disabled={matches.length > 0}
                     onClick={(e) => {
                       e.stopPropagation();
                       disclosure.setExpanded(disclosureId, !expanded);
@@ -1151,8 +1176,8 @@ export function ProjectsList({
           <div className={inSidebar ? 'sidebar-projects-filter list-filter' : 'list-filter'}>
             <Search size={14} className="list-filter-icon" aria-hidden="true" />
             <input
-              placeholder={agentsOnly ? 'Filter agents' : inSidebar && !scopedProjectId ? 'Filter machines or projects' : 'Filter projects'}
-              aria-label={agentsOnly ? 'Filter agents' : inSidebar && !scopedProjectId ? 'Filter machines or projects' : 'Filter projects'}
+              placeholder={agentsOnly ? 'Filter agents' : inSidebar && !scopedProjectId ? 'Filter machines, projects or chats' : 'Filter projects'}
+              aria-label={agentsOnly ? 'Filter agents' : inSidebar && !scopedProjectId ? 'Filter machines, projects or chats' : 'Filter projects'}
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               onKeyDown={(event) => {
@@ -1250,7 +1275,7 @@ export function ProjectsList({
             </div>
           )
         ) : inSidebar && railGroups.length === 0 ? (
-          <div className="list-empty" role="status">No machines or projects match &ldquo;{filter}&rdquo;.</div>
+          <div className="list-empty" role="status">No machines, projects or chats match &ldquo;{filter}&rdquo;.</div>
         ) : railGroups.every(group => group.projects.length === 0) && !inSidebar ? (
           filter.trim() ? (
             <div className="list-empty" role="status">No projects match &ldquo;{filter}&rdquo;.</div>
@@ -1398,18 +1423,20 @@ export function ProjectsList({
                 <Star size={12} className={p.favorite ? 'project-menu-star-on' : undefined} />
                 <span>{p.favorite ? 'Remove from favorites' : 'Add to favorites'}</span>
               </button>
-              <div className="project-menu-sep" />
-              {!scopedProjectId && (
-                <button
-                  className="project-menu-item"
-                  onClick={() => {
-                    setMenu(null);
-                    void product.windows.openProject(p.id);
-                  }}
-                >
-                  <AppWindow size={12} />
-                  <span>Open in new window</span>
-                </button>
+              {!scopedProjectId && hasDesktopBridge() && (
+                <>
+                  <div className="project-menu-sep" />
+                  <button
+                    className="project-menu-item"
+                    onClick={() => {
+                      setMenu(null);
+                      void product.windows.openNew(p.id);
+                    }}
+                  >
+                    <AppWindow size={12} />
+                    <span>Open in new window</span>
+                  </button>
+                </>
               )}
               {rowMenuActions.length > 0 && (
                 <>

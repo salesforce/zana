@@ -79,23 +79,26 @@ vi.mock('electron', () => {
     dock: loose()
   } as Record<string, unknown>, { get: (t, k) => (k in t ? t[k as string] : (typeof k === 'symbol' ? undefined : loose())) });
   class BrowserWindow {
+    private static nextId = 1;
     static getAllWindows() { return []; }
     static getFocusedWindow() { return null; }
     static fromWebContents() { return null; }
     constructor(options: unknown) {
       h.winOptions.push(options);
+      const id = BrowserWindow.nextId++;
       const handlers = new Map<string, ((...a: any[]) => any)[]>();
+      // Electron objects are synchronous values even when a helper returns them in a promise.
       const fallback = { get: (target: Record<string, unknown>, key: string | symbol) =>
-        key in target ? target[key as string] : loose() };
+        key in target ? target[key as string] : key === 'then' ? undefined : loose() };
       const win: any = new Proxy({
-        id: 1,
+        id,
         isDestroyed: () => h.winDestroyed,
         on: (name: string, fn: (...a: any[]) => any) => {
           handlers.set(name, [...(handlers.get(name) ?? []), fn]);
           return win;
         },
         setTitleBarOverlay: (options: unknown) => { h.overlays.push(options); },
-        webContents: new Proxy({ id: 2, isDestroyed: () => h.contentsDestroyed(), send: (...a: unknown[]) => { h.sent.push(a); } }, fallback)
+        webContents: new Proxy({ id, isDestroyed: () => h.contentsDestroyed(), send: (...a: unknown[]) => { h.sent.push(a); } }, fallback)
       }, fallback);
       h.lastWin = win;
       h.windowHandlers.set(win, handlers);
@@ -1770,7 +1773,7 @@ describe('host bootstrap wiring', () => {
     const deliveries = () => h.sent.filter(([channel, d]) => channel === IPC.deepLinks.onLink && (d as any).payload === 'ready');
 
     // Ready window: link is sent to the renderer.
-    ctx().markRendererReady(h.lastWin);
+    ctx().markRendererReady(ctx().mainWindow());
     h.sent.length = 0;
     openUrl({ preventDefault: vi.fn() }, link);
     await vi.waitFor(() => expect(deliveries()).toHaveLength(1));

@@ -187,6 +187,23 @@ describe('threadOpenListener', () => {
     expect(latest).toHaveBeenCalledWith(expect.stringContaining('t-1'));
   });
 
+  it('honors the menu bar’s main-window destination', () => {
+    const event = { type: 'thread-open', targetWindow: 'main', threadId: 't1', projectId: 'p1' };
+    const listener = threadOpenListener({ current: vi.fn() });
+    try {
+      for (const surface of [{}, { cc: { windows: { secondary: true } } }]) {
+        vi.stubGlobal('window', surface);
+        listener(event);
+        expect(h.enterProjectFocus).not.toHaveBeenCalled();
+      }
+      vi.stubGlobal('window', { cc: { windows: { secondary: false } } });
+      listener(event);
+      expect(h.enterProjectFocus).toHaveBeenCalledExactlyOnceWith('p1');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('ignores file, terminal, malformed and foreign payloads', () => {
     const listener = threadOpenListener({ current: vi.fn() });
     for (const payload of [null, 'x', { type: 'other', threadId: 't', projectId: 'p' }, { type: 'thread-open', threadId: 't', projectId: 'p', file: 'a.ts' },

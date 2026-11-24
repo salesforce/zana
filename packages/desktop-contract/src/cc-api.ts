@@ -1471,11 +1471,17 @@ export interface CcApi {
   /** Multi-window control surface (project, plugin view and thread view windows). */
   windows: {
     /**
-     * Open (or focus) a window locked to a single project — the renderer-side
-     * half of "Open in New Window". Main validates the id and de-dupes against
+     * Open (or focus) a window scoped to a single project.
+     * Main validates the id and de-dupes against
      * an existing window for the same project. Resolves `true` once handled.
      */
     openProject(projectId: string): Promise<boolean>;
+    /** Always create an independent shell window, optionally starting in a registered project. */
+    openNew(projectId?: string): Promise<boolean>;
+    /** Return this project window to its cross-project shell. */
+    leaveProject(destination: 'projects' | 'settings'): Promise<boolean>;
+    /** Auxiliary windows leave app-wide startup work to the primary window. */
+    readonly secondary: boolean;
     /**
      * Open (or focus) a window showing one plugin project tab. Main checks the
      * project and plugin; the window's renderer checks the tab opted in with

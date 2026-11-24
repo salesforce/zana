@@ -97,15 +97,15 @@ it('migrates validated legacy thread shortcuts, confines project windows and nev
     closed: [thread('c')]
   });
   const state = { open: [setup, thread('a')], closed: [thread('c')] };
-  saveApplicationTabs(io, null, state);
-  expect(storage.get('zcc.application-tabs.v1:main')).not.toContain('setup');
+  saveApplicationTabs(io, state);
+  expect(storage.get('zcc.application-tabs.v2')).not.toContain('setup');
   expect(readApplicationTabs(io, null)).toEqual({
     open: [thread('a')],
     closed: [thread('c')]
   });
   storage.set('zcc.application-tabs.v1:p', legacy);
   expect(readApplicationTabs(io, 'p').open).toEqual([thread('a')]);
-  storage.set('zcc.application-tabs.v1:main', '{broken');
+  storage.set('zcc.application-tabs.v2', '{broken');
   expect(readApplicationTabs(io, null)).toEqual(empty());
   const unavailable = {
     getItem() {
@@ -116,8 +116,19 @@ it('migrates validated legacy thread shortcuts, confines project windows and nev
     }
   };
   expect(readApplicationTabs(unavailable, null)).toEqual(empty());
-  expect(() => saveApplicationTabs(unavailable, null, state)).not.toThrow();
+  expect(() => saveApplicationTabs(unavailable, state)).not.toThrow();
 });
+it('retains open and closed project tabs after Back and leaves another window’s history alone', () => {
+  const scoped = memory(JSON.stringify({ open: [thread('a'), thread('b', 'q')], closed: [thread('c')] }), 'p');
+  const other = memory(JSON.stringify({ open: [thread('other')], closed: [] }));
+  const tabs = readApplicationTabs(scoped.io, 'p');
+  expect(tabs).toEqual({ open: [thread('a')], closed: [thread('c')] });
+  saveApplicationTabs(scoped.io, tabs);
+  expect(readApplicationTabs(scoped.io, null)).toEqual(tabs);
+  expect(readApplicationTabs(scoped.io, 'q')).toEqual(empty());
+  expect(readApplicationTabs(other.io, null).open).toEqual([thread('other')]);
+});
+
 it('initializes a window once, merges live drafts, and isolates other project windows', () => {
   const store = useApplicationTabs.getState();
   store.openTab(setup);
@@ -321,12 +332,12 @@ it('round-trips mixed rows and keeps every valid thread when plugin rows are bad
     open: [thread('a'), plugin('d', { icon: 'file' }), setup, thread('b')],
     closed: [plugin('c'), thread('z')]
   };
-  saveApplicationTabs(io, null, state);
+  saveApplicationTabs(io, state);
   expect(readApplicationTabs(io, null)).toEqual({
     open: [thread('a'), plugin('d', { icon: 'file' }), thread('b')],
     closed: [plugin('c'), thread('z')]
   });
-  const saved = JSON.parse(storage.get('zcc.application-tabs.v1:main')!);
+  const saved = JSON.parse(storage.get('zcc.application-tabs.v2')!);
   expect(saved.open[0]).not.toHaveProperty('kind');
   const mixed = {
     open: [
@@ -556,8 +567,8 @@ it('round-trips agent rows without extra fields and skips them in old readers by
     open: [thread('a'), agent('s1'), setup],
     closed: [agent('s2')]
   };
-  saveApplicationTabs(io, null, state);
-  const saved = JSON.parse(storage.get('zcc.application-tabs.v1:main')!);
+  saveApplicationTabs(io, state);
+  const saved = JSON.parse(storage.get('zcc.application-tabs.v2')!);
   expect(saved.open[1]).toEqual({ kind: 'agent', sessionId: 's1', projectId: 'p', projectScoped: false });
   expect(readApplicationTabs(io, null)).toEqual({
     open: [thread('a'), agent('s1')],
@@ -590,8 +601,8 @@ it('stays under the restore size limit with 30 maximal agent rows and 20 maximal
   const { io, storage } = memory();
   const parsed = readApplicationTabs(memory(JSON.stringify({ open: rows, closed: [] })).io, null);
   expect(parsed.open).toHaveLength(50);
-  saveApplicationTabs(io, null, parsed);
-  expect(storage.get('zcc.application-tabs.v1:main')!.length).toBeLessThan(128_000 + MAX_PLUGIN_ROWS_CHARS);
+  saveApplicationTabs(io, parsed);
+  expect(storage.get('zcc.application-tabs.v2')!.length).toBeLessThan(128_000 + MAX_PLUGIN_ROWS_CHARS);
   expect(readApplicationTabs(io, null).open).toHaveLength(50);
 });
 

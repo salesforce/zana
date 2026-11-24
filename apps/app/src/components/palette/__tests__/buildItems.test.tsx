@@ -22,6 +22,8 @@ vi.mock('../../../store', async () => {
 });
 vi.mock('../../thread/pickers/model-refresh.js', () => ({ refreshModelsWithToast: vi.fn() }));
 import { refreshModelsWithToast } from '../../thread/pickers/model-refresh.js';
+vi.mock('../../../lib/app-surface.js', () => ({ hasDesktopBridge: vi.fn(() => true) }));
+import { hasDesktopBridge } from '../../../lib/app-surface.js';
 const noop = () => {};
 const asyncNoop = async () => null;
 
@@ -131,6 +133,11 @@ describe('buildPaletteItems', () => {
       'action:reopen-last-closed',
       'open-window:p1'
     ]);
+  });
+
+  it('omits native window actions in a browser', () => {
+    vi.mocked(hasDesktopBridge).mockReturnValueOnce(false);
+    expect(buildPaletteItems(baseCtx()).some(item => item.key.startsWith('open-window:'))).toBe(false);
   });
 
   it('names the platform file manager on the reveal action', () => {
