@@ -309,7 +309,8 @@ export function AgentSettings() {
   const hostProject = kind === 'project' ? selected : '';
   const descriptors = useResource(`harness-descriptors:${hostProject}`, () => api.harnessDescriptors(hostProject || undefined));
   const { loaded, current, error, save: saveEdit } = useScopedHarnessRouting(api, scope);
-  const ready = loaded && descriptors.data !== null;
+  const loadError = error ?? descriptors.error;
+  const ready = loaded && descriptors.data !== null && !loadError;
   const save = (edit: (value: HarnessRouting | null) => HarnessRouting | null) => {
     if (ready) saveEdit(edit);
   };
@@ -332,7 +333,7 @@ export function AgentSettings() {
             </select>
           </label>
         ) : <p className="dd-muted dd-agent-help">No projects are registered.</p>)}
-        {(scope || error) && (
+        {(scope || loadError) && (
           <HarnessRoutingEditor
             descriptors={descriptors.data ?? []}
             value={current ?? undefined}
@@ -343,8 +344,8 @@ export function AgentSettings() {
             }}
             rowCopy={AGENT_ROW_COPY}
             inheritLabel={kind === 'global' ? 'Use Zana’s AI harness settings' : 'Use Default'}
-            loading={!ready && !error}
-            notice={error ? <p className="dd-agent-error" role="alert">{error}</p> : null}
+            loading={!ready && !loadError}
+            notice={loadError ? <p className="dd-agent-error" role="alert">{loadError}</p> : null}
           />
         )}
       </div>

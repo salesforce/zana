@@ -727,13 +727,47 @@ describe('durable independent-store payload replication', () => {
     expect(b.store.find(draft.id)).toBeNull();
     a.store.update(draft.id, { status: 'approved', expectedHead: a.sync.head('repo', draft.id) }, user);
     a.service.mutationCommitted();
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1);
     expect(b.store.find(draft.id)).not.toBeNull();
     dispose();
     const calls = vi.mocked(peers.call).mock.calls.length;
     a.service.mutationCommitted(); a.service.start(peers);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(vi.mocked(peers.call).mock.calls).toHaveLength(calls);
+  });
+  it('yields between pending deliveries so a local peer backlog does not starve worker heartbeats', async () => {
+    const a = fixture('a'), b = fixture('b'); a.pair(); b.pair();
+    a.store.create({ title: 'First pending', status: 'approved', template: 'blank' }, user);
+    a.store.create({ title: 'Second pending', status: 'approved', template: 'blank' }, user);
+    let heartbeatRan = false, handshakes = 0;
+    setTimeout(() => { heartbeatRan = true; }, 0);
+    const peers = transport(a, b), call = peers.call;
+    peers.call = vi.fn(async (peerId, method, body, args) => {
+      if (method === 'handshake' && ++handshakes === 2) expect(heartbeatRan).toBe(true);
+      return call(peerId, method, body, args);
+    });
+
+    await a.service.deliverPending(peers);
+
+    expect(handshakes).toBe(2);
+  });
+  it('does not begin another pending delivery when disposed during a heartbeat yield', async () => {
+    const a = fixture('a'), b = fixture('b'); a.pair(); b.pair();
+    a.store.create({ title: 'First pending', status: 'approved', template: 'blank' }, user);
+    a.store.create({ title: 'Second pending', status: 'approved', template: 'blank' }, user);
+    let dispose!: () => void, handshakes = 0;
+    a.service.register({ sdk: { peers: { handle: () => {} } }, onDispose: (fn: () => void) => { dispose = fn; } } as unknown as ZccPluginApi);
+    const peers = transport(a, b), call = peers.call;
+    peers.call = vi.fn(async (peerId, method, body, args) => {
+      const result = await call(peerId, method, body, args);
+      if (method === 'handshake') handshakes++;
+      if (method === 'apply') setTimeout(dispose, 0);
+      return result;
+    });
+
+    await a.service.deliverPending(peers);
+
+    expect(handshakes).toBe(1);
   });
   it('registers fenced receivers once and rejects old hosts, aborts and epoch mismatch', async () => {
     const a = fixture('a'), b = fixture('b'); a.pair(); b.pair();
