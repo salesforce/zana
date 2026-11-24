@@ -1072,3 +1072,36 @@ test('interactive HTML state survives hiding, conversation navigation and tab sw
     retainedSrc
   )).toBe(0);
 });
+
+test('Basic marks a conversation Unread when it replies while you are elsewhere, and clears it on open', async ({ app }, testInfo) => {
+  const page = app.window;
+  await dismissConsentOverlays(page);
+  await resize(app, 1440, 900);
+  const { ids } = await projectAndThreads(app, ['Draft the launch email', 'Review the roadmap']);
+  await basic(page).click();
+  const [first, second] = ids.map(id => sidebar(page).getByTestId(`basic-chat-row-${id}`));
+  const firstUnread = sidebar(page).getByTestId(`basic-chat-unread-${ids[0]}`);
+  await first.click();
+  await expect(page.getByTestId('thread-timeline')).toContainText('Response to: A useful result');
+  await expect(firstUnread).toHaveCount(0);
+  await second.click();
+  await expect(page).toHaveURL(new RegExp(`/threads/${ids[1]}$`));
+  // The reply lands while another conversation is open, as a background turn would.
+  await page.evaluate(async id => {
+    const response = await fetch(`/api/v1/threads/${encodeURIComponent(id)}/send`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'Add a call to action', mode: 'queue-if-active' })
+    });
+    if (!response.ok) throw new Error(await response.text());
+  }, ids[0]);
+  await expect(firstUnread).toHaveText('Unread');
+  await expect(first).toHaveClass(/is-unread/);
+  await expect(first).toHaveAttribute('aria-label', /, unread$/);
+  await expect(first.locator('.basic-ui-chat-name')).toHaveCSS('font-weight', '650');
+  await expect(sidebar(page).getByTestId(`basic-chat-unread-${ids[1]}`)).toHaveCount(0);
+  await captureTrialScreenshot(app, testInfo.outputPath('basic-conversations-unread.png'));
+  await first.click();
+  await expect(page.getByTestId('thread-timeline')).toContainText('Response to: Add a call to action');
+  await expect(firstUnread).toHaveCount(0);
+  await second.click();
+  await expect(firstUnread).toHaveCount(0);
+});
