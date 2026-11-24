@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HarnessFamily, HarnessModelRoutingV1 } from '@zana-ai/zcc-domain/product';
 import type { LaunchProvider } from '@zana-ai/zcc-host-daemon/harness/launch-provider';
 
+const getPrimaryHost = vi.hoisted(() => vi.fn(() => ({ id: 'local-host' })));
+vi.mock('@zana-ai/zcc-db', () => ({ getPrimaryHost }));
+
 const threadProviders = new Map<string, Record<string, unknown>>();
 const bridgeLaunchForProvider = vi.fn((providerId: string) => ({ bridge: providerId }));
 
@@ -56,6 +59,7 @@ function makeCtx(options: CtxOptions = {}) {
   const modelCatalogsRead = vi.fn(async () => (options.acpOptions ? { acpMode: { options: options.acpOptions } } : {}));
   const resolveHostId = vi.fn((hostId?: string) => hostId ?? 'local-host');
   const ctx = {
+    db: {},
     toProjects: () => options.projects ?? [],
     projectSettings: { get: projectSettingsGet },
     config: { getConfig: () => options.config ?? {} },
@@ -211,6 +215,7 @@ describe('plugin-keyed harness overrides', () => {
     const global = new Map<string, unknown>();
     const perProject = new Map<string, unknown>();
     const ctx = {
+      db: {},
       toProjects: () => list,
       hostHub: { resolveHostId: (hostId?: string) => hostId ?? 'local-host' },
       modelCatalogs: { read: vi.fn(async () => ({})) },
@@ -228,7 +233,7 @@ describe('plugin-keyed harness overrides', () => {
     return { ctx: ctx as never, raw: ctx, global, perProject };
   }
 
-  it('descriptors use the project host, an explicit host, or the local host', async () => {
+  it('descriptors use the project host, an explicit host, or primary host for Default scope', async () => {
     const { ctx } = overrideCtx();
     const hub = (ctx as { hostHub: unknown }).hostHub;
     await pluginHarnessDescriptors(ctx, { projectId: 'p1' });
@@ -236,7 +241,7 @@ describe('plugin-keyed harness overrides', () => {
     await pluginHarnessDescriptors(ctx, { projectId: 'p1', hostId: 'h2' });
     expect(harnessDescriptors).toHaveBeenLastCalledWith(hub, 'h2');
     await pluginHarnessDescriptors(ctx);
-    expect(harnessDescriptors).toHaveBeenLastCalledWith(hub, undefined);
+    expect(harnessDescriptors).toHaveBeenLastCalledWith(hub, 'local-host');
     await expect(pluginHarnessDescriptors(ctx, { projectId: 'nope' })).rejects.toThrow('unknown project');
   });
 

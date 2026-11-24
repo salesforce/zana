@@ -727,13 +727,23 @@ describe('durable independent-store payload replication', () => {
     expect(b.store.find(draft.id)).toBeNull();
     a.store.update(draft.id, { status: 'approved', expectedHead: a.sync.head('repo', draft.id) }, user);
     a.service.mutationCommitted();
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1);
     expect(b.store.find(draft.id)).not.toBeNull();
     dispose();
     const calls = vi.mocked(peers.call).mock.calls.length;
     a.service.mutationCommitted(); a.service.start(peers);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(vi.mocked(peers.call).mock.calls).toHaveLength(calls);
+  });
+  it('yields between pending deliveries so a local peer backlog does not starve worker heartbeats', async () => {
+    const a = fixture('a'), b = fixture('b'); a.pair(); b.pair();
+    a.store.create({ title: 'First pending', status: 'approved', template: 'blank' }, user);
+    a.store.create({ title: 'Second pending', status: 'approved', template: 'blank' }, user);
+    const yieldSpy = vi.spyOn(a.service as unknown as { yieldToHeartbeat: () => Promise<void> }, 'yieldToHeartbeat');
+
+    await a.service.deliverPending(transport(a, b));
+
+    expect(yieldSpy).toHaveBeenCalledTimes(1);
   });
   it('registers fenced receivers once and rejects old hosts, aborts and epoch mismatch', async () => {
     const a = fixture('a'), b = fixture('b'); a.pair(); b.pair();

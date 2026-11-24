@@ -17,6 +17,7 @@ import type {
   ProjectSettings
 } from '@zana-ai/zcc-domain/product';
 import type { HarnessAdapterDescriptor, HarnessScope } from '@zana-ai/zcc-domain/harness-adapter';
+import { getPrimaryHost } from '@zana-ai/zcc-db';
 import { threadProviderIdForHarnessFamily } from '@zana-ai/zcc-domain/launch-provider';
 import type { LaunchProvider } from '@zana-ai/zcc-host-daemon/harness/launch-provider';
 import { providerForFamily } from '@zana-ai/zcc-host-daemon/harness/registry';
@@ -218,7 +219,7 @@ export type HarnessRoutingCheckResult = { ok: true } | { ok: false; reason: stri
 
 export type PluginHarnessOverrideCtx = Pick<
   ProductHttpContext,
-  'toProjects' | 'projectSettings' | 'config' | 'hostHub' | 'modelCatalogs' | 'pluginHostArtifacts'
+  'db' | 'toProjects' | 'projectSettings' | 'config' | 'hostHub' | 'modelCatalogs' | 'pluginHostArtifacts'
 >;
 
 type PluginHarnessCheckCtx = Pick<PluginHarnessOverrideCtx, 'toProjects' | 'config' | 'hostHub' | 'modelCatalogs' | 'pluginHostArtifacts'>;
@@ -251,12 +252,14 @@ function resolveScope(ctx: Pick<PluginHarnessOverrideCtx, 'toProjects'>, scope: 
 
 /** Renderer-safe per-family descriptors for the project's host (or the given/local host). */
 export async function pluginHarnessDescriptors(
-  ctx: Pick<PluginHarnessOverrideCtx, 'toProjects' | 'hostHub'>,
+  ctx: Pick<PluginHarnessOverrideCtx, 'db' | 'toProjects' | 'hostHub'>,
   input: { projectId?: string; hostId?: string } = {}
 ): Promise<HarnessAdapterDescriptor[]> {
   const project = input.projectId ? resolveScope(ctx, { kind: 'project', projectId: input.projectId }) : undefined;
   const hostId = typeof input.hostId === 'string' ? input.hostId : undefined;
-  return harnessDescriptors(ctx.hostHub, hostId ?? (project?.kind === 'project' ? project.project.hostId : undefined));
+  // Default-scope plugin settings belong to this computer, never an arbitrary connected host.
+  const defaultHostId = getPrimaryHost(ctx.db)?.id;
+  return harnessDescriptors(ctx.hostHub, hostId ?? (project?.kind === 'project' ? project.project.hostId : defaultHostId));
 }
 
 /**

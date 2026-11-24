@@ -64,18 +64,18 @@ async function threadCount(win: Page, doc: string) {
 async function openAgentSettings(win: Page) {
   await win.getByRole('button', { name: /^Design Docs/ }).click();
   await win.locator('.dd-list').getByRole('button', { name: 'Settings', exact: true }).click();
-  await win.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Agent', exact: true }).click();
-  return win.getByRole('region', { name: 'Agent harness' });
+  await win.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'AI Harness', exact: true }).click();
+  return win.getByRole('region', { name: 'AI Harness' });
 }
 
 async function expandClaude(win: Page) {
-  const expand = win.getByRole('region', { name: 'Agent harness' }).getByRole('button', { name: 'Agent settings for Claude Code' });
+  const expand = win.getByRole('region', { name: 'AI Harness' }).getByRole('button', { name: 'Agent settings for Claude Code' });
   if (await expand.getAttribute('aria-expanded') !== 'true') await expand.click();
   await expect(expand).toHaveAttribute('aria-expanded', 'true');
 }
 
 async function pick(win: Page, control: string, option: RegExp) {
-  await win.getByRole('region', { name: 'Agent harness' }).getByRole('button', { name: control }).click();
+  await win.getByRole('region', { name: 'AI Harness' }).getByRole('button', { name: control }).click();
   await win.getByRole('listbox', { name: control }).getByRole('option', { name: option }).click();
 }
 
