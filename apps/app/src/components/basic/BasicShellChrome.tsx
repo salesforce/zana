@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, Menu, PanelLeft, PanelLeftClose, PanelsTopLeft, Plus, Search, X } from 'lucide-react';
 import { ZanaIcon } from '../icons/ZanaIcon.js';
 import { SidebarResizer } from '../SidebarResizer.js';
+import { NewWindowButton } from '../sidebar/NewWindowButton.js';
 import { SidebarFooterSlot } from '../sidebar/SidebarFooterSlot.js';
 import { useMobileNavDismiss } from '../mobile-nav-context.js';
 import { useData } from '../../store.js';
@@ -158,6 +159,7 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
       {conversations.length > visible.length && <button type="button" className="basic-ui-more-chats" onClick={() => setLimit(value => value + PAGE)}>Show more conversations</button>}
     </nav>
     <SidebarFooterSlot />
+    <NewWindowButton projectId={scopedProjectId ?? undefined} />
     <p className="basic-ui-sidebar-note">More tools are available in Advanced.</p>
     {!dismissMobileNav && <SidebarResizer />}
   </aside>;

@@ -329,7 +329,7 @@ import {
   writeThreadViewBounds
 } from './window/thread-view-windows.js';
 import { createThreadViewHost } from './window/thread-view-host.js';
-import { findUnscopedWindow, isUnscopedRegistration } from './window/main-window-registry.js';
+import { findUnscopedWindow, isUnscopedRegistration, leaveProjectWindow } from './window/main-window-registry.js';
 import { createWindowsTitleBarOverlays } from './window/titlebar-overlay.js';
 import { resolveThemeSetting, windowThemeOptions } from './window/window-theme.js';
 import { registerPluginViewIpc, registerThreadViewIpc } from './ipc/windows.js';
@@ -963,8 +963,8 @@ function setActiveProjectSkillsWatcher(
 
 /**
  * Live app windows. Replaces the old single `win` so the app can open several
- * windows at once — a "main" window (no scoped project) plus any number of
- * per-project windows opened on demand (see `windows:openProject`). The optional
+ * windows at once — the primary window and independent windows that can start
+ * in the global shell or in a project. The optional
  * `projectId` is the project a window is locked to; `undefined` is the full,
  * unscoped shell. Entries are added in `createWindow` and removed on `closed`,
  * so the map only ever holds live, non-destroyed windows.
@@ -985,7 +985,7 @@ function setActiveProjectSkillsWatcher(
  * A thread view window (`threadView`) shows one thread and its side panel. A
  * thread may have no project, so it is never the unscoped main window either.
  */
-const windows = new Map<number, { win: BrowserWindow; projectId?: string; view?: PluginViewTarget; threadView?: ThreadViewTarget }>();
+const windows = new Map<number, { win: BrowserWindow; projectId?: string; view?: PluginViewTarget; threadView?: ThreadViewTarget; secondary: boolean }>();
 // Windows caption buttons (minimize / maximize / close) follow the effective
 // theme: new windows take `current()`, open ones are re-coloured on a Theme
 // setting change (ipc/config.ts) and on OS appearance changes (`bind()`).
@@ -4082,14 +4082,31 @@ function showMainWindow() {
   win.focus();
 }
 
-async function ensureMainWindowReady(): Promise<boolean> {
+async function readyMainWindow(): Promise<BrowserWindow | null> {
   let win = unscopedWindow();
   if (!win) {
     createWindow(undefined, startupState.mode === 'repair-required');
     win = unscopedWindow();
   }
-  if (!win || win.webContents.isDestroyed()) return false;
-  return rendererReadiness.wait(win.id, MAIN_RENDERER_READY_TIMEOUT_MS);
+  if (!win || win.webContents.isDestroyed()) return null;
+  const ready = await rendererReadiness.wait(win.id, MAIN_RENDERER_READY_TIMEOUT_MS);
+  return ready && !win.isDestroyed() && !win.webContents.isDestroyed() ? win : null;
+}
+
+async function ensureMainWindowReady(): Promise<boolean> {
+  return (await readyMainWindow()) !== null;
+}
+
+async function sendToMainWindow(channel: string, ...args: unknown[]): Promise<boolean> {
+  try {
+    const win = await readyMainWindow();
+    if (!win) return false;
+    win.webContents.send(channel, ...args);
+    return true;
+  } catch (error) {
+    logMainError(`sendToMainWindow ${channel}`, error);
+    return false;
+  }
 }
 
 /**
@@ -4118,13 +4135,19 @@ function openProjectWindow(projectId: string) {
   createWindow(projectId);
 }
 
+function openNewWindow(projectId?: unknown): boolean {
+  if (projectId !== undefined && (typeof projectId !== 'string' || !store.listProjects().some(p => p.id === projectId))) return false;
+  createWindow(projectId, false, { secondary: true });
+  return true;
+}
+
 /* v8 ignore next -- wiring to Electron windows; createPluginViewHost is unit-tested and the windows are covered by built-Electron E2E */
 const pluginViewCloseGuard = createPluginViewCloseGuard();
 const pluginViews = createPluginViewHost({
   windows,
   listApps: () => runtimeSupervisor ? runtimeSupervisor.listPluginApps() : listPluginAppsFromProductServer(),
   projectIds: () => store.listProjects().map((project) => project.id),
-  createWindow: (view) => createWindow(view.projectId, false, view),
+  createWindow: (view) => createWindow(view.projectId, false, { view }),
   ensureMainWindowReady,
   mainWindow: unscopedWindow,
   showMainWindow,
@@ -4137,18 +4160,10 @@ const pluginViews = createPluginViewHost({
 const threadViews = createThreadViewHost({
   windows,
   projectIds: () => store.listProjects().map((project) => project.id),
-  createWindow: (target) => createWindow(target.projectId, false, undefined, target),
+  createWindow: (target) => createWindow(target.projectId, false, { threadView: target }),
   sendToMainWindow: (channel, args) => {
-    void ensureMainWindowReady().then((ready) => {
-      const win = unscopedWindow();
-      if (!ready || !win || win.webContents.isDestroyed()) return;
-      try {
-        win.webContents.send(channel, ...args);
-      } catch (err) {
-        logMainError(`sendToMainWindow ${channel}`, err);
-        return;
-      }
-      showMainWindow();
+    void sendToMainWindow(channel, ...args).then(sent => {
+      if (sent) showMainWindow();
     });
   },
   broadcast: safeSend,
@@ -4194,7 +4209,7 @@ function handleLoudInboxEntry(entry: InboxEntry) {
     });
     notification.on('click', () => {
       showMainWindow();
-      safeSend('app:focusInboxEntry', entry.id, entry.projectId);
+      void sendToMainWindow('app:focusInboxEntry', entry.id, entry.projectId);
     });
     notification.show();
   } catch (err) {
@@ -8440,21 +8455,25 @@ export async function runReviewedScheduledTeamNow(scheduleId: string, previewTok
  * out across.
  */
 /* v8 ignore next -- window construction runs only at the built-Electron boundary */
-function createWindow(projectId?: string, repairOnly = false, view?: PluginViewTarget, threadView?: ThreadViewTarget) {
+function createWindow(projectId?: string, repairOnly = false, options: {
+  view?: PluginViewTarget; threadView?: ThreadViewTarget; secondary?: boolean
+} = {}) {
+  const { view, threadView } = options;
+  const secondary = options.secondary ?? Boolean(projectId || threadView);
   // Capture the window the user invoked from BEFORE creating the new one, so a
   // scoped window cascades off its actual opener (not whatever `mainWindow()`
   // would pick, and never off itself once it's in the map).
   const opener = BrowserWindow.getFocusedWindow();
-  // Only the unscoped main window restores/persists saved bounds. Scoped
+  // Only the primary window restores/persists saved bounds. Additional
   // windows open at the default size, cascaded so stacked ones don't perfectly
   // overlap — per-project bounds persistence is a deliberate later step.
   const config = store.getConfig();
   // A thread view window may have no project, so it is checked on its own.
-  const scoped = !!projectId || repairOnly || !!threadView;
-  const saved = scoped ? undefined : config.windowBounds;
+  const useMainBounds = !secondary && !repairOnly;
+  const saved = useMainBounds ? config.windowBounds : undefined;
   const restored = restoreWindowState(
     saved,
-    scoped ? undefined : config.windowMaximized,
+    useMainBounds ? config.windowMaximized : undefined,
     screen.getAllDisplays(),
     screen.getPrimaryDisplay()
   );
@@ -8488,13 +8507,13 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
     ...(viewGeometry
       ? viewGeometry.options
       : {
-          width: scoped ? 1400 : restored.bounds.width,
-          height: scoped ? 900 : restored.bounds.height,
-          x: scoped ? undefined : restored.bounds.x,
-          y: scoped ? undefined : restored.bounds.y,
-          minWidth: scoped ? 900 : restored.minWidth,
+          width: useMainBounds ? restored.bounds.width : 1400,
+          height: useMainBounds ? restored.bounds.height : 900,
+          x: useMainBounds ? restored.bounds.x : undefined,
+          y: useMainBounds ? restored.bounds.y : undefined,
+          minWidth: useMainBounds ? restored.minWidth : 900,
           /* v8 ignore next -- window geometry is covered by built-Electron E2E */
-          minHeight: scoped ? 600 : restored.minHeight
+          minHeight: useMainBounds ? restored.minHeight : 600
         }),
     title: 'Zana',
     icon: productIconImage(),
@@ -8532,11 +8551,11 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
       // tokens it CAN read (process.argv): the theme it seeds before first
       // paint, and the e2e flag. The e2e flag is only present when the tap is
       // enabled; it gates the window.__zccTest bridge in preload.
-      additionalArguments: [windowTheme.themeArg, ...(E2E_TAP_ENABLED ? ['--zcc-e2e'] : [])]
+      additionalArguments: [windowTheme.themeArg, ...(secondary ? ['--zcc-secondary-window'] : []), ...(E2E_TAP_ENABLED ? ['--zcc-e2e'] : [])]
     }
   });
 
-  windows.set(win.id, { win, projectId, view, threadView });
+  windows.set(win.id, { win, projectId, view, threadView, secondary });
   if (view) {
     bindPluginViewCloseLifecycle(win, pluginViewCloseGuard, () => windowShutdownStarted);
     pluginViews.broadcast();
@@ -8599,7 +8618,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
 
   // A scoped window opens slightly offset from its opener so a freshly-opened
   // project window isn't hidden exactly behind the window it was opened from.
-  if (projectId && !view && !threadView && opener && opener !== win && !opener.isDestroyed()) {
+  if (secondary && !view && !threadView && opener && opener !== win && !opener.isDestroyed()) {
     const b = opener.getBounds();
     win.setBounds({ x: b.x + 36, y: b.y + 36, width: b.width, height: b.height });
   }
@@ -8626,7 +8645,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
   // The unscoped main window owns the saved bounds; a plugin view window keeps
   // its own entry in a capped record, and thread view windows share one entry.
   // Project windows open at the default size.
-  if (!scoped || viewKey || threadView) {
+  if (useMainBounds || viewKey || threadView) {
     const controller = threadView
       ? createBoundsStateController({
           win,
@@ -8719,7 +8738,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
     });
   }
 
-  if (!scoped) {
+  if (useMainBounds) {
     // macOS can reapply native zoom state after BrowserWindow construction on a
     // process relaunch, overriding explicit constructor bounds. Reassert normal
     // state once native window restoration has finished.
@@ -9399,6 +9418,8 @@ function registerIpc() {
     get offLoudInboxAppended() { return offLoudInboxAppended; },
     set offLoudInboxAppended(value) { offLoudInboxAppended = value; },
     get openProjectWindow() { return openProjectWindow; },
+    get openNewWindow() { return openNewWindow; },
+    leaveProjectWindow: (win, destination) => leaveProjectWindow(windows.get(win.id), destination, rendererUrl()),
     get overseerAudit() { return overseerAudit; },
     get apiErrorResume() { return apiErrorResume; },
     get squadWorkerRestarter() { return squadWorkerRestarter; },
@@ -9437,6 +9458,7 @@ function registerIpc() {
     get scheduler() { return scheduler; },
     get setActiveProjectSkillsWatcher() { return setActiveProjectSkillsWatcher; },
     get showMainWindow() { return showMainWindow; },
+    sendToMainWindow,
     get skillBundles() { return skillBundles; },
     get squadExecutionService() { return squadExecutionService; },
     get squadWorktreeAction() { return squadWorktreeRuntime.squadWorktreeAction; },
@@ -9497,7 +9519,11 @@ function buildAppMenu() {
       label: 'File',
       submenu: [
         {
-          label: 'New Claude Tab',
+          label: 'New Window',
+          click: () => openNewWindow()
+        },
+        {
+          label: 'New Tab',
           accelerator: 'CmdOrCtrl+T',
           // Hint only; shortcuts.ts owns the keystroke (see Settings… above).
           registerAccelerator: false,
@@ -10057,7 +10083,7 @@ async function bootstrapNormal() {
       isEnabled: companionEnabled,
       showMainWindow,
       e2e: E2E_LAUNCH,
-      sendToApp: safeSend,
+      sendToApp: sendToMainWindow,
       preloadPath: join(__dirname, '../preload/index.js'),
       logger: logMainError
     });
@@ -10071,9 +10097,9 @@ async function bootstrapNormal() {
       showWindow: showMainWindow,
       focusSession: (sessionId, projectId) => {
         showMainWindow();
-        safeSend('app:focusSession', sessionId, projectId);
+        void sendToMainWindow('app:focusSession', sessionId, projectId);
       },
-      openScheduler: (taskId) => safeSend('app:openScheduler', taskId),
+      openScheduler: (taskId) => void sendToMainWindow('app:openScheduler', taskId),
       popover: menubar,
       popoverEnabled: menubarPopoverEnabled,
       commandCenter: { enabled: companionEnabled, enter: companionHost.enter },

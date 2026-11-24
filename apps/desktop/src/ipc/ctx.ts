@@ -101,6 +101,8 @@ export interface IpcCtx {
   moduleRouter: any;
   offLoudInboxAppended: any;
   openProjectWindow: any;
+  openNewWindow: (projectId?: unknown) => boolean;
+  leaveProjectWindow: (win: import('electron').BrowserWindow, destination: unknown) => Promise<boolean>;
   overseerAudit: any;
   apiErrorResume: any;
   packAndInstallLocal: any;
@@ -135,6 +137,7 @@ export interface IpcCtx {
   scheduler: any;
   setActiveProjectSkillsWatcher: any;
   showMainWindow: any;
+  sendToMainWindow(channel: string, ...args: unknown[]): Promise<boolean>;
   ensureMainWindowReady: any;
   skillBundles: any;
   squadExecutionService: any;

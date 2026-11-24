@@ -22,6 +22,8 @@ vi.mock('../../../store', async () => {
 });
 vi.mock('../../thread/pickers/model-refresh.js', () => ({ refreshModelsWithToast: vi.fn() }));
 import { refreshModelsWithToast } from '../../thread/pickers/model-refresh.js';
+vi.mock('../../../lib/app-surface.js', () => ({ hasDesktopBridge: vi.fn(() => true) }));
+import { hasDesktopBridge } from '../../../lib/app-surface.js';
 const noop = () => {};
 const asyncNoop = async () => null;
 
@@ -131,6 +133,22 @@ describe('buildPaletteItems', () => {
       'action:reopen-last-closed',
       'open-window:p1'
     ]);
+  });
+
+  it('omits native window actions in a browser', () => {
+    vi.mocked(hasDesktopBridge).mockReturnValueOnce(false);
+    expect(buildPaletteItems(baseCtx()).some(item => item.key.startsWith('open-window:'))).toBe(false);
+  });
+
+  it('opens the selected project in a new desktop window and closes the palette', () => {
+    const openNew = vi.fn();
+    const onClose = vi.fn();
+    vi.stubGlobal('window', { cc: { windows: { openNew } } });
+    try {
+      buildPaletteItems(baseCtx({ onClose })).find(item => item.key === 'open-window:p1')!.run();
+      expect(openNew).toHaveBeenCalledExactlyOnceWith('p1');
+      expect(onClose).toHaveBeenCalledOnce();
+    } finally { vi.unstubAllGlobals(); }
   });
 
   it('names the platform file manager on the reveal action', () => {

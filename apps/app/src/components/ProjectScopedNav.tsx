@@ -12,7 +12,6 @@ import {
   MessageCircleQuestion,
   Activity,
   ArrowLeft,
-  AppWindow,
   SquarePen,
   Sparkles,
   Bot,
@@ -38,9 +37,7 @@ import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js
 import { useProjectTabAvailability } from '../hooks/useProjectTabAvailability.js';
 import { useRouteState } from '../hooks/useRouteState.js';
 import { useCompactLayout } from '../hooks/useCompactLayout.js';
-import { showInMainWindow } from '../plugins/plugin-view-windows.js';
 import {
-  getAgentsRoutePath,
   getProjectInboxRoutePath,
   getNewThreadRoutePath,
   getProjectModeRoutePath,
@@ -78,7 +75,7 @@ import {
  *
  * Two variants, same rail:
  * - `'window'` — a PER-PROJECT WINDOW (opened "in a new window"). The window is
- *   hard-locked to the project (URL scope); there is no "back".
+ *   scoped by URL until Back returns this same window to the global shell.
  * - `'focus'` — the MAIN WINDOW drilled into a project (`focusedProjectId`).
  *   History back returns to the cross-project home; Settings stays one click
  *   away in the utility dock.
@@ -154,10 +151,8 @@ export function ProjectScopedNav({
   }, [mode, goalsEnabled, followUpsEnabled, project.id, setProjectView]);
 
   const handleBack = () => {
-    // A project window is locked to this project, so Back hands off to the
-    // main window, which lists every project, instead of unlocking this one.
     if (!isFocus) {
-      void showInMainWindow(route.isProjectSettings ? getSettingsRoutePath() : getAgentsRoutePath());
+      void product.windows.leaveProject(route.isProjectSettings ? 'settings' : 'projects');
       return;
     }
     useUi.getState().exitProjectFocus(
@@ -353,25 +348,13 @@ export function ProjectScopedNav({
           data-testid="project-nav-back"
           onClick={handleBack}
           aria-label={backLabel}
-          title={isFocus ? undefined : 'Show all projects in the main window'}
+          title={backLabel}
         >
           <ArrowLeft size={17} aria-hidden="true" />
           Back
         </button>
       }
-      utilityStart={
-        isFocus ? (
-          <button
-            type="button"
-            className="sidebar-utility-button"
-            title="Open this project in a new window"
-            aria-label="Open this project in a new window"
-            onClick={() => void product.windows.openProject(project.id)}
-          >
-            <AppWindow size={18} />
-          </button>
-        ) : null
-      }
+      newWindowProjectId={project.id}
     />
   );
 }

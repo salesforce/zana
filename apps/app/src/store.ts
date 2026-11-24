@@ -2937,7 +2937,7 @@ export const useData = create<DataState>((set, get) => ({
       // belongs to the unscoped main window. The scoped window already hydrated
       // its own live ptys above (display only). A thread view window may have
       // no project, so it is checked on its own.
-      if (!isScopedWindow() && !isThreadViewSurface() && hasDesktopBridge()) {
+      if (!isScopedWindow() && !isThreadViewSurface() && hasDesktopBridge() && !window.cc.windows?.secondary) {
         await get().restoreSessions(hydrationFailed);
       }
     } catch (err) {

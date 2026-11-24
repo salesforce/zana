@@ -29,12 +29,18 @@ it('opens, closes and lists plugin view windows through their IPC channels', asy
   await cc.windows.closePluginView(target);
   await cc.windows.listPluginViews();
   await cc.windows.showInMain('/projects/p1');
+  await cc.windows.openNew();
+  await cc.windows.openNew('p1');
+  await cc.windows.leaveProject('settings');
   await cc.pluginApprovals.request({ pluginId: 'salesforce', title: 'Publish' });
   expect(electron.invoke.mock.calls).toEqual([
     [IPC.windows.openPluginView, target],
     [IPC.windows.closePluginView, target],
     [IPC.windows.listPluginViews],
     [IPC.windows.showInMain, '/projects/p1'],
+    [IPC.windows.openNew, undefined],
+    [IPC.windows.openNew, 'p1'],
+    [IPC.windows.leaveProject, 'settings'],
     [IPC.pluginApprovals.request, { pluginId: 'salesforce', title: 'Publish' }]
   ]);
 });

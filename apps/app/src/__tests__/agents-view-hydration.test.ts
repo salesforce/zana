@@ -18,6 +18,20 @@ vi.mock('../lib/product-client.js', () => ({ product: new Proxy({}, { get: (_tar
 import { useData, useUi } from '../store.js';
 afterEach(() => vi.restoreAllMocks());
 
+it.each([true, false])('restores terminal sessions only in the primary window (secondary=%s)', async secondary => {
+  const original = useData.getState().restoreSessions;
+  const restoreSessions = vi.fn(async () => {});
+  vi.stubGlobal('cc', { windows: { secondary } });
+  useData.setState({ restoreSessions });
+  try {
+    await useData.getState().init();
+    expect(restoreSessions).toHaveBeenCalledTimes(secondary ? 0 : 1);
+  } finally {
+    useData.setState({ restoreSessions: original });
+    vi.unstubAllGlobals();
+  }
+});
+
 it.each(['board', 'list', 'flow', 'plugin:city/world', 'invalid', undefined])('hydrates only valid saved Agents views: %s', async preferred => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   config.value = { agentsBoardView: preferred, walkthroughCompleted: true, setupDismissed: true };

@@ -6,7 +6,8 @@ import type { PluginViewHost } from '../window/plugin-view-host.js';
 import type { ThreadViewHost } from '../window/thread-view-host.js';
 
 export function registerWindowsIpc(): void {
-  
+  ctx.safeHandleFromWindow(IPC.windows.openNew, (_win, projectId?: unknown) => ctx.openNewWindow(projectId), () => false);
+  ctx.safeHandleFromWindow(IPC.windows.leaveProject, ctx.leaveProjectWindow, () => false);
   ctx.safeHandle(
     IPC.windows.openProject,
     (projectId: string) => {

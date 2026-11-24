@@ -115,7 +115,7 @@ export function ApplicationTabs({
   }, [scope]);
   useEffect(() => {
     if (initialized === scope)
-      saveApplicationTabs(sessionStorage, scope, { open, closed });
+      saveApplicationTabs(sessionStorage, { open, closed });
   }, [open, closed, scope, initialized]);
   useEffect(() => {
     if (includeThreads) void useThreads.getState().load();

@@ -70,6 +70,7 @@ vi.mock('../../store', () => ({
   SIDEBAR_MIN: 256,
   SIDEBAR_MAX: 480
 }));
+vi.mock('../../lib/app-surface.js', async (importOriginal) => ({ ...(await importOriginal<object>()), hasDesktopBridge: () => true }));
 vi.mock('../../modules', () => ({
   useProjectTabModules: () => h.modules
 }));
@@ -193,7 +194,7 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     expect(markup).toContain('aria-label="Settings"');
     expect(markup).toContain('href="/projects/proj-1/settings"');
     expect(markup).toContain('aria-label="Report a bug"');
-    expect(markup).toContain('aria-label="Open this project in a new window"');
+    expect(markup).toContain('aria-label="New Window"');
     expect(markup).toContain('>Settings<');
     expect(markup).not.toContain('>Open in new window<');
     expect(markup).not.toContain('Project workspace');
@@ -268,20 +269,20 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     h.agentCounts = { active: 0, blocked: 0 };
   });
 
-  it('omits the pop-out control but keeps Back in a dedicated project window', () => {
+  it('offers New Window and Back in a dedicated project window', () => {
     const markup = renderNav(
       <ProjectScopedNav project={project} variant="window" />
     );
 
     expect(markup).toContain('sidebar--titlebar-controls');
     expect(markup).not.toContain('project-focused-nav');
-    expect(markup).not.toContain('aria-label="Open this project in a new window"');
+    expect(markup).toContain('aria-label="New Window"');
     expect(markup).toContain('aria-label="Settings"');
     expect(markup).toContain('href="/projects/proj-1/settings"');
     expect(markup).toContain('aria-label="Report a bug"');
     expect(markup).not.toContain('aria-label="Go back"');
     expect(markup).toContain('aria-label="Back to all projects"');
-    expect(markup).toContain('title="Show all projects in the main window"');
+    expect(markup).toContain('title="Back to all projects"');
     expect(markup).toContain('>Back</button>');
   });
 
