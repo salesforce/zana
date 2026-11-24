@@ -7,6 +7,7 @@ import {
   type ServerResponse
 } from 'node:http';
 import { Transform } from 'node:stream';
+import { urlToHttpOptions } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createMobilePushRelay } from './push.js';
 import { digest, MobileDeviceStore } from './device-store.js';
@@ -315,9 +316,8 @@ export async function startMobileGateway(options: MobileGatewayOptions) {
       // contributes the validated path and query and can never pick the host.
       const proxy = httpRequest(
         {
-          protocol: upstream.protocol,
-          hostname: upstream.hostname,
-          port: upstream.port,
+          // urlToHttpOptions strips the brackets from an IPv6 host such as [::1].
+          ...urlToHttpOptions(upstream),
           path: upstreamPath,
           method: req.method,
           headers,
@@ -383,11 +383,12 @@ export async function startMobileGateway(options: MobileGatewayOptions) {
   server.on('upgrade', (req, socket, head) => {
     const id = sessionDevice(req);
     const machine = authenticatedMachine(req);
+    const machinePath = machine ? upstreamPathFor(req.url) : null;
     if (
       !requestAllowed(req) ||
       ((req.headers[MACHINE_HOST_HEADER] || req.headers[MACHINE_INSTANCE_HEADER]) && !machine) ||
       !id ||
-      (machine ? !isMachinePath('GET', req.url, true) || !upstreamPathFor(req.url) : !['/ws', '/ws/'].includes(req.url ?? '')) ||
+      (machine ? !isMachinePath('GET', req.url, true) || !machinePath : !['/ws', '/ws/'].includes(req.url ?? '')) ||
       sockets.size >= 40
     ) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
@@ -395,7 +396,7 @@ export async function startMobileGateway(options: MobileGatewayOptions) {
     }
     wss.handleUpgrade(req, socket, head, (client) => {
       sockets.set(client, id);
-      const target = new URL(machine ? upstreamPathFor(req.url)! : '/ws', upstream);
+      const target = new URL(machinePath ?? '/ws', upstream);
       target.protocol = 'ws:';
       const remote = new WebSocket(target, {
         ...(machine ? { headers: {

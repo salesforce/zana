@@ -313,6 +313,26 @@ describe('mobile gateway', () => {
   ])('upstreamPathFor(%s) -> %s', (raw, expected) => {
     expect(upstreamPathFor(raw)).toBe(expected);
   });
+  it('proxies to an IPv6 loopback upstream', async () => {
+    const seen: string[] = [];
+    const v6 = createServer((req, res) => {
+      seen.push(req.url ?? '');
+      res.end('{"ok":true}');
+    });
+    v6.listen(0, '::1');
+    try {
+      await once(v6, 'listening');
+    } catch {
+      return; // host has no IPv6 loopback
+    }
+    cleanup.push(() => new Promise(resolve => v6.close(resolve)));
+    const port = (v6.address() as { port: number }).port;
+    const f = await setup(false, { upstream: `http://[::1]:${port}` });
+    const pair = await f.pair();
+    const session = await f.session(pair.json.credential);
+    expect((await f.call('/api/v1/threads?q=1', { headers: { cookie: session.cookie } })).status).toBe(200);
+    expect(seen).toEqual(['/api/v1/threads?q=1']);
+  });
   it('rejects malformed pairing bodies and missing credentials', async () => {
     const f = await setup();
     for (const value of ['[]', 'null', '{', JSON.stringify({ code: 'x'.repeat(5000) })])
