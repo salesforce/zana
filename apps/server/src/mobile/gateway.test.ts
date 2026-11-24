@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
-import { startMobileGateway, isMobileProxyPath, type MobileGatewayOptions } from './gateway.js';
+import { startMobileGateway, isMobileProxyPath, upstreamPathFor, type MobileGatewayOptions } from './gateway.js';
 import { createUiSendVerifier, signUiSend } from '../http/ui-send-proof.js';
 import { MobileDeviceStore, DEVICE_LIFETIME_MS } from './device-store.js';
 const cleanup: Array<() => unknown> = [];
@@ -277,6 +277,41 @@ describe('mobile gateway', () => {
     expect(
       (await f.call('/', { method: 'OPTIONS', headers: { cookie: session.cookie } })).status
     ).toBe(405);
+  });
+  it('never forwards a double-slash or dot-segment target to another host', async () => {
+    const f = await setup();
+    const pair = await f.pair();
+    const session = await f.session(pair.json.credential);
+    let evilHits = 0;
+    const evil = createServer((_req, res) => {
+      evilHits += 1;
+      res.end('evil');
+    });
+    evil.listen(0, '127.0.0.1');
+    await once(evil, 'listening');
+    cleanup.push(() => new Promise(resolve => evil.close(resolve)));
+    const evilPort = (evil.address() as { port: number }).port;
+    const raw = async (path: string) => (await f.call(path, { headers: { cookie: session.cookie } })).status;
+    for (const path of [`//127.0.0.1:${evilPort}/x`, `/.//127.0.0.1:${evilPort}/x`, `/a/..//127.0.0.1:${evilPort}/x`])
+      expect(await raw(path)).toBe(400);
+    expect(evilHits).toBe(0);
+    expect(f.requests.some(r => r.url?.includes('127.0.0.1'))).toBe(false);
+    expect(await raw('/api/v1/threads?q=1')).toBe(200);
+    expect(f.requests.at(-1)!.url).toBe('/api/v1/threads?q=1');
+  });
+  it.each([
+    ['/api/v1/threads?x=1', '/api/v1/threads?x=1'],
+    [undefined, '/'],
+    ['/a/../b', '/b'],
+    ['/%2F%2Fx', '/%2F%2Fx'],
+    ['//evil.example/x', null],
+    ['/\\evil.example/x', null],
+    ['/.//evil.example/x', null],
+    ['/a/..//evil.example/x', null],
+    ['http://evil.example/x', null],
+    ['evil.example:443', null]
+  ])('upstreamPathFor(%s) -> %s', (raw, expected) => {
+    expect(upstreamPathFor(raw)).toBe(expected);
   });
   it('rejects malformed pairing bodies and missing credentials', async () => {
     const f = await setup();
