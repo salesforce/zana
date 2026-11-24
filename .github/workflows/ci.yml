@@ -470,7 +470,7 @@ jobs:
           pnpm exec playwright install chromium
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Run test-fault Squad specs
-        run: xvfb-run -a pnpm test:e2e -- e2e/job-team-failed-slots.spec.ts e2e/job-team-launch-complete-fault.spec.ts e2e/job-team-no-turn-warning.spec.ts
+        run: xvfb-run -a pnpm test:e2e -- e2e/job-team-failed-slots.spec.ts e2e/job-team-launch-complete-fault.spec.ts e2e/job-team-no-turn-warning.spec.ts e2e/squad-blocker-reminder.spec.ts e2e/squad-idle-capacity-notice.spec.ts
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@v7

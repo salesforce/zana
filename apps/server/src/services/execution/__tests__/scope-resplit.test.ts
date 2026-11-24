@@ -19,12 +19,22 @@ describe('pathInScope', () => {
     expect(pathInScope('src/a1.ts', ['src/a?.ts'])).toBe(true);
     expect(pathInScope('x.ts', ['./'])).toBe(false);
   });
+  it('treats `dir/**/*.ext` as zero or more directories', () => {
+    expect(pathInScope('src/a.ts', ['src/**/*.ts'])).toBe(true);
+    expect(pathInScope('src/x/y/a.ts', ['src/**/*.ts'])).toBe(true);
+    expect(pathInScope('src/a.css', ['src/**/*.ts'])).toBe(false);
+    expect(pathInScope('other/a.ts', ['src/**/*.ts'])).toBe(false);
+  });
 });
 
 describe('extractNamedPaths', () => {
   it('finds relative paths and bare files, drops traversal, absolute, urls-ish and versions', () => {
     const paths = extractNamedPaths('Edit `apps/server/src/api.ts`, also ./packages/x/y.json. See ../secret/a.ts, /etc/passwd and v1.2.3 e.g. foo. package.json');
     expect(paths).toEqual(['apps/server/src/api.ts', 'packages/x/y.json', 'package.json']);
+  });
+  it('finds a root-level file followed by a sentence-ending period', () => {
+    expect(extractNamedPaths('Also update extra.ts.')).toEqual(['extra.ts']);
+    expect(extractNamedPaths('Touch src/a.ts. Then stop.')).toEqual(['src/a.ts']);
   });
   it('ignores overlong tokens and plain prose', () => {
     expect(extractNamedPaths(`${'a/'.repeat(200)}b.ts and nothing else`)).toEqual([]);
@@ -47,8 +57,12 @@ describe('assessScopeWidening', () => {
     const u = assessScopeWidening(unit(), 'the API contract needs a new field');
     expect(u.verdict).toBe('undecidable');
     expect(confirmSplitPrompt('ui', u)).toContain('scopeSplit "keep"');
+    const twenty = assessScopeWidening(unit(), Array.from({ length: 20 }, (_, i) => `other/f${i}.ts`).join(' '));
+    expect(twenty).toMatchObject({ verdict: 'widens' });
+    expect(twenty.addedFiles).toHaveLength(20);
     const many = assessScopeWidening(unit(), Array.from({ length: 30 }, (_, i) => `other/f${i}.ts`).join(' '));
-    expect(many.addedFiles).toHaveLength(20);
+    expect(many).toMatchObject({ verdict: 'undecidable', addedFiles: [] });
+    expect(many.reason).toContain('30 paths');
   });
 });
 

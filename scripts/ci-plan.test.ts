@@ -175,7 +175,7 @@ it('runs test-fault Squad specs in a private fault-enabled build whenever e2e is
   const workflow = load(readFileSync('.github/workflows/ci.yml', 'utf8')) as any;
   const job = workflow.jobs['squad-test-faults'];
   expect(job.if).toBe("needs.plan.outputs.e2e == 'true'");
-  expect(job.steps.some((step: any) => step.run === 'xvfb-run -a pnpm test:e2e -- e2e/job-team-failed-slots.spec.ts e2e/job-team-launch-complete-fault.spec.ts e2e/job-team-no-turn-warning.spec.ts')).toBe(true);
+  expect(job.steps.some((step: any) => step.run === 'xvfb-run -a pnpm test:e2e -- e2e/job-team-failed-slots.spec.ts e2e/job-team-launch-complete-fault.spec.ts e2e/job-team-no-turn-warning.spec.ts e2e/squad-blocker-reminder.spec.ts e2e/squad-idle-capacity-notice.spec.ts')).toBe(true);
   // Build-gated `ZCC_TEST_*` knobs are compiled out of the production artifact the affected
   // shards reuse, so every spec that sets one must skip there and run in this job.
   const run = job.steps.map((step: any) => step.run ?? '').join('\n');

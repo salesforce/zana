@@ -1909,12 +1909,12 @@ describe('doc:// plan sources', () => {
 
   it('refuses another project\'s doc, an unassigned doc, an unknown doc and a missing file, saying nothing about existence for the first two', async () => {
     const other = await withDocs(docRpc({ projectId: 'p9' })).service.checkPlan(route, { path: 'doc://dd_abc123' });
-    expect(other).toMatchObject({ ok: false, code: 'SOURCE_NOT_ALLOWED' });
-    expect(code(await withDocs(docRpc({ projectId: null })).service.checkPlan(route, { path: 'doc://dd_abc123' }))).toBe('SOURCE_NOT_ALLOWED');
+    expect(other).toMatchObject({ ok: false, code: 'SOURCE_NOT_FILE' });
+    expect(code(await withDocs(docRpc({ projectId: null })).service.checkPlan(route, { path: 'doc://dd_abc123' }))).toBe('SOURCE_NOT_FILE');
     expect(code(await withDocs(docRpc({ missing: true })).service.checkPlan(route, { path: 'doc://dd_abc123' }))).toBe('SOURCE_NOT_FILE');
     expect(code(await withDocs(docRpc()).service.checkPlan(route, { path: 'doc://dd_abc123/nope.md' }))).toBe('SOURCE_NOT_FILE');
     expect(code(await withDocs(docRpc()).service.propose(route, { ...input, sources: ['doc://dd_zzz'] }))).toBe('SOURCE_NOT_FILE');
-    expect(code(await withDocs(docRpc({ projectId: 'p9' })).service.propose(route, { ...input, sources: ['doc://dd_abc123'] }))).toBe('SOURCE_NOT_ALLOWED');
+    expect(code(await withDocs(docRpc({ projectId: 'p9' })).service.propose(route, { ...input, sources: ['doc://dd_abc123'] }))).toBe('SOURCE_NOT_FILE');
   });
 
   it('refuses oversize, binary and malformed doc sources, and every doc source when design docs are unavailable', async () => {

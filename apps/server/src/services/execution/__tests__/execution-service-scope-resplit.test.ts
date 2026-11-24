@@ -6,10 +6,10 @@ import { MAX_BLOCKER_ANSWER_BYTES, SquadExecutionService } from '../service.js';
 import { createExecutionStore, type ExecutionRecord } from '../store.js';
 import { createExecutionArtifactStore } from '../artifact-store.js';
 
-// Worker-reported failure of a claim that never started: retried through the shared kickoff budget, then blocked.
+// Scope resplit: an owner answer that names files outside a unit's scope is split into a child unit.
 
 async function fixture(run: (filePath: string) => Promise<void>): Promise<void> {
-  const dir = await mkdtemp(join(tmpdir(), 'zcc-no-start-retry-'));
+  const dir = await mkdtemp(join(tmpdir(), 'zcc-scope-resplit-'));
   try { await run(join(dir, 'executions.json')); } finally { await rm(dir, { recursive: true, force: true }); }
 }
 
@@ -244,9 +244,11 @@ describe('scope re-split on non-owner (Inbox / board) blocker answers', () => {
     const version = await stateVersion(store);
     const first = await service.respondToBlocker('owner', 'project-1', 'execution-1', version, 'blk-1', 'req-n4', E5);
     expect(first).toMatchObject({ ok: true, splitChildId: 'a-split-1' });
-    const replay = await service.respondToBlocker('owner', 'project-1', 'execution-1', version, 'blk-1', 'req-n4', E5).catch((error) => ({ ok: false, error }));
+    const replay = await service.respondToBlocker('owner', 'project-1', 'execution-1', version, 'blk-1', 'req-n4', E5);
     expect((await store.get('execution-1'))!.workUnits!.filter((unit) => unit.id.startsWith('a-split'))).toHaveLength(1);
-    expect(replay).toBeDefined();
+    // Same request id: idempotent success carrying the original delivery, no second child.
+    expect(replay).toMatchObject({ ok: true, delivery: { clientRequestId: 'req-n4', blockerId: 'blk-1' } });
+    expect(replay).not.toHaveProperty('splitChildId', 'a-split-2');
   }));
 });
 

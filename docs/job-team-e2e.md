@@ -133,6 +133,8 @@ All registered in `JOBTEAM_SPECS` in `scripts/run-jobteam-e2e.mjs`:
 | `e2e/job-team-worker-restart.spec.ts` | Card Restart rejoins the Squad; orchestrator and unknown ids are refused. |
 | `e2e/job-team-run-limits.spec.ts` | Per-Squad run limits reach run detail (including a scheduled run of the saved Squad); `maxConcurrent` counts coordinator plus workers and refuses a roster over the cap. |
 | `e2e/job-team-no-turn-warning.spec.ts` | A claimed worker with no turn raises exactly one `worker-no-turn` run warning and one Inbox row (`ZCC_TEST_NO_TURN_WARN_MS`). |
+| `e2e/squad-blocker-reminder.spec.ts` | A human blocker unanswered past the reminder window raises one run warning and one loud Inbox row (`ZCC_TEST_*` fault build). |
+| `e2e/squad-idle-capacity-notice.spec.ts` | A READY unit waiting while a capable worker seat is idle raises one `worker-idle` run warning (`ZCC_TEST_*` fault build). |
 | `e2e/squad-settings-surfaces.spec.ts` | Persona load warnings, Settings Launch opens a pre-filled New Agent dialog without creating tabs, foreign ids refused. |
 
 Harness notes (`e2e/sdk/harness.ts`): the `respawn-after-kill` scenario polls

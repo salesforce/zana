@@ -144,7 +144,6 @@ describe('ExecutionService worker signals', () => {
     };
     return { svc: new ExecutionService(deps as never), calls, errors };
   }
-  const vi_record = 'ok';
 
   it('records a confined write and a turn; skips failed, non-write and unconfined events', async () => tmp(async (dir) => {
     const root = join(dir, 'wt'); await mkdir(root); await writeFile(join(root, 'a.ts'), 'x');

@@ -174,33 +174,35 @@ describe('buildUnitCheckpoint (AC5)', () => {
     expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe('unit edit\n');
   }));
 
-  it('covers Bash-mediated writes by diffing against the baseline, restoring only when no sibling overlaps', async () => repo(async (root) => {
+  it('covers Bash-mediated writes by diffing against the baseline, reporting them without rewriting (a person may have made them)', async () => repo(async (root) => {
     await writeFile(join(root, 'b.txt'), 'dirty before\n');
     const baseline = await baselineOf(root);
     await writeFile(join(root, 'a.txt'), 'bash edit\n');
     await writeFile(join(root, 'gen.txt'), 'bash created\n');
     const alone = await buildUnitCheckpoint(root, { id: 'a', state: 'FAILED', touched: [], baseline }, [], { restore: true });
-    expect(alone.checkpoint).toMatchObject({ state: 'restored', restored: ['a.txt'], deleted: ['gen.txt'] });
+    expect(alone.checkpoint).toMatchObject({ state: 'partial', restored: [], deleted: [] });
+    expect(alone.checkpoint.skipped.map((s) => s.reason)).toEqual(['unattributed-write', 'unattributed-write']);
     expect(JSON.parse(alone.artifactContent).patches.every((p: { source: string }) => p.source === 'inferred')).toBe(true);
-    expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe('base-a\n');
+    expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe('bash edit\n');
+    expect(await readFile(join(root, 'gen.txt'), 'utf8')).toBe('bash created\n');
     expect(await readFile(join(root, 'b.txt'), 'utf8')).toBe('dirty before\n');
 
     await writeFile(join(root, 'a.txt'), 'bash edit again\n');
     const shared = await buildUnitCheckpoint(root, { id: 'a', state: 'FAILED', touched: [], baseline }, [{ id: 's', touched: [], concurrent: true }], { restore: true });
-    expect(shared.checkpoint.unattributed).toEqual(['a.txt']);
+    expect(shared.checkpoint.unattributed).toEqual(['a.txt', 'gen.txt']);
     expect(shared.checkpoint.restored).toEqual([]);
     expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe('bash edit again\n');
   }));
 
-  it('restores a tracked file the unit deleted and keeps the executable bit', async () => repo(async (root) => {
+  it('restores a tool-written executable keeping its mode, and leaves a shell-deleted tracked file for the person', async () => repo(async (root) => {
     const baseline = await baselineOf(root);
     await rm(join(root, 'a.txt'));
     await writeFile(join(root, 'run.sh'), 'changed\n');
     const result = await buildUnitCheckpoint(root, { id: 'a', state: 'FAILED', touched: [touch('run.sh', 'changed\n')], baseline }, [], { restore: true });
-    expect(result.checkpoint.restored.sort()).toEqual(['a.txt', 'run.sh']);
-    expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe('base-a\n');
+    expect(result.checkpoint.restored).toEqual(['run.sh']);
+    expect(result.checkpoint.skipped).toEqual([{ path: 'a.txt', reason: 'unattributed-write' }]);
     expect((await stat(join(root, 'run.sh'))).mode & 0o111).not.toBe(0);
-    expect(git(root, 'status', '--porcelain').trim()).toBe('');
+    expect(git(root, 'status', '--porcelain').trim()).toBe('D a.txt');
   }));
 
   it('never writes through a symlink that escapes the worktree', async () => repo(async (root, dir) => {

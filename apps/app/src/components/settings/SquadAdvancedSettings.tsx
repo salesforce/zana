@@ -28,7 +28,7 @@ export function SquadAdvancedSettings({
   const reveal = useContext(RevealContext);
   useEffect(() => {
     if (reveal.reveal === 'advanced' && reveal.target?.startsWith('squads.')) setOpen(true);
-  }, [reveal]);
+  }, [reveal.reveal, reveal.target]);
 
   return (
     <details

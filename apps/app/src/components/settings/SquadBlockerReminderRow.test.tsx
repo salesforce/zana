@@ -43,10 +43,10 @@ describe('SquadBlockerReminderRow', () => {
     const { input, onUpdate } = setup(900_000);
     fireEvent.change(input, { target: { value: '60' } });
     fireEvent.blur(input);
-    expect(onUpdate).toHaveBeenCalledWith({ executionBlockerReminderMs: 3_600_000 });
+    expect(onUpdate).toHaveBeenCalledWith({ executionBlockerReminderMs: 3_600_000 }, { throwOnError: true });
     fireEvent.change(input, { target: { value: '0' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(onUpdate).toHaveBeenLastCalledWith({ executionBlockerReminderMs: 0 });
+    expect(onUpdate).toHaveBeenLastCalledWith({ executionBlockerReminderMs: 0 }, { throwOnError: true });
   });
 
   it('blank saves the default; unchanged value saves nothing', () => {
@@ -55,7 +55,29 @@ describe('SquadBlockerReminderRow', () => {
     expect(onUpdate).not.toHaveBeenCalled();
     fireEvent.change(input, { target: { value: '' } });
     fireEvent.blur(input);
-    expect(onUpdate).toHaveBeenCalledWith({ executionBlockerReminderMs: 1_800_000 });
+    expect(onUpdate).toHaveBeenCalledWith({ executionBlockerReminderMs: 1_800_000 }, { throwOnError: true });
+  });
+
+  it('does not persist the default when an unset field is only focused and blurred, nor a rounded stored value', () => {
+    const unset = setup();
+    fireEvent.blur(unset.input);
+    expect(unset.onUpdate).not.toHaveBeenCalled();
+    cleanup();
+    const odd = setup(90_000);
+    fireEvent.blur(odd.input);
+    expect(odd.onUpdate).not.toHaveBeenCalled();
+  });
+
+  it('shows a save error when the update rejects or throws', async () => {
+    const { input, onUpdate } = setup(900_000);
+    onUpdate.mockRejectedValueOnce(new Error('disk'));
+    fireEvent.change(input, { target: { value: '60' } });
+    fireEvent.blur(input);
+    expect((await screen.findByRole('alert')).textContent).toContain('Could not save');
+    onUpdate.mockImplementationOnce(() => { throw new Error('sync'); });
+    fireEvent.change(input, { target: { value: '45' } });
+    fireEvent.blur(input);
+    expect((await screen.findByRole('alert')).textContent).toContain('Could not save');
   });
 
   it('shows an inline error and saves nothing for an invalid value, clearing it on edit', () => {

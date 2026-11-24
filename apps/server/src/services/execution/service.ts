@@ -4,7 +4,7 @@ import { fitRecoveryObjective } from './recovery-objective.js';
 import { createHash } from 'node:crypto';
 import { confineAndHashClaimWrite, captureBaseline, buildUnitCheckpoint, MAX_RESTORE_ATTEMPTS, type UnitCheckpoint, type GitRunner } from './unit-checkpoints.js';
 import { launchDigest } from '../launch/digest.js';
-import { singleSeatOf, EXECUTION_RETENTION_MS, boundReason, formatFailedSlots, unitSlotEligibility, levelCheckSkipped, type ExecutionRoutingPolicyV1, assignmentRequirementFailures, LOOP_LIMIT_BLOCKER_PREFIX, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
+import { singleSeatOf, capableSeats, EXECUTION_RETENTION_MS, boundReason, formatFailedSlots, unitSlotEligibility, levelCheckSkipped, type ExecutionRoutingPolicyV1, assignmentRequirementFailures, LOOP_LIMIT_BLOCKER_PREFIX, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
 import { VisibilityNoticeState, IDLE_CAPACITY_NOTICE_MS, HEARTBEAT_WARN_MS, formatWait, resolveBlockerReminderMs, blockerWaitStart, workerNoticeLabel, blockerWaiter, unitNoticeName } from './visibility-notices.js';
 import { timeoutRecoveryBlockReason } from './timeout-recovery-policy.js';
 import type { createExecutionStore } from './store.js';
@@ -1387,7 +1387,11 @@ export class ExecutionService {
         live.add(key);
         const seen = this.visibility.observe(record.id, key, now);
         if (!seen || seen.noticed || now - seen.since < idleWindow) continue;
-        const idle = (await readLifecycle())?.workers?.find((worker) => worker.slotId && worker.projectId === record.projectId
+        // Only a seat that could actually take this unit (requirements, routing) counts as idle capacity.
+        // A record without a seat roster (legacy) cannot say who is capable, so it keeps the unfiltered behavior.
+        const capable = record.authorizationContext?.slots?.length
+          ? new Set(capableSeats(record, unit, this.deps.routingEnforcementEnabled?.(record) === true).map((seat) => seat.slotId)) : undefined;
+        const idle = (await readLifecycle())?.workers?.find((worker) => worker.slotId && worker.projectId === record.projectId && (!capable || capable.has(worker.slotId))
           && !isOrchestratorSlotId(worker.slotId) && !!worker.process && !DEAD_WORKER_PROCESSES.has(worker.process) && !busySlots.has(worker.slotId));
         if (!idle?.slotId) continue;
         seen.noticed = true;

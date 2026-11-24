@@ -693,8 +693,9 @@ test.describe('Modern proposer', () => {
       const refused = await callTool('squad_propose', {
         teamId: 'e2e-job-team', goal: GOAL, planning: 'provided', sources: [`doc://${foreignDoc}/plan.md`], title: 'Foreign doc attempt'
       });
-      expect(refused.text, diagnostics.join('\n')).toContain('SOURCE_NOT_ALLOWED');
-      expect(refused.text).toContain('does not belong to this project');
+      expect(refused.text, diagnostics.join('\n')).toContain('SOURCE_NOT_FILE');
+      // Same answer as a missing doc: a foreign Project's doc must not be confirmed to exist.
+      expect(refused.text).toContain('no design doc with that id was found');
 
       const proposed = await callTool('squad_propose', {
         teamId: 'e2e-job-team', goal: GOAL, planning: 'provided', sources: [`doc://${ownDoc}/plan.md`], title: TITLE

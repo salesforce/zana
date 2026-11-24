@@ -65,7 +65,7 @@ export async function readDesignDocSource(rpc: DesignDocsRpc | undefined, projec
   }
   if (!detail || typeof detail.id !== 'string') return fail('SOURCE_NOT_FILE', `${source}: no design doc with that id was found.`);
   // Same answer for another Project's doc and an unassigned one as for a missing one: do not confirm that it exists.
-  if (detail.projectId !== projectId) return fail('SOURCE_NOT_ALLOWED', `${source}: that design doc does not belong to this project, so it can't be attached.`);
+  if (detail.projectId !== projectId) return fail('SOURCE_NOT_FILE', `${source}: no design doc with that id was found.`);
   const docId = detail.id;
   const path = link.path ?? (typeof detail.entryPath === 'string' ? detail.entryPath : '');
   if (!path) return fail('SOURCE_NOT_FILE', `${source} names no file and the doc has no entry file.`);

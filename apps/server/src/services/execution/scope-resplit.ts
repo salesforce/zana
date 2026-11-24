@@ -25,14 +25,14 @@ export interface ScopeAssessment {
 export const MAX_SPLIT_FILES = 20;
 const MAX_PATH_CHARS = 300;
 
-const PATH_TOKEN = /(?:^|[\s"'`(\[,;:])((?:\.{1,2}\/)?[\w@.+-]+(?:\/[\w@.+\-[\]]+)+\/?|[\w@.+-]+\.(?:tsx?|jsx?|mjs|cjs|json|css|scss|md|py|go|rs|java|kt|ya?ml|sql|html|sh|toml|proto|graphql))(?=$|[\s"'`)\],;:?!])/g;
+const PATH_TOKEN = /(?:^|[\s"'`(\[,;:])((?:\.{1,2}\/)?[\w@.+-]+(?:\/[\w@.+\-[\]]+)+\/?|[\w@.+-]+\.(?:tsx?|jsx?|mjs|cjs|json|css|scss|md|py|go|rs|java|kt|ya?ml|sql|html|sh|toml|proto|graphql))(?=\.?(?:$|[\s"'`)\],;:?!]))/g;
 const CONTRACT_WORDS = /\b(contract|api (?:change|shape|surface)|schema|interface|endpoint|protocol|type definitions?|wire format)\b/i;
 
 /** Strip a trailing glob and normalize a declared scope entry to a plain prefix. */
 function declaredPrefix(entry: string): { prefix: string; glob: RegExp | undefined } {
   const clean = entry.trim().replace(/^\.\//, '').replace(/\/+$/, '');
   if (/[*?]/.test(clean)) {
-    const source = clean.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '\u0000').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]').replace(/\u0000/g, '.*');
+    const source = clean.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*\//g, '\u0001').replace(/\*\*/g, '\u0000').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]').replace(/\u0001/g, '(?:.*/)?').replace(/\u0000/g, '.*');
     return { prefix: clean.split(/[*?]/)[0]!.replace(/\/[^/]*$/, ''), glob: new RegExp(`^${source}$`) };
   }
   return { prefix: clean, glob: undefined };
@@ -69,6 +69,9 @@ export function assessScopeWidening(unit: Pick<ExecutionWorkUnit, 'files' | 'rea
   // A unit with no declared scope has nothing to widen: it already owns the whole tree.
   if (declared.length === 0) return { verdict: 'none', addedFiles: [], contract, reason: 'unit declares no file scope' };
   const added = extractNamedPaths(response).filter((path) => !pathInScope(path, declared));
+  if (added.length > MAX_SPLIT_FILES) {
+    return { verdict: 'undecidable', addedFiles: [], contract, reason: `response names ${added.length} paths outside the unit's scope (more than ${MAX_SPLIT_FILES} is a plan change, not a split)` };
+  }
   if (added.length > 0) {
     return { verdict: 'widens', addedFiles: added.slice(0, MAX_SPLIT_FILES), contract, reason: `response names ${added.length} path(s) outside the unit's scope` };
   }

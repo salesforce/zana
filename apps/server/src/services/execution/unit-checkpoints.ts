@@ -84,6 +84,9 @@ export async function confineAndHashClaimWrite(root: string, cwd: string | undef
     catch { real = joinPath(await realpath(dirname(absolute)), absolute.slice(dirname(absolute).length + 1)); }
     const rel = relative(realRoot, real);
     if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return undefined;
+    // Never open a FIFO/device: open() on one can block a threadpool thread indefinitely.
+    const pre = await stat(real).catch(() => undefined);
+    if (pre && !pre.isFile()) return undefined;
     const handle = await open(real, 'r');
     try {
       const info = await handle.stat();
@@ -281,7 +284,7 @@ async function writeAtomic(absolute: string, bytes: Buffer, mode: number): Promi
  * Build the unit's checkpoint: per-path patches against HEAD, labelled pre-dirty paths, and (for a FAILED
  * unit with `restore` true) a guarded restore. A path is restored only when ALL hold: git baseline is complete,
  * HEAD has not moved, the path was clean at claim time, no sibling touched it, and the file's current hash still
- * equals the unit's last write. A file absent from HEAD is deleted (the unit created it); otherwise HEAD's bytes
+ * equals the unit's last write. Paths found only by diffing (shell writes) are reported with a patch, never restored. A file absent from HEAD is deleted (the unit created it); otherwise HEAD's bytes
  * are written back atomically. Everything else is skipped and reported. Never throws.
  */
 export async function buildUnitCheckpoint(
@@ -300,7 +303,9 @@ export async function buildUnitCheckpoint(
   const patches: CheckpointPatch[] = [];
   const skip = (path: string, reason: string) => { if (skipped.length < MAX_CHECKPOINT_PATHS) skipped.push({ path: cap(path, MAX_PATH_LENGTH), reason }); };
   const finish = (state: CheckpointState, extra: { truncated?: boolean; reason?: string } = {}): CheckpointResult => {
-    const finalState: CheckpointState = state === 'restored' && skipped.length > 0 ? 'partial' : state;
+    // Incomplete evidence (skips, truncation, failed scan) is never reported as a clean result.
+    const incomplete = skipped.length > 0 || extra.truncated === true;
+    const finalState: CheckpointState = (state === 'restored' || state === 'saved') && incomplete ? 'partial' : state;
     return {
       checkpoint: {
         at, state: finalState, restored, deleted, skipped, preDirty, unattributed,
@@ -381,6 +386,9 @@ export async function buildUnitCheckpoint(
       if (entry.preDirty) { skip(entry.path, 'pre-dirty'); continue; }
       const sharedWith = otherTouched.get(entry.path);
       if (sharedWith) { skip(entry.path, `shared-with:${cap(sharedWith.join(','), 80)}`); continue; }
+      // A path seen only through a post-hoc diff cannot be told apart from a person's or another tool's edit in the
+      // same checkout, so it is reported with its patch and never rewritten.
+      if (entry.source === 'inferred') { skip(entry.path, 'unattributed-write'); continue; }
       if (!headInfo) { skip(entry.path, 'head-lookup-failed'); continue; }
       if (headInfo.tracked && headInfo.mode !== '100644' && headInfo.mode !== '100755') { skip(entry.path, 'unsupported-mode'); continue; }
       if (!confined) {
@@ -400,12 +408,13 @@ export async function buildUnitCheckpoint(
           await unlink(absolute);
           deleted.push(entry.path);
         } else {
-          const blob = await git(root, ['cat-file', 'blob', `HEAD:${entry.path}`], { timeoutMs: GIT_TIMEOUT_MS, maxBytes: GIT_CONTENT_MAX_BYTES });
+          const blob = await git(root, ['cat-file', 'blob', `${baseline!.head}:${entry.path}`], { timeoutMs: GIT_TIMEOUT_MS, maxBytes: GIT_CONTENT_MAX_BYTES });
           if (!blob || blob.code !== 0) { skip(entry.path, 'head-content-unavailable'); continue; }
           if (blob.truncated) { skip(entry.path, 'too-large'); continue; }
           // Re-check right before writing: a sibling may have written since the hash above.
           const again = await confineAndHashClaimWrite(root, realRoot, entry.path);
-          if (current && again?.hash !== current.hash) { skip(entry.path, 'changed-during-restore'); continue; }
+          if (again?.hash !== current?.hash) { skip(entry.path, 'changed-during-restore'); continue; }
+          if (await headOf(root, git) !== baseline!.head) { skip(entry.path, 'head-moved'); continue; }
           const mode = headInfo.mode === '100755' ? 0o755 : (await stat(absolute).then((info) => info.mode & 0o777).catch(() => 0o644));
           await writeAtomic(absolute, blob.stdout, mode);
           restored.push(entry.path);

@@ -28,6 +28,10 @@ describe('readDesignDocSource names', () => {
     expect(res).toMatchObject({ ok: true, name: 'design-doc-dd_1-hidden-plan-.md' });
   });
   it('refuses a doc without an entry file and a non-object reply', async () => {
+    const foreign = await readDesignDocSource(async () => ({ id: 'dd_1', projectId: 'other', entryPath: 'a.md', files: [{ path: 'a.md' }] }), 'p', 'doc://dd_1/a.md');
+    const missing = await readDesignDocSource(async () => { throw new Error('nope'); }, 'p', 'doc://dd_1/a.md');
+    expect(foreign).toMatchObject({ ok: false, code: 'SOURCE_NOT_FILE' });
+    expect(foreign).toEqual(missing);
     expect(await readDesignDocSource(async () => ({ id: 'dd_1', projectId: 'p' }), 'p', 'doc://dd_1')).toMatchObject({ ok: false, code: 'SOURCE_NOT_FILE' });
     expect(await readDesignDocSource(async () => null, 'p', 'doc://dd_1')).toMatchObject({ ok: false, code: 'SOURCE_NOT_FILE' });
     const failing = async (method: string) => { if (method === 'readFile') throw new Error('io'); return { id: 'dd_1', projectId: 'p', entryPath: 'a.md', files: [{ path: 'a.md', size: 1 }] }; };

@@ -96,7 +96,7 @@ describe('restartSlotAsOwner', () => {
   }));
 
   it('refuses without a host hook, for a terminal run, and for a non-running run', async () => fixture(async (filePath) => {
-    const { service, store } = await setup(filePath);
+    const { service } = await setup(filePath);
     expect(await service.restartSlotAsOwner('owner', 'project-1', 'execution-1', 'slot-1')).toMatchObject({ ok: false, code: 'UNAVAILABLE' });
     await fixture(async (second) => {
       const restartWorker = vi.fn(restarted);
@@ -109,7 +109,6 @@ describe('restartSlotAsOwner', () => {
       expect(await ctx.service.restartSlotAsOwner('owner', 'project-1', 'execution-1', 'slot-1')).toMatchObject({ ok: false, code: 'TERMINAL' });
       expect(restartWorker).not.toHaveBeenCalled();
     });
-    expect(store).toBeDefined();
   }));
 
   it('does not restart a live worker that is mid-turn, and does not spend the rate limit on that refusal', async () => fixture(async (filePath) => {

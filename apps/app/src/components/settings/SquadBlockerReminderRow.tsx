@@ -41,11 +41,14 @@ export function SquadBlockerReminderRow({
   useEffect(() => { setDraft(saved); setError(null); }, [saved]);
 
   const commit = () => {
+    // Untouched (Enter then blur, or focus then blur) never writes: an unset value stays "absent = default".
+    if (draft.trim() === saved) { setError(null); return; }
     const parsed = parseBlockerReminderMinutes(draft);
     if (!parsed.ok) { setError(parsed.error); return; }
     setError(null);
     if (parsed.ms === config.executionBlockerReminderMs) return;
-    void onUpdate({ executionBlockerReminderMs: parsed.ms });
+    const failed = () => setError('Could not save. Try again.');
+    try { Promise.resolve(onUpdate({ executionBlockerReminderMs: parsed.ms }, { throwOnError: true })).catch(failed); } catch { failed(); }
   };
 
   return (

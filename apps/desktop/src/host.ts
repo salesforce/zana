@@ -3429,7 +3429,8 @@ async function reconcileModernMembers(records?: readonly TeamLifecycleRecord[]):
           if (status.live) {
             if (worker.sessionId) executionDeliveryDrain.observe(worker.sessionId, status.status === 'idle' ? 'idle' : 'working');
             if (status.eventSequence > (previous?.eventSequence ?? 0) && status.status === 'active' && worker.modernContext?.executionId) {
-              // No PTY session id on the modern member path: unfenced by session (slot identity only).              await squadExecutionService.renewWorkerLease(worker.modernContext.executionId, worker.slotId);
+              // No PTY session id on the modern member path: unfenced by session (slot identity only).
+              await squadExecutionService.renewWorkerLease(worker.modernContext.executionId, worker.slotId);
             }
           } else if (worker.sessionId) executionDeliveryDrain.remove(worker.sessionId);
           if (status.status === 'stopped') { modernMemberStatus.delete(reference.threadId); modernStatusFailureLogged.delete(reference.threadId); }
@@ -3516,7 +3517,7 @@ export function recordClaimWriteFromSettledEvent(
     const event: unknown = JSON.parse(body);
     if (!event || typeof event !== 'object') return Promise.resolve();
     const { tool_name: toolName, tool_input: input, hook_event_name: hookEvent } = event as Record<string, unknown>;
-    return service.recordWorkerToolEvent(cohort.executionId, cohort.slotId, { toolName, input, failed: hookEvent === 'PostToolUseFailure', ...(sessionId ? { sessionId } : {}) });
+    return Promise.resolve(service.recordWorkerToolEvent(cohort.executionId, cohort.slotId, { toolName, input, failed: hookEvent === 'PostToolUseFailure', ...(sessionId ? { sessionId } : {}) })).then(() => undefined, () => undefined);
   } catch { return Promise.resolve(); }
 }
 const claimSignalSettledHook = async (projectId: string, sessionId: string, body: string): Promise<void> => {
@@ -10277,7 +10278,7 @@ async function bootstrapNormal() {
        // tracker keeps fallback behaviour for harnesses that never send one.
        agentStatus.turnFinished(sessionId);
        const turnCohort = ptys.getSession(sessionId)?.cohort;
-       if (turnCohort?.executionId && turnCohort.role === 'worker' && turnCohort.slotId) void squadExecutionService.recordWorkerTurn(turnCohort.executionId, turnCohort.slotId, sessionId);
+       if (turnCohort?.executionId && turnCohort.role === 'worker' && turnCohort.slotId) void squadExecutionService.recordWorkerTurn(turnCohort.executionId, turnCohort.slotId, sessionId).catch((error) => logMainError(`execution worker turn ${sessionId}`, error));
        wrapUpClose.onTurnFinished(sessionId);
        apiErrorResume.cancel(sessionId);
        disarm(apiErrorDispatchCtx, sessionId);

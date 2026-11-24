@@ -307,8 +307,8 @@ export interface ExecutionWorkUnit extends ExecutionWorkUnitInput {
   outputLeaseExpiresAt?: number;
   /** Count of STALLED reclaims of this unit. The first returns it to READY; the next fails it as STALLED. */
   stallReclaims?: number;
-  /** Same-seat recovery already spent for this unit in `executionAttempt` (single-capable-seat roles). */
-  /** `respawned: 'pending'` = the respawn was reserved (spent) before it ran and not yet settled; a crash or a failed settle leaves it spent, so a second respawn can never follow. */
+  /** Same-seat recovery already spent for this unit in `executionAttempt` (single-capable-seat roles).
+   *  `respawned: 'pending'` = the respawn was reserved (spent) before it ran and not yet settled; a crash or a failed settle leaves it spent, so a second respawn can never follow. */
   seatRecovery?: { executionAttempt: number; retried?: boolean; respawned?: 'pending' | 'ok' | 'failed' };
   /** True once a write was dropped because {@link MAX_CLAIM_TOUCHED_PATHS} was reached. */
   touchedTruncated?: boolean;
@@ -3530,12 +3530,6 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  /**
-   * Record per-claim signals from the claim's OWN worker events: a finished turn and/or files the
-   * worker wrote (paths already confined and hashed by the caller). Matches the unit CLAIMED by
-   * `slotId`; a late event after the claim ended is dropped. Advances `progressAt` (not the lease) on a new signal.
-   * Persists only on a change (new path or new hash, or a turn) so a hot write loop stays cheap.
-   */
   /** Bind the CURRENT claim of `workUnitId` to the session its assignment is delivered to (the fence for
    * {@link renewWorkerLease} / {@link recordClaimSignal}). No-op unless `claimId` is still the unit's claim. Cleared with the claim. */
   async function bindClaimSession(executionId: string, workUnitId: string, claimId: string, sessionId: string): Promise<boolean> {
@@ -3552,6 +3546,12 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
+  /**
+   * Record per-claim signals from the claim's OWN worker events: a finished turn and/or files the
+   * worker wrote (paths already confined and hashed by the caller). Matches the unit CLAIMED by
+   * `slotId`; a late event after the claim ended is dropped. Advances `progressAt` (not the lease) on a new signal.
+   * Persists only on a change (new path or new hash, or a turn) so a hot write loop stays cheap.
+   */
   async function recordClaimSignal(executionId: string, slotId: string, signal: { turn?: boolean; writes?: ReadonlyArray<{ path: string; hash: string }>; sessionId?: string }): Promise<boolean> {
     return storeQueue.run(async () => {
       const snapshot = read();
