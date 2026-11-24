@@ -415,7 +415,7 @@ describe('unmanaged environment reuse', () => {
     expect(source).toContain("choice.kind === 'unmanaged'");
     expect(source).toContain('needsHostAttach');
     expect(source).toContain("existing.workspaceProvisionType === 'unmanaged'");
-    expect(source).toContain('requestAutoThreadTitle(ctx, input, running.id, textPrompt)');
+    expect(source).toContain('requestAutoThreadTitle(ctx, input, running.id, titlePrompt)');
     expect(source).toContain('hostPromptInputFromInput');
     expect(source).toContain('titleFromPrompt');
     expect(source).toContain('reasoningLevel: args.input.reasoningLevel');

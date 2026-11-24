@@ -369,6 +369,12 @@ export async function createConversationFromRequest(
   input.serviceTier = authorizedServiceTier(ctx, input.providerId, input.serviceTier);
   const pluginResolvedPromptInput = await withResolvedPluginMentionContext(ctx.plugins, input.promptInput);
   const textPrompt = flattenThreadInput(pluginResolvedPromptInput).map((part) => part.trim()).filter((part) => part.length > 0);
+  // Name from what people see, not an agent-only sender header.
+  const titlePrompt = flattenThreadInput(
+    Array.isArray(pluginResolvedPromptInput)
+      ? pluginResolvedPromptInput.filter((part) => !(part && typeof part === 'object' && (part as { visibility?: unknown }).visibility === 'agent-only'))
+      : pluginResolvedPromptInput
+  ).map((part) => part.trim()).filter((part) => part.length > 0);
   const promptSource = textPrompt.length > 0 ? textPrompt : input.input.map((part) => part.trim()).filter((part) => part.length > 0);
   let resolvedPromptInput = pluginResolvedPromptInput;
   let prompt = hostPromptInputFromInput(
@@ -550,7 +556,7 @@ export async function createConversationFromRequest(
         hostId,
         environmentId: existing.id,
         providerId,
-        title: threadTitle(input, textPrompt),
+        title: threadTitle(input, titlePrompt),
         titleSource: threadTitleSource(input),
         status: 'starting',
         parentThreadId: input.parentThreadId ?? null,
@@ -607,7 +613,7 @@ export async function createConversationFromRequest(
           ? (getConversationThread(ctx.db, thread.id) ?? thread)
           : thread;
         ctx.hub.emit('threads:updated', conversationThreadView(ctx, running));
-        requestAutoThreadTitle(ctx, input, running.id, textPrompt);
+        requestAutoThreadTitle(ctx, input, running.id, titlePrompt);
         emitPluginThreadEvent(ctx, {
           name: 'thread.active',
           threadId: running.id,
@@ -665,7 +671,7 @@ export async function createConversationFromRequest(
         hostId,
         environmentId: environment.id,
         providerId,
-        title: threadTitle(input, textPrompt),
+        title: threadTitle(input, titlePrompt),
         titleSource: threadTitleSource(input),
         status: 'starting',
         parentThreadId: input.parentThreadId ?? null,
@@ -699,7 +705,7 @@ export async function createConversationFromRequest(
         hostId,
         environmentId: existing.id,
         providerId,
-        title: threadTitle(input, textPrompt),
+        title: threadTitle(input, titlePrompt),
         titleSource: threadTitleSource(input),
         status: 'starting',
         parentThreadId: input.parentThreadId ?? null,
@@ -766,7 +772,7 @@ export async function createConversationFromRequest(
         ? (getConversationThread(ctx.db, created.thread.id) ?? created.thread)
         : created.thread;
       ctx.hub.emit('threads:updated', conversationThreadView(ctx, running));
-      requestAutoThreadTitle(ctx, input, running.id, textPrompt);
+      requestAutoThreadTitle(ctx, input, running.id, titlePrompt);
       emitPluginThreadEvent(ctx, {
         name: 'thread.active',
         threadId: running.id,

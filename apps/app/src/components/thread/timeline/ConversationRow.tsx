@@ -1,6 +1,5 @@
 import { validPromptReferences, relocatePromptReferences } from '@zana-ai/zcc-domain/thread-runtime';
-import { peerMessageDisplay } from './peer-message.js';
-import { PeerMessageSource } from './PeerMessageSource.js';
+import { peerMessageDisplay, peerMessageSource } from './peer-message.js';
 import { MessageSourceHeader, messageSourceStyle } from './MessageSourceHeader.js';
 import { compactReferenceText, ContextReferenceMessage } from '../../composer/ContextReferenceMessage.js';
 import { memo, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -40,7 +39,7 @@ import type { PlanExecutionView } from './plan-execution-card.js';
 function userRequestLabel(row: Extract<ThreadTimelineViewRow, { kind: 'conversation' }>): string | null {
   if (row.role !== 'user') return null;
   // The source header already says who sent it; "Steer" would read as yours.
-  if (row.messageSource) return null;
+  if (row.messageSource || peerMessageDisplay(row)) return null;
   if (row.systemMessageKind !== 'unlabeled') {
     return row.systemMessageKind.replace(/-/g, ' ');
   }
@@ -96,7 +95,8 @@ export const ConversationRow = memo(function ConversationRow({
   const [lightbox, setLightbox] = useState<{ src: string; name: string } | null>(null);
   const references = useMemo(() => validPromptReferences(row.text ?? '', row.role === 'user' ? row.references : undefined), [row]);
   const peer = peerMessageDisplay(row);
-  const source = row.role === 'user' ? row.messageSource ?? null : null;
+  const source = row.role !== 'user' ? null
+    : row.messageSource ?? (peer && row.role === 'user' && row.senderThreadId ? peerMessageSource(peer, row.senderThreadId) : null);
   const extracted = useMemo(() => extractInlineThreadImages(compactReferenceText(peer?.text ?? row.text ?? '', references)), [peer?.text, row.text, references]);
   const text = extracted.text.trim();
   // User prompts collapse by rendered height (mobile has its own preview) and
@@ -244,7 +244,7 @@ export const ConversationRow = memo(function ConversationRow({
         </span>
       ) : null}
       <div className="thread-timeline-bubble">
-        {source ? <MessageSourceHeader source={source} /> : peer ? <PeerMessageSource peer={peer} /> : null}
+        {source ? <MessageSourceHeader source={source} /> : null}
         <MobileMessagePreview
           enabled={mobileUser && !editing}
           expanded={expanded}
