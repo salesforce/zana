@@ -52,9 +52,11 @@ withApp('UX-1 coverage line lists covered and not-yet-available agents', async (
   await expect(line).toBeVisible({ timeout: 15_000 });
   await expect(line).toContainText('Claude Code');
   const text = (await line.textContent()) ?? '';
-  for (const unsupported of ['OpenCode', 'Cursor', 'Pi']) {
-    if (text.includes(unsupported)) expect(text.split('Not available yet:')[1] ?? '', unsupported).toContain(unsupported);
-  }
+  const [covered = '', notYet = ''] = text.split('Not available yet:');
+  // OpenCode and Pi are covered; Cursor has no readable failure signal and stays on the not-yet side.
+  for (const supported of ['OpenCode', 'Pi']) expect(notYet, `${supported} is covered`).not.toContain(supported);
+  if (text.includes('Cursor')) expect(notYet, 'Cursor stays not available').toContain('Cursor');
+  expect(covered).not.toContain('Cursor');
   await shot(c, 'ux-1-coverage-line', info);
 });
 
