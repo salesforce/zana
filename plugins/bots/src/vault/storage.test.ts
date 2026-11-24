@@ -1,4 +1,4 @@
-import { createHmac, scryptSync } from 'node:crypto';
+import { scryptSync } from 'node:crypto';
 import { open, seal, type Envelope } from './encryption.js';
 import { describe, expect, it } from 'vitest';
 import { botScopeKey, httpsOrigin, prepareItem } from './items.js';
@@ -50,7 +50,7 @@ describe('encrypted bot Vault', () => {
     expect((await vault.list())[0]).not.toHaveProperty('billingContactId');
     vault.dispose();
   });
-  it('migrates existing items and preserves the OAuth encryption key across restart', async () => {
+  it('migrates existing items and keeps them readable across restart', async () => {
     const { kv, device, values } = fixture();
     const salt = Buffer.alloc(16, 3).toString('base64');
     const dataKey = scryptSync(pass, Buffer.from(salt, 'base64'), 32);
@@ -66,10 +66,8 @@ describe('encrypted bot Vault', () => {
     await expect(vault.migrate(pass)).rejects.toThrow('Wait');
     expect(values.get(store)).toEqual(original);
     vault.dispose();
-    let resumed: Buffer | undefined;
-    const migrated = new BotVault(kv, device, () => {}, { resume(k) { resumed = k; }, pause() {} });
+    const migrated = new BotVault(kv, device);
     await migrated.migrate(pass);
-    expect(resumed).toEqual(createHmac('sha256', dataKey).update('zana-bot-connections/v1').digest());
     expect(await migrated.list()).toEqual([row.item]);
     expect(values.get(store)).toMatchObject({...original, salt:''});
     migrated.dispose();

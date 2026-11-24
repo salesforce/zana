@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, randomUUID, scrypt } from 'node:crypto';
+import { randomBytes, randomUUID, scrypt } from 'node:crypto';
 import { promisify } from 'node:util';
 import { isShared, prepareItem, type BotIdentity, type SavedItem, type VaultItem } from './items.js';
 
@@ -17,8 +17,7 @@ export class BotVault {
   private session?: Session;
   private retryAfter = 0;
   private disposed = false;
-  constructor(private kv: Kv, private deviceKey: () => Promise<Uint8Array>, private changed = () => {},
-    private connections?: { resume(key: Buffer): void; pause(): void }) {}
+  constructor(private kv: Kv, private deviceKey: () => Promise<Uint8Array>, private changed = () => {}) {}
   private serial<T>(fn: () => Promise<T>) {
     const p = this.chain.then(fn);
     this.chain = p.catch(() => {});
@@ -31,9 +30,8 @@ export class BotVault {
     this.disposed = true;
     this.session?.key.fill(0);
     this.session = undefined;
-    this.connections?.pause();
   }
-  // Rewrap the original data key so saved items and independently encrypted OAuth grants move together.
+  // Rewrap the original data key so existing items remain readable after migration.
   private async prepare(legacyPassphrase?: unknown): Promise<Session | null> {
     this.assertLive();
     if (this.session) return this.session;
@@ -66,7 +64,6 @@ export class BotVault {
         await this.kv.set(STORE_KEY, { ...(envelope ?? seal([], key, '', AAD)), salt: '', wrappedKey });
       }
       this.assertLive();
-      this.connections?.resume(createHmac('sha256', key).update('zana-bot-connections/v1').digest());
       this.session = { key, wrappedKey };
       key = undefined;
       return this.session;
@@ -84,7 +81,6 @@ export class BotVault {
     if (!session) throw new Error('Open the Vault in Zana to migrate existing items.');
     return session;
   }
-  ensureReady() { return this.serial(async () => { await this.ready(); }); }
   private async read(session: Session) {
     const envelope = await this.kv.get<DeviceEnvelope>(STORE_KEY);
     this.assertLive();

@@ -120,7 +120,7 @@ export class BotService {
     return job!.routineId ? { kind: 'routine', bot: owner, routineId: job!.routineId } : { kind: 'job', bot: owner };
   }
 
-  /** The bot a thread acts as: its main thread or one of its routine runs (which use its connections). */
+  /** The bot a thread acts as: its main thread or one of its routine runs. */
   botActingAs(threadId: string): Bot | undefined {
     const role = this.roleOf(threadId);
     return role.kind === 'main' || role.kind === 'routine' ? role.bot : undefined;
