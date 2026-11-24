@@ -28,7 +28,10 @@ export const MAX_ROUTINE_RESULT_LENGTH = 2000;
 /** Whether an AI routine's final answer means "nothing to report". */
 export function isNoChange(text: string | null | undefined): boolean {
   const trimmed = (text ?? '').trim().replace(/^[`*_\s]+|[`*_.\s]+$/g, '');
-  return trimmed === '' || trimmed.toUpperCase() === NO_CHANGE;
+  if (trimmed === '' || trimmed.toUpperCase() === NO_CHANGE) return true;
+  // Models often explain themselves: "NO_CHANGE: still 0 open cases". A separator
+  // right after the token keeps it a no-change answer; "NO_CHANGE but …" does not.
+  return /^NO_CHANGE[*_`]*\s*(?:[:\-\u2013\u2014(]|\n)/i.test(trimmed);
 }
 
 export interface BotRoutine {
