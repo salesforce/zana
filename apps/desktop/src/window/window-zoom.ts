@@ -90,3 +90,22 @@ export function zoomMenuItems(
     alias('CmdOrCtrl+numsub', -1)
   ];
 }
+
+/** The part of `WebContents` that reports Ctrl+wheel zoom requests. */
+export interface WheelZoomSource extends ZoomTarget {
+  on(event: 'zoom-changed', listener: (event: unknown, direction: 'in' | 'out') => void): unknown;
+  isDestroyed(): boolean;
+}
+
+/**
+ * Applies Ctrl+mouse wheel zoom. Chromium reports the request through
+ * `zoom-changed` but leaves applying it to the host, so without this the wheel
+ * did nothing. One notch is one menu step, with the same range, and the level
+ * is stored per origin like the menu zoom, so every window shares it.
+ */
+export function bindWheelZoom(contents: WheelZoomSource): void {
+  contents.on('zoom-changed', (_event, direction) => {
+    if (contents.isDestroyed()) return;
+    contents.setZoomLevel(steppedZoomLevel(contents.getZoomLevel(), direction === 'in' ? 1 : -1));
+  });
+}

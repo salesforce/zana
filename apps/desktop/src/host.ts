@@ -214,7 +214,7 @@ import { runHarnessRoutingMigration } from '@zana-ai/zcc-server/services/harness
 import { reconcileOpenCodeStartupRouting, selectOpenCodeProbeCwd } from '@zana-ai/zcc-server/services/harness-routing/opencode-startup-reconciler';
 import { MigrationRepairRequiredError } from '@zana-ai/zcc-server/services/harness-routing/journal';
 import { runStartupGate, type StartupState } from './startup-gate.js';
-import { DEFAULT_RENDERER_ZOOM_FACTOR, zoomMenuItems } from './window/window-zoom.js';
+import { DEFAULT_RENDERER_ZOOM_FACTOR, bindWheelZoom, zoomMenuItems } from './window/window-zoom.js';
 import { resolveLaunchSelection } from '@zana-ai/zcc-host-daemon/harness/launch-selection';
 import { resolveEffectiveHarnessDefault } from '@zana-ai/zcc-host-daemon/harness/effective-default';
 import { applyUnattendedScheduledLaunch, profilePostureOf } from '@zana-ai/zcc-host-daemon/harness/unattended-launch';
@@ -8556,6 +8556,7 @@ function createWindow(projectId?: string, repairOnly = false, options: {
   });
 
   windows.set(win.id, { win, projectId, view, threadView, secondary });
+  bindWheelZoom(win.webContents);
   if (view) {
     bindPluginViewCloseLifecycle(win, pluginViewCloseGuard, () => windowShutdownStarted);
     pluginViews.broadcast();

@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import type { MenuItemConstructorOptions } from 'electron';
 import {
   DEFAULT_RENDERER_ZOOM_FACTOR,
+  bindWheelZoom,
   MAX_RENDERER_ZOOM_FACTOR,
   MIN_RENDERER_ZOOM_FACTOR,
   steppedZoomLevel,
   zoomFactorFromLevel,
   zoomLevelFromFactor,
   zoomMenuItems,
+  type WheelZoomSource,
   type ZoomTarget,
   type ZoomWindow
 } from './window-zoom.js';
@@ -121,5 +123,45 @@ describe('zoomMenuItems on macOS', () => {
     expect(items.map((item) => item.role ?? item.label)).toEqual(['Reset Zoom', 'zoomIn', 'zoomOut']);
     press(items[0]);
     expect(calls).toEqual([`factor:${DEFAULT_RENDERER_ZOOM_FACTOR}`]);
+  });
+});
+
+describe('bindWheelZoom', () => {
+  function wheelSource(factor = DEFAULT_RENDERER_ZOOM_FACTOR, destroyed = false) {
+    const { target, factor: current } = fakeTarget(factor);
+    let listener: ((event: unknown, direction: 'in' | 'out') => void) | undefined;
+    const source: WheelZoomSource = {
+      ...target.webContents,
+      isDestroyed: () => destroyed,
+      on: (_event, fn) => {
+        listener = fn;
+        return source;
+      }
+    };
+    bindWheelZoom(source);
+    return { wheel: (direction: 'in' | 'out') => listener?.({}, direction), current };
+  }
+
+  it('steps one menu step per notch, in and out', () => {
+    const { wheel, current } = wheelSource();
+    wheel('in');
+    expect(current()).toBeCloseTo(DEFAULT_RENDERER_ZOOM_FACTOR * 1.2 ** 0.5, 4);
+    wheel('out');
+    expect(current()).toBeCloseTo(DEFAULT_RENDERER_ZOOM_FACTOR, 4);
+  });
+
+  it('stops at the zoom range limits', () => {
+    const top = wheelSource(MAX_RENDERER_ZOOM_FACTOR);
+    top.wheel('in');
+    expect(top.current()).toBeCloseTo(MAX_RENDERER_ZOOM_FACTOR, 4);
+    const bottom = wheelSource(MIN_RENDERER_ZOOM_FACTOR);
+    bottom.wheel('out');
+    expect(bottom.current()).toBeCloseTo(MIN_RENDERER_ZOOM_FACTOR, 4);
+  });
+
+  it('ignores a request after the window is destroyed', () => {
+    const { wheel, current } = wheelSource(DEFAULT_RENDERER_ZOOM_FACTOR, true);
+    wheel('in');
+    expect(current()).toBeCloseTo(DEFAULT_RENDERER_ZOOM_FACTOR, 4);
   });
 });
