@@ -355,6 +355,8 @@ export interface PlanHandoffDeps {
   logInfo?(message: string, detail: string): void;
   /** Nudges allowed before deferring to the plan-readiness watchdog. Default 2. */
   maxNudges?: number;
+  /** Called once when the nudge budget is spent without a registered plan, so the run shows why it is stuck. */
+  reportStalled?(ctx: CoordinatorHandoffContext, reason: string): void;
   /** Correlation trace sink; observes only, a throw here never changes the handoff. */
   trace?(event: PlanHandoffTrace): void;
 }
@@ -385,6 +387,8 @@ interface HandoffState {
   nudges: number;
   /** The one automatic Squad-check correction round was sent. */
   judged?: boolean;
+  /** The nudge budget is spent; reads continue but nothing more is sent. */
+  exhausted?: boolean;
   done: boolean;
   /** Serialize idle re-entries for one execution (idle can fire repeatedly). */
   inFlight: boolean;
@@ -476,6 +480,9 @@ export class TeamPlanHandoff {
         await this.handleInvalid(entry, maxNudges, ctx, `host rejected plan: ${rejection}`, `the host rejected your plan (${rejection})`);
         return;
       }
+      // After the nudge budget is spent only a valid plan is acted on; a missing or
+      // still-invalid file just waits for the next idle edge or the watchdog.
+      if (entry.exhausted) return;
       const reason = read.status === 'invalid' ? read.reason : `no plan file found at \`${handoffPromptPath(ctx.projectRoot, authoredPlanRelPath(ctx.executionId))}\``;
       await this.handleInvalid(entry, maxNudges, ctx, reason, reason);
     } catch (error) {
@@ -510,9 +517,19 @@ export class TeamPlanHandoff {
   private maybeNudge(entry: HandoffState, maxNudges: number, ctx: CoordinatorHandoffContext, reason: string): void {
     if (entry.nudges >= maxNudges) {
       // Budget spent — stop prompting; the plan-readiness watchdog owns the
-      // clean FAILED transition so the run does not hang or loop.
-      entry.done = true;
-      this.emit(ctx, () => ({ stage: 'nudge-exhausted', reason: boundTraceReason(reason), nudges: entry.nudges }));
+      // clean FAILED transition so the run does not hang or loop. The entry is
+      // NOT latched done: a plan written after the last nudge is still read and
+      // registered on later idle edges (see onCoordinatorIdle), and the
+      // stall is reported once so the run is not silently RUNNING.
+      if (!entry.exhausted) {
+        entry.exhausted = true;
+        this.emit(ctx, () => ({ stage: 'nudge-exhausted', reason: boundTraceReason(reason), nudges: entry.nudges }));
+        try {
+          this.deps.reportStalled?.(ctx, boundTraceReason(reason) ?? reason);
+        } catch (error) {
+          this.deps.logError(`team plan handoff stall report ${ctx.sessionId}`, error);
+        }
+      }
       return;
     }
     entry.nudges += 1;
@@ -567,6 +584,22 @@ function unitsTrace(units: readonly ExecutionWorkUnitInput[]): { unitCount: numb
   } catch {
     return { unitCount: units.length };
   }
+}
+
+/** Inbox entry raised once when the orchestrator's plan is still not registered after the nudges. */
+export function createStallNotice(
+  append: (input: { projectId: string; subject: string; comments: string; executionId: string; dedupeKey: string }) => Promise<unknown>,
+  logError: (message: string, error: unknown) => void
+): (ctx: CoordinatorHandoffContext, reason: string) => void {
+  return (ctx, reason) => {
+    void append({
+      projectId: ctx.projectId,
+      subject: 'Squad plan not registered yet',
+      comments: `The orchestrator has not produced a plan the host could register (${reason}). The host keeps checking for the plan file until the startup grace ends.`,
+      executionId: ctx.executionId,
+      dedupeKey: `execution-plan-stalled:${ctx.executionId}`
+    }).catch((error) => logError('team plan handoff stall notice', error));
+  };
 }
 
 /** Generation fence stamped onto a trace at emit time. */

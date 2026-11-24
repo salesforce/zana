@@ -12,6 +12,7 @@ import {
   MAX_HANDOFF_FILE_BYTES,
   PLAN_TRACE_REASON_MAX,
   TeamPlanHandoff,
+  createStallNotice,
   authoredPlanRelPath,
   boundTraceReason,
   createPlanTraceSink,
@@ -500,6 +501,61 @@ describe('TeamPlanHandoff.onCoordinatorIdle', () => {
     await handoff.onCoordinatorIdle(ctx); // budget spent → silent, latches done
     await handoff.onCoordinatorIdle(ctx);
     expect(nudge).toHaveBeenCalledTimes(2);
+  });
+
+  it('registers a plan that appears after the nudge budget was spent, and reports the stall once', async () => {
+    let present = false;
+    const reportStalled = vi.fn();
+    const nudge = vi.fn();
+    const register = vi.fn(async () => ({ ok: true }));
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => (present ? { status: 'ok', units, realPath: '/root/.zana/execution-plan-exec-1.md' } : { status: 'missing' }),
+      register,
+      nudge,
+      cleanup: async () => {},
+      logError: () => {},
+      maxNudges: 2,
+      reportStalled
+    });
+    await handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx); // budget spent, still no file
+    await handoff.onCoordinatorIdle(ctx);
+    expect(nudge).toHaveBeenCalledTimes(2);
+    expect(reportStalled).toHaveBeenCalledOnce();
+    present = true; // the orchestrator finally writes its plan
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenCalledOnce();
+    expect(register).toHaveBeenCalledWith(ctx, units);
+  });
+
+  it('stall notice appends one deduped Inbox entry and logs a failed append', async () => {
+    const append = vi.fn(async () => ({}));
+    createStallNotice(append, () => {})(ctx, 'no plan file found');
+    expect(append).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'p-1', executionId: 'exec-1', dedupeKey: 'execution-plan-stalled:exec-1', subject: 'Squad plan not registered yet'
+    }));
+    const logError = vi.fn();
+    createStallNotice(async () => { throw new Error('inbox down'); }, logError)(ctx, 'x');
+    await vi.waitFor(() => expect(logError).toHaveBeenCalledOnce());
+  });
+
+  it('survives a throwing stall report', async () => {
+    const logError = vi.fn();
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => ({ status: 'invalid', reason: 'bad' }),
+      register: async () => ({ ok: true }),
+      nudge: () => {},
+      cleanup: async () => {},
+      logError,
+      maxNudges: 0,
+      reportStalled: () => { throw new Error('boom'); }
+    });
+    await handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx); // exhausted + invalid file: silent wait
+    expect(logError).toHaveBeenCalledOnce();
   });
 
   it('re-registers after forget() (fresh execution state)', async () => {
