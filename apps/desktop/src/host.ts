@@ -419,7 +419,7 @@ import { ContentScreen, type ContentScreenEvent, buildWarningText } from './wind
 import { HeartbeatService } from '@zana-ai/zcc-server/services/followups/heartbeat';
 import { apiErrorProducerLookup, createApiErrorDispatchCtx, createApiErrorResume } from './api-error-resume-wiring.js';
 import { createWorkerApiErrorRecovery, routeApiErrorStop, workerApiErrorRecoveryEnabled } from './worker-api-error-recovery-wiring.js';
-import { armQuietCheck, disarm, dispatchApiErrorStop, forgetSession as forgetApiErrorDispatch, touch as touchApiErrorDispatch, type DispatchCtx } from './api-error-dispatch.js';
+import { armQuietCheck, disarm, dispatchApiErrorStop, isArmed as isApiErrorArmed, forgetSession as forgetApiErrorDispatch, touch as touchApiErrorDispatch, type DispatchCtx } from './api-error-dispatch.js';
 import { createWrapUpClose } from './wrap-up-close-wiring.js';
 import { LocalExtensionWatcher } from '@zana-ai/zcc-server/services/extensions/local-extension-watcher';
 import { AutonomousRunSupervisor, AUTONOMOUS_DEFAULTS } from '@zana-ai/zcc-server/services/agents/autonomous-run-supervisor';
@@ -1440,7 +1440,17 @@ const agentStatus = new AgentStatusTracker();
 const outputActivity = new OutputActivityMonitor({
   sink: agentStatus,
   setTimer: (fn, ms) => setTimeout(fn, ms),
-  clearTimer: (handle) => clearTimeout(handle)
+  clearTimer: (handle) => clearTimeout(handle),
+  // Harnesses with a body-less API-error producer and no turn-start hook are armed from the busy edge.
+  // Hook harnesses (Claude, Codex) keep arming from their own UserPromptSubmit callback.
+  onBusyEdge: (sessionId) => {
+    const session = ptys.getSession(sessionId);
+    if (!session || session.status === 'exited') return;
+    const status = providerFor(session.profile as LaunchProfileId).adapter.status;
+    if (!status?.apiErrorProducer || status.interactionHook) return;
+    if (isApiErrorArmed(sessionId)) return;
+    armQuietCheck(apiErrorDispatchCtx, sessionId, status.apiErrorProducer, transcriptRefForSession(session));
+  }
 });
 /**
  * Screen-scan blocked detector (LAS-07 — the "needs-you" slice for non-Claude

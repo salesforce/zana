@@ -61,6 +61,42 @@ describe('OutputActivityMonitor', () => {
     ctx = makeMonitor();
   });
 
+  describe('onBusyEdge', () => {
+    it('fires once per not-working to working edge, from output and from onTurnStart', () => {
+      const edges: string[] = [];
+      const { monitor, clock } = makeMonitor({ onBusyEdge: (id) => edges.push(id) });
+      monitor.onTurnStart('s1');
+      monitor.observe('s1', 'a');
+      monitor.observe('s1', 'b');
+      expect(edges).toEqual(['s1']);
+      clock.advance(DEFAULT_IDLE_AFTER_MS);
+      monitor.observe('s1', 'again');
+      expect(edges).toEqual(['s1', 's1']);
+    });
+
+    it('fires after the waiting state when output finally arrives', () => {
+      const edges: string[] = [];
+      const { monitor, clock } = makeMonitor({ onBusyEdge: (id) => edges.push(id) });
+      monitor.onTurnStart('s1');
+      clock.advance(DEFAULT_IDLE_AFTER_MS);
+      monitor.observe('s1', 'late');
+      expect(edges).toEqual(['s1', 's1']);
+    });
+
+    it('swallows a throwing callback so status reporting continues', () => {
+      const { monitor, reports } = makeMonitor({ onBusyEdge: () => { throw new Error('boom'); } });
+      expect(() => monitor.observe('s1', 'x')).not.toThrow();
+      expect(reports).toEqual([['s1', 'working']]);
+    });
+
+    it('ignores control-only chunks', () => {
+      const edges: string[] = [];
+      const { monitor } = makeMonitor({ onBusyEdge: (id) => edges.push(id) });
+      monitor.observe('s1', '\u001b]0;title\u0007');
+      expect(edges).toEqual([]);
+    });
+  });
+
   it('reports `working` on the first output chunk (edge)', () => {
     ctx.monitor.observe('s1', 'hello');
     expect(ctx.reports).toEqual([['s1', 'working']]);

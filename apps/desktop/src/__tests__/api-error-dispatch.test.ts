@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  armQuietCheck, armedCount, disarm, dispatchApiErrorStop, forgetSession, touch,
+  armQuietCheck, armedCount, disarm, isArmed, dispatchApiErrorStop, forgetSession, touch,
   type ApiErrorProducer, type ApiErrorStopEvent, type DispatchCtx
 } from '../api-error-dispatch.js';
 
@@ -35,6 +35,29 @@ const flush = async () => { await vi.advanceTimersByTimeAsync(0); };
 describe('api-error-dispatch', () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
+
+  it('isArmed covers the marker window, the armed window, and clears on disarm', async () => {
+    const { ctx } = makeCtx();
+    const producer = makeProducer();
+    expect(isArmed('s9')).toBe(false);
+    armQuietCheck(ctx, 's9', producer, ref('s9'));
+    expect(isArmed('s9')).toBe(true); // marker still in flight
+    await flush();
+    expect(isArmed('s9')).toBe(true); // timer pending
+    disarm(ctx, 's9');
+    expect(isArmed('s9')).toBe(false);
+    forgetSession(ctx, 's9');
+  });
+
+  it('isArmed is false again after a failed markTurnStart', async () => {
+    const { ctx } = makeCtx();
+    const producer = makeProducer();
+    (producer.markTurnStart as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('x'));
+    armQuietCheck(ctx, 's8', producer, ref('s8'));
+    await flush();
+    expect(isArmed('s8')).toBe(false);
+    forgetSession(ctx, 's8');
+  });
 
   it('dispatch marks the turn failed before routing', () => {
     const { ctx, calls } = makeCtx();
