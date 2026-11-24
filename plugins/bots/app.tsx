@@ -778,7 +778,7 @@ function Details({ bot, jobs, openLibrary, visible }: {
   }, [rpc, bot.id, scheduleKey, visible]);
   const openChat = useOpenChat();
   const activity = [
-    ...bot.routines.filter(r => r.lastRunAt).map(r => ({ key: 'routine-' + r.id, name: r.name, at: r.lastRunAt!, detail: r.runs?.[0]?.status === 'failed' ? 'Routine failed' : r.runs?.[0]?.status === 'posted' ? 'Posted to main chat' : 'Routine ran', threadId: bot.mainThreadId, title: bot.name })),
+    ...bot.routines.filter(r => r.lastRunAt).map(r => ({ key: 'routine-' + r.id, name: r.name, at: r.lastRunAt!, detail: routineActivity(r.runs?.[0]?.status), threadId: bot.mainThreadId, title: bot.name })),
     ...(jobs.jobs ?? []).map(j => ({ key: 'job-' + j.threadId, name: j.title, at: j.startedAt, detail: j.archived ? 'Archived job' : 'Job · ' + j.status, threadId: j.threadId, title: j.title }))
   ].sort((a, b) => b.at - a.at).slice(0, 5);
   return <>
@@ -797,6 +797,20 @@ function Details({ bot, jobs, openLibrary, visible }: {
       </button>)}
     </Section>
   </>;
+}
+
+const RUN_STATUS_LABELS = {
+  posted: 'Posted to main chat',
+  quiet: 'Nothing new · not posted',
+  running: 'Running',
+  sent: 'AI prompt delivered',
+  failed: 'Failed'
+} as const;
+
+function routineActivity(status: keyof typeof RUN_STATUS_LABELS | undefined): string {
+  if (status === 'failed') return 'Routine failed';
+  if (status === 'posted' || status === 'quiet' || status === 'running') return RUN_STATUS_LABELS[status];
+  return 'Routine ran';
 }
 
 function RoutineRow({ bot, routine, nextRun }: { bot: BotView; routine: BotRoutine; nextRun?: number | null }) {
@@ -822,7 +836,7 @@ function RoutineRow({ bot, routine, nextRun }: { bot: BotView; routine: BotRouti
         </span>
         {!!routine.runs?.length && <details className="bt-sub"><summary>Recent runs</summary>
           {routine.runs.map((run, index) => <div key={index}><time>{new Date(run.at).toLocaleString()}</time> · {
-            run.status === 'posted' ? 'Posted to main chat' : run.status === 'sent' ? 'AI prompt delivered' : `Failed · ${run.error}`
+            run.status === 'failed' ? `Failed · ${run.error}` : RUN_STATUS_LABELS[run.status]
           }</div>)}
         </details>}
         {action.feedback}

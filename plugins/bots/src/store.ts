@@ -2,6 +2,7 @@ import type { PluginKvStorage } from '@zana-ai/zcc-plugin-sdk/server';
 import {
   BotValidationError,
   MAX_BOTS,
+  MAX_ROUTINE_RESULT_LENGTH,
   MAX_ROUTINES_PER_BOT,
   findBot,
   newBot,
@@ -27,6 +28,10 @@ export interface BotJob {
   botId: string;
   title: string;
   startedAt: number;
+  /** Set on the hidden thread of an AI routine run; its result is posted to the main chat by the plugin. */
+  routineId?: string;
+  /** The run timestamp recorded on the routine, so the result updates that run. */
+  runAt?: number;
 }
 
 /**
@@ -146,6 +151,14 @@ export class BotStore {
     return this.mutate(ref, bot => ({ ...bot, mainThreadId: threadId, updatedAt: this.now() }));
   }
 
+  clearRoleChanged(ref: string): Promise<Bot> {
+    return this.mutate(ref, bot => {
+      if (!bot.roleChanged) return bot;
+      delete bot.roleChanged;
+      return bot;
+    });
+  }
+
   clearMainThread(ref: string, deletedId: string): Promise<Bot> {
     return this.mutate(ref, bot => {
       if (bot.mainThreadId !== deletedId) return bot;
@@ -202,13 +215,37 @@ export class BotStore {
   }
 
   markRoutineRun(botId: string, routineId: string, at: number, status: RoutineRun['status'] = 'sent',
-    details: { error?: string; prices?: Record<string, number> } = {}): Promise<Bot> {
-    const run: RoutineRun = { at, status, ...(details.error ? { error: details.error.slice(0, 200) } : {}) };
+    details: { error?: string; prices?: Record<string, number>; threadId?: string } = {}): Promise<Bot> {
+    const run: RoutineRun = {
+      at, status, ...(details.error ? { error: details.error.slice(0, 200) } : {}), ...(details.threadId ? { threadId: details.threadId } : {})
+    };
     return this.mutate(botId, (bot) => ({
       ...bot,
       routines: bot.routines.map(row => row.id !== routineId ? row : {
         ...row, lastRunAt: at, runs: [run, ...(row.runs ?? [])].slice(0, 5),
         ...(details.prices ? { lastPrices: details.prices } : {})
+      })
+    }));
+  }
+
+  /**
+   * Settle the run of thread `threadId` (started at `at`): update its status, or
+   * record it when the run was pruned, and keep the posted result for the next run.
+   */
+  finishRoutineRun(botId: string, routineId: string, threadId: string, at: number, status: RoutineRun['status'],
+    details: { error?: string; result?: string } = {}): Promise<Bot> {
+    const run: RoutineRun = { at, status, threadId, ...(details.error ? { error: details.error.slice(0, 200) } : {}) };
+    return this.mutate(botId, (bot) => ({
+      ...bot,
+      routines: bot.routines.map(row => {
+        if (row.id !== routineId) return row;
+        const runs = row.runs ?? [];
+        const known = runs.some(r => r.threadId === threadId);
+        return {
+          ...row,
+          runs: known ? runs.map(r => (r.threadId === threadId ? run : r)) : [run, ...runs].slice(0, 5),
+          ...(details.result !== undefined ? { lastResult: details.result.slice(0, MAX_ROUTINE_RESULT_LENGTH) } : {})
+        };
       })
     }));
   }
@@ -257,5 +294,6 @@ function isBotRecord(value: unknown): value is Bot & { avatar?: unknown } {
 function isJobRecord(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
   const row = value as Record<string, unknown>;
-  return typeof row.threadId === 'string' && typeof row.botId === 'string' && typeof row.startedAt === 'number';
+  return typeof row.threadId === 'string' && typeof row.botId === 'string' && typeof row.startedAt === 'number'
+    && (row.routineId === undefined || typeof row.routineId === 'string');
 }

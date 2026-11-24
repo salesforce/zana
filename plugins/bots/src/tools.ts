@@ -1,7 +1,7 @@
 import { toolInstructions } from './instructions.js';
 import type { ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import { BotValidationError, ROUTINE_KINDS, type Bot } from './model.js';
-import type { Approver, BotService, ThreadRole } from './service.js';
+import { isBackground, type Approver, type BotService, type ThreadRole } from './service.js';
 
 function record(input: unknown): Record<string, unknown> {
   return input && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
@@ -40,6 +40,8 @@ export const BOT_TOOL_NAMES = ['bot_list', 'bot_send', 'bot_reply', 'bot_job_sta
 export function toolsFor(role: ThreadRole['kind']): string[] {
   if (role === 'main') return [...BOT_TOOL_NAMES, 'bot_vault_list', 'bot_assigned_cases'];
   if (role === 'job') return ['bot_list'];
+  // Routine runs act for the bot (e.g. its connected accounts) but cannot reach other bots or threads.
+  if (role === 'routine') return ['bot_list', 'bot_vault_list', 'bot_assigned_cases'];
   return ['bot_list', 'bot_send', 'bot_routines', 'bot_create'];
 }
 
@@ -110,7 +112,8 @@ export function registerBotTools(zcc: Pick<ZccPluginApi, 'agents' | 'ui'>, servi
     presentation: { label: { pending: 'Replying', completed: 'Replied' }, icon: { glyph: 'Reply' } },
     execute: async (input, ctx) => {
       const args = record(input);
-      return service.reply(ctx.threadId, str(args.threadId, 'threadId'), str(args.message, 'message'));
+      const result = await service.reply(ctx.threadId, str(args.threadId, 'threadId'), str(args.message, 'message'));
+      return { ...result, delivered: true, note: 'Delivered. Do not repeat it here; at most one line.' };
     }
   });
 
@@ -189,7 +192,7 @@ export function registerBotTools(zcc: Pick<ZccPluginApi, 'agents' | 'ui'>, servi
     presentation: { label: { pending: 'Creating bot', completed: 'Created bot' }, icon: { glyph: 'Bot' } },
     execute: async (input, ctx) => {
       const args = record(input);
-      if (service.roleOf(ctx.threadId).kind === 'job') throw new BotValidationError('background jobs cannot create bots');
+      if (isBackground(service.roleOf(ctx.threadId))) throw new BotValidationError('background jobs cannot create bots');
       return agentBotSummary(await service.create({ name: args.name, personality: args.personality, projectId: ctx.projectId }));
     }
   });

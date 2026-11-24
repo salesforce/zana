@@ -263,6 +263,20 @@ it('edits routines with human-readable schedules, confirmations and switches', a
   await waitFor(() => expect(screen.queryByRole('form', { name: 'Add routine' })).toBeNull());
 });
 
+it('labels quiet, running, posted and failed routine runs', async () => {
+  const runs = [
+    { at: 4, status: 'running' }, { at: 3, status: 'quiet' }, { at: 2, status: 'posted' }, { at: 1, status: 'failed', error: 'boom' }, { at: 0, status: 'sent' }
+  ];
+  route({ list: () => [{ ...scout, routines: [{ ...scout.routines[0], runs }] }], jobs: () => [] });
+  render(<BotsPanel />);
+  const digest = await screen.findByRole('group', { name: 'Digest' });
+  for (const label of ['Running', 'Nothing new · not posted', 'Posted to main chat', 'Failed · boom', 'AI prompt delivered']) {
+    expect(digest.textContent).toContain(label);
+  }
+  await screen.findByText('Recent activity');
+  await waitFor(() => expect(document.body.textContent).toContain('Digest'));
+});
+
 it('ignores double clicks while an action is running and clears notices', async () => {
   let release: (value: unknown) => void = () => {};
   route({ list: () => [scout], runRoutine: () => new Promise((resolve) => { release = resolve; }) });

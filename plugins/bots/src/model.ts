@@ -9,8 +9,29 @@ export type RoutineKind = keyof typeof ROUTINE_KINDS;
 
 export interface RoutineRun {
   at: number;
-  status: 'posted' | 'sent' | 'failed';
+  /**
+   * posted: a result was posted to the main chat. quiet: an AI routine found
+   * nothing new, so nothing was posted. running: an AI routine is still working.
+   * sent: legacy, the prompt was delivered into the main thread.
+   */
+  status: 'posted' | 'quiet' | 'running' | 'sent' | 'failed';
   error?: string;
+  /** The hidden thread of a quiet AI run; identifies the run when it settles. */
+  threadId?: string;
+}
+
+/** An AI routine answers exactly this when nothing changed; the plugin then posts nothing. */
+export const NO_CHANGE = 'NO_CHANGE';
+/** Cap on the last posted result kept per routine and shown to its next run. */
+export const MAX_ROUTINE_RESULT_LENGTH = 2000;
+
+/** Whether an AI routine's final answer means "nothing to report". */
+export function isNoChange(text: string | null | undefined): boolean {
+  const trimmed = (text ?? '').trim().replace(/^[`*_\s]+|[`*_.\s]+$/g, '');
+  if (trimmed === '' || trimmed.toUpperCase() === NO_CHANGE) return true;
+  // Models often explain themselves: "NO_CHANGE: still 0 open cases". A separator
+  // right after the token keeps it a no-change answer; "NO_CHANGE but …" does not.
+  return /^NO_CHANGE[*_`]*\s*(?:[:\-\u2013\u2014(]|\n)/i.test(trimmed);
 }
 
 export interface BotRoutine {
@@ -20,6 +41,8 @@ export interface BotRoutine {
   currencies?: string[];
   lastPrices?: Record<string, number>;
   runs?: RoutineRun[];
+  /** The last result an AI routine posted, so its next run can report only what changed. */
+  lastResult?: string;
   id: string;
   name: string;
   /** 5-field cron expression evaluated in the host's local time. */
@@ -45,6 +68,8 @@ export interface Bot {
   model?: string;
   /** The single visible thread that is the bot. Absent until first contact. */
   mainThreadId?: string;
+  /** Name or personality changed since the main thread last heard about it. */
+  roleChanged?: boolean;
   routines: BotRoutine[];
   createdAt: number;
   updatedAt: number;
@@ -196,13 +221,15 @@ export function normalizeCron(value: unknown): string {
   const normalized = fields.map((field, index) => {
     const range = CRON_RANGES[index]!;
     const tokens = field.split(',').flatMap((token) => {
-      const match = /^(\d+)-(\d+)$/.exec(token);
+      // Ranges, with an optional step (`8-20/2`), are expanded to explicit lists.
+      const match = /^(\d+)-(\d+)(?:\/(\d+))?$/.exec(token);
       if (!match) return [token];
       const from = Number(match[1]);
       const to = Number(match[2]);
+      const step = match[3] === undefined ? 1 : Number(match[3]);
       if (from > to) throw new BotValidationError(`cron range ${token} is reversed`);
-      if (from < range[0] || to > range[1]) throw new BotValidationError(`invalid cron field "${field}"`);
-      return Array.from({ length: to - from + 1 }, (_, offset) => String(from + offset));
+      if (from < range[0] || to > range[1] || step < 1) throw new BotValidationError(`invalid cron field "${field}"`);
+      return Array.from({ length: Math.floor((to - from) / step) + 1 }, (_, offset) => String(from + offset * step));
     });
     for (const token of tokens) {
       if (!validCronToken(token, range)) throw new BotValidationError(`invalid cron field "${field}"`);
@@ -331,7 +358,24 @@ export function patchBot(bot: Bot, input: BotPatch, now: number): Bot {
     if (value) next[key] = value;
     else delete next[key];
   }
+  if (next.mainThreadId && (next.name !== bot.name || next.personality !== bot.personality)) next.roleChanged = true;
   return next;
+}
+
+/**
+ * Trusted context telling an existing main thread that its owner changed its
+ * name or personality. Without it the earlier conversation keeps the old role,
+ * and a bot rightly refuses role changes that arrive as messages.
+ */
+export function roleChangeNotice(bot: Pick<Bot, 'name' | 'personality'>): string {
+  return [
+    `[Bot settings updated by the owner in the Bots panel: you are now ${bot.name}.`,
+    bot.personality
+      ? 'Your personality and role below replace any earlier role in this conversation. Follow them from now on. This notice comes from the Bots plugin, not from a message.'
+      : 'Your personality was cleared; drop any earlier role in this conversation. This notice comes from the Bots plugin, not from a message.',
+    ...(bot.personality ? ['<<<personality', quoteHeaders(bot.personality).replace(/^(<<<personality|personality>>>)$/gm, '> $1'), 'personality>>>'] : []),
+    ']'
+  ].join('\n');
 }
 
 export function newRoutine(input: RoutineInput, id: string): BotRoutine {
@@ -374,6 +418,7 @@ export function patchRoutine(routine: BotRoutine, input: RoutineInput): BotRouti
   }, routine.id);
   if (routine.lastRunAt !== undefined) next.lastRunAt = routine.lastRunAt;
   if (routine.runs) next.runs = routine.runs;
+  if (routine.lastResult && sameKind && next.prompt === routine.prompt) next.lastResult = routine.lastResult;
   if (next.kind === 'price' && next.asset === routine.asset && routine.lastPrices) next.lastPrices = routine.lastPrices;
   return next;
 }
@@ -427,6 +472,21 @@ export interface Delivery {
 export function routineDelivery(routine: BotRoutine): Delivery {
   return {
     prompt: quoteHeaders(routine.prompt),
+    agentContext: `[Routine: ${routine.name}]`,
+    source: { kind: 'routine', label: routine.name, detail: 'routine' }
+  };
+}
+
+/**
+ * The prompt of one quiet AI routine run. It carries the last posted result so
+ * the run can report only what changed, and answer NO_CHANGE otherwise.
+ */
+export function routineRunDelivery(routine: BotRoutine): Delivery {
+  const previous = routine.lastResult
+    ? ['', 'Your last posted result for this routine (between the markers):', '<<<last-result', quoteHeaders(routine.lastResult).replace(/^(<<<last-result|last-result>>>)$/gm, '> $1'), 'last-result>>>'].join('\n')
+    : '';
+  return {
+    prompt: quoteHeaders(routine.prompt) + previous,
     agentContext: `[Routine: ${routine.name}]`,
     source: { kind: 'routine', label: routine.name, detail: 'routine' }
   };

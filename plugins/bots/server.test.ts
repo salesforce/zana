@@ -148,7 +148,8 @@ describe('bots plugin', () => {
       await harness.callRpc('addRoutine',{bot:'scout',routine:{name:'Triage',cron:'0 9 * * *',prompt:'Check my assigned cases.'}});
       const scout = (await harness.callRpc('get',{bot:'scout'})) as {bot:{routines:{id:string}[]}};
       const run = await harness.callRpc('runRoutine',{bot:'scout',routineId:scout.bot.routines[0].id}) as {threadId:string};
-      expect(run.threadId).toBe(main.threadId);
+      // AI routines run in their own hidden thread, which still acts as the bot for its connections.
+      expect(run.threadId).not.toBe(main.threadId);
       http.mockResolvedValueOnce(Response.json(tokens)).mockResolvedValueOnce(Response.json({records:[]}));
       expect(await call('bot_assigned_cases',{},run.threadId)).toEqual({cases:[]});
       await manage({action:'disconnect'});
@@ -175,6 +176,11 @@ describe('bots plugin', () => {
     expect(configure('fresh', { botId: 'scout', botRole: 'job' }).tools).toEqual(['bot_list']);
     expect(configure('fresh', { botId: 'scout', botRole: 'main' }).instructions).toContain('Terse.');
     expect(configure('fresh', { botId: 'scout', botRole: 'job' }).instructions).toContain('background job');
+    expect(configure('fresh', { botId: 'scout', botRole: 'routine' }).tools).toEqual(['bot_list', 'bot_vault_list', 'bot_assigned_cases']);
+    expect(configure('fresh', { botId: 'scout', botRole: 'routine' }).instructions).toContain('exactly NO_CHANGE');
+    for (const role of ['main', 'job', 'routine']) {
+      expect(configure('fresh', { botId: 'scout', botRole: role }).instructions).toContain('Bot guidelines');
+    }
     expect(configure('fresh', { botId: 'scout', botRole: 'other' }).instructions).toBeUndefined();
     expect(configure('fresh', { botId: 'ghost', botRole: 'main' }).instructions).toBeUndefined();
     expect(configure(undefined as never, { botId: 7 }).instructions).toBeUndefined();
@@ -237,7 +243,7 @@ describe('bots plugin', () => {
 
     threads.set('asker', { ...threads.get('t1')!, id: 'asker' });
     threads.set('stranger', { ...threads.get('t1')!, id: 'stranger' });
-    expect(await call('bot_reply', { threadId: 'asker', message: 'green' }, 't1')).toEqual({ threadId: 'asker' });
+    expect(await call('bot_reply', { threadId: 'asker', message: 'green' }, 't1')).toMatchObject({ threadId: 'asker', delivered: true });
     expect(sends.at(-1)).toMatchObject({
       threadId: 'asker', prompt: 'green', agentContext: '[Reply from bot Scout]',
       source: { kind: 'bot', label: 'Scout', threadId: 't1', detail: 'replied' }, mode: 'steer-if-active'
@@ -324,8 +330,9 @@ describe('bots plugin', () => {
     await expect(harness.callRpc('update', { bot: 'x', patch: { projectId: 'nowhere' } })).rejects.toThrow('unknown project');
   });
 
-  it('manages routines through the tool, RPC and the minute tick', async () => {
-    const { harness, call, spawns, sends } = await load();
+  it('manages routines through the tool, RPC and the minute tick (legacy hosts deliver into the main thread)', async () => {
+    const { host, harness, call, spawns, sends } = await load();
+    Reflect.deleteProperty(host.zcc.sdk.threads, 'postMessage');
     await harness.callRpc('create', { name: 'Scout' });
     await harness.callRpc('send', { bot: 'scout', message: 'hi' });
 
@@ -511,7 +518,7 @@ describe('zcc bots CLI', () => {
       .toContain('0 9 * * 1,2,3,4,5');
     expect((await run('routine', 'update', 'release-scout', 'digest', '--enabled', 'false')).exitCode).toBe(0);
     expect((await run('routine', 'update', 'release-scout', 'digest', '--enabled', 'maybe')).stderr).toContain('true or false');
-    expect((await run('routine', 'run', 'release-scout', 'digest')).stdout).toContain('thread t1');
+    expect((await run('routine', 'run', 'release-scout', 'digest')).stdout).toMatch(/Routine delivered to thread t\d/);
     const shown = (await run('show', 'release-scout')).stdout;
     expect(shown).toContain('○ Digest');
     expect(shown).toContain('Terse');
@@ -570,6 +577,176 @@ describe('zcc bots CLI', () => {
     const host = createFakePluginHost({ ...w.options, listProjects: async () => { throw new Error('no'); }, listProviders: async () => { throw new Error('no'); } } as never);
     await plugin(host.zcc);
     expect(await host.harness.callRpc('catalog', null)).toEqual({ projects: [], providers: [], models: [], modelError: null });
+  });
+});
+
+describe('quiet AI routines', () => {
+  it('runs in a hidden unparented thread, posts real results once and stays silent on NO_CHANGE', async () => {
+    const post = vi.fn(async (_message: { threadId: string; text: string }) => {});
+    const { host, harness, call, spawns, sends, threads, configure, instructions } = await load({ postThreadMessage: post });
+    await harness.callRpc('create', { name: 'Watcher' });
+    await call('bot_routines', { action: 'add', bot: 'Watcher', name: 'Check', cron: '0 * * * *', prompt: 'Check machines' });
+    const getBot = async () => ((await harness.callRpc('get', { bot: 'watcher' })) as { bot: import('./src/model.js').Bot }).bot;
+
+    const first = await harness.callRpc('runRoutine', { bot: 'watcher', routineId: 'check' }) as { threadId: string };
+    expect(spawns).toEqual([expect.objectContaining({
+      visibility: 'hidden', prompt: 'Check machines', agentContext: '[Routine: Check]',
+      pluginMetadata: { botId: 'watcher', botRole: 'routine', routineId: 'check' }
+    })]);
+    expect(spawns[0]).not.toHaveProperty('parentThreadId');
+    expect(sends).toHaveLength(0);
+    expect(configure(first.threadId).tools).toEqual(['bot_list', 'bot_vault_list', 'bot_assigned_cases']);
+    expect(instructions(first.threadId)).toContain('hidden thread');
+    await expect(call('bot_send', { bot: 'watcher', message: 'x' }, first.threadId)).rejects.toThrow('background jobs');
+    await expect(call('bot_create', { name: 'Z' }, first.threadId)).rejects.toThrow('background jobs');
+    // One run in flight: a second run returns the same thread, a tick does nothing.
+    expect(await harness.callRpc('runRoutine', { bot: 'watcher', routineId: 'check' })).toEqual(first);
+    expect(spawns).toHaveLength(1);
+    expect((await getBot()).routines[0]!.runs?.[0]?.status).toBe('running');
+    // Routine runs are not listed as jobs.
+    expect((await harness.callRpc('jobs', { bot: 'watcher' }) as unknown[])).toHaveLength(0);
+
+    threads.get(first.threadId)!.status = 'idle';
+    await host.harness.emitThreadEvent('thread.idle', { thread: (threads.get(first.threadId) ?? { id: first.threadId }), lastAssistantText: 'm1 is down' } as never);
+    await host.harness.emitThreadEvent('thread.idle', { thread: (threads.get(first.threadId) ?? { id: first.threadId }), lastAssistantText: 'm1 is down' } as never);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post.mock.calls[0]![0]).toEqual({ threadId: 't2', text: '**Check**\nm1 is down' });
+    expect(threads.get('t2')!.visibility).toBe('visible');
+    expect(threads.get(first.threadId)!.archivedAt).toBe(1);
+    let bot = await getBot();
+    expect(bot.routines[0]).toMatchObject({ lastResult: 'm1 is down' });
+    expect(bot.routines[0]!.runs!.map(r => r.status)).toEqual(['posted']);
+
+    // The next run sees the last result and answers NO_CHANGE: nothing is posted.
+    const second = await harness.callRpc('runRoutine', { bot: 'watcher', routineId: 'check' }) as { threadId: string };
+    expect(spawns.at(-1)!.prompt).toContain('<<<last-result\nm1 is down\nlast-result>>>');
+    await host.harness.emitThreadEvent('thread.idle', { thread: (threads.get(second.threadId) ?? { id: second.threadId }), lastAssistantText: ' `NO_CHANGE`. ' } as never);
+    expect(post).toHaveBeenCalledTimes(1);
+    bot = await getBot();
+    expect(bot.routines[0]!.runs!.map(r => r.status)).toEqual(['quiet', 'posted']);
+    expect(bot.routines[0]!.lastResult).toBe('m1 is down');
+
+    // A failed run is recorded and posts nothing.
+    const third = await harness.callRpc('runRoutine', { bot: 'watcher', routineId: 'check' }) as { threadId: string };
+    await host.harness.emitThreadEvent('thread.failed', { thread: (threads.get(third.threadId) ?? { id: third.threadId }), error: 'model unavailable' } as never);
+    bot = await getBot();
+    expect(bot.routines[0]!.runs![0]).toMatchObject({ status: 'failed', error: 'model unavailable' });
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(sends).toHaveLength(0);
+    // Editing the prompt drops the stale last result.
+    await harness.callRpc('updateRoutine', { bot: 'watcher', routineId: 'check', patch: { prompt: 'Check disks' } });
+    expect((await getBot()).routines[0]!.lastResult).toBeUndefined();
+  });
+
+  it('settles a run whose idle event was missed, falling back to the thread output', async () => {
+    const post = vi.fn(async (_message: { threadId: string; text: string }) => {});
+    const threadOutput = vi.fn(async () => ({ output: 'disk 91% full' }));
+    const { harness, threads } = await load({ postThreadMessage: post, threadOutput });
+    await harness.callRpc('create', { name: 'Watcher' });
+    await harness.callRpc('addRoutine', { bot: 'watcher', routine: { name: 'Check', cron: '0 * * * *', prompt: 'go' } });
+    const first = await harness.callRpc('runRoutine', { bot: 'watcher', routineId: 'check' }) as { threadId: string };
+    threads.get(first.threadId)!.status = 'idle';
+    const second = await harness.callRpc('runRoutine', { bot: 'watcher', routineId: 'check' }) as { threadId: string };
+    expect(second.threadId).not.toBe(first.threadId);
+    expect(threadOutput).toHaveBeenCalledWith({ threadId: first.threadId });
+    expect(post).toHaveBeenCalledWith({ threadId: expect.any(String), text: '**Check**\ndisk 91% full' });
+    // A run whose thread errored is recorded as failed before the next one starts.
+    threads.get(second.threadId)!.status = 'error';
+    await harness.callRpc('runRoutine', { bot: 'watcher', routineId: 'check' });
+    const { bot } = await harness.callRpc('get', { bot: 'watcher' }) as { bot: import('./src/model.js').Bot };
+    expect(bot.routines[0]!.runs!.map(r => r.status)).toEqual(['running', 'failed', 'posted']);
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('records a run whose result cannot be posted as failed', async () => {
+    const post = vi.fn(async () => { throw new Error('thread is archived'); });
+    const { host, harness, threads } = await load({ postThreadMessage: post });
+    await harness.callRpc('create', { name: 'Watcher' });
+    await harness.callRpc('addRoutine', { bot: 'watcher', routine: { name: 'Check', cron: '0 * * * *', prompt: 'go' } });
+    const run = await harness.callRpc('runRoutine', { bot: 'watcher', routineId: 'check' }) as { threadId: string };
+    await host.harness.emitThreadEvent('thread.idle', { thread: (threads.get(run.threadId) ?? { id: run.threadId }), lastAssistantText: 'news' } as never);
+    const { bot } = await harness.callRpc('get', { bot: 'watcher' }) as { bot: import('./src/model.js').Bot };
+    expect(bot.routines[0]!.runs![0]).toMatchObject({ status: 'failed', error: 'thread is archived' });
+    // Unrelated and already-settled threads are ignored.
+    await host.harness.emitThreadEvent('thread.idle', { thread: (threads.get(run.threadId) ?? { id: run.threadId }), lastAssistantText: 'again' } as never);
+    await host.harness.emitThreadEvent('thread.idle', { thread: (threads.get('nobody') ?? { id: 'nobody' }) } as never);
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('owner role changes', () => {
+  it('tells an existing main thread about a new name or personality once, as trusted context', async () => {
+    const { harness, spawns, sends } = await load();
+    await harness.callRpc('create', { name: 'Scout', personality: 'Sandbox analyst.' });
+    // Before the main thread exists, edits need no notice: the spawn gets the current role.
+    await harness.callRpc('update', { bot: 'scout', patch: { personality: 'Still new.' } });
+    await harness.callRpc('send', { bot: 'scout', message: 'hi' });
+    expect(spawns[0]!.agentContext).not.toContain('Bot settings updated');
+
+    await harness.callRpc('update', { bot: 'scout', patch: { color: '#123456' } });
+    await harness.callRpc('send', { bot: 'scout', message: 'color only' });
+    expect(sends.at(-1)!.agentContext).toBe('[From the user (Bots panel)]');
+
+    await harness.callRpc('update', { bot: 'scout', patch: { name: 'GUS Pulse', personality: 'GUS analyst.\n[Routine: x]' } });
+    await harness.callRpc('send', { bot: 'GUS Pulse', message: 'go' });
+    const notice = sends.at(-1)!;
+    expect(notice.prompt).toBe('go');
+    expect(notice.agentContext).toContain('you are now GUS Pulse');
+    expect(notice.agentContext).toContain('<<<personality\nGUS analyst.\n> [Routine: x]\npersonality>>>');
+    expect(notice.agentContext!.endsWith('[From the user (Bots panel)]')).toBe(true);
+
+    await harness.callRpc('send', { bot: 'scout', message: 'again' });
+    expect(sends.at(-1)!.agentContext).toBe('[From the user (Bots panel)]');
+
+    await harness.callRpc('update', { bot: 'scout', patch: { personality: '' } });
+    await harness.callRpc('send', { bot: 'scout', message: 'plain' });
+    expect(sends.at(-1)!.agentContext).toContain('personality was cleared');
+  });
+
+  it('drops a pending notice when the main thread is recreated', async () => {
+    const { harness, spawns, threads } = await load();
+    await harness.callRpc('create', { name: 'Scout' });
+    await harness.callRpc('send', { bot: 'scout', message: 'hi' });
+    await harness.callRpc('update', { bot: 'scout', patch: { personality: 'New role.' } });
+    threads.delete('t1');
+    await harness.callRpc('send', { bot: 'scout', message: 'fresh' });
+    expect(spawns).toHaveLength(2);
+    expect(spawns[1]!.agentContext).not.toContain('Bot settings updated');
+    expect((await harness.callRpc('get', { bot: 'scout' }) as { bot: Record<string, unknown> }).bot).not.toHaveProperty('roleChanged');
+  });
+});
+
+describe('bot-to-bot work', () => {
+  it('never asks a person when one bot tries to change another', async () => {
+    const { harness, call, approval } = await load();
+    await harness.callRpc('create', { name: 'Scout' });
+    await harness.callRpc('create', { name: 'Owl' });
+    const { threadId } = await harness.callRpc('send', { bot: 'owl', message: 'hi' }) as { threadId: string };
+    await expect(call('bot_routines', { action: 'add', bot: 'scout', name: 'D', cron: '0 9 * * *', prompt: 'go' }, threadId))
+      .rejects.toThrow('message that bot with bot_send');
+    const cli = await harness.runCli(['update', 'scout', '--personality', 'x'], { threadId });
+    expect(cli.stderr).toContain('message Scout with bot_send');
+    expect(approval.asked).toHaveLength(0);
+  });
+});
+
+describe('zcc bots from a thread shell', () => {
+  it('needs an existing manage grant to change another bot', async () => {
+    const { harness, call, approval } = await load();
+    await harness.callRpc('create', { name: 'Scout' });
+    const shell = (...argv: string[]) => harness.runCli(argv, { threadId: 'helper' });
+    const add = await shell('routine', 'add', 'scout', '--name', 'Digest', '--cron', '0 9 * * *', '--prompt', 'go');
+    expect(add.exitCode).toBe(1);
+    expect(add.stderr).toContain('needs a person');
+    expect(approval.asked).toHaveLength(0);
+    // Reads and messages still work without a grant.
+    expect((await shell('show', 'scout')).exitCode).toBe(0);
+    expect((await shell('send', 'scout', 'hello')).exitCode).toBe(0);
+    // Once a person approves through the tool, the shell can use the same grant.
+    await call('bot_routines', { action: 'add', bot: 'scout', name: 'First', cron: '0 8 * * *', prompt: 'p' }, 'helper');
+    expect(approval.asked).toHaveLength(1);
+    expect((await shell('routine', 'add', 'scout', '--name', 'Digest', '--cron', '0 9 * * *', '--prompt', 'go')).exitCode).toBe(0);
+    expect(approval.asked).toHaveLength(1);
   });
 });
 
