@@ -88,13 +88,14 @@ function need(value: string | undefined, what: string): string {
 }
 
 /**
- * A terminal call is the user. A call from a thread's shell is that thread: it
- * already runs commands, so approval adds nothing there, but role rules
- * (jobs, self-messages, own routines only), rate limits and the honest
- * "[From thread …]" header still apply.
+ * A terminal call is the user. A call from a thread's shell is that thread: role
+ * rules (jobs, self-messages, own routines only), rate limits and the honest
+ * "[From thread …]" header apply. The shell has no approval sheet, so changing
+ * another bot from there needs a grant the thread already holds (approved once
+ * through the bot_routines tool); otherwise it fails with guidance, matching the tool path.
  */
 function cliSender(ctx: PluginCliContext): Sender {
-  return ctx.threadId ? { kind: 'agent', threadId: ctx.threadId, approve: async () => true } : { kind: 'user', via: 'zcc CLI' };
+  return ctx.threadId ? { kind: 'agent', threadId: ctx.threadId } : { kind: 'user', via: 'zcc CLI' };
 }
 
 export async function runCli(service: BotService, argv: string[], ctx: PluginCliContext): Promise<PluginCliResult> {

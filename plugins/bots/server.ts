@@ -110,7 +110,7 @@ export default async function plugin(zcc: ZccPluginApi): Promise<void> {
   zcc.agents.configure((ctx) => {
     const metadata = ctx.pluginMetadata ?? {};
     const instructions = service.instructionsFor(ctx.threadId, metadata);
-    const role = metadata.botRole === 'main' || metadata.botRole === 'job'
+    const role = metadata.botRole === 'main' || metadata.botRole === 'job' || metadata.botRole === 'routine'
       ? metadata.botRole
       : ctx.threadId ? service.roleOf(ctx.threadId).kind : 'thread';
     return { tools: toolsFor(role), ...(instructions ? { instructions } : {}) };
@@ -136,8 +136,16 @@ export default async function plugin(zcc: ZccPluginApi): Promise<void> {
 
   const isBotThread = (threadId: string) => service.roleOf(threadId).kind !== 'thread';
   for (const name of ['thread.idle', 'thread.active', 'thread.failed'] as const) {
-    zcc.events.on(name, (event) => {
-      if (isBotThread(event.threadId)) service.changed();
+    zcc.events.on(name, async (event) => {
+      const role = service.roleOf(event.threadId);
+      if (role.kind === 'thread') return;
+      service.changed();
+      // A quiet routine run finished: post its result (or nothing) to the main chat.
+      if (role.kind === 'routine' && name !== 'thread.active') {
+        await service.settleRoutineRun(event.threadId, name === 'thread.failed'
+          ? { failed: event.error ?? null }
+          : { text: event.lastAssistantText ?? null });
+      }
     });
   }
   zcc.events.on('thread.deleted', async (event) => {

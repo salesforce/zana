@@ -1,9 +1,11 @@
-import { jobThreadInstructions, mainThreadInstructions } from './instructions.js';
+import { jobThreadInstructions, mainThreadInstructions, routineThreadInstructions } from './instructions.js';
 import type { PluginSdkThreadSummary, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
 import {
   BotValidationError,
   MAX_ACTIVE_JOBS_PER_BOT,
   inboundDelivery,
+  isNoChange,
+  routineRunDelivery,
   jobDelivery,
   replyDelivery,
   routineDelivery,
@@ -36,7 +38,16 @@ export type Approver = (request: { bot: Bot; summary: string }) => Promise<boole
  */
 export type Sender = { kind: 'user'; via: string } | { kind: 'agent'; threadId: string; approve?: Approver };
 
-export type ThreadRole = { kind: 'main'; bot: Bot } | { kind: 'job'; bot: Bot } | { kind: 'thread' };
+export type ThreadRole =
+  | { kind: 'main'; bot: Bot }
+  | { kind: 'job'; bot: Bot }
+  | { kind: 'routine'; bot: Bot; routineId: string }
+  | { kind: 'thread' };
+
+/** Hidden threads a bot runs for itself: they act for the bot but cannot reach other bots or change any. */
+export function isBackground(role: ThreadRole): role is Extract<ThreadRole, { kind: 'job' | 'routine' }> {
+  return role.kind === 'job' || role.kind === 'routine';
+}
 
 export interface BotJobView extends BotJob {
   status: string;
@@ -84,12 +95,13 @@ export class BotService {
     const tagged = typeof metadata.botId === 'string' ? bots.find((bot) => bot.id === metadata.botId) : undefined;
     if (tagged && metadata.botRole === 'main') return mainThreadInstructions(tagged);
     if (tagged && metadata.botRole === 'job') return jobThreadInstructions(tagged);
+    if (tagged && metadata.botRole === 'routine') return routineThreadInstructions(tagged);
     if (!threadId) return null;
-    const main = bots.find((bot) => bot.mainThreadId === threadId);
-    if (main) return mainThreadInstructions(main);
-    const job = this.store.jobsSnapshot().find((row) => row.threadId === threadId);
-    const owner = job ? bots.find((bot) => bot.id === job.botId) : undefined;
-    return owner ? jobThreadInstructions(owner) : null;
+    const role = this.roleOf(threadId);
+    if (role.kind === 'main') return mainThreadInstructions(role.bot);
+    if (role.kind === 'job') return jobThreadInstructions(role.bot);
+    if (role.kind === 'routine') return routineThreadInstructions(role.bot);
+    return null;
   }
 
   /** The bot whose main thread is `threadId`. */
@@ -103,7 +115,14 @@ export class BotService {
     if (main) return { kind: 'main', bot: main };
     const job = this.store.jobsSnapshot().find((row) => row.threadId === threadId);
     const owner = job ? this.store.snapshot().find((bot) => bot.id === job.botId) : undefined;
-    return owner ? { kind: 'job', bot: owner } : { kind: 'thread' };
+    if (!owner) return { kind: 'thread' };
+    return job!.routineId ? { kind: 'routine', bot: owner, routineId: job!.routineId } : { kind: 'job', bot: owner };
+  }
+
+  /** The bot a thread acts as: its main thread or one of its routine runs (which use its connections). */
+  botActingAs(threadId: string): Bot | undefined {
+    const role = this.roleOf(threadId);
+    return role.kind === 'main' || role.kind === 'routine' ? role.bot : undefined;
   }
 
   async create(input: BotInput): Promise<Bot> {
@@ -179,7 +198,7 @@ export class BotService {
     return Promise.all(bots.map((bot) => this.view(bot)));
   }
 
-  async jobs(botId: string): Promise<BotJobView[]> {
+  private async allJobs(botId: string): Promise<BotJobView[]> {
     const jobs = await this.store.jobs(botId);
     const views = await Promise.all(jobs.map(async (job) => {
       const thread = await this.peek(job.threadId);
@@ -188,6 +207,11 @@ export class BotService {
       return { ...job, status: thread.status, archived: thread.archivedAt != null };
     }));
     return views.filter((job): job is BotJobView => job !== null).sort((a, b) => b.startedAt - a.startedAt);
+  }
+
+  /** Background jobs the bot started itself; routine runs are tracked on their routine instead. */
+  async jobs(botId: string): Promise<BotJobView[]> {
+    return (await this.allJobs(botId)).filter(job => !job.routineId);
   }
 
   /** Opening and messaging share a queue so they can never create two main threads. */
@@ -226,7 +250,7 @@ export class BotService {
     const text = validatePrompt(message, 'message');
     if (from.kind === 'user') return this.openMainThread(bot.id, inboundDelivery(text, { kind: 'user', via: from.via }));
     const role = this.roleOf(from.threadId);
-    if (role.kind === 'job') throw new BotValidationError('background jobs cannot message bots; put it in your final answer instead');
+    if (isBackground(role)) throw new BotValidationError('background jobs cannot message bots; put it in your final answer instead');
     if (role.kind === 'main' && role.bot.id === bot.id) {
       throw new BotValidationError('a bot cannot message itself; just continue in this thread');
     }
@@ -248,7 +272,7 @@ export class BotService {
   async routineTarget(from: Sender, ref: string | undefined, mutating: boolean): Promise<Bot> {
     if (from.kind === 'user') return this.requireBot(ref ?? '');
     const role = this.roleOf(from.threadId);
-    if (role.kind === 'job') throw new BotValidationError('background jobs cannot manage routines');
+    if (isBackground(role)) throw new BotValidationError('background jobs cannot manage routines');
     if (role.kind === 'main') {
       if (ref && (await this.store.get(ref))?.id !== role.bot.id) {
         throw new BotValidationError('a bot can only manage its own routines');
@@ -265,12 +289,18 @@ export class BotService {
   async authorizeManage(from: Sender, bot: Bot): Promise<void> {
     if (from.kind === 'user') return;
     const role = this.roleOf(from.threadId);
-    if (role.kind === 'job') throw new BotValidationError('background jobs cannot change bots');
+    if (isBackground(role)) throw new BotValidationError('background jobs cannot change bots');
     if (role.kind === 'main' && role.bot.id === bot.id) return;
     if (role.kind === 'main') throw new BotValidationError('a bot can only change itself');
     if (this.trust.hasManageGrant(from.threadId, bot.id)) return;
+    if (!from.approve) {
+      throw new BotValidationError(
+        `not approved: changing ${bot.name} from a thread needs a person's approval. ` +
+        'Use the bot_routines tool (it asks for approval), or ask them to do it from the Bots panel or a terminal.'
+      );
+    }
     const summary = `Let this thread change ${bot.name}: its personality, settings and routines. The bot runs with full permissions.`;
-    if (!(await from.approve?.({ bot, summary }))) {
+    if (!(await from.approve({ bot, summary }))) {
       throw new BotValidationError(
         `not approved: a person must allow this thread to change ${bot.name}. ` +
         'Ask them to approve the request, or to do it from the Bots panel.'
@@ -397,8 +427,16 @@ export class BotService {
     let threadId: string;
     let prices: Record<string, number> | undefined;
     const usesModel = !routine.kind || routine.kind === 'agent';
+    // Hosts that can post display-only messages run AI routines quietly in a hidden thread.
+    const quiet = usesModel && Boolean(this.zcc.sdk.threads.postMessage);
+    if (quiet) {
+      const running = await this.runningRoutineThread(botId, routineId);
+      if (running) return force ? { threadId: running } : null;
+    }
     try {
-      if (usesModel) {
+      if (quiet) {
+        threadId = await this.spawnRoutineRun(bot!, routine, at);
+      } else if (usesModel) {
         const main = await this.openMainThread(botId, routineDelivery(routine));
         threadId = main.threadId;
       } else {
@@ -415,9 +453,75 @@ export class BotService {
       this.changed(botId);
       throw error;
     }
-    await this.store.markRoutineRun(botId, routineId, at, usesModel ? 'sent' : 'posted', { prices });
+    await this.store.markRoutineRun(botId, routineId, at, quiet ? 'running' : usesModel ? 'sent' : 'posted', { prices, ...(quiet ? { threadId } : {}) });
     this.changed(botId);
     return { threadId };
+  }
+
+  /**
+   * One run in flight per routine. A run whose thread already went idle (its
+   * idle event was missed, e.g. across a restart) is settled here first.
+   */
+  private async runningRoutineThread(botId: string, routineId: string): Promise<string | null> {
+    const runs = (await this.store.jobs(botId)).filter(job => job.routineId === routineId);
+    for (const run of runs) {
+      const thread = await this.peek(run.threadId);
+      if (thread === 'unknown' || (thread && ACTIVE_STATUSES.has(thread.status))) return run.threadId;
+      if (thread && thread.status === 'error') await this.settleRoutineRun(run.threadId, { failed: 'the routine run failed' });
+      else await this.settleRoutineRun(run.threadId, {});
+    }
+    return null;
+  }
+
+  /** Hidden and unparented, so the host does not wake the main thread with the run's output. */
+  private async spawnRoutineRun(bot: Bot, routine: BotRoutine, at: number): Promise<string> {
+    const spawned = await this.zcc.sdk.threads.spawn({
+      projectId: bot.projectId,
+      ...this.wire(routineRunDelivery(routine)),
+      title: `${bot.name} · ${routine.name}`,
+      permissionMode: 'full',
+      visibility: 'hidden',
+      ...(bot.providerId ? { providerId: bot.providerId } : { harness: 'project-default' as const }),
+      ...(bot.model ? { model: bot.model } : {}),
+      pluginMetadata: { botId: bot.id, botRole: 'routine', routineId: routine.id }
+    });
+    await this.store.addJob({ threadId: spawned.id, botId: bot.id, title: routine.name, startedAt: this.now(), routineId: routine.id, runAt: at });
+    return spawned.id;
+  }
+
+  /**
+   * A routine run finished (idle) or failed. Its answer is posted display-only to
+   * the main chat, or dropped when it is NO_CHANGE. Claiming the run record first
+   * makes duplicate idle events harmless.
+   */
+  async settleRoutineRun(threadId: string, outcome: { text?: string | null; failed?: string | null }): Promise<void> {
+    const run = this.store.jobsSnapshot().find(job => job.threadId === threadId && job.routineId);
+    if (!run || !(await this.store.removeJob(threadId))) return;
+    const { botId, routineId } = run as typeof run & { routineId: string };
+    const at = run.runAt ?? run.startedAt;
+    try {
+      if (outcome.failed !== undefined) {
+        await this.store.finishRoutineRun(botId, routineId, threadId, at, 'failed', { error: outcome.failed || 'the routine run failed' });
+        return;
+      }
+      const text = outcome.text ?? (await this.zcc.sdk.threads.output?.({ threadId }).catch(() => null))?.output ?? '';
+      if (isNoChange(text)) {
+        await this.store.finishRoutineRun(botId, routineId, threadId, at, 'quiet');
+        return;
+      }
+      const bot = await this.store.get(botId);
+      const routine = bot?.routines.find(row => row.id === routineId);
+      if (!bot || !routine) return;
+      const main = await this.openMainThread(botId);
+      await this.zcc.sdk.threads.postMessage!({ threadId: main.threadId, text: `**${routine.name}**\n${text.trim()}` });
+      await this.store.finishRoutineRun(botId, routineId, threadId, at, 'posted', { result: text.trim() });
+    } catch (error) {
+      this.zcc.log.warn(`routine run ${threadId} could not be settled: ${errorMessage(error)}`);
+      await this.store.finishRoutineRun(botId, routineId, threadId, at, 'failed', { error: errorMessage(error) }).catch(() => undefined);
+    } finally {
+      await this.zcc.sdk.threads.archive({ threadId }).catch(() => undefined);
+      this.changed(botId);
+    }
   }
 
   private alreadyRan(routine: BotRoutine, at: number): boolean {

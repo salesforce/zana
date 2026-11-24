@@ -9,8 +9,26 @@ export type RoutineKind = keyof typeof ROUTINE_KINDS;
 
 export interface RoutineRun {
   at: number;
-  status: 'posted' | 'sent' | 'failed';
+  /**
+   * posted: a result was posted to the main chat. quiet: an AI routine found
+   * nothing new, so nothing was posted. running: an AI routine is still working.
+   * sent: legacy, the prompt was delivered into the main thread.
+   */
+  status: 'posted' | 'quiet' | 'running' | 'sent' | 'failed';
   error?: string;
+  /** The hidden thread of a quiet AI run; identifies the run when it settles. */
+  threadId?: string;
+}
+
+/** An AI routine answers exactly this when nothing changed; the plugin then posts nothing. */
+export const NO_CHANGE = 'NO_CHANGE';
+/** Cap on the last posted result kept per routine and shown to its next run. */
+export const MAX_ROUTINE_RESULT_LENGTH = 2000;
+
+/** Whether an AI routine's final answer means "nothing to report". */
+export function isNoChange(text: string | null | undefined): boolean {
+  const trimmed = (text ?? '').trim().replace(/^[`*_\s]+|[`*_.\s]+$/g, '');
+  return trimmed === '' || trimmed.toUpperCase() === NO_CHANGE;
 }
 
 export interface BotRoutine {
@@ -20,6 +38,8 @@ export interface BotRoutine {
   currencies?: string[];
   lastPrices?: Record<string, number>;
   runs?: RoutineRun[];
+  /** The last result an AI routine posted, so its next run can report only what changed. */
+  lastResult?: string;
   id: string;
   name: string;
   /** 5-field cron expression evaluated in the host's local time. */
@@ -376,6 +396,7 @@ export function patchRoutine(routine: BotRoutine, input: RoutineInput): BotRouti
   }, routine.id);
   if (routine.lastRunAt !== undefined) next.lastRunAt = routine.lastRunAt;
   if (routine.runs) next.runs = routine.runs;
+  if (routine.lastResult && sameKind && next.prompt === routine.prompt) next.lastResult = routine.lastResult;
   if (next.kind === 'price' && next.asset === routine.asset && routine.lastPrices) next.lastPrices = routine.lastPrices;
   return next;
 }
@@ -429,6 +450,21 @@ export interface Delivery {
 export function routineDelivery(routine: BotRoutine): Delivery {
   return {
     prompt: quoteHeaders(routine.prompt),
+    agentContext: `[Routine: ${routine.name}]`,
+    source: { kind: 'routine', label: routine.name, detail: 'routine' }
+  };
+}
+
+/**
+ * The prompt of one quiet AI routine run. It carries the last posted result so
+ * the run can report only what changed, and answer NO_CHANGE otherwise.
+ */
+export function routineRunDelivery(routine: BotRoutine): Delivery {
+  const previous = routine.lastResult
+    ? ['', 'Your last posted result for this routine (between the markers):', '<<<last-result', quoteHeaders(routine.lastResult).replace(/^(<<<last-result|last-result>>>)$/gm, '> $1'), 'last-result>>>'].join('\n')
+    : '';
+  return {
+    prompt: quoteHeaders(routine.prompt) + previous,
     agentContext: `[Routine: ${routine.name}]`,
     source: { kind: 'routine', label: routine.name, detail: 'routine' }
   };

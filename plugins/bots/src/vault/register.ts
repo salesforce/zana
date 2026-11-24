@@ -48,8 +48,8 @@ export function registerVault(zcc: ZccPluginApi, bots: BotService) {
     execute: async (input, ctx) => {
       if (Object.keys(record(input)).length) throw new Error('This action takes no arguments.');
       const key = () => {
-        const bot = bots.botForMainThread(ctx.threadId);
-        if (!bot || bot.projectId !== ctx.projectId) throw new Error('Only the bot’s main thread can use this connection.');
+        const bot = bots.botActingAs(ctx.threadId);
+        if (!bot || bot.projectId !== ctx.projectId) throw new Error('Only the bot’s main thread or its routines can use this connection.');
         return botScopeKey(bot);
       };
       const identity = key();
@@ -62,8 +62,8 @@ export function registerVault(zcc: ZccPluginApi, bots: BotService) {
     description: toolInstructions.bot_vault_list,
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     execute: async (_input, ctx) => {
-      const bot = bots.botForMainThread(ctx.threadId);
-      if (!bot || bot.projectId !== ctx.projectId) throw new Error('Only a bot’s main thread can use its Vault.');
+      const bot = bots.botActingAs(ctx.threadId);
+      if (!bot || bot.projectId !== ctx.projectId) throw new Error('Only a bot’s main thread or its routines can use its Vault.');
       return (await vault.shared(bot)).map(({ scope: _scope, revision: _revision, ...item }) => item);
     }
   });
