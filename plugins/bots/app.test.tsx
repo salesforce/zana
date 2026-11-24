@@ -231,9 +231,9 @@ it('edits routines with human-readable schedules, confirmations and switches', a
   fireEvent.click(within(digest).getByText('Delete Digest'));
   await waitFor(() => expect(state.rpc.call).toHaveBeenCalledWith('removeRoutine', { bot: 'scout', routineId: 'digest' }));
 
-  fireEvent.click(screen.getByText('＋ Add routine'));
+  fireEvent.click(screen.getByRole('button', { name: 'Add routine' }));
   fireEvent.click(screen.getByText('Cancel'));
-  fireEvent.click(screen.getByText('＋ Add routine'));
+  fireEvent.click(screen.getByRole('button', { name: 'Add routine' }));
   const form = screen.getByRole('form', { name: 'Add routine' });
   fireEvent.change(within(form).getByPlaceholderText('Morning digest'), { target: { value: 'New' } });
   fireEvent.change(within(form).getByPlaceholderText(/Summarize what changed/), { target: { value: 'go' } });

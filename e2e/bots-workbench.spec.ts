@@ -40,6 +40,104 @@ test.beforeEach(async ({ app }) => {
   await expect(nav).toBeVisible();
 });
 
+test('bot tabs share a centered content column at wide and narrow pane sizes', async ({ app, home }, testInfo) => {
+  const page = app.window;
+  const path = join(home, 'bot-layout');
+  mkdirSync(path);
+  const project = await page.request.post(new URL('/api/v1/projects', page.url()).href, { data: { path } });
+  expect(project.ok()).toBe(true);
+  const rpc = new URL('/api/v1/plugin-apps/bots/rpc', page.url()).href;
+  const bot = 'GUS Pulse';
+  const created = await page.request.post(rpc, { data: { method: 'create', args: {
+    name: bot, color: '#f97316', personality: 'Summarize changes to work items and flag blockers before the daily review.',
+    projectId: (await project.json()).project.id, providerId: 'fake'
+  } } });
+  expect(created.ok()).toBe(true);
+  expect((await page.request.post(rpc, { data: { method: 'openThread', args: { bot } } })).ok()).toBe(true);
+  const routine = await page.request.post(rpc, { data: { method: 'addRoutine', args: {
+    bot, routine: { kind: 'agent', name: 'GUS work watch', cron: '0 9 * * 1-5', prompt: 'Summarize work item changes.', enabled: false }
+  } } });
+  expect(routine.ok()).toBe(true);
+  await page.evaluate(() => window.cc.config.set({ theme: 'light' }));
+  const nativeWindow = await app.electron.browserWindow(page);
+  await nativeWindow.evaluate(win => {
+    win.webContents.setZoomFactor(1);
+    win.setContentSize(1800, 800);
+  });
+  await nativeWindow.dispose();
+  await page.locator('.nav-item').filter({ hasText: /^Bots$/ }).first().click();
+  const panel = page.locator('.bt-root');
+  const pane = panel.locator('.bt-main');
+  const tabs = panel.getByRole('tablist');
+  await expect(panel.locator('.bt-meta')).toContainText('bot-layout');
+  await expect(tabs).toBeVisible();
+  for (const size of ['wide', 'narrow']) {
+    if (size === 'narrow') await panel.evaluate(el => { el.style.maxWidth = '360px'; });
+    const paneBox = (await pane.boundingBox())!;
+    const column = (await tabs.boundingBox())!;
+    if (size === 'wide') {
+      expect(paneBox.width).toBeGreaterThan(1000);
+      expect(column.width).toBeCloseTo(880, 0);
+    } else {
+      expect(paneBox.width).toBeCloseTo(360, 0);
+      expect(column.width).toBeGreaterThan(280);
+    }
+    expect(column.x + column.width / 2).toBeCloseTo(paneBox.x + paneBox.width / 2, 0);
+    let routineField: { x: number; width: number; height: number } | undefined;
+    for (const name of ['Overview', 'Library', 'Vault', 'Settings']) {
+      await panel.getByRole('tab', { name }).click();
+      const section = panel.getByRole('tabpanel', { name }).locator('section').first();
+      const card = section.locator('.bt-card');
+      await expect(card).toBeVisible();
+      for (const element of [panel.locator('.bt-topline'), panel.locator('.bt-hero'), tabs, section, card]) {
+        const box = (await element.boundingBox())!;
+        expect(box.x).toBeCloseTo(column.x, 0);
+        expect(box.width).toBeCloseTo(column.width, 0);
+      }
+      const sectionBox = (await section.boundingBox())!;
+      const tabBox = (await tabs.boundingBox())!;
+      expect(sectionBox.y - (tabBox.y + tabBox.height)).toBeCloseTo(20, 0);
+      expect((await card.boundingBox())!.y - sectionBox.y).toBeCloseTo(36, 0);
+      if (name === 'Settings') {
+        await expect(section.getByRole('textbox', { name: 'Personality and role' })).toBeVisible();
+      } else {
+        const empty = panel.getByRole('tabpanel', { name }).locator('.bt-empty-line').first();
+        await expect(empty).toBeVisible();
+        await expect(empty).toHaveCSS('padding-inline-start', '16px');
+        await expect(empty).toHaveCSS('font-size', '12px');
+      }
+      expect(await pane.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+      if (name === 'Overview' && size === 'narrow') {
+        const run = (await section.getByRole('button', { name: 'Run now' }).boundingBox())!;
+        const toggle = (await section.getByRole('switch').boundingBox())!;
+        expect(toggle.y + toggle.height / 2).toBeCloseTo(run.y + run.height / 2, 0);
+        expect(toggle.x).toBeGreaterThan(run.x + run.width);
+      }
+      await captureElectronScreenshot(app.electron, page, testInfo.outputPath(name.toLowerCase() + '-' + size + '.png'), pane);
+      if (name === 'Overview' || name === 'Vault') {
+        const add = section.getByRole('button', { name: name === 'Vault' ? 'New item' : 'Add routine', exact: true });
+        expect((await add.boundingBox())!.height).toBeCloseTo(28, 0);
+        await add.click();
+        if (name === 'Vault') await section.getByRole('button', { name: 'Login', exact: true }).click();
+      }
+      if (name !== 'Library') {
+        const field = section.getByRole('textbox', { name: name === 'Vault' ? 'Websites' : 'Name', exact: true });
+        const box = (await field.boundingBox())!;
+        const innerLeft = column.x + 17;
+        if (size === 'narrow') expect(box.x).toBeCloseTo(innerLeft, 0);
+        else expect(box.x).toBeGreaterThan(innerLeft + 200);
+        if (name === 'Overview') routineField = box;
+        else {
+          expect(box.x).toBeCloseTo(routineField!.x, 0);
+          expect(box.width).toBeCloseTo(routineField!.width, 0);
+          expect(box.height).toBeCloseTo(routineField!.height, 0);
+        }
+        if (name !== 'Settings') await section.getByRole('button', { name: 'Cancel', exact: true }).click();
+      }
+    }
+  }
+});
+
 test('Bots shows routines, tagged memory, and host settings controls in the installed panel', async ({ app, home }, testInfo) => {
   test.setTimeout(180_000);
   const cli = resolve(process.env.ZCC_E2E_APP_ROOT ?? '.', 'packages/cli/dist/bin/zcc');

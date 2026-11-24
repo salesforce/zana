@@ -1,25 +1,29 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useRealtime, useRpc } from '@zana-ai/zcc-plugin-sdk/app';
-import { CreditCard, KeyRound, ContactRound } from 'lucide-react';
+import { Plus } from 'lucide-react';
+import { Section, botSectionCss } from '../BotSection.js';
 import { botScopeKey, contactFields, isShared, type BotIdentity, type VaultItem, type VaultKind } from './items.js';
 
 const kinds = { login: 'Login', card: 'Card', contact: 'Contact info' } as const;
-const icons = { login: KeyRound, card: CreditCard, contact: ContactRound };
 const styles = `
-.bv{max-width:44rem;margin:auto;color:var(--text-primary);font-size:13px;line-height:1.5}.bv h3,.bv h4,.bv p{margin:0}.bv p,.bv small{color:var(--text-muted)}
-.bv header,.bv footer,.bv-bar,.bv-tabs,.bv-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.bv header,.bv footer{justify-content:space-between}.bv header{margin-bottom:14px}
-.bv button,.bv input,.bv textarea,.bv select{font:inherit;color:inherit}.bv button{cursor:pointer;border:1px solid var(--border);border-radius:7px;background:var(--bg-elevated);padding:5px 10px}.bv button:disabled{opacity:.5;cursor:default}
-.bv .bv-primary,.bv button[aria-pressed=true]{color:var(--accent-blue);border-color:var(--accent-blue)}.bv form,.bv-editor,.bv-list{display:grid;gap:12px}.bv-editor,.bv-list{padding:14px;border:1px solid var(--border);border-radius:10px}
-.bv label{display:grid;gap:4px}.bv input:not([type=checkbox]),.bv select{box-sizing:border-box;border:1px solid var(--border);padding:7px 9px;border-radius:6px;background:var(--bg-base);width:100%}
-.bv fieldset{border:0;margin:0;padding:0;display:grid;gap:6px}.bv legend{margin-bottom:4px}.bv .bv-check{display:flex;gap:7px;align-items:center}.bv .bv-row{display:flex;align-items:center;gap:12px;text-align:left;width:100%;background:transparent;border:0;padding:8px}
-.bv .bv-row small,.bv .bv-row strong{display:block;overflow-wrap:anywhere}.bv .bv-row:hover{background:var(--bg-hover)}.bv .bv-danger,.bv [role=alert]{color:var(--danger,#db6a70)}.bv .bv-stack{display:grid;gap:12px}.bv .bv-mask{color:var(--text-muted)}
+.bv { font-size: 13px; line-height: 1.5; color: var(--text-primary); overflow-wrap: anywhere; }
+.bv-standalone { container: bot-page / inline-size; max-width: 44rem; margin-inline: auto; }
+.bv-standalone .bt-sec { margin-top: 0; }
+.bv h4 { margin: 0; font-size: 13px; font-weight: 600; }
+.bv-bar, .bv-check { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.bv-tools, .bv-choices { display: grid; gap: 8px; }
+.bv-tools .bt-btn[aria-pressed=true] { background: var(--bg-elevated); border-color: var(--accent-blue); color: var(--accent-blue); }
+.bv-check input { margin: 0; }
+.bv .bv-check { flex-direction: row; }
+.bv .bv-delete { margin-inline-end: auto; }
+.bv .bt-row > span { min-width: 0; }
 `;
 type Editor = { kind: VaultKind; item?: VaultItem };
 function errorText(reason: unknown) { return reason instanceof Error ? reason.message : 'Vault request failed.'; }
 function WriteOnly({ name, label, saved }: { name: string; label: string; saved: boolean }) {
   const [replace, setReplace] = useState(!saved);
-  return replace ? <label>{label}<input name={name} type="password" autoComplete="new-password" maxLength={name === 'password' ? 4096 : 32} /></label>
-    : <div className="bv-bar"><span>{label}</span><span className="bv-mask">•••••• saved</span><button type="button" aria-label={'Replace ' + label} onClick={() => setReplace(true)}>Replace</button></div>;
+  return replace ? <label className="bt-form-row">{label}<input name={name} type="password" autoComplete="new-password" maxLength={name === 'password' ? 4096 : 32} /></label>
+    : <div className="bt-form-row"><span>{label}</span><div className="bv-bar"><span className="bt-sub">•••••• saved</span><button type="button" className="bt-btn is-sm" aria-label={'Replace ' + label} onClick={() => setReplace(true)}>Replace</button></div></div>;
 }
 function ItemEditor({ editor, bots, contacts, bot, busy, save, close, remove }: {
   editor: Editor; contacts: VaultItem[]; bots: BotIdentity[]; bot?: BotIdentity; busy: boolean;
@@ -36,38 +40,42 @@ function ItemEditor({ editor, bots, contacts, bot, busy, save, close, remove }: 
     save({ ...input, kind, id: item?.id, revision: item?.revision, scope: all ? 'all' : fd.getAll('scope'),
       ...(kind === 'login' ? { sites: String(input.sites ?? '').split(/[\s,]+/).filter(Boolean) } : {}) });
   }
-  return <form className="bv-editor" onSubmit={submit}>
-    <h4>{item ? 'Edit ' : 'New '}{kinds[kind].toLowerCase()}</h4>
+  return <form className="bt-form" onSubmit={submit}>
+    <h4 className="bt-inset">{item ? 'Edit ' : 'New '}{kinds[kind].toLowerCase()}</h4>
     {kind === 'login' && <>
-      <label>Websites<input name="sites" required defaultValue={item?.sites.join(', ')} placeholder="accounts.example.com" /></label>
-      <label>Username<input name="username" autoComplete="off" defaultValue={item?.username} /></label>
+      <label className="bt-form-row">Websites<input name="sites" required defaultValue={item?.sites.join(', ')} placeholder="accounts.example.com" /></label>
+      <label className="bt-form-row">Username<input name="username" autoComplete="off" defaultValue={item?.username} /></label>
       <WriteOnly name="password" label="Password" saved={!!item} />
-      <label>Hint<input name="hint" defaultValue={item?.hint} /></label>
+      <label className="bt-form-row">Hint<input name="hint" defaultValue={item?.hint} /></label>
     </>}
     {kind === 'card' && <>
-      <label>Nickname<input name="label" defaultValue={item?.label} placeholder="Travel card" /></label>
-      <label>Name on card<input name="nameOnCard" autoComplete="off" defaultValue={item?.nameOnCard} /></label>
+      <label className="bt-form-row">Nickname<input name="label" defaultValue={item?.label} placeholder="Travel card" /></label>
+      <label className="bt-form-row">Name on card<input name="nameOnCard" autoComplete="off" defaultValue={item?.nameOnCard} /></label>
       <WriteOnly name="number" label="Card number" saved={!!item} /><WriteOnly name="expiry" label="Expiry (MM/YY)" saved={!!item} />
-      <label>Billing contact<select name="billingContactId" defaultValue={item?.billingContactId ?? ''}>
+      <label className="bt-form-row">Billing contact<select name="billingContactId" defaultValue={item?.billingContactId ?? ''}>
         <option value="">None</option>{contacts.map(contact => <option key={contact.id} value={contact.id}>{contact.label}</option>)}
       </select></label>
       <WriteOnly name="securityCode" label="Security code (optional)" saved={!!item?.hasCode} />
     </>}
-    {kind === 'contact' && contactFields.map(([key, label]) => <label key={key}>{label}<input name={key} required={key === 'fullName'} defaultValue={item?.contact?.[key]} /></label>)}
-    <fieldset><legend>Share with</legend>
-      <label className="bv-check"><input type="checkbox" checked={all} onChange={e => setAll(e.target.checked)} />All current and future bots</label>
-      {!all && bots.map(b => <label className="bv-check" key={b.id}><input name="scope" type="checkbox" value={botScopeKey(b)} defaultChecked={scope !== 'all' && scope.includes(botScopeKey(b))} />{b.name}</label>)}
-    </fieldset>
-    {kind === 'contact' && <p>Shared bots can read these contact details.</p>}
-    <footer><div>{item && (deleting ? <span>Delete this item? <button type="button" className="bv-danger" disabled={busy} onClick={remove}>Confirm delete</button></span>
-      : <button type="button" className="bv-danger" onClick={() => setDeleting(true)}>Delete item</button>)}</div>
-      <div className="bv-actions"><button type="button" onClick={close} disabled={busy}>Cancel</button><button className="bv-primary" disabled={busy}>Save item</button></div>
+    {kind === 'contact' && contactFields.map(([key, label]) => <label className="bt-form-row" key={key}>{label}<input name={key} required={key === 'fullName'} defaultValue={item?.contact?.[key]} /></label>)}
+    <div className="bt-form-row" role="group" aria-label="Share with">
+      <span>Share with</span>
+      <div className="bv-choices">
+        <label className="bv-check"><input type="checkbox" checked={all} onChange={e => setAll(e.target.checked)} />All current and future bots</label>
+        {!all && bots.map(b => <label className="bv-check" key={b.id}><input name="scope" type="checkbox" value={botScopeKey(b)} defaultChecked={scope !== 'all' && scope.includes(botScopeKey(b))} />{b.name}</label>)}
+      </div>
+    </div>
+    {kind === 'contact' && <p className="bt-empty-line">Shared bots can read these contact details.</p>}
+    <footer className="bt-form-footer">
+      {item && <div className="bv-delete">{deleting ? <span>Delete this item? <button type="button" className="bt-btn is-danger" disabled={busy} onClick={remove}>Confirm delete</button></span>
+        : <button type="button" className="bt-btn is-danger" onClick={() => setDeleting(true)}>Delete item</button>}</div>}
+      <button type="button" className="bt-btn is-ghost" onClick={close} disabled={busy}>Cancel</button>
+      <button className="bt-btn is-primary" disabled={busy}>Save item</button>
     </footer>
   </form>;
 }
 export function VaultPanel({ bot }: { bot?: BotIdentity }) {
   const rpc = useRpc();
-  const titleId = useId();
   const [migrationRequired, setMigrationRequired] = useState<boolean>();
   const [items, setItems] = useState<VaultItem[] | null>(null);
   const [bots, setBots] = useState<BotIdentity[]>([]);
@@ -106,30 +114,44 @@ export function VaultPanel({ bot }: { bot?: BotIdentity }) {
   const shared = items?.filter(item => !bot || isShared(item, bot)) ?? [];
   const shown = shared.filter(item => (filter === 'all' || item.kind === filter) &&
     [item.label, item.username, item.last4, ...item.sites, item.contact?.email].some(value => value?.toLowerCase().includes(search.toLowerCase())));
-  return <section className="bv" aria-labelledby={titleId}><style>{styles}</style><header>
-    <div><h3 id={titleId}>Vault</h3><p>{bot ? 'Items shared with ' + bot.name : 'Logins, cards, and contacts for your bots.'}</p></div>
-  </header>
-  {error && <p role="alert">{error} {!items && !migrationRequired && <button type="button" onClick={refresh}>Retry</button>}</p>}
-  {migrationRequired ? <form className="bv-editor" onSubmit={migrate}><h4>Move your existing Vault to this device</h4>
-      <p>Enter your previous passphrase once to keep your saved items.</p>
-      <label>Previous Vault passphrase<input name="passphrase" required type="password" maxLength={512} autoComplete="current-password" /></label>
-      <div><button className="bv-primary" disabled={busy}>Migrate Vault</button></div></form>
-    : !items ? !error && <p role="status">Loading Vault…</p>
-    : editor ? <ItemEditor key={editor.item?.id ?? editor.kind} editor={editor} bot={bot} bots={bots} contacts={items.filter(item => item.kind === 'contact')} busy={busy} close={() => { setEditor(undefined); setError(''); }}
-      save={item => void action(async () => { await rpc.call('desktop.vaultSave', { item }); setEditor(undefined); })}
-      remove={() => void action(async () => { await rpc.call('desktop.vaultRemove', { id: editor.item?.id, revision: editor.item?.revision }); setEditor(undefined); })} />
-    : <div className="bv-stack">
-      <div className="bv-bar"><button type="button" aria-expanded={adding} onClick={() => setAdding(!adding)}>New item</button>
-        {adding && (Object.keys(kinds) as VaultKind[]).map(kind => <button key={kind} type="button" onClick={() => { setEditor({ kind }); setAdding(false); }}>{kinds[kind]}</button>)}
-      </div>
-      {shared.length > 0 && <><input type="search" aria-label="Search Vault" placeholder="Search Vault" value={search} onChange={e => setSearch(e.target.value)} />
-        <div className="bv-tabs">{(['all','login','card','contact'] as const).map(k => <button key={k} type="button" aria-pressed={filter === k} onClick={() => setFilter(k)}>
-          {k === 'all' ? 'All' : kinds[k]} · {shared.filter(item => k === 'all' || k === item.kind).length}</button>)}</div></>}
-      <div className="bv-list">{!shown.length ? <p>{shared.length ? 'No matching items.' : 'No saved items here yet.'}</p> : shown.map(item => {
-        const Icon = icons[item.kind];
-        return <button type="button" key={item.id} className="bv-row" onClick={() => { setEditor({ kind: item.kind, item }); setError(''); }}>
-          <Icon size={18}/><span><strong>{item.label}{item.last4 && ' •••• ' + item.last4}</strong><small>{[item.username ?? item.contact?.email, item.scope === 'all' ? 'All bots' : bots.filter(b => isShared(item,b)).map(b => b.name).join(', ') || 'No current bots'].filter(Boolean).join(' · ')}</small></span></button>;
-      })}</div>
-    </div>}
-  </section>;
+  const createAction = items && !migrationRequired && !editor && (
+    <button type="button" className="bt-btn is-sm" aria-expanded={adding} onClick={() => setAdding(!adding)}>
+      <Plus size={14} aria-hidden="true" />New item
+    </button>
+  );
+  return <div className={bot ? 'bv' : 'bv bv-standalone'}>
+    <style>{bot ? styles : botSectionCss + styles}</style>
+    <Section label="Vault" action={createAction}>
+      {!bot && <p className="bt-empty-line">Logins, cards, and contacts for your bots.</p>}
+      {error && <p className="bt-empty-line" role="alert">{error} {!items && !migrationRequired && <button type="button" className="bt-btn is-sm" onClick={refresh}>Retry</button>}</p>}
+      {migrationRequired ? <form className="bt-form" onSubmit={migrate}>
+          <h4 className="bt-inset">Move your existing Vault to this device</h4>
+          <p className="bt-empty-line">Enter your previous passphrase once to keep your saved items.</p>
+          <label className="bt-form-row">Previous Vault passphrase<input name="passphrase" required type="password" maxLength={512} autoComplete="current-password" /></label>
+          <div className="bt-form-footer"><button className="bt-btn is-primary" disabled={busy}>Migrate Vault</button></div>
+        </form>
+        : !items ? !error && <p role="status" className="bt-empty-line">Loading Vault…</p>
+        : editor ? <ItemEditor key={editor.item?.id ?? editor.kind} editor={editor} bot={bot} bots={bots} contacts={items.filter(item => item.kind === 'contact')} busy={busy} close={() => { setEditor(undefined); setError(''); }}
+          save={item => void action(async () => { await rpc.call('desktop.vaultSave', { item }); setEditor(undefined); })}
+          remove={() => void action(async () => { await rpc.call('desktop.vaultRemove', { id: editor.item?.id, revision: editor.item?.revision }); setEditor(undefined); })} />
+        : <>
+          {adding && <div className="bt-inset bv-bar">{(Object.keys(kinds) as VaultKind[]).map(kind =>
+            <button key={kind} type="button" className="bt-btn is-sm" onClick={() => { setEditor({ kind }); setAdding(false); }}>{kinds[kind]}</button>)}</div>}
+          {shared.length > 0 && <div className="bt-inset bv-tools">
+            {bot && <span className="bt-sub">Items shared with {bot.name}</span>}
+            <input type="search" aria-label="Search Vault" placeholder="Search Vault" value={search} onChange={e => setSearch(e.target.value)} />
+            <div className="bv-bar">{(['all', 'login', 'card', 'contact'] as const).map(k =>
+              <button key={k} className="bt-btn is-sm" type="button" aria-pressed={filter === k} onClick={() => setFilter(k)}>
+                {k === 'all' ? 'All' : kinds[k]} · {shared.filter(item => k === 'all' || k === item.kind).length}
+              </button>)}</div>
+          </div>}
+          {!shown.length && <p className="bt-empty-line">{shared.length ? 'No matching items.' : bot ? `No items shared with ${bot.name} yet.` : 'No saved items yet.'}</p>}
+          {shown.map(item => <button type="button" key={item.id} className="bt-row" onClick={() => { setEditor({ kind: item.kind, item }); setError(''); }}>
+            <span><span className="bt-row-title">{item.label}{item.last4 && ' •••• ' + item.last4}</span>
+              <span className="bt-sub">{[kinds[item.kind], item.username ?? item.contact?.email, item.scope === 'all' ? 'All bots' : bots.filter(b => isShared(item, b)).map(b => b.name).join(', ') || 'No current bots'].filter(Boolean).join(' · ')}</span>
+            </span>
+          </button>)}
+        </>}
+    </Section>
+  </div>;
 }
