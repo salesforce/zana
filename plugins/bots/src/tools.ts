@@ -30,7 +30,7 @@ export function agentBotSummary(bot: Bot) {
   return { ...rest, hasMainThread: bot.mainThreadId !== undefined };
 }
 
-/** Every tool this plugin registers. */
+/** Bot management and messaging tools. Vault tools are registered separately. */
 export const BOT_TOOL_NAMES = ['bot_list', 'bot_send', 'bot_reply', 'bot_job_start', 'bot_routines', 'bot_create'] as const;
 
 /**
@@ -38,10 +38,9 @@ export const BOT_TOOL_NAMES = ['bot_list', 'bot_send', 'bot_reply', 'bot_job_sta
  * Jobs only read; replies and jobs are for a bot's own main thread.
  */
 export function toolsFor(role: ThreadRole['kind']): string[] {
-  if (role === 'main') return [...BOT_TOOL_NAMES, 'bot_vault_list', 'bot_assigned_cases'];
+  if (role === 'main') return [...BOT_TOOL_NAMES, 'bot_vault_list'];
   if (role === 'job') return ['bot_list'];
-  // Routine runs act for the bot (e.g. its connected accounts) but cannot reach other bots or threads.
-  if (role === 'routine') return ['bot_list', 'bot_vault_list', 'bot_assigned_cases'];
+  if (role === 'routine') return ['bot_list', 'bot_vault_list'];
   return ['bot_list', 'bot_send', 'bot_routines', 'bot_create'];
 }
 

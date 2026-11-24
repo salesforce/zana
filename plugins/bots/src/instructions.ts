@@ -71,6 +71,5 @@ export const toolInstructions = {
       'The job runs with full permissions and its final answer is posted back to you when it finishes.',
   bot_routines: `Schedule routines on a five-field cron in host local time. Use price (asset and currencies) or reminder (literal prompt) for direct main-chat results with zero AI calls, minimum interval ${DIRECT_INTERVAL_MINUTES} minutes. Use agent (prompt, minimum ${MIN_ROUTINE_INTERVAL_MINUTES} minutes) for reasoning: it runs in a hidden thread and posts only when there is something new. A main thread manages its own routines. Other threads must name a bot and changes require approval.`,
   bot_create: 'Create a new bot when the user asks for one. Give it a clear name and a personality/role description.',
-  bot_assigned_cases: 'Read up to 20 open Salesforce cases assigned to this bot’s connected account. Works during scheduled AI prompts.',
   bot_vault_list: 'List Vault items the owner has shared with this bot. Shared contacts include their contact details. Logins and cards show only identifying details.',
 } as const;

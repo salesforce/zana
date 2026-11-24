@@ -116,7 +116,7 @@ describe('bots plugin', () => {
     expect(spawns[0].prompt).toBe('[From the user (Bots panel)]\nhello');
   });
 
-  it('only shares Vault items with the bound main bot thread without an unlock step', async () => {
+  it('shares Vault items with the bot’s main thread and AI routines without an unlock step', async () => {
     const { harness, call } = await load();
     await harness.callRpc('create', { name:'Scout', projectId:'proj-a' });
     const main = await harness.callRpc('openThread', { bot:'Scout' }) as { threadId:string };
@@ -125,43 +125,20 @@ describe('bots plugin', () => {
     await expect(call('bot_vault_list', { threadId:main.threadId }, 'other')).rejects.toThrow('main thread');
     expect(await call('bot_vault_list', {}, main.threadId)).toMatchObject([{ contact:{email:input.email} }]);
     await expect(call('bot_vault_list', {}, main.threadId, 'other-project')).rejects.toThrow('main thread');
-  });
-
-  it('allows an account grant only from its bot and scheduled main thread, with no credential in the result', async () => {
-    const { harness, call } = await load();
-    const http = vi.spyOn(globalThis, 'fetch');
-    try {
-      const org = 'https://demo.my.salesforce.com';
-      const tokens = { id: org + '/id/00D000000000001/005000000000001', instance_url: org, access_token: 'test-access-only' };
-      await harness.callRpc('create', { name:'Scout', projectId:'proj-a' });
-      const main = await harness.callRpc('openThread', {bot:'scout'}) as {threadId:string};
-      const manage = (args: Record<string,unknown>) => harness.callRpc('desktop.botConnection',{bot:'scout',...args});
-      await expect(manage({action:'status',bot:null})).rejects.toThrow('Choose a bot');
-      await expect(manage({action:'other'})).rejects.toThrow('Unknown');
-      await expect(manage({action:'finish',ticket:'stale'})).rejects.toThrow('expired');
-      expect(await manage({action:'status'})).toBeNull();
-      http.mockResolvedValueOnce(Response.json(tokens));
-      await manage({action:'connect',mode:'service',clientId:'test-app',clientSecret:'test-client-secret',origin:org});
-      await expect(call('bot_assigned_cases',{},'ordinary')).rejects.toThrow('main thread');
-      await expect(call('bot_assigned_cases',{bot:'scout'},main.threadId)).rejects.toThrow('no arguments');
-      await expect(call('bot_assigned_cases',{},main.threadId,'other-project')).rejects.toThrow('main thread');
-      await harness.callRpc('addRoutine',{bot:'scout',routine:{name:'Triage',cron:'0 9 * * *',prompt:'Check my assigned cases.'}});
-      const scout = (await harness.callRpc('get',{bot:'scout'})) as {bot:{routines:{id:string}[]}};
-      const run = await harness.callRpc('runRoutine',{bot:'scout',routineId:scout.bot.routines[0].id}) as {threadId:string};
-      // AI routines run in their own hidden thread, which still acts as the bot for its connections.
-      expect(run.threadId).not.toBe(main.threadId);
-      http.mockResolvedValueOnce(Response.json(tokens)).mockResolvedValueOnce(Response.json({records:[]}));
-      expect(await call('bot_assigned_cases',{},run.threadId)).toEqual({cases:[]});
-      await manage({action:'disconnect'});
-      await expect(call('bot_assigned_cases',{},main.threadId)).rejects.toThrow('Connect a Salesforce account');
-    } finally { http.mockRestore(); }
+    await harness.callRpc('addRoutine', {
+      bot: 'scout', routine: { name: 'Contact digest', cron: '0 9 * * *', prompt: 'Check the shared contacts.' }
+    });
+    const run = await harness.callRpc('runRoutine', { bot: 'scout', routineId: 'contact-digest' }) as { threadId: string };
+    expect(run.threadId).not.toBe(main.threadId);
+    expect(await call('bot_vault_list', {}, run.threadId)).toMatchObject([{ contact: { email: input.email } }]);
   });
 
   it('registers tools, CLI, schedule and instructions', async () => {
     const { harness, instructions } = await load();
     expect(harness.agentTools.map((row) => row.name).sort()).toEqual(
-      ['bot_assigned_cases', 'bot_create', 'bot_job_start', 'bot_list', 'bot_reply', 'bot_routines', 'bot_send', 'bot_vault_list']
+      ['bot_create', 'bot_job_start', 'bot_list', 'bot_reply', 'bot_routines', 'bot_send', 'bot_vault_list']
     );
+    await expect(harness.callRpc('desktop.botConnection', { action: 'status', bot: 'scout' })).rejects.toThrow(/unknown rpc|has no rpc method/);
     expect(harness.schedules).toEqual([expect.objectContaining({ name: 'routines', cron: '* * * * *' })]);
     expect(instructions('')).toBeNull();
     expect(instructions('random')).toBeNull();
@@ -172,11 +149,11 @@ describe('bots plugin', () => {
     const { harness, configure } = await load();
     await harness.callRpc('create', { name: 'Scout', personality: 'Terse.' });
     expect(configure('x').tools).toEqual(['bot_list', 'bot_send', 'bot_routines', 'bot_create']);
-    expect(configure('fresh', { botId: 'scout', botRole: 'main' }).tools).toHaveLength(8);
+    expect(configure('fresh', { botId: 'scout', botRole: 'main' }).tools).toHaveLength(7);
     expect(configure('fresh', { botId: 'scout', botRole: 'job' }).tools).toEqual(['bot_list']);
     expect(configure('fresh', { botId: 'scout', botRole: 'main' }).instructions).toContain('Terse.');
     expect(configure('fresh', { botId: 'scout', botRole: 'job' }).instructions).toContain('background job');
-    expect(configure('fresh', { botId: 'scout', botRole: 'routine' }).tools).toEqual(['bot_list', 'bot_vault_list', 'bot_assigned_cases']);
+    expect(configure('fresh', { botId: 'scout', botRole: 'routine' }).tools).toEqual(['bot_list', 'bot_vault_list']);
     expect(configure('fresh', { botId: 'scout', botRole: 'routine' }).instructions).toContain('exactly NO_CHANGE');
     for (const role of ['main', 'job', 'routine']) {
       expect(configure('fresh', { botId: 'scout', botRole: role }).instructions).toContain('Bot guidelines');
@@ -595,7 +572,7 @@ describe('quiet AI routines', () => {
     })]);
     expect(spawns[0]).not.toHaveProperty('parentThreadId');
     expect(sends).toHaveLength(0);
-    expect(configure(first.threadId).tools).toEqual(['bot_list', 'bot_vault_list', 'bot_assigned_cases']);
+    expect(configure(first.threadId).tools).toEqual(['bot_list', 'bot_vault_list']);
     expect(instructions(first.threadId)).toContain('hidden thread');
     await expect(call('bot_send', { bot: 'watcher', message: 'x' }, first.threadId)).rejects.toThrow('background jobs');
     await expect(call('bot_create', { name: 'Z' }, first.threadId)).rejects.toThrow('background jobs');

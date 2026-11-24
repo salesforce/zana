@@ -13,7 +13,6 @@ it('creates, filters, replaces and deletes shared items without prompting for a 
   const store = new Map<string,unknown>();
   const vault = new BotVault({get: async <T,>(k: string) => store.get(k) as T|undefined, set: async (k,v) => { store.set(k,v); }}, async () => Buffer.alloc(32, 9));
   mocks.rpc.call.mockImplementation(async (method, args) => {
-    if (method === 'desktop.botConnection') return null;
     if (method === 'desktop.vaultStatus') return vault.status();
     if (method === 'desktop.vaultList') return vault.list();
     if (method === 'desktop.vaultSave') return vault.save(args.item,[bot]);
@@ -25,6 +24,7 @@ it('creates, filters, replaces and deletes shared items without prompting for a 
   const click = async (name: string|RegExp) => fireEvent.click(await screen.findByRole('button', {name,exact:true}));
   const fill = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label,{exact:true}),{target:{value}});
   await screen.findByRole('button',{name:'New item'});
+  expect(screen.queryByRole('region', { name: 'Connections' })).toBeNull();
   expect(screen.queryByLabelText(/passphrase/i)).toBeNull();
   await click('New item'); await click('Contact info');
   fill('Full name','Casey Chen'); fill('Email','casey@example.test');

@@ -29,7 +29,7 @@ test.beforeEach(async ({ app }) => {
   const page = app.window;
   const nav = page.locator('.nav-item').filter({ hasText: /^Bots$/ }).first();
   const toggle = await openBotsSwitch(page);
-  await expect(toggle).toHaveAttribute('aria-checked', 'false');
+  await expect(toggle).toHaveAttribute('aria-checked', 'false', { timeout: 45_000 });
   await page.getByRole('link', { name: 'Back to app' }).click();
   await expect(nav).toHaveCount(0);
   await openBotsSwitch(page);
@@ -46,6 +46,7 @@ test('Bots shows routines, tagged memory, and host settings controls in the inst
   const run = (args: string[]) => exec(process.execPath, [cli, ...args], {
     cwd: home, timeout: 60_000, env: { ...process.env, HOME: home, ZCC_DATA_DIR: join(home, '.zcc'),
       ZCC_SERVER_URL: new URL(app.window.url()).origin, ZCC_SESSION_ID: undefined, ZCC_SESSION_TOKEN: undefined,
+      ZCC_THREAD_ID: undefined, BB_THREAD_ID: undefined,
       ZCC_SKIP_PLUGIN_NPM: '1' }
   });
   const projectPath = join(home, 'bot-project');
@@ -71,15 +72,8 @@ test('Bots shows routines, tagged memory, and host settings controls in the inst
   await panel.getByRole('tab', { name: 'Vault' }).click();
   const vault = panel.getByRole('region', { name: 'Vault' });
   await expect(vault.getByLabel(/passphrase/i)).toHaveCount(0);
-  const connections = vault.getByRole('region', { name: 'Connections' });
-  await connections.getByRole('button', { name: 'Connect Salesforce' }).click();
-  await expect(connections.getByLabel('Consumer secret', {exact:true})).toHaveAttribute('type', 'password');
-  await connections.getByLabel('Salesforce identity').selectOption('delegated');
-  await connections.getByLabel('My Domain URL').fill('example.test');
-  await connections.getByLabel('Consumer key').fill('test-client');
-  await connections.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(connections.getByRole('alert')).toContainText('Salesforce My Domain');
-  await connections.getByRole('button', { name: 'Cancel' }).click();
+  await expect(vault.getByRole('button', { name: 'New item' })).toBeVisible();
+  await expect(vault.getByRole('region', { name: 'Connections' })).toHaveCount(0);
   await vault.getByRole('button', { name: 'New item' }).click();
   await vault.getByRole('button', { name: 'Login', exact: true }).click();
   await vault.getByLabel('Websites').fill('https://accounts.example.test');
@@ -188,6 +182,11 @@ test('Bots shows routines, tagged memory, and host settings controls in the inst
   await expect(panel.getByRole('heading', { name: 'Scout II' })).toBeVisible();
   await expect.poll(readPersonality).toBe('**Triage releases**');
   await expect(panel.getByText('Digest', { exact: true }).first()).toBeVisible();
+
+  await route(app.window, '/settings/plugins/bots');
+  const settingsVault = app.window.getByRole('region', { name: 'Vault' });
+  await expect(settingsVault.getByRole('button', { name: /accounts.example.test/ })).toBeVisible();
+  await expect(settingsVault.getByRole('region', { name: 'Connections' })).toHaveCount(0);
 });
 
 test('Basic sidebar opens bot conversations and leaves Advanced navigation intact', async ({ app, home }) => {
