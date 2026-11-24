@@ -1,5 +1,6 @@
 import { TEAM_LIMIT_BOUNDS, type ExecutionBoardProjection, type TerminalSession } from '@zana-ai/zcc-domain/product';
 import { isWorkerRecoveryLive, MAX_DELIVERY_ATTEMPTS, type ExecutionRecord, type ExecutionWorkUnit } from './store.js';
+import { blockerWaitStart } from './visibility-notices.js';
 import { usageRollup } from './contracts.js';
 import { timeoutRecoveryBlockReason } from './timeout-recovery-policy.js';
 import type { TeamLifecycleRecord } from '../launch/team-lifecycle-store.js';
@@ -23,7 +24,8 @@ function limitsProjection(record: ExecutionRecord): ExecutionBoardProjection['li
   return {
     maxConcurrent: Math.min(policy?.maxConcurrent ?? maxLaunches, maxLaunches),
     ...(policy?.maxClaimWallClockMs === undefined ? {} : { claimWallClockMs: policy.maxClaimWallClockMs }),
-    ...(policy?.maxClaimStallMs === undefined ? {} : { claimStallMs: policy.maxClaimStallMs })
+    ...(policy?.maxClaimStallMs === undefined ? {} : { claimStallMs: policy.maxClaimStallMs }),
+    ...(policy?.maxClaimOutputOnlyMs === undefined ? {} : { claimOutputCeilingMs: policy.maxClaimOutputOnlyMs })
   };
 }
 
@@ -138,6 +140,7 @@ function blockerProjection(record: ExecutionRecord): Pick<ExecutionBoardProjecti
       id: currentBlocker.id, workUnitId: currentBlocker.workUnitId, slotId: currentBlocker.slotId,
       question: currentBlocker.question, ...(currentBlocker.options ? { options: currentBlocker.options } : {}),
       ...(currentBlocker.audience ? { audience: currentBlocker.audience } : {}),
+      waitingSince: blockerWaitStart(currentBlocker),
       ...(currentBlocker.response ? { response: currentBlocker.response } : {}),
       ...(currentDelivery ? { delivery: {
         id: currentDelivery.id, state: currentDelivery.state, attempt: currentDelivery.attempt,
@@ -374,5 +377,117 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
       ...(record.recoveryDeadlineAt === undefined ? {} : { deadlineAt: record.recoveryDeadlineAt }),
       actions: retainedRecoveryActions(record)
     }
+  };
+}
+
+/** Compact status caps. Every list is bounded so the result stays far under an MCP tool-result limit (E9, B5). */
+export const COMPACT_MAX_UNITS = 50;
+export const COMPACT_MAX_BLOCKERS = 20;
+export const COMPACT_MAX_FAILURES = 20;
+export const COMPACT_MAX_DEPENDENCIES = 10;
+const COMPACT_TEXT = { title: 120, question: 300, option: 120, summary: 1_000, id: 200 } as const;
+
+function clip(value: string | undefined, max: number): string | undefined {
+  if (value === undefined) return undefined;
+  return value.length <= max ? value : `${value.slice(0, Math.max(0, max - 1))}…`;
+}
+
+export interface CompactExecutionUnit {
+  id: string;
+  title: string;
+  state: ExecutionWorkUnit['state'];
+  assignedSlotId?: string;
+  dependencies?: string[];
+  dependenciesOmitted?: number;
+  turnCount?: number;
+}
+
+export interface CompactExecutionStatus {
+  mode: 'compact';
+  id: string;
+  projectId?: string;
+  teamId?: string;
+  jobTitle: string;
+  summary?: string;
+  attempt?: number;
+  state: ExecutionRecord['state'];
+  stateVersion?: number;
+  lastEventSequence?: number;
+  coordinationMode?: ExecutionRecord['coordinationMode'];
+  reportTo?: ExecutionRecord['reportTo'];
+  squadWorktree?: { path: string; branch: string; ownership?: string; targetKind?: string };
+  finalSummary?: string;
+  failureReason?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  dismissedAt?: number;
+  unitCounts: Record<string, number>;
+  units: CompactExecutionUnit[];
+  unitsOmitted?: number;
+  blockers: Array<{ id: string; workUnitId: string; slotId: string; question: string; options?: string[]; audience: 'human' | 'coordinator'; waitingSince: number; waitedMs: number }>;
+  blockersOmitted?: number;
+  failures?: Array<{ workUnitId: string; code: string }>;
+  /** Where the omitted detail lives: `execution.history` pages events; `mode: "full"` returns the whole record. */
+  history: { tool: 'execution.history'; afterSequence: number };
+}
+
+/**
+ * State, unit table and open blockers of one execution, with no history, results, deliveries,
+ * checkpoints or artifacts. Unfinished units sort ahead of finished ones so the cap never hides work in flight.
+ */
+export function compactExecutionStatus(record: ExecutionRecord, now: number = Date.now()): CompactExecutionStatus {
+  const units = record.workUnits ?? [];
+  const unitCounts: Record<string, number> = {};
+  for (const unit of units) unitCounts[unit.state] = (unitCounts[unit.state] ?? 0) + 1;
+  const finished = (state: string) => state === 'COMPLETED' || state === 'SKIPPED';
+  const ordered = [...units.filter((unit) => !finished(unit.state)), ...units.filter((unit) => finished(unit.state))];
+  const shown = ordered.slice(0, COMPACT_MAX_UNITS).map((unit): CompactExecutionUnit => {
+    const deps = unit.dependencies ?? [];
+    return {
+      id: clip(unit.id, COMPACT_TEXT.id)!,
+      title: clip(unit.title, COMPACT_TEXT.title) ?? '',
+      state: unit.state,
+      ...(unit.assignedSlotId ? { assignedSlotId: clip(unit.assignedSlotId, COMPACT_TEXT.id) } : {}),
+      ...(deps.length ? { dependencies: deps.slice(0, COMPACT_MAX_DEPENDENCIES).map((id) => clip(id, COMPACT_TEXT.id)!) } : {}),
+      ...(deps.length > COMPACT_MAX_DEPENDENCIES ? { dependenciesOmitted: deps.length - COMPACT_MAX_DEPENDENCIES } : {}),
+      ...(unit.turnCount ? { turnCount: unit.turnCount } : {})
+    };
+  });
+  const open = (record.blockers ?? []).filter((blocker) => !blocker.resolved);
+  const worktree = record.squadWorktree;
+  const failures = record.assembledResult?.failures ?? [];
+  return {
+    mode: 'compact',
+    id: record.id,
+    ...(record.projectId === undefined ? {} : { projectId: record.projectId }),
+    ...(record.teamId === undefined ? {} : { teamId: record.teamId }),
+    jobTitle: clip(record.jobTitle, COMPACT_TEXT.title) ?? '',
+    ...(record.summary === undefined ? {} : { summary: clip(record.summary, COMPACT_TEXT.summary) }),
+    ...(record.attempt === undefined ? {} : { attempt: record.attempt }),
+    state: record.state,
+    ...(record.stateVersion === undefined ? {} : { stateVersion: record.stateVersion }),
+    ...(record.lastEventSequence === undefined ? {} : { lastEventSequence: record.lastEventSequence }),
+    ...(record.coordinationMode === undefined ? {} : { coordinationMode: record.coordinationMode }),
+    ...(record.reportTo === undefined ? {} : { reportTo: record.reportTo }),
+    ...(worktree ? { squadWorktree: { path: worktree.path, branch: worktree.branch, ...(worktree.ownership ? { ownership: worktree.ownership } : {}), ...(worktree.targetKind ? { targetKind: worktree.targetKind } : {}) } } : {}),
+    ...(record.finalSummary === undefined ? {} : { finalSummary: clip(record.finalSummary, COMPACT_TEXT.summary) }),
+    ...(record.failureReason === undefined ? {} : { failureReason: clip(record.failureReason, COMPACT_TEXT.summary) }),
+    ...(record.createdAt === undefined ? {} : { createdAt: record.createdAt }),
+    ...(record.updatedAt === undefined ? {} : { updatedAt: record.updatedAt }),
+    ...(record.dismissedAt === undefined ? {} : { dismissedAt: record.dismissedAt }),
+    unitCounts,
+    units: shown,
+    ...(ordered.length > shown.length ? { unitsOmitted: ordered.length - shown.length } : {}),
+    blockers: open.slice(0, COMPACT_MAX_BLOCKERS).map((blocker) => ({
+      id: blocker.id, workUnitId: blocker.workUnitId, slotId: blocker.slotId,
+      question: clip(blocker.question, COMPACT_TEXT.question) ?? '',
+      ...(blocker.options?.length ? { options: blocker.options.slice(0, 5).map((option) => clip(option, COMPACT_TEXT.option)!) } : {}),
+      audience: blocker.audience ?? 'human',
+      waitingSince: blockerWaitStart(blocker),
+      waitedMs: Math.max(0, now - blockerWaitStart(blocker))
+    })),
+    ...(open.length > COMPACT_MAX_BLOCKERS ? { blockersOmitted: open.length - COMPACT_MAX_BLOCKERS } : {}),
+    ...(failures.length ? { failures: failures.slice(0, COMPACT_MAX_FAILURES).map(({ workUnitId, code }) => ({ workUnitId, code })) } : {}),
+    history: { tool: 'execution.history', afterSequence: 0 }
   };
 }

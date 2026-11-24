@@ -42,7 +42,7 @@ export const SECTION_SOURCES: Record<SearchSection, readonly string[]> = {
   notifications: ['views/settings/NotificationsSettingsView.tsx', 'views/settings/AgentSoundSettings.tsx'],
   agents: ['views/settings/AgentsSettingsView.tsx', 'views/settings/AgentGuidanceSettings.tsx', 'components/settings/OverseerRecentPane.tsx', 'components/settings/ApiErrorResumeSection.tsx'],
   personas: ['views/settings/PersonasView.tsx'],
-  squads: ['views/settings/SquadsView.tsx'],
+  squads: ['views/settings/SquadsView.tsx', 'components/settings/SquadAdvancedSettings.tsx', 'components/settings/SquadBlockerReminderRow.tsx'],
   usage: ['views/settings/UsageView.tsx'],
   experimental: ['views/settings/ExperimentalView.tsx'],
   development: ['views/settings/DevelopmentView.tsx'],

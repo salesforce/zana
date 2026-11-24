@@ -206,7 +206,7 @@ export function inferredPlanCorrectionMessage(findings: readonly SquadPlanFindin
   const blocking = findings.filter((finding) => finding.severity === 'blocking').slice(0, 20);
   return [
     'Your plan failed the Squad check. Fix these steps once and write the plan again; if it still fails the operator is asked.',
-    ...blocking.map((finding) => `- ${finding.stepId ? `Step \`${finding.stepId}\`` : 'Plan'} (${finding.requirement}): ${finding.suggestion || finding.detail || 'fix the step'}`),
+    ...blocking.map((finding) => `- ${finding.stepId ? `Step \`${finding.stepId}\`${finding.stepTitle ? ` (${finding.stepTitle})` : ''}` : 'Plan'} (${finding.requirement}): ${finding.suggestion || finding.detail || 'fix the step'}`),
     rosterBlock(summary)
   ].join('\n');
 }

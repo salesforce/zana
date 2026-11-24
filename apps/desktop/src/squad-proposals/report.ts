@@ -101,6 +101,33 @@ export function buildSquadReport(record: ExecutionRecord, opts: { worktree?: Squ
   return text.length > max ? withClosing(head(), closing, max) : text;
 }
 
+const INBOX_SUMMARY_CHARS = 1500;
+
+/** Control characters out, line breaks kept: the Inbox renders markdown, so the summary keeps its own lines. */
+function multiLine(text: string | undefined): string {
+  return (text ?? '').replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, ' ').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * The Inbox copy of a run's result, written for a person. {@link buildSquadReport} is a one-line prompt for an
+ * agent's terminal (it ends with an instruction to that agent); this has the same facts as short readable lines
+ * and nothing addressed to an agent.
+ */
+export function buildSquadInboxReport(record: ExecutionRecord, opts: { worktree?: SquadWorktreeOutcome } = {}): string {
+  const units = record.workUnits ?? [];
+  const count = (state: string) => units.filter((unit) => unit.state === state).length;
+  const failed = record.state === 'FAILED' && record.failureReason ? oneLine(record.failureReason) : '';
+  const summarySource = failed && !multiLine(record.finalSummary) ? `Failed: ${failed}` : multiLine(record.finalSummary);
+  const summary = trimTo(summarySource, INBOX_SUMMARY_CHARS);
+  const duration = formatSquadDuration((record.updatedAt ?? 0) - (record.createdAt ?? 0));
+  return [
+    `"${oneLine(record.jobTitle)}" ${squadOutcomeLabel(record.state)} after ${duration}.`,
+    `${branchText(record, opts.worktree)}.`,
+    `Units: ${count('COMPLETED')} done, ${count('FAILED')} failed, ${count('SKIPPED')} skipped.`,
+    ...(summary ? ['', summary] : [])
+  ].join('\n');
+}
+
 /**
  * The run needs a human answer. A proposer only tells the user (D5). The owner that started the
  * run with `execution.start` may answer it itself, and is told how.

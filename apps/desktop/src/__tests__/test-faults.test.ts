@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { testFaultActive, testNoTurnWarnWindowMs, workerSpawnFaultFor } from '../test-faults.js';
+import { testFaultActive, testNoTurnWarnWindowMs, testVisibilityWindowMs, workerSpawnFaultFor } from '../test-faults.js';
 
 describe('testFaultActive', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -59,5 +59,29 @@ describe('testNoTurnWarnWindowMs', () => {
   it.each([undefined, '', '0', '-5', '1.5', 'abc', '600001', '1e3'])('rejects %s', (raw) => {
     vi.stubGlobal('__ZCC_TEST_FAULTS__', true);
     expect(testNoTurnWarnWindowMs(raw === undefined ? {} : { ZCC_TEST_NO_TURN_WARN_MS: raw })).toBeUndefined();
+  });
+});
+
+describe('testVisibilityWindowMs', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('is never read in a production build', () => {
+    expect(testVisibilityWindowMs('IDLE', { ZCC_TEST_IDLE_NOTICE_MS: '500' })).toBeUndefined();
+    vi.stubGlobal('__ZCC_TEST_FAULTS__', false);
+    expect(testVisibilityWindowMs('BLOCKER', { ZCC_TEST_BLOCKER_NOTICE_MS: '500' })).toBeUndefined();
+  });
+
+  it('reads the variable of the named window in an enabled build', () => {
+    vi.stubGlobal('__ZCC_TEST_FAULTS__', true);
+    const env = { ZCC_TEST_IDLE_NOTICE_MS: '1', ZCC_TEST_HEARTBEAT_NOTICE_MS: '3000', ZCC_TEST_BLOCKER_NOTICE_MS: '600000' };
+    expect(testVisibilityWindowMs('IDLE', env)).toBe(1);
+    expect(testVisibilityWindowMs('HEARTBEAT', env)).toBe(3000);
+    expect(testVisibilityWindowMs('BLOCKER', env)).toBe(600_000);
+    expect(testVisibilityWindowMs('IDLE', { ZCC_TEST_HEARTBEAT_NOTICE_MS: '5' })).toBeUndefined();
+  });
+
+  it.each([undefined, '', '0', '-5', '1.5', 'abc', '600001'])('rejects %s', (raw) => {
+    vi.stubGlobal('__ZCC_TEST_FAULTS__', true);
+    expect(testVisibilityWindowMs('IDLE', raw === undefined ? {} : { ZCC_TEST_IDLE_NOTICE_MS: raw })).toBeUndefined();
   });
 });

@@ -1,3 +1,4 @@
+import { DEFAULT_CLAIM_OUTPUT_CEILING_MS } from '@zana-ai/zcc-domain/product';
 import type { ExecutionRecord } from './store.js';
 
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
@@ -90,7 +91,7 @@ export function openHumanBlockers(record: ExecutionRecord): NonNullable<Executio
  */
 export function planDeadline(record: ExecutionRecord, timings: DeadlineTimings, now: number): DeadlinePlan | undefined {
   const open = openHumanBlockers(record);
-  if (open.length === 0) return { phase: 'idle', at: executionProgressAnchor(record) + timings.deadlineMs };
+  if (open.length === 0) return { phase: 'idle', at: Math.max(executionProgressAnchor(record) + timings.deadlineMs, outputOnlyCeilingFloor(record, now)) };
   const stopAt = Math.min(...open.map((blocker) => blocker.createdAt)) + timings.blockedWaitMs;
   const warnAt = stopAt - Math.min(BLOCKED_WAIT_WARN_LEAD_MS, Math.floor(timings.blockedWaitMs / 4));
   if (record.blockedWarnedAt === undefined && now < stopAt && warnAt < stopAt) return { phase: 'blocked-warn', at: warnAt };
@@ -102,6 +103,32 @@ export function nextDeadlineAt(record: ExecutionRecord, now: number): number | u
   if (TERMINAL_STATES.has(record.state)) return undefined;
   const timings = deadlineTimings(record);
   return timings ? planDeadline(record, timings, now)?.at : undefined;
+}
+
+/** True while host-observed worker output keeps the claim's output lease live (agent-state renewal never does). */
+export function claimOutputLive(unit: { outputLeaseExpiresAt?: number }, now: number): boolean {
+  return unit.outputLeaseExpiresAt !== undefined && unit.outputLeaseExpiresAt > now;
+}
+
+/** Grace after the output-only ceiling before the idle deadline may fire, so the claim reclaim always runs first. */
+export const OUTPUT_CEILING_DEADLINE_MARGIN_MS = 60_000;
+
+/**
+ * Idle-deadline floor for claims that are still printing output. Their `progressAt` only moves on a turn or a
+ * file change, so with a small `deadlineMs` the idle deadline would stop the run before the output-only ceiling
+ * (`maxClaimOutputOnlyMs`) reclaims the claim. Until that ceiling (plus a margin) the idle deadline waits.
+ * Claims without live output are unaffected (the stall limit, ~10 min, reclaims them), as is a policy with no ceiling.
+ */
+export function outputOnlyCeilingFloor(record: ExecutionRecord, now: number): number {
+  // Runs persisted before the ceiling existed fall back to the default, matching classifyExpiredClaim.
+  const ceiling = record.request.policy?.maxClaimOutputOnlyMs ?? DEFAULT_CLAIM_OUTPUT_CEILING_MS;
+  let floor = 0;
+  for (const unit of record.workUnits ?? []) {
+    if (unit.state !== 'CLAIMED' || !claimOutputLive(unit, now)) continue;
+    const base = unit.progressAt ?? unit.claimedAt;
+    if (base !== undefined) floor = Math.max(floor, base + ceiling + OUTPUT_CEILING_DEADLINE_MARGIN_MS);
+  }
+  return floor;
 }
 
 export class ExecutionDeadlineWatchdog {

@@ -14443,6 +14443,7 @@ body.resizing-col .explorer-resizer:active::after {
 
 /* Squad editor slot controls sit at the left edge of a narrow drawer: grow the tooltip rightwards so it stays on screen. */
 .team-slot-reorder .composer-control-tooltip::after,
+.team-slot-toggle.composer-control-tooltip::after,
 .team-slot-orch-toggle.composer-control-tooltip::after {
   left: 0;
   right: auto;
@@ -15029,6 +15030,13 @@ body.resizing-col .explorer-resizer:active::after {
   overflow: visible;
 }
 
+.agent-card-blocker-wait {
+  display: block;
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .agent-card-team-run::after {
   content: attr(data-tooltip);
   position: absolute;
@@ -15230,6 +15238,19 @@ body.resizing-col .explorer-resizer:active::after {
   font-size: 10px;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
+}
+.agent-squad-worker {
+  flex-wrap: wrap;
+}
+.agent-squad-worker-visibility {
+  flex: 1 0 100%;
+  padding-left: 14px;
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: normal;
+}
+.agent-squad-worker-visibility.is-stale {
+  color: var(--accent-amber, #c98a00);
 }
 .agent-squad-worker-more {
   font-size: 10.5px;
@@ -15618,6 +15639,19 @@ body.resizing-col .explorer-resizer:active::after {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Second line of a Squad worker row: Squad, owner thread, liveness. */
+.agents-worker-row { flex-wrap: wrap; }
+.agents-worker-visibility {
+  flex: 1 0 100%;
+  min-width: 0;
+  padding-left: 14px;
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.agents-worker-visibility.is-stale { color: var(--warning, #d29922); }
 .agents-worker-dur {
   flex: 0 0 auto;
   font-size: 10px;
@@ -15977,7 +16011,7 @@ body.resizing-col .explorer-resizer:active::after {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 1px 5px;
-  cursor: help;
+  cursor: help; pointer-events: auto;
 }
 
 /* Cluster of open-the-actual-file buttons on the right of the header. */
@@ -19118,7 +19152,7 @@ body.resizing-col .explorer-resizer:active::after {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-muted);
-  cursor: help;
+  cursor: help; pointer-events: auto;
 }
 
 .skills-plugin-banner {
@@ -42313,20 +42347,6 @@ body.resizing-col .thread-secondary-resizer:active::after {
   border-radius: 8px;
 }
 
-.team-slot-on-demand,
-.team-slot-fresh-session {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.team-slot-fresh-session-help {
-  padding-left: 22px;
-}
-
 .squads-plans-copy {
   margin: 0 0 8px;
   font-size: 12px;
@@ -43054,6 +43074,16 @@ body.resizing-col .thread-secondary-resizer:active::after {
 .team-composer-plan-status { margin-top: 4px; font-weight: 600; color: var(--success); }
 .team-composer-plan-status.thread-command-error { color: var(--danger); }
 .team-composer-plan-other { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+.team-composer-skip-impact > summary { cursor: pointer; font-weight: 600; }
+.team-composer-skip-impact > ul { list-style: none; padding-left: 0; margin-top: 6px; }
+.team-composer-skip-impact li ul { margin-top: 4px; padding-left: 28px; list-style: disc; font-size: 12px; color: var(--text-muted); }
+.team-composer-skip-toggle { display: flex; align-items: center; gap: 8px; width: 100%; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.team-composer-skip-toggle:hover { background: var(--bg-hover, rgba(127,127,127,.12)); }
+.team-composer-skip-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.team-composer-skip-step { font-weight: 600; flex: 1 1 auto; overflow-wrap: anywhere; }
+.team-composer-skip-count { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.team-composer-skip-impact li[data-risky='true'] > .team-composer-skip-toggle { border-color: var(--warning, #d29922); }
+.team-composer-skip-risky { padding: 0 6px; border-radius: 999px; font-size: 11px; font-weight: 600; color: var(--warning, #d29922); border: 1px solid var(--warning, #d29922); }
 
 /* ---- Rail mode: 52px icon-only navigation (sidebar-is-rail) ----------------
  * The class sits on .app-shell, a descendant of :root, so it wins over the
@@ -43144,3 +43174,101 @@ body.resizing-col .thread-secondary-resizer:active::after {
 .library-md-editor .md-editor-source { border:1px solid var(--border-subtle, #80808040); border-radius:6px; margin:16px 0; }
 .library-md-editor .md-editor-source::before { content:'Markdown source'; display:block; padding:6px 12px; font-size:10px; color:var(--text-muted); border-bottom:1px solid var(--border-subtle, #80808040); }
 .library-md-editor .md-editor-source pre { margin:0; }
+.execution-blocker-heading .execution-blocker-wait { color: var(--text-muted); text-transform: none; letter-spacing: 0; font-weight: 600; }
+
+/* Squad editor: icon toggles, sections, radios, limits grid, Advanced. */
+.team-slot-toggles { display: inline-flex; gap: 4px; align-items: center; }
+.team-slot-toggle { position: relative; }
+.team-slot-toggle.is-active { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.team-slot-toggle.is-unavailable {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: repeating-linear-gradient(135deg, transparent 0 4px, var(--border) 4px 5px);
+}
+.team-slot-toggle.is-unavailable::before {
+  content: '\2298';
+  position: absolute;
+  right: -3px;
+  top: -6px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--danger, #b42318);
+  background: var(--bg-elevated);
+  border-radius: 50%;
+}
+.team-slot-legend { display: flex; flex-direction: column; gap: 3px; margin: 8px 0 0; }
+.team-slot-legend > span { display: flex; align-items: center; gap: 6px; }
+.team-slot-legend svg { flex: none; }
+.team-slot-edit .team-slot-toggles, .team-slot-edit .team-slot-remove { order: 5; }
+.team-editor-section {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 18px 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.team-editor-section span { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.team-editor-fieldset { border: 0; margin: 0 0 8px; padding: 0; min-width: 0; }
+.team-editor-fieldset legend { padding: 0; font-weight: 600; margin-bottom: 4px; }
+.team-editor-radios { display: flex; flex-direction: column; gap: 4px; }
+.team-editor-radios label { display: flex; gap: 7px; align-items: flex-start; font-weight: 400; }
+.team-editor-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.team-editor-danger { color: var(--danger, #b42318); }
+.team-editor-how > summary,
+.team-editor-advanced .team-editor-how > summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 400;
+  padding: 0;
+  margin-top: 4px;
+}
+.team-run-limits-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; }
+.team-limit-field label { display: block; font-weight: 600; margin-bottom: 3px; }
+.team-limit-input { display: flex; align-items: center; gap: 6px; }
+.team-limit-input input { max-width: 96px; }
+.team-limit-input input[aria-invalid='true'] { border-color: var(--danger, #b42318); }
+.team-editor-advanced { margin-top: 14px; border: 1px solid var(--border); border-radius: 8px; }
+.team-editor-advanced > summary { padding: 8px 12px; cursor: pointer; font-weight: 600; }
+.team-editor-advanced > summary small { margin-left: 8px; font-weight: 400; color: var(--text-muted); }
+.team-editor-advanced-body { padding: 4px 12px 12px; border-top: 1px solid var(--border); }
+.team-editor-advanced-body { display: flex; flex-direction: column; gap: 14px; padding-top: 12px; }
+.team-editor-advanced-body > .scheduler-form-field { margin: 0; }
+
+.team-slot-label-wrap { position: relative; display: flex; min-width: 0; }
+.team-slot-label-wrap .team-slot-label-input { flex: 1; min-width: 0; }
+.team-slot-label-wrap.has-roles-warning .team-slot-label-input {
+  border-color: var(--warning, #b54708);
+  padding-right: 28px;
+}
+.team-slot-roles-marker {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  display: inline-flex; color: var(--warning, #b54708); cursor: help; pointer-events: auto;
+}
+.team-slot-roles-legend { color: var(--warning, #b54708); }
+
+.agent-squad-owner { font-size: 11px; color: var(--text-muted); padding: 0 4px 2px; }
+.agents-squad-owner { font-size: 11px; color: var(--text-muted); padding: 0 8px 2px; }
+
+/* Settings > Squads: squad-wide run settings under the list, same Advanced treatment as the squad editor. */
+.squads-advanced { margin-top: 14px; border: 1px solid var(--border); border-radius: 8px; }
+.squads-advanced > summary { padding: 8px 12px; cursor: pointer; font-weight: 600; }
+.squads-advanced > summary small { margin-left: 8px; font-weight: 400; color: var(--text-muted); }
+.squads-advanced-body { display: flex; flex-direction: column; gap: 4px; padding: 4px 12px 8px; border-top: 1px solid var(--border); }
+.squads-advanced-body .settings-field { margin: 0; padding: 6px 0; }
+.squads-advanced-body .settings-field + .settings-field,
+.squads-advanced-body > div + div { border-top: 1px solid var(--border); }
+.squads-advanced-minutes { width: 64px; text-align: right; }

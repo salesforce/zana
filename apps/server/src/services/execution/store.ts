@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { MAX_BASELINE_PATHS, MAX_CHECKPOINT_PATHS, type UnitBaseline, type UnitCheckpoint } from './unit-checkpoints.js';
 import { planDeadline, type DeadlineTimings } from './deadline-watchdog.js';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -9,6 +10,7 @@ import {
   readRawFile
 } from '../harness-routing/storage.js';
 import { EXECUTION_FAILURE_CODES, normalizeRoles, isDurableCoordination, isOrchestratorSlotId, isSquadExecutionTargetSelector, enforcedSkillAllowlist, mcpAllowlistCovers, skillAllowlistCovers } from '@zana-ai/zcc-domain/product';
+import { workerNoticeLabel } from './visibility-notices.js';
 import type { SquadExecutionTargetSelector, SquadWorktreeOwnership } from '@zana-ai/zcc-domain/product';
 import type { ExecutionFailureCode, ExecutionSourceSnapshot, TeamLaunchAuthorizationContextV1 } from '@zana-ai/zcc-domain/product';
 import type { SquadBundleWorkflowMetadataV1, TeamLaunchAuthorizationInputSlot, TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
@@ -227,7 +229,53 @@ export interface WorkUnitRequirementsV1 {
   mcpServers?: string[];
 }
 
+/** One path a claim wrote: worktree-relative POSIX path, hash of its content after the last write. */
+export interface ClaimTouchedPath { path: string; hash: string; at: number }
+export const MAX_CLAIM_TOUCHED_PATHS = 200;
+const MAX_CLAIM_TOUCHED_PATH_LENGTH = 1_024;
+
+function validClaimTouched(value: unknown): value is ClaimTouchedPath[] {
+  return Array.isArray(value) && value.length <= MAX_CLAIM_TOUCHED_PATHS && value.every((entry) => !!entry && typeof entry === 'object'
+    && typeof entry.path === 'string' && entry.path.length > 0 && entry.path.length <= MAX_CLAIM_TOUCHED_PATH_LENGTH
+    && typeof entry.hash === 'string' && entry.hash.length > 0 && entry.hash.length <= 128
+    && typeof entry.at === 'number' && Number.isFinite(entry.at));
+}
+
+function boundedStr(value: unknown, max: number): value is string { return typeof value === 'string' && value.length > 0 && value.length <= max; }
+function strList(value: unknown, max: number): boolean {
+  return Array.isArray(value) && value.length <= max && value.every((entry) => boundedStr(entry, MAX_CLAIM_TOUCHED_PATH_LENGTH));
+}
+function validUnitBaseline(value: unknown): value is UnitBaseline {
+  if (!value || typeof value !== 'object') return false;
+  const b = value as Partial<UnitBaseline>;
+  return boundedStr(b.claimId, 128) && typeof b.at === 'number' && Number.isFinite(b.at) && typeof b.ok === 'boolean'
+    && (b.head === undefined || boundedStr(b.head, 128)) && (b.truncated === undefined || typeof b.truncated === 'boolean')
+    && (b.reason === undefined || boundedStr(b.reason, 200))
+    && Array.isArray(b.dirty) && b.dirty.length <= MAX_BASELINE_PATHS
+    && b.dirty.every((entry) => !!entry && boundedStr(entry.path, MAX_CLAIM_TOUCHED_PATH_LENGTH) && boundedStr(entry.hash, 128));
+}
+function validUnitCheckpoint(value: unknown): value is UnitCheckpoint {
+  if (!value || typeof value !== 'object') return false;
+  const c = value as Partial<UnitCheckpoint>;
+  return typeof c.at === 'number' && Number.isFinite(c.at)
+    && (c.state === 'saved' || c.state === 'restored' || c.state === 'partial' || c.state === 'pending' || c.state === 'unavailable')
+    && (c.artifact === undefined || boundedStr(c.artifact, 512)) && validNonNegativeInteger(c.attempts)
+    && strList(c.restored, MAX_CHECKPOINT_PATHS) && strList(c.deleted, MAX_CHECKPOINT_PATHS) && strList(c.preDirty, MAX_CHECKPOINT_PATHS)
+    && strList(c.unattributed, MAX_CHECKPOINT_PATHS)
+    && Array.isArray(c.skipped) && c.skipped.length <= MAX_CHECKPOINT_PATHS
+    && c.skipped.every((entry) => !!entry && boundedStr(entry.path, MAX_CLAIM_TOUCHED_PATH_LENGTH) && boundedStr(entry.reason, 300))
+    && (c.truncated === undefined || typeof c.truncated === 'boolean') && (c.reason === undefined || boundedStr(c.reason, 200));
+}
+
 export interface ExecutionWorkUnit extends ExecutionWorkUnitInput {
+  /** Worktree state at the current claim's start (git HEAD + already-dirty paths); the checkpoint baseline. */
+  baseline?: UnitBaseline;
+  /** Per-unit checkpoint written when the unit COMPLETED or FAILED (see unit-checkpoints.ts). */
+  checkpoint?: UnitCheckpoint;
+  /** Set on a child created by a scope re-split: the parent, the blocker whose answer widened scope, and the added paths. */
+  splitFrom?: { parentId: string; blockerId: string; files: string[]; at: number };
+  /** Ids of children split off this unit. */
+  splitChildren?: string[];
   state: ExecutionWorkUnitState;
   assignedSlotId?: string;
   /** Main-minted fence. Missing only on pre-Phase-04 persisted claims. */
@@ -246,6 +294,24 @@ export interface ExecutionWorkUnit extends ExecutionWorkUnitInput {
    *  a silent-but-'working' worker before the blunt wall-clock backstop. */
   progressAt?: number;
   turnCount?: number;
+  /** Last completed-turn signal for the current claim (epoch ms): the worker's own `turnCount`
+   *  heartbeat or its harness Stop hook. Never set by a file watcher or by output bytes. */
+  lastTurnAt?: number;
+  /** Files the CURRENT claim wrote, from the claim's own worker tool-call events (never a worktree
+   *  watcher: sibling units share the worktree). Paths are worktree-relative; bounded by
+   *  {@link MAX_CLAIM_TOUCHED_PATHS}. Kept after the claim ends (for checkpoints) and reset at the next claim. */
+  touched?: ClaimTouchedPath[];
+  /** Epoch ms until which the claim counts as "worker is producing output": set only by host-observed output
+   *  (`renewWorkerLease` with `output`), never by agent-state renewal. A claim with a live output lease is
+   *  exempt from the stall and wall-clock limits and is bounded by `maxClaimOutputOnlyMs` on `progressAt`. */
+  outputLeaseExpiresAt?: number;
+  /** Count of STALLED reclaims of this unit. The first returns it to READY; the next fails it as STALLED. */
+  stallReclaims?: number;
+  /** Same-seat recovery already spent for this unit in `executionAttempt` (single-capable-seat roles).
+   *  `respawned: 'pending'` = the respawn was reserved (spent) before it ran and not yet settled; a crash or a failed settle leaves it spent, so a second respawn can never follow. */
+  seatRecovery?: { executionAttempt: number; retried?: boolean; respawned?: 'pending' | 'ok' | 'failed' };
+  /** True once a write was dropped because {@link MAX_CLAIM_TOUCHED_PATHS} was reached. */
+  touchedTruncated?: boolean;
   /**
    * Count of successive claim reclaims where the worker NEVER reported a completed
    * turn (`turnCount` stayed 0) — the kickoff-churn signature. A bare interactive
@@ -262,7 +328,7 @@ export interface ExecutionWorkUnit extends ExecutionWorkUnitInput {
   kickoffFailures?: number;
   /** Bounded per-attempt no-progress evidence. A listed slot is excluded from
    * automatic redispatch until an explicit retry resets this unit. */
-  noProgressSlots?: Array<{ slotId: string; executionAttempt: number; unitAttempt: number; claimGeneration: number; reason: NoProgressReason; reclaimedAt: number }>;
+  noProgressSlots?: Array<{ slotId: string; executionAttempt: number; unitAttempt: number; claimGeneration: number; reason: NoProgressReason; reclaimedAt: number; /** ms the claim had made no progress when reclaimed */ idleMs?: number; /** the claim had reported a turn or changed a file */ turned?: boolean }>;
   /** Epoch ms when an enforced run first found every worker slot UNKNOWN for this READY unit. Cleared when any
    * candidate becomes known or the wait is escalated ({@link ALL_UNKNOWN_ESCALATE_MS}). */
   unknownSince?: number;
@@ -621,6 +687,11 @@ export interface ExecutionPolicyV1 extends NonNullable<TeamLaunchRequestInput['p
    *  wall-clock backstop. Reclaimed only from a lease already expired (a streaming
    *  worker keeps its lease fresh and never reaches this branch). */
   maxClaimStallMs?: number;
+  /** Only clock for a claim whose worker is still producing output (its lease is live from output):
+   *  reclaim it when it has sent no turn heartbeat and changed no file (`progressAt`) for this long.
+   *  Such a claim is exempt from {@link maxClaimStallMs} and {@link maxClaimWallClockMs}. A claim with
+   *  no recent output keeps those two. Default 30 min for durable modes. */
+  maxClaimOutputOnlyMs?: number;
   /** Maximum continuous wait on an open human blocker before the run is stopped; 0 = the 24 h maximum, absent = default (see effectiveBlockedWaitMs). */
   blockedWaitMs?: number;
   usageBudget?: { maxTokens?: number; maxUsd?: number };
@@ -744,6 +815,8 @@ export interface ActiveClaimPage {
 }
 
 export interface ReclaimExpiredClaimInput {
+  /** Optional evidence appended to the `released` history entry (e.g. a worker-reported no-start failure). */
+  detail?: string;
   workUnitId: string;
   claimId: string;
   claimGeneration: number;
@@ -858,6 +931,13 @@ export const MAX_DELIVERY_ATTEMPTS = 8;
  * block of a genuinely slow worker.
  */
 export const KICKOFF_FAILURE_BLOCK_THRESHOLD = 3;
+/**
+ * STALLED reclaims a unit may take back to READY before the next one fails it as STALLED. Combined caps per
+ * unit and execution attempt (document here, enforced in three places): one STALLED READY-retry (this),
+ * `kickoffFailures` < {@link KICKOFF_FAILURE_BLOCK_THRESHOLD} for never-turned claims, and one same-seat
+ * retry plus one respawn for a role with a single capable seat (`seatRecovery`).
+ */
+export const STALLED_RECLAIM_RETRIES = 1;
 /** Bounded wait before an enforced run whose candidate slots are all UNKNOWN is escalated as a no-route blocker. */
 export const ALL_UNKNOWN_ESCALATE_MS = 2 * 60_000;
 const DELIVERY_LEASE_MS = 60_000;
@@ -1083,12 +1163,24 @@ function validWorkUnit(value: unknown): value is ExecutionWorkUnit {
     && (unit.heartbeatAt === undefined || typeof unit.heartbeatAt === 'number' && Number.isFinite(unit.heartbeatAt))
     && (unit.progressAt === undefined || typeof unit.progressAt === 'number' && Number.isFinite(unit.progressAt))
     && (unit.turnCount === undefined || validNonNegativeInteger(unit.turnCount))
+    && (unit.lastTurnAt === undefined || typeof unit.lastTurnAt === 'number' && Number.isFinite(unit.lastTurnAt))
+    && (unit.touched === undefined || validClaimTouched(unit.touched))
+    && (unit.outputLeaseExpiresAt === undefined || typeof unit.outputLeaseExpiresAt === 'number' && Number.isFinite(unit.outputLeaseExpiresAt))
+    && (unit.stallReclaims === undefined || validNonNegativeInteger(unit.stallReclaims))
+    && (unit.seatRecovery === undefined || !!unit.seatRecovery && typeof unit.seatRecovery === 'object' && validNonNegativeInteger(unit.seatRecovery.executionAttempt)
+      && (unit.seatRecovery.retried === undefined || typeof unit.seatRecovery.retried === 'boolean') && (unit.seatRecovery.respawned === undefined || unit.seatRecovery.respawned === 'pending' || unit.seatRecovery.respawned === 'ok' || unit.seatRecovery.respawned === 'failed'))
+    && (unit.touchedTruncated === undefined || typeof unit.touchedTruncated === 'boolean')
+    && (unit.splitFrom === undefined || !!unit.splitFrom && validString(unit.splitFrom.parentId) && validString(unit.splitFrom.blockerId) && Array.isArray(unit.splitFrom.files) && unit.splitFrom.files.length <= MAX_UNIT_LIST && unit.splitFrom.files.every(validString) && typeof unit.splitFrom.at === 'number')
+    && (unit.splitChildren === undefined || Array.isArray(unit.splitChildren) && unit.splitChildren.length <= MAX_UNIT_LIST && unit.splitChildren.every(validString))
+    && (unit.baseline === undefined || validUnitBaseline(unit.baseline))
+    && (unit.checkpoint === undefined || validUnitCheckpoint(unit.checkpoint))
     && (unit.kickoffFailures === undefined || validNonNegativeInteger(unit.kickoffFailures))
     && (unit.unknownSince === undefined || typeof unit.unknownSince === 'number' && Number.isFinite(unit.unknownSince))
     && (unit.noProgressSlots === undefined || Array.isArray(unit.noProgressSlots) && unit.noProgressSlots.length <= MAX_WORK_UNITS
       && unit.noProgressSlots.every((entry) => validString(entry.slotId) && validNonNegativeInteger(entry.executionAttempt)
         && validNonNegativeInteger(entry.unitAttempt) && validNonNegativeInteger(entry.claimGeneration)
-        && isNoProgressReason(entry.reason) && typeof entry.reclaimedAt === 'number' && Number.isFinite(entry.reclaimedAt)))
+        && isNoProgressReason(entry.reason) && typeof entry.reclaimedAt === 'number' && Number.isFinite(entry.reclaimedAt)
+        && (entry.idleMs === undefined || validNonNegativeInteger(entry.idleMs)) && (entry.turned === undefined || typeof entry.turned === 'boolean')))
     && (unit.apiErrorRecovery === undefined || validWorkerApiErrorRecovery(unit.apiErrorRecovery))
     && (unit.failureCode === undefined || failureCodes.has(unit.failureCode))
     && (unit.failure === undefined || validString(unit.failure)) && (unit.result === undefined || validString(unit.result))
@@ -1153,6 +1245,8 @@ function reopenUnit(unit: ExecutionWorkUnit, timestamp: number, detail: string):
   unit.assignedSlotId = undefined;
   unit.reclaimedClaim = undefined;
   unit.noProgressSlots = undefined;
+  unit.stallReclaims = undefined;
+  unit.seatRecovery = undefined;
   unit.kickoffFailures = undefined;
   unit.apiErrorRecovery = undefined;
   unit.repairDigests = undefined;
@@ -1245,6 +1339,17 @@ function dependencyDead(reviewOf: ReadonlyMap<string, ExecutionWorkUnit>, depend
   return review !== undefined && (review.state === 'FAILED' || review.state === 'SKIPPED');
 }
 
+/**
+ * Session fence for slot-addressed worker signals (lease renewal, turn/write signals). A signal that names its
+ * session is ignored when the claim is bound to a different one (late output of a respawned seat's old session).
+ * An unbound claim (worker-initiated claim, no dispatch delivery yet) or a signal with no session id (modern
+ * Squad member status path, which has no PTY session id) is accepted: the slot is the only identity available.
+ */
+function claimSessionMatches(unit: ExecutionWorkUnit, sessionId: string | undefined): boolean {
+  const bound = unit.claimedBy?.sessionId;
+  return sessionId === undefined || bound === undefined || bound === sessionId;
+}
+
 function clearClaim(unit: ExecutionWorkUnit): void {
   unit.claimId = undefined;
   unit.claimedBy = undefined;
@@ -1253,6 +1358,9 @@ function clearClaim(unit: ExecutionWorkUnit): void {
   unit.heartbeatAt = undefined;
   unit.progressAt = undefined;
   unit.turnCount = undefined;
+  unit.lastTurnAt = undefined;
+  unit.outputLeaseExpiresAt = undefined;
+  // `touched` deliberately survives: checkpoints and the no-start check read it after the claim ends.
 }
 
 function resetRetainedWork(record: ExecutionRecord, opts?: { keepSlotIds?: ReadonlySet<string> }): void {
@@ -1269,6 +1377,12 @@ function resetRetainedWork(record: ExecutionRecord, opts?: { keepSlotIds?: Reado
     unit.heartbeatAt = undefined;
     unit.progressAt = undefined;
     unit.turnCount = undefined;
+    unit.lastTurnAt = undefined;
+    unit.outputLeaseExpiresAt = undefined;
+    unit.touched = undefined;
+    unit.touchedTruncated = undefined;
+    unit.baseline = undefined;
+    unit.checkpoint = undefined;
     unit.failureCode = undefined;
     unit.failure = undefined;
     unit.result = undefined;
@@ -1278,6 +1392,8 @@ function resetRetainedWork(record: ExecutionRecord, opts?: { keepSlotIds?: Reado
     unit.failureRetry = undefined;
     unit.reclaimedClaim = undefined;
     unit.noProgressSlots = undefined;
+    unit.stallReclaims = undefined;
+    unit.seatRecovery = undefined;
     unit.apiErrorRecovery = undefined;
   }
   record.blockers = [];
@@ -1561,11 +1677,12 @@ function validSourceBundle(value: unknown): boolean {
 
 function validExecutionPolicy(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
-  const policy = value as { maxTurnsPerClaim?: unknown; maxClaimWallClockMs?: unknown; maxClaimStallMs?: unknown; blockedWaitMs?: unknown; usageBudget?: { maxTokens?: unknown; maxUsd?: unknown } | null };
+  const policy = value as { maxTurnsPerClaim?: unknown; maxClaimWallClockMs?: unknown; maxClaimStallMs?: unknown; maxClaimOutputOnlyMs?: unknown; blockedWaitMs?: unknown; usageBudget?: { maxTokens?: unknown; maxUsd?: unknown } | null };
   const positiveInteger = (input: unknown, max: number) => Number.isInteger(input) && (input as number) > 0 && (input as number) <= max;
   return (policy.maxTurnsPerClaim === undefined || positiveInteger(policy.maxTurnsPerClaim, 10_000))
     && (policy.maxClaimWallClockMs === undefined || positiveInteger(policy.maxClaimWallClockMs, 24 * 60 * 60 * 1_000))
     && (policy.maxClaimStallMs === undefined || positiveInteger(policy.maxClaimStallMs, 24 * 60 * 60 * 1_000))
+    && (policy.maxClaimOutputOnlyMs === undefined || positiveInteger(policy.maxClaimOutputOnlyMs, 24 * 60 * 60 * 1_000))
     && (policy.blockedWaitMs === undefined || policy.blockedWaitMs === 0 || positiveInteger(policy.blockedWaitMs, 24 * 60 * 60 * 1_000))
     && (policy.usageBudget === undefined || policy.usageBudget !== null && typeof policy.usageBudget === 'object'
       && (policy.usageBudget.maxTokens === undefined || positiveInteger(policy.usageBudget.maxTokens, Number.MAX_SAFE_INTEGER))
@@ -1815,17 +1932,57 @@ const KICKOFF_TITLE_BUDGET = 200;
  * to fit MAX_STRING, so a long title can never push the slot or the instructions out of the text.
  * Plans reject empty titles, so an untitled unit only reaches here from older records; it gets no brackets.
  */
-export function kickoffBlockerQuestion(unit: { id: string; title?: string }, onlySlotId: string | undefined, earlier: string): string {
+export function kickoffBlockerQuestion(unit: { id: string; title?: string }, onlySlotId: string | undefined, earlier: string, seat?: SeatRecoveryAccount): string {
   const build = (title: string, note: string) => {
-    const label = title ? ` (${title})` : '';
+    const name = title ? `"${unit.id}: ${title}"` : unit.id;
+    if (onlySlotId && seat) return `Work unit ${name} made no progress, and the only worker slot that can take it (${onlySlotId}) ${seatCause(seat.reason, seat.idleMs, seat.turned)}. ${seatTried(seat)}${note} Check that worker's terminal, then retry the unit or restart the run.`;
     return onlySlotId
-      ? `Work unit ${unit.id}${label} made no progress, and the only worker slot that can take it (${onlySlotId}) never started a turn.${note} Check that worker's terminal, then retry the unit or restart the run.`
-      : `Work unit ${unit.id}${label} made no progress on every eligible worker slot; its worker never started a turn.${note} Check the worker terminal, then retry the unit or restart the run.`;
+      ? `Work unit ${name} made no progress, and the only worker slot that can take it (${onlySlotId}) never started a turn.${note} Check that worker's terminal, then retry the unit or restart the run.`
+      : `Work unit ${name} made no progress on every eligible worker slot; none of those workers started a turn.${note} Check the worker terminal, then retry the unit or restart the run.`;
   };
   // The title is a label, so it gets a short share; the earlier-recovery note takes whatever the rest leaves.
   const title = (unit.title ?? '').slice(0, KICKOFF_TITLE_BUDGET);
   const note = earlier.slice(0, Math.max(0, MAX_STRING - build(title, '').length));
   return build(title, note);
+}
+
+/** Worker seats able to take this unit now (requirements, hard routing, and routing eligibility when the unit is routed). */
+export function capableSeats(record: ExecutionRecord, unit: ExecutionWorkUnit, enforceRouting: boolean): Array<{ slotId: string; personaId: string }> {
+  const modelBySlot = resolvedModelsBySlot(record);
+  const hardOn = hardRequirementsActive(record);
+  return workerSlotsOf(record).filter((slot) => {
+    if (!slotReachesRequirements(unit, modelBySlot.get(slot.slotId)) || hardOn && assignmentRequirementFailures(record, unit, slot).hardFailures.length) return false;
+    if (!unit.routing) return true;
+    const status = unitSlotEligibility(unit, slot, modelBySlot.get(slot.slotId), hardOn ? sameWorkerExclusions(record, unit) : undefined, levelCheckSkipped(record, slot.slotId)).status;
+    return enforceRouting ? status === 'PASS' : status !== 'FAIL';
+  });
+}
+
+/** The one seat that can take a reclaimed READY unit, with its latest no-progress evidence; undefined for a role with 2+ capable seats. */
+export function singleSeatOf(record: ExecutionRecord, unit: ExecutionWorkUnit, enforceRouting: boolean): { slotId: string; reason: NoProgressReason; seatRecovery?: ExecutionWorkUnit['seatRecovery'] } | undefined {
+  if (unit.state !== 'READY') return undefined;
+  const last = [...(unit.noProgressSlots ?? [])].reverse().find((entry) => entry.executionAttempt === record.attempt);
+  const capable = capableSeats(record, unit, enforceRouting);
+  if (!last || capable.length !== 1 || capable[0].slotId !== last.slotId) return undefined;
+  return { slotId: last.slotId, reason: last.reason, ...(unit.seatRecovery?.executionAttempt === record.attempt ? { seatRecovery: unit.seatRecovery } : {}) };
+}
+
+/** What a single-seat blocker names: why the claim was reclaimed and what Zana already tried on that seat. */
+export interface SeatRecoveryAccount { reason: NoProgressReason; idleMs?: number; turned?: boolean; retried: boolean; respawned?: 'ok' | 'failed' }
+
+function seatCause(reason: NoProgressReason, idleMs: number | undefined, turned: boolean | undefined): string {
+  if (reason === NO_PROGRESS_CLAIM_REASON.PROVEN_DEAD || reason === NO_PROGRESS_CLAIM_REASON.AGENT_DEAD) return 'ended its session';
+  if (turned === false) return 'never started a turn';
+  const minutes = idleMs === undefined ? undefined : Math.max(1, Math.round(idleMs / 60_000));
+  return minutes === undefined ? 'stopped producing output' : `stopped producing output for ${minutes} minute${minutes === 1 ? '' : 's'}`;
+}
+
+function seatTried(seat: SeatRecoveryAccount): string {
+  const tried = [
+    ...(seat.respawned === 'ok' ? ['respawned the seat'] : seat.respawned === 'failed' ? ['tried to respawn the seat and could not'] : []),
+    ...(seat.retried ? ['retried the unit once on the same seat'] : [])
+  ];
+  return tried.length ? `Zana ${tried.join(' and ')}; it failed again.` : '';
 }
 
 /** The authorized worker slots: every slot except the coordinator's. One definition for dispatch and kickoff recovery. */
@@ -1868,6 +2025,12 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     unit.heartbeatAt = timestamp;
     unit.progressAt = timestamp;
     unit.turnCount = 0;
+    unit.lastTurnAt = undefined;
+    unit.outputLeaseExpiresAt = undefined;
+    unit.touched = undefined;
+    unit.touchedTruncated = undefined;
+    unit.baseline = undefined;
+    unit.checkpoint = undefined;
     unit.reclaimedClaim = undefined; // a fresh claim supersedes any reclaimed-idle window
   }
   const maxRecords = Math.min(options.maxRecords ?? MAX_RECORDS, MAX_RECORDS);
@@ -2846,7 +3009,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       const normalized = normalizePlan(units, isDurableCoordination(record.coordinationMode));
       assertHardConstraintsEnforceable(normalized, record.routingPolicy);
       if (record.workUnits?.length) {
-        if (JSON.stringify(record.workUnits.map(stripWorkUnitState)) === JSON.stringify(normalized.map(stripWorkUnitState))) {
+        if (JSON.stringify(originalPlanInputs(record.workUnits)) === JSON.stringify(normalized.map(stripWorkUnitState))) {
           return clone(record);
         }
         throw new Error('execution plan already registered with different work units');
@@ -2912,8 +3075,8 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     const roles = [...new Set(workerSlots.map((slot) => slot.personaId))].slice(0, 8).join(', ') || 'none';
     const needs = [...new Set(unmet)].slice(0, 4).join('; ') || 'a worker this Squad does not have';
     const question = (unknownLevels
-      ? `Step ${unit.id} is waiting because Zana cannot tell what level any worker in this Squad runs at (worker levels are unknown). Roles offered: ${roles}. Reply to skip this step, or cancel the run and fix the Squad.`
-      : `No worker in this Squad can do step ${unit.id} (needs ${needs}). Roles offered: ${roles}. Reply to skip this step, or cancel the run and fix the plan.`).slice(0, MAX_STRING);
+      ? `Step ${unit.title ? `${unit.id}: ${unit.title}` : unit.id} is waiting because Zana cannot tell what level any worker in this Squad runs at (worker levels are unknown). Roles offered: ${roles}. Reply to skip this step, or cancel the run and fix the Squad.`
+      : `No worker in this Squad can do step ${unit.title ? `${unit.id}: ${unit.title}` : unit.id} (needs ${needs}). Roles offered: ${roles}. Reply to skip this step, or cancel the run and fix the plan.`).slice(0, MAX_STRING);
     unit.unknownSince = undefined;
     unit.state = 'BLOCKED';
     unit.history.push({ action: 'blocked', attempt: unit.attempt, at: timestamp, detail: 'no qualified worker for this step' });
@@ -3306,6 +3469,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         if (maxTurns !== undefined && claim.turnCount > maxTurns) throw new Error('work claim turn limit exceeded');
         const nextTurnCount = Math.max(unit.turnCount ?? 0, claim.turnCount);
         changed ||= nextTurnCount !== unit.turnCount;
+        if (nextTurnCount > (unit.turnCount ?? 0)) unit.lastTurnAt = timestamp;
         unit.turnCount = nextTurnCount;
         // A real completed turn proves the kickoff succeeded — clear the churn
         // counter so a later mid-work stall/reclaim is never mislabeled as a
@@ -3339,7 +3503,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
    * stateVersion fence (this is not a principal mutation) and NO event append (output is
    * far too frequent to log). Cheap: only persists when the lease is within
    * {@link HEARTBEAT_PERSIST_REMAINING_MS} of expiry, so a hot output stream is a no-op. */
-  async function renewWorkerLease(executionId: string, slotId: string, options?: { advanceProgress?: boolean }): Promise<ExecutionRecord | undefined> {
+  async function renewWorkerLease(executionId: string, slotId: string, options?: { advanceProgress?: boolean; output?: boolean; sessionId?: string }): Promise<ExecutionRecord | undefined> {
     return storeQueue.run(async () => {
       const snapshot = read();
       const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
@@ -3347,10 +3511,14 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       const unit = (record.workUnits ?? []).find((candidate) =>
         candidate.state === 'CLAIMED' && candidate.assignedSlotId === slotId && candidate.claimId !== undefined);
       if (!unit) return undefined;
+      if (!claimSessionMatches(unit, options?.sessionId)) return undefined;
       const timestamp = now();
-      if ((unit.leaseExpiresAt ?? 0) - timestamp > HEARTBEAT_PERSIST_REMAINING_MS) return clone(record);
+      // Output has its own lease so "is this worker streaming" is never confused with a lease kept alive by agent state.
+      const outputStale = options?.output === true && (unit.outputLeaseExpiresAt ?? 0) - timestamp <= HEARTBEAT_PERSIST_REMAINING_MS;
+      if ((unit.leaseExpiresAt ?? 0) - timestamp > HEARTBEAT_PERSIST_REMAINING_MS && !outputStale) return clone(record);
       unit.heartbeatAt = timestamp;
-      unit.leaseExpiresAt = timestamp + workClaimLeaseMs;
+      unit.leaseExpiresAt = Math.max(unit.leaseExpiresAt ?? 0, timestamp + workClaimLeaseMs);
+      if (options?.output) unit.outputLeaseExpiresAt = timestamp + workClaimLeaseMs;
       // Only real worker OUTPUT advances the stall clock. The agent-state renewal
       // in `reconcileActive` passes `advanceProgress: false` so a silent-but-alive
       // worker can still be stall-reclaimed even though its lease is kept fresh.
@@ -3359,6 +3527,92 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       record.updatedAt = timestamp;
       persist(snapshot.state, snapshot.hash);
       return clone(record);
+    });
+  }
+
+  /** Bind the CURRENT claim of `workUnitId` to the session its assignment is delivered to (the fence for
+   * {@link renewWorkerLease} / {@link recordClaimSignal}). No-op unless `claimId` is still the unit's claim. Cleared with the claim. */
+  async function bindClaimSession(executionId: string, workUnitId: string, claimId: string, sessionId: string): Promise<boolean> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record || terminalStates.has(record.state)) return false;
+      const unit = (record.workUnits ?? []).find((candidate) => candidate.id === workUnitId);
+      if (!unit || unit.state !== 'CLAIMED' || unit.claimId !== claimId || !unit.claimedBy || !validString(sessionId)) return false;
+      if (unit.claimedBy.sessionId === sessionId) return true;
+      unit.claimedBy.sessionId = sessionId;
+      persist(snapshot.state, snapshot.hash);
+      return true;
+    });
+  }
+
+  /**
+   * Record per-claim signals from the claim's OWN worker events: a finished turn and/or files the
+   * worker wrote (paths already confined and hashed by the caller). Matches the unit CLAIMED by
+   * `slotId`; a late event after the claim ended is dropped. Advances `progressAt` (not the lease) on a new signal.
+   * Persists only on a change (new path or new hash, or a turn) so a hot write loop stays cheap.
+   */
+  async function recordClaimSignal(executionId: string, slotId: string, signal: { turn?: boolean; writes?: ReadonlyArray<{ path: string; hash: string }>; sessionId?: string }): Promise<boolean> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      if (!record || terminalStates.has(record.state)) return false;
+      const unit = (record.workUnits ?? []).find((candidate) =>
+        candidate.state === 'CLAIMED' && candidate.assignedSlotId === slotId && candidate.claimId !== undefined);
+      if (!unit) return false;
+      if (!claimSessionMatches(unit, signal.sessionId)) return false;
+      const timestamp = now();
+      let changed = false;
+      if (signal.turn) { unit.lastTurnAt = timestamp; changed = true; }
+      for (const write of signal.writes ?? []) {
+        if (typeof write.path !== 'string' || !write.path || write.path.length > MAX_CLAIM_TOUCHED_PATH_LENGTH || typeof write.hash !== 'string' || !write.hash || write.hash.length > 128) continue;
+        const touched = unit.touched ?? (unit.touched = []);
+        const existing = touched.find((entry) => entry.path === write.path);
+        if (existing) {
+          if (existing.hash === write.hash) continue;
+          existing.hash = write.hash;
+          existing.at = timestamp;
+          changed = true;
+        } else if (touched.length >= MAX_CLAIM_TOUCHED_PATHS) {
+          if (!unit.touchedTruncated) { unit.touchedTruncated = true; changed = true; }
+        } else {
+          touched.push({ path: write.path, hash: write.hash, at: timestamp });
+          changed = true;
+        }
+      }
+      if (!changed) return false;
+      // A turn or a new file change is the claim's real forward progress; raw output never is.
+      unit.progressAt = timestamp;
+      record.stateVersion += 1;
+      record.updatedAt = timestamp;
+      persist(snapshot.state, snapshot.hash);
+      return true;
+    });
+  }
+
+  /**
+   * Persist checkpoint data for a unit. `baseline` is accepted only while the unit's CURRENT claim still
+   * matches `baseline.claimId`; `checkpoint` only for a COMPLETED or FAILED unit. Returns false on a mismatch.
+   */
+  async function recordUnitCheckpoint(executionId: string, workUnitId: string, update: { baseline?: UnitBaseline; checkpoint?: UnitCheckpoint }): Promise<boolean> {
+    return storeQueue.run(async () => {
+      const snapshot = read();
+      const record = snapshot.state.records.find((candidate) => candidate.id === string(executionId, 'id'));
+      const unit = record?.workUnits?.find((candidate) => candidate.id === workUnitId);
+      if (!record || !unit) return false;
+      if (update.baseline) {
+        if (!validUnitBaseline(update.baseline) || unit.state !== 'CLAIMED' || unit.claimId !== update.baseline.claimId) return false;
+        unit.baseline = clone(update.baseline);
+      }
+      if (update.checkpoint) {
+        if (!validUnitCheckpoint(update.checkpoint) || (unit.state !== 'COMPLETED' && unit.state !== 'FAILED')) return false;
+        unit.checkpoint = clone(update.checkpoint);
+      }
+      if (!update.baseline && !update.checkpoint) return false;
+      record.stateVersion += 1;
+      record.updatedAt = now();
+      persist(snapshot.state, snapshot.hash);
+      return true;
     });
   }
 
@@ -3409,19 +3663,41 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         // engine must eventually escape via blockKickoffFailure — a worker that
         // repeatedly accepts the unit but never starts a turn is not making
         // progress, it is stuck at delivery.
-        if ((unit.turnCount ?? 0) === 0) unit.kickoffFailures = (unit.kickoffFailures ?? 0) + 1;
+        if ((unit.turnCount ?? 0) === 0 && unit.lastTurnAt === undefined) unit.kickoffFailures = (unit.kickoffFailures ?? 0) + 1;
         const holderSlotId = unit.assignedSlotId ?? unit.claimedBy?.slotId;
         if (holderSlotId && isNoProgressReason(claim.reason)) {
           const evidence = unit.noProgressSlots ?? [];
           if (!evidence.some((entry) => entry.slotId === holderSlotId && entry.executionAttempt === record.attempt)) {
             unit.noProgressSlots = [...evidence, {
               slotId: holderSlotId, executionAttempt: record.attempt, unitAttempt: unit.attempt,
-              claimGeneration: unit.claimGeneration ?? 0, reason: claim.reason as NoProgressReason, reclaimedAt: timestamp
+              claimGeneration: unit.claimGeneration ?? 0, reason: claim.reason as NoProgressReason, reclaimedAt: timestamp,
+              idleMs: Math.max(0, Math.floor(timestamp - (unit.progressAt ?? unit.claimedAt ?? timestamp))),
+              turned: (unit.turnCount ?? 0) > 0 || unit.lastTurnAt !== undefined || (unit.touched?.length ?? 0) > 0
             }].slice(-MAX_WORK_UNITS);
           }
         }
+        if (claim.reason === NO_PROGRESS_CLAIM_REASON.STALLED && ((unit.turnCount ?? 0) > 0 || unit.lastTurnAt !== undefined || (unit.touched?.length ?? 0) > 0)) {
+          // One STALLED reclaim of a claim that DID start (turns or file changes) returns the unit to READY; the
+          // next one fails it, so a stalled claim can neither stay CLAIMED nor be re-dispatched forever. A claim
+          // that never started follows the kickoff path instead (reassign / single-seat retry / human block).
+          // (Shared budget: see escalateKickoffFailures.)
+          const stalls = (unit.stallReclaims ?? 0) + 1;
+          unit.stallReclaims = stalls;
+          if (stalls > STALLED_RECLAIM_RETRIES) {
+            unit.state = 'FAILED';
+            unit.failureCode = 'STALLED';
+            unit.failure = string(`${NO_PROGRESS_CLAIM_REASON.STALLED} (reclaimed ${stalls} times)`, 'work unit failure');
+            unit.history.push({ action: 'failed', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: unit.failure });
+            unit.reclaimedClaim = undefined;
+            clearClaim(unit);
+            unit.assignedSlotId = undefined;
+            applyFailureRetry(record, unit, timestamp);
+            reclaimed += 1;
+            continue;
+          }
+        }
         unit.state = 'READY';
-        unit.history.push({ action: 'released', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: string(claim.reason, 'claim recovery reason') });
+        unit.history.push({ action: 'released', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: string(claim.detail ? `${claim.reason}; ${claim.detail}`.slice(0, 400) : claim.reason, 'claim recovery reason') });
         // Durable evidence of the EXACT claim we just reclaimed. A worker that was
         // mid-flight when we reclaimed its silent claim may still finish; completeWork
         // accepts that late result ONLY from this recorded claim, and only while the
@@ -3538,17 +3814,20 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         const earlier = recovery && recovery.executionAttempt === record.attempt
           ? ` Earlier, Zana tried to recover ${recovery.slotId} after an API error: ${recovery.steps.map((entry) => entry.step).join(', ')}. Last error: ${lastError}.`
           : '';
-        const routing = unit.routing;
-        const modelBySlot = resolvedModelsBySlot(record);
-        const capable = routing
-          ? workerSlotsOf(record)
-            // Enforced routing dispatches to PASS slots only, so only they can "take it"; otherwise any non-FAIL slot can.
-            .filter((slot) => { const status = unitSlotEligibility(unit, slot, modelBySlot.get(slot.slotId), hardRequirementsActive(record) ? sameWorkerExclusions(record, unit) : undefined, levelCheckSkipped(record, slot.slotId)).status; return opts?.enforceRouting ? status === 'PASS' : status !== 'FAIL'; })
-          : [];
+        // Enforced routing dispatches to PASS slots only, so only they can "take it"; otherwise any non-FAIL slot can.
+        // An unrouted unit keeps the legacy question unless a single-seat recovery ran, whose account the question must name.
+        const seatTouched = unit.seatRecovery?.executionAttempt === record.attempt && Boolean(unit.seatRecovery.retried || unit.seatRecovery.respawned);
+        const capable = unit.routing || seatTouched ? capableSeats(record, unit, opts?.enforceRouting === true) : [];
         // "never started a turn" is only true of a slot this unit was actually tried on in this attempt.
         const triedHere = capable.length === 1 && (unit.history.some((entry) => entry.action === 'claimed' && entry.slotId === capable[0].slotId)
           || (unit.noProgressSlots ?? []).some((entry) => entry.executionAttempt === record.attempt && entry.slotId === capable[0].slotId));
-        question = kickoffBlockerQuestion(unit, triedHere ? capable[0].slotId : undefined, earlier);
+        const lastEntry = [...(unit.noProgressSlots ?? [])].reverse().find((entry) => entry.executionAttempt === record.attempt);
+        const seatRecovery = unit.seatRecovery?.executionAttempt === record.attempt ? unit.seatRecovery : undefined;
+        const account: SeatRecoveryAccount | undefined = triedHere && lastEntry && (seatRecovery?.retried || seatRecovery?.respawned)
+          ? { reason: lastEntry.reason, ...(lastEntry.idleMs === undefined ? {} : { idleMs: lastEntry.idleMs }), ...(lastEntry.turned === undefined ? {} : { turned: lastEntry.turned }), retried: seatRecovery.retried === true, ...(seatRecovery.respawned ? { respawned: seatRecovery.respawned === 'ok' ? 'ok' as const : 'failed' as const } : {}) }
+          : undefined;
+        // Name the seat the way the Agents board does (its label), so the question matches the card the person opens.
+        question = kickoffBlockerQuestion(unit, triedHere ? workerNoticeLabel(record, capable[0].slotId) : undefined, earlier, account);
       }
       unit.state = 'BLOCKED';
       unit.history.push({ action: 'blocked', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp, detail: apiError ? 'stopped after an API error' : 'kickoff delivery produced no worker turn' });
@@ -3618,6 +3897,44 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     }, `Work unit reassigned to fresh slot after kickoff failure: ${workUnitId}`);
   }
 
+  /**
+   * Single-seat recovery (#789), tried BEFORE {@link blockKickoffFailure} when {@link reassignKickoffToFreshSlot}
+   * finds no fresh slot. Only for a unit whose role has exactly ONE capable seat and that seat is the one that
+   * was just reclaimed. `retry` re-dispatches to the same seat once; `respawn` records that the seat was
+   * respawned (`ok`) or could not be (`failed`): a successful respawn also re-dispatches, a failed one leaves
+   * the unit for the human block. Each step is spent once per unit and execution attempt (`seatRecovery`) and
+   * is recorded in the unit history, so the combined cap is bounded: one same-seat retry + one respawn.
+   * THROWS {@link WorkUnitRecoveryGuardError} on every no-op guard so the service falls through.
+   */
+  async function recordSeatRecovery(executionId: string, workUnitId: string, step: { kind: 'retry' } | { kind: 'respawn-intent' } | { kind: 'respawn'; ok: boolean }, opts?: { enforceRouting?: boolean }): Promise<ExecutionRecord> {
+    return mutateRecord(executionId, undefined, (record, timestamp) => {
+      const unit = findUnit(record, workUnitId);
+      if (unit.state !== 'READY') throw new WorkUnitRecoveryGuardError('work unit is not READY for same-seat recovery');
+      const last = [...(unit.noProgressSlots ?? [])].reverse().find((entry) => entry.executionAttempt === record.attempt);
+      if (!last) throw new WorkUnitRecoveryGuardError('work unit has no reclaimed seat');
+      const capable = capableSeats(record, unit, opts?.enforceRouting === true);
+      if (capable.length !== 1 || capable[0].slotId !== last.slotId) throw new WorkUnitRecoveryGuardError('role has more than one capable seat');
+      const spent = unit.seatRecovery?.executionAttempt === record.attempt ? unit.seatRecovery : { executionAttempt: record.attempt };
+      if (step.kind === 'respawn-intent') {
+        // Reserve the respawn durably BEFORE it runs: a throw/crash between the respawn and its settle can then never allow a second one.
+        if (spent.respawned) throw new WorkUnitRecoveryGuardError('same-seat recovery already spent');
+        unit.seatRecovery = { ...spent, respawned: 'pending' };
+        return;
+      }
+      // A settle closes a reserved ('pending') respawn; a direct settle (no reservation) is still allowed once.
+      if (step.kind === 'retry' ? spent.retried : spent.respawned && spent.respawned !== 'pending') throw new WorkUnitRecoveryGuardError('same-seat recovery already spent');
+      const next = { ...spent, ...(step.kind === 'retry' ? { retried: true } : { respawned: step.ok ? 'ok' as const : 'failed' as const, ...(step.ok ? { retried: true } : {}) }) };
+      unit.seatRecovery = next;
+      const detail = step.kind === 'retry' ? 'same-seat retry' : step.ok ? 'seat respawned, retrying on the same seat' : 'seat respawn failed';
+      unit.history.push({ action: 'retried', slotId: last.slotId, attempt: unit.attempt, at: timestamp, detail });
+      if (step.kind === 'respawn' && !step.ok) return;
+      // Lift the quarantine on the one seat that can take this unit; a fresh claim re-adds it if it fails again.
+      unit.noProgressSlots = (unit.noProgressSlots ?? []).filter((entry) => !(entry.executionAttempt === record.attempt && entry.slotId === last.slotId));
+      unit.assignedSlotId = last.slotId;
+      unit.reclaimedClaim = undefined;
+    }, `Work unit ${step.kind === 'retry' ? 'retried on the same seat' : step.kind === 'respawn-intent' ? 'seat respawn reserved' : step.ok ? 'seat respawned' : 'seat respawn failed'}: ${workUnitId}`);
+  }
+
   async function retryWork(executionId: string, expectedStateVersion: number, authority: ExecutionCohortAuthority, workUnitId: string, assignedSlotId?: string): Promise<ExecutionRecord> {
     if (authority.role !== 'orchestrator') throw new Error('only coordinator can retry work');
     return mutateRecord(executionId, expectedStateVersion, (record, timestamp) => {
@@ -3655,6 +3972,8 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       // worker, so a prior kickoff-churn block must not immediately re-block.
       unit.kickoffFailures = undefined;
       unit.noProgressSlots = undefined;
+      unit.stallReclaims = undefined;
+      unit.seatRecovery = undefined;
       unit.apiErrorRecovery = undefined;
       unit.history.push({ action: 'retried', slotId: unit.assignedSlotId, attempt: unit.attempt, at: timestamp });
       for (const blocker of record.blockers ?? []) {
@@ -3817,8 +4136,8 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
   async function enqueueBlockerDelivery(
     executionId: string,
     expectedStateVersion: number,
-    input: { clientRequestId: string; blockerId: string; text: string }
-  ): Promise<{ outcome: 'accepted' | 'replay'; delivery: ExecutionDeliveryRecord; record: ExecutionRecord }> {
+    input: { clientRequestId: string; blockerId: string; text: string; split?: { child: ExecutionWorkUnitInput } }
+  ): Promise<{ outcome: 'accepted' | 'replay'; delivery: ExecutionDeliveryRecord; record: ExecutionRecord; splitChildId?: string }> {
     const clientRequestId = string(input.clientRequestId, 'delivery client request id');
     const blockerId = string(input.blockerId, 'blocker id');
     if (!validUtf8String(input.text, MAX_DELIVERY_TEXT_BYTES)) throw new Error('delivery payload exceeds 16384 bytes');
@@ -3848,6 +4167,8 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
         throw new Error('execution delivery outbox limit reached');
       }
       const timestamp = now();
+      // Split first: it throws on any invalid child, so a bad split leaves neither a unit nor a delivery behind.
+      const splitChild = input.split ? applyScopeSplit(record, blocker.workUnitId, blocker.id, input.split.child, timestamp) : undefined;
       const delivery: ExecutionDeliveryRecord = {
         id: string(id(), 'delivery id'), clientRequestId, blockerId, workUnitId: blocker.workUnitId,
         slotId: blocker.slotId, payload: { text: input.text }, state: 'PENDING', attempt: 0,
@@ -3856,9 +4177,9 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       record.deliveries.push(delivery);
       record.stateVersion += 1;
       record.updatedAt = timestamp;
-      append(snapshot.state, record, record.state, 'info', `Execution blocker response accepted: ${blockerId}`, timestamp, { kind: 'command', slotId: blocker.slotId });
+      append(snapshot.state, record, record.state, 'info', `Execution blocker response accepted: ${blockerId}${splitChild ? `; scope split into ${splitChild.id}` : ''}`, timestamp, { kind: 'command', slotId: blocker.slotId });
       persist(snapshot.state, snapshot.hash);
-      return { outcome: 'accepted' as const, delivery: clone(delivery), record: clone(record) };
+      return { outcome: 'accepted' as const, delivery: clone(delivery), record: clone(record), ...(splitChild ? { splitChildId: splitChild.id } : {}) };
     });
   }
 
@@ -4385,7 +4706,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     });
   }
 
-  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, markReported, markBlockerReported, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, warning, reserveWorkerRespawn, settleWorkerRespawn, command, producerEvent, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, clearNativeRecoverySnapshot, recordAutomatedMcpCatalogueProvenance, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, recordWorkerRecovery, blockKickoffFailure, reassignKickoffToFreshSlot, retryWork, reassignWork, blockWork, escalateBlockerToHuman, resolveNoRouteBlocker, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, countActiveOwned, listInProject, listActive, listUndisposedSquadWorktrees, listUnreportedExecutions, listUnreportedBlockers, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
+  return { claim, transition, stopForPlanCorrection, setSquadWorktree, markSquadWorktreeTerminalEffects, markReported, markBlockerReported, disposeSquadWorktree, reserveTimeoutRecovery, linkTimeoutSuccessor, decideDeadline, event, warning, reserveWorkerRespawn, settleWorkerRespawn, command, producerEvent, setAuthorizationContext, prepareLaunchIntent, addEffectiveOwner, removeEffectiveOwner, rotateRecoveryGeneration, upsertNativeRecoverySnapshot, clearNativeRecoverySnapshot, recordAutomatedMcpCatalogueProvenance, beginRetry, beginRetainedRecovery, clearPriorNativeRecoverySnapshots, registerPlan, claimWork, heartbeatWork, renewWorkerLease, bindClaimSession, recordClaimSignal, recordUnitCheckpoint, dispatchReady, replaceResolvedModels, failRouteFacts, completeWork, failWork, releaseWork, releaseUndelivered, reclaimExpiredClaims, recordWorkerRecovery, blockKickoffFailure, reassignKickoffToFreshSlot, recordSeatRecovery, retryWork, reassignWork, blockWork, escalateBlockerToHuman, resolveNoRouteBlocker, acknowledgeNotice, deferNotice, cancelNotice, listPendingNotices, enqueueBlockerDelivery, pullBlockerDelivery, ackBlockerDelivery, retryBlockerDelivery, completeExecution, failExecution, queueCoordinatorWake, acknowledgeCoordinatorWake, appendUsageObservation, blockForResource, recordOutputRepair, setRouteFitProposal, dismiss, get, getInProject, list, countActiveOwned, listInProject, listActive, listUndisposedSquadWorktrees, listUnreportedExecutions, listUnreportedBlockers, listActiveClaims, retainedSourceContentRefs, upgradeSourceBundle, events, eventsInProject };
 }
 
 /**
@@ -4493,8 +4814,44 @@ function normalizePlan(inputs: ExecutionWorkUnitInput[], requireComplete = false
   });
 }
 
+/** The registered plan as inputs, ignoring units a scope re-split added and the dependency links it created. */
+function originalPlanInputs(units: readonly ExecutionWorkUnit[]): ExecutionWorkUnitInput[] {
+  const children = new Set(units.filter((unit) => unit.splitFrom).map((unit) => unit.id));
+  return units.filter((unit) => !children.has(unit.id)).map((unit) => {
+    const input = stripWorkUnitState(unit);
+    return children.size ? { ...input, dependencies: input.dependencies.filter((dependency) => !children.has(dependency)) } : input;
+  });
+}
+
+/**
+ * Apply a scope re-split in place: add `child` (state derived like a registered unit), re-link every not-yet-finished
+ * dependent of `parent` to also wait for the child, and record the lineage. The parent keeps its claim and history.
+ */
+function applyScopeSplit(record: ExecutionRecord, parentId: string, blockerId: string, childInput: ExecutionWorkUnitInput, timestamp: number): ExecutionWorkUnit {
+  const units = record.workUnits ?? [];
+  if (units.length >= MAX_WORK_UNITS) throw new Error('execution work unit limit reached; cannot split');
+  const parent = findUnit(record, parentId);
+  if (parent.state === 'COMPLETED' || parent.state === 'FAILED' || parent.state === 'SKIPPED') throw new Error('work unit is already finished; cannot split');
+  if (units.some((unit) => unit.id === childInput.id)) throw new Error('split unit id already exists');
+  const dependents = units.filter((unit) => unit.id !== parent.id && unit.dependencies.includes(parent.id) && unit.state !== 'COMPLETED' && unit.state !== 'FAILED' && unit.state !== 'SKIPPED' && unit.state !== 'CLAIMED');
+  const relinked = units.map((unit) => (dependents.includes(unit) ? { ...stripWorkUnitState(unit), dependencies: [...unit.dependencies, childInput.id] } : stripWorkUnitState(unit)));
+  // Validates scope, verification, DAG and size exactly like a registered plan; only the child is taken from it.
+  const child = normalizePlan([...relinked, childInput], isDurableCoordination(record.coordinationMode)).find((unit) => unit.id === childInput.id)!;
+  assertHardConstraintsEnforceable([child], record.routingPolicy);
+  child.splitFrom = { parentId: parent.id, blockerId, files: [...(childInput.files ?? [])], at: timestamp };
+  child.history.push({ action: 'reopened', attempt: 0, at: timestamp, detail: `split from ${parent.id} on blocker ${blockerId}` });
+  for (const dependent of dependents) {
+    dependent.dependencies.push(child.id);
+    if (dependent.state === 'READY') dependent.state = 'PENDING';
+  }
+  parent.splitChildren = [...(parent.splitChildren ?? []), child.id];
+  record.workUnits!.push(child);
+  deriveReadiness(record);
+  return child;
+}
+
 function stripWorkUnitState(unit: ExecutionWorkUnit): ExecutionWorkUnitInput {
-  const { state: _state, assignedSlotId: _assignedSlotId, claimGeneration: _claimGeneration, claimId: _claimId, claimedBy: _claimedBy, claimedAt: _claimedAt, leaseExpiresAt: _leaseExpiresAt, heartbeatAt: _heartbeatAt, progressAt: _progressAt, turnCount: _turnCount, kickoffFailures: _kickoffFailures, unknownSince: _unknownSince, noProgressSlots: _noProgressSlots, reclaimedClaim: _reclaimedClaim, apiErrorRecovery: _apiErrorRecovery, attempt: _attempt, failureCode: _failureCode, failure: _failure, result: _result, structuredResult: _structuredResult, passedChecks: _passedChecks, retryFeedback: _retryFeedback, failureRetry: _failureRetry, repairDigests: _repairDigests, loopRound: _loopRound, loopExtraRounds: _loopExtraRounds, history: _history, ...input } = unit;
+  const { state: _state, assignedSlotId: _assignedSlotId, claimGeneration: _claimGeneration, claimId: _claimId, claimedBy: _claimedBy, claimedAt: _claimedAt, leaseExpiresAt: _leaseExpiresAt, heartbeatAt: _heartbeatAt, progressAt: _progressAt, turnCount: _turnCount, lastTurnAt: _lastTurnAt, outputLeaseExpiresAt: _outputLeaseExpiresAt, stallReclaims: _stallReclaims, seatRecovery: _seatRecovery, touched: _touched, touchedTruncated: _touchedTruncated, splitFrom: _splitFrom, splitChildren: _splitChildren, baseline: _baseline, checkpoint: _checkpoint, kickoffFailures: _kickoffFailures, unknownSince: _unknownSince, noProgressSlots: _noProgressSlots, reclaimedClaim: _reclaimedClaim, apiErrorRecovery: _apiErrorRecovery, attempt: _attempt, failureCode: _failureCode, failure: _failure, result: _result, structuredResult: _structuredResult, passedChecks: _passedChecks, retryFeedback: _retryFeedback, failureRetry: _failureRetry, repairDigests: _repairDigests, loopRound: _loopRound, loopExtraRounds: _loopExtraRounds, history: _history, ...input } = unit;
   return input;
 }
 
@@ -4588,6 +4945,8 @@ function applyFailureRetry(record: ExecutionRecord, unit: ExecutionWorkUnit, tim
     candidate.reclaimedClaim = undefined;
     candidate.apiErrorRecovery = undefined;
     candidate.noProgressSlots = undefined;
+    candidate.stallReclaims = undefined;
+    candidate.seatRecovery = undefined;
     candidate.kickoffFailures = undefined;
     candidate.repairDigests = undefined;
     candidate.result = undefined;

@@ -29,6 +29,7 @@ import {
   summarizeSquadPlanFindings,
   type SquadPlanTierFitFinding,
   type SquadPlanStep,
+  SQUAD_PLAN_SKIP_IMPACT_CAP,
   type SquadPlanning,
   type SquadProposalErrorCode,
   type SquadAttachmentInput,
@@ -61,6 +62,8 @@ import {
   type SquadSourceBases,
   type SquadSourceScope
 } from './sources.js';
+import { isDesignDocSource, readDesignDocSource, type DesignDocsRpc } from './design-doc-source.js';
+import { diagnoseNoSteps, planCriticalPathWidth, planSkippedIfFails, NO_EXECUTABLE_STEPS_REASON } from '@zana-ai/zcc-server/services/execution/portable-plan';
 import type { SquadProposalStore } from './store.js';
 import type { StagingStore, StagedFile } from './staging.js';
 
@@ -185,6 +188,11 @@ export interface SquadProposalServiceDeps {
    */
   planTierFit?(projectId: string, teamId: string, workUnits: readonly unknown[]): Promise<readonly SquadPlanTierFitFinding[]>;
   fs: SquadProposalFs;
+  /**
+   * Design Docs plugin RPC, for `doc://` sources. Absent: a `doc://` source is refused with a plain message. The doc is
+   * read in main, must belong to the launching project, and is snapshotted as an attachment (never written to the project).
+   */
+  designDocs?: DesignDocsRpc;
   /** HOME, the clone root and Zana's data folders: with the project, the bases of the source policy. */
   sourceBases(): SquadSourceBases;
   inbox: { appendOnce(input: InboxInput): Promise<InboxEntry> };
@@ -213,7 +221,7 @@ export interface SquadProposalServiceDeps {
 }
 
 /** The plan-review part of a prefill, re-read from the plan files. */
-export type SquadPlanRecheck = Pick<SquadLaunchPrefill, 'planFindings' | 'planFindingsHidden' | 'planBindings' | 'planBindingsHidden' | 'planSummary' | 'planStepCount' | 'planCanonicalText'>;
+export type SquadPlanRecheck = Pick<SquadLaunchPrefill, 'planFindings' | 'planFindingsHidden' | 'planBindings' | 'planBindingsHidden' | 'planSummary' | 'planStepCount' | 'planCanonicalText' | 'planSkipImpact' | 'planSkipImpactHidden'>;
 
 const STAGING_RETRIES = 5;
 
@@ -309,8 +317,19 @@ function prepareAttachments(sources: ConfinedSource[], given: readonly SquadAtta
   return ok({ attachments, mapping });
 }
 
-const toPlanSteps = (units: Array<{ id: string; title: string; dependencies: string[]; files?: string[] }>): SquadPlanStep[] =>
-  units.map((u) => ({ id: u.id, title: u.title, dependencies: [...u.dependencies], writeScope: [...(u.files ?? [])] }));
+const toPlanSteps = (units: Array<{ id: string; title: string; dependencies: string[]; files?: string[] }>): SquadPlanStep[] => {
+  const skipped = planSkippedIfFails(units);
+  return units.map((u) => ({ id: u.id, title: u.title, dependencies: [...u.dependencies], writeScope: [...(u.files ?? [])], skippedIfFails: skipped.get(u.id) ?? [] }));
+};
+
+/** Steps that would skip something if they failed, biggest first is left to the card; capped for the prefill. */
+function skipImpactRows(steps: readonly SquadPlanStep[] | undefined): Pick<SquadLaunchPrefill, 'planSkipImpact' | 'planSkipImpactHidden'> {
+  const titles = new Map((steps ?? []).map((s) => [s.id, s.title] as const));
+  const rows = (steps ?? []).filter((s) => s.skippedIfFails?.length).map((s) => ({ stepId: s.id, title: s.title, skips: [...s.skippedIfFails!], skipTitles: s.skippedIfFails!.map((id) => titles.get(id) ?? '') }));
+  if (!rows.length) return {};
+  const shown = rows.slice(0, SQUAD_PLAN_SKIP_IMPACT_CAP);
+  return { planSkipImpact: shown, ...(rows.length > shown.length ? { planSkipImpactHidden: rows.length - shown.length } : {}) };
+}
 
 /** The project, its host, the Squad, its orchestrator and slot count, as Launch will see them. */
 function resolveSquad(deps: SquadProposalServiceDeps, projectId: string, teamId: string): SquadProposalOutcome<{
@@ -361,7 +380,8 @@ async function checkProvidedPlan(
     return fail('SOURCE_UNREADABLE', 'A source file could not be read, or it changed after it was checked.');
   }
   const plan = deps.resolveSquadPlan('provided', [...texts, ...attachments.map((a) => a.text), goal]);
-  if (plan.planError) return fail('INVALID_PLAN', plan.planError);
+  // Say why no step was found, in the parser's own words, instead of the bare stable reason.
+  if (plan.planError) return fail('INVALID_PLAN', plan.planError === NO_EXECUTABLE_STEPS_REASON ? `${plan.planError}. ${diagnoseNoSteps([...texts, ...attachments.map((a) => a.text), goal].join('\n\n'))}` : plan.planError);
   if (!plan.workUnits?.length) return fail('INVALID_PLAN', 'No plan steps were found in the goal or the source files.');
   return ok({ steps: toPlanSteps(plan.workUnits), workUnits: plan.workUnits, findings: plan.findings, declaredSquad: plan.declaredSquad });
 }
@@ -375,9 +395,17 @@ async function prepare(
   if (!squad.ok) return squad;
   const { project, team, orchestrator, slots } = squad.value;
   const scope = await sourceScope(deps.fs, project.path, deps.sourceBases(), { remote: Boolean(project.remote) });
-  const sources = await confineSources(deps.fs, scope, rawSources);
+  // `doc://` sources are read from the Design Docs plugin and joined to the attachments (a snapshot, not a project file).
+  const docSources = rawSources.filter(isDesignDocSource);
+  const docAttachments: SquadAttachmentInput[] = [];
+  for (const raw of docSources) {
+    const doc = await readDesignDocSource(deps.designDocs, projectId, raw);
+    if (!doc.ok) return doc;
+    if (!docAttachments.some((a) => a.name === doc.name)) docAttachments.push({ name: doc.name, text: doc.text });
+  }
+  const sources = await confineSources(deps.fs, scope, rawSources.filter((raw) => !isDesignDocSource(raw)));
   if (!sources.ok) return sources;
-  const attached = prepareAttachments(sources.value, rawAttachments);
+  const attached = prepareAttachments(sources.value, [...rawAttachments, ...docAttachments]);
   if (!attached.ok) return attached;
   // Without the project folder nothing can be judged, and Launch would otherwise discover the goal's paths unchecked.
   if (!scope && goalPathTokens(goal).length) {
@@ -556,7 +584,7 @@ function createNowDedupe(now: () => number) {
 
 /** Capped findings and binding table for the composer card, with how many were left out. */
 function planDisplay(prepared: Prepared): Partial<SquadLaunchPrefill> {
-  if (!prepared.planFindings && !prepared.planBindings && !prepared.planCanonicalText) return {};
+  if (!prepared.planFindings && !prepared.planBindings && !prepared.planCanonicalText && !prepared.planSteps?.length) return {};
   const capped = capSquadPlanFindings(prepared.planFindings ?? []);
   const bindings = (prepared.planBindings ?? []).slice(0, SQUAD_PLAN_BINDING_CAP);
   const bindingsHidden = Math.max(0, (prepared.planBindings?.length ?? 0) - bindings.length);
@@ -566,6 +594,7 @@ function planDisplay(prepared: Prepared): Partial<SquadLaunchPrefill> {
     ...(bindings.length ? { planBindings: bindings } : {}),
     ...(bindingsHidden ? { planBindingsHidden: bindingsHidden } : {}),
     planSummary: formatSquadPlanSummary(prepared.planFindings ?? []),
+    ...skipImpactRows(prepared.planSteps),
     ...(prepared.planCanonicalText ? { planCanonicalText: prepared.planCanonicalText } : {})
   };
 }
@@ -825,6 +854,10 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
 
   /** A plan file named by squad_plan_check, checked and read like a source. */
   async function readPlanFile(projectId: string, path: string): Promise<SquadProposalOutcome<string>> {
+    if (isDesignDocSource(path)) {
+      const doc = await readDesignDocSource(deps.designDocs, projectId, path);
+      return doc.ok ? ok(doc.text) : doc;
+    }
     const project = deps.projects.get(projectId);
     if (!project) return fail('NOT_FOUND', 'Project not found.');
     const scope = await sourceScope(deps.fs, project.path, deps.sourceBases(), { remote: Boolean(project.remote) });
@@ -986,7 +1019,12 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         };
         if (plan.planError) {
           const judged = await judge([]);
-          return ok({ ok: false, reason: plan.planError, ...(judged?.findings.length ? { findings: capSquadPlanFindings(judged.findings).findings } : {}), ...(plan.declaredSquad ? { declaredSquad: plan.declaredSquad } : {}), ...unjudgedNote(!!judged) });
+          // Say why no step was found (E8): the reason text stays the stable parse error; the diagnosis is a warning finding.
+          const diagnosis: SquadPlanFinding[] = plan.planError === NO_EXECUTABLE_STEPS_REASON
+            ? [{ requirement: 'plan', severity: 'warning', candidateSlots: [], suggestion: '', detail: diagnoseNoSteps(text.value) }]
+            : [];
+          const reported = [...(judged?.findings ?? []), ...diagnosis];
+          return ok({ ok: false, reason: plan.planError, ...(reported.length ? { findings: capSquadPlanFindings(reported).findings } : {}), ...(plan.declaredSquad ? { declaredSquad: plan.declaredSquad } : {}), ...unjudgedNote(!!judged) });
         }
         if (!plan.workUnits?.length) return ok({ ok: false, reason: 'No plan steps were found.', ...unjudgedNote(false) });
         const steps = toPlanSteps(plan.workUnits);
@@ -997,6 +1035,13 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
           catch (error) { deps.logError('plan check tier fit', error); }
         }
         const judged = await judge(plan.workUnits);
+        // Without a Squad there are no slots to compare, so only a plan that runs strictly one step at a time is flagged.
+        if (judged && !judgedAgainst && plan.workUnits.length >= 4 && planCriticalPathWidth(plan.workUnits) === 1) {
+          judged.findings.push({
+            requirement: 'plan', severity: 'warning', candidateSlots: [], suggestion: '',
+            detail: `Critical-path width is 1 across ${plan.workUnits.length} steps: every step waits for another, so a Squad with more than one worker will leave the rest idle. Pass a Squad to compare against its slots.`
+          });
+        }
         const capped = judged ? capSquadPlanFindings(judged.findings) : undefined;
         const bindings = judged?.bindings.slice(0, SQUAD_PLAN_BINDING_CAP);
         return ok({

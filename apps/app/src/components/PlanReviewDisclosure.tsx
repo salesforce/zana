@@ -3,13 +3,15 @@ import {
   formatSquadPlanFinding,
   formatSquadPlanFindingProblem,
   squadFindingSeverityLabel,
+  squadStepName,
   type SquadLaunchPrefill,
   type SquadPlanFinding
 } from '@zana-ai/zcc-domain/squad-proposal';
 import { product } from '../lib/product-client.js';
 import { copyTextOrFail } from '../lib/copy-text.js';
+import { PlanSkipImpact } from './PlanSkipImpact.js';
 
-type PlanDisplay = Pick<SquadLaunchPrefill, 'planFindings' | 'planFindingsHidden' | 'planBindings' | 'planBindingsHidden' | 'planSummary' | 'planCanonicalText'>;
+type PlanDisplay = Pick<SquadLaunchPrefill, 'planFindings' | 'planFindingsHidden' | 'planBindings' | 'planBindingsHidden' | 'planSummary' | 'planCanonicalText' | 'planSkipImpact' | 'planSkipImpactHidden'>;
 /** What a re-check replaces: every plan field, including the ones that are now absent. */
 export type PlanRecheck = PlanDisplay & Pick<SquadLaunchPrefill, 'planStepCount'>;
 
@@ -39,7 +41,7 @@ export function PlanReviewDisclosure({ prefill, proposalId, proposerTitle, planF
   const [busy, setBusy] = useState<'send' | 'recheck' | null>(null);
   const findings = prefill.planFindings ?? [];
   const bindings = prefill.planBindings ?? [];
-  if (!prefill.planSummary && !findings.length && !bindings.length && !prefill.planCanonicalText) return null;
+  if (!prefill.planSummary && !findings.length && !bindings.length && !prefill.planCanonicalText && !prefill.planSkipImpact?.length) return null;
   const mustFix = planHasMustFix(prefill);
   const blocking = findings.filter((finding) => finding.severity === 'blocking');
   const who = proposerTitle ? `the agent “${proposerTitle}”` : 'the agent that prepared this launch';
@@ -126,7 +128,7 @@ export function PlanReviewDisclosure({ prefill, proposalId, proposerTitle, planF
           <tbody>
             {bindings.map((binding) => (
               <tr key={binding.stepId}>
-                <th scope="row">{binding.stepId}</th>
+                <th scope="row">{squadStepName(binding.stepId, binding.stepTitle)}</th>
                 <td>{binding.unbound ? 'No member can run this step' : binding.label?.trim() || binding.personaId || 'Chosen when it starts'}</td>
               </tr>
             ))}
@@ -134,6 +136,7 @@ export function PlanReviewDisclosure({ prefill, proposalId, proposerTitle, planF
         </table>
       ) : null}
       {prefill.planBindingsHidden ? <p>and {prefill.planBindingsHidden} more</p> : null}
+      <PlanSkipImpact rows={prefill.planSkipImpact ?? []} hidden={prefill.planSkipImpactHidden} />
       {prefill.planCanonicalText ? (
         <details data-testid="plan-canonical">
           <summary>The plan the Squad will run</summary>

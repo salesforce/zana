@@ -1299,3 +1299,30 @@ describe('normalizeConfig onboarding v2', () => {
     expect(normalizeConfig({ onboarding: { version: 9 } as never })).not.toHaveProperty('onboarding');
   });
 });
+
+describe('normalizeConfig — executionBlockerReminderMs', () => {
+  it('keeps 0 (disabled) and collapses a negative value to 0', () => {
+    expect(normalizeConfig({ executionBlockerReminderMs: 0 }).executionBlockerReminderMs).toBe(0);
+    expect(normalizeConfig({ executionBlockerReminderMs: -1 }).executionBlockerReminderMs).toBe(0);
+  });
+
+  it('clamps to one minute..one day and rounds', () => {
+    expect(normalizeConfig({ executionBlockerReminderMs: 1_000 }).executionBlockerReminderMs).toBe(60_000);
+    expect(normalizeConfig({ executionBlockerReminderMs: 999_999_999 }).executionBlockerReminderMs).toBe(86_400_000);
+    expect(normalizeConfig({ executionBlockerReminderMs: 120_000.4 }).executionBlockerReminderMs).toBe(120_000);
+  });
+
+  it('leaves it unset when absent or not a number, so old files keep the default', () => {
+    expect(normalizeConfig({}).executionBlockerReminderMs).toBeUndefined();
+    expect(normalizeConfig({ executionBlockerReminderMs: 'x' as unknown as number }).executionBlockerReminderMs).toBeUndefined();
+  });
+});
+
+describe('normalizeConfig — squadUnitCheckpointsEnabled', () => {
+  it('keeps booleans and drops anything else', () => {
+    expect(normalizeConfig({ squadUnitCheckpointsEnabled: false }).squadUnitCheckpointsEnabled).toBe(false);
+    expect(normalizeConfig({ squadUnitCheckpointsEnabled: true }).squadUnitCheckpointsEnabled).toBe(true);
+    expect(normalizeConfig({ squadUnitCheckpointsEnabled: 'no' as unknown as boolean }).squadUnitCheckpointsEnabled).toBeUndefined();
+    expect(normalizeConfig({}).squadUnitCheckpointsEnabled).toBeUndefined();
+  });
+});

@@ -1,4 +1,5 @@
 import { launchFailure } from './launch-pre-spawn.js';
+import { waitForSessionExit } from './session-exit-wait.js';
 import { MAX_MAIN_CEILING_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import { startAgentSoundEvents } from './native/agent-sound-events.js';
 import { AgentSounds } from './native/agent-sounds.js';
@@ -173,7 +174,7 @@ import { SQUAD_SEAT_MARKER, squadSeatRefusal } from './squad-seat-launch.js';
 import { createRestoreCapabilityStore, type RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
 import { createTeamLifecycleIntegration, createTeamLifecycleStore, type TeamLifecycleRecord, type TeamModernWorkerObservation } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
 import { createRemoteReapLedger, remoteReapOrphans, type RemoteReapEntry } from '@zana-ai/zcc-server/services/launch/remote-reap-ledger';
-import { boundReason, SLOT_REASON_MAX, createExecutionStore, isUserOwnedSquadWorktree, recordedLevelPolicy, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
+import { boundReason, SLOT_REASON_MAX, isTerminalExecutionState, createExecutionStore, isUserOwnedSquadWorktree, recordedLevelPolicy, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
 import { squadConcurrentCap, withSquadLimits } from '@zana-ai/zcc-server/services/execution/squad-limits-policy';
@@ -189,6 +190,7 @@ import { createResumeGrantStore } from '@zana-ai/zcc-server/services/execution/r
 import { createResumeTokenStore } from '@zana-ai/zcc-server/services/execution/resume-token-store';
 import { createInboxActionRegistry } from './inbox-actions/registry.js';
 import { createSquadWorkerRestarter } from './squad-worker-restart.js';
+import { restartSquadWorkerForOwner } from './squad-worker-card-restart.js';
 import { lifecycleClaimOps } from './terminal-restore-launch.js';
 import { squadWorktreeHasActiveFollowUp, withSquadWorktreeLifecycleLock, type SquadWorktreeTerminalOutcome } from './squad-worktree-lifecycle.js';
 import { relaunchExecutionMonitor } from '@zana-ai/zcc-server/services/execution/relaunch-monitor';
@@ -197,7 +199,7 @@ import { expandTeamSlots } from '@zana-ai/zcc-server/services/agents/team-slot-e
 import { bindLaunchPrincipal, type LaunchAuthorizationBinding, type LaunchPrincipal, type LaunchPrincipalRef } from '@zana-ai/zcc-server/services/launch/types';
 import type { TerminalLaunchOptions } from '@zana-ai/zcc-server/services/launch/terminal-launcher';
 import * as testTap from './test-tap.js';
-import { testFaultActive, testNoTurnWarnWindowMs, workerSpawnFaultFor } from './test-faults.js';
+import { testFaultActive, testNoTurnWarnWindowMs, testVisibilityWindowMs, workerSpawnFaultFor } from './test-faults.js';
 import { AgentStatusTracker } from '@zana-ai/zcc-server/services/agents/agent-status';
 import { OutputActivityMonitor } from '@zana-ai/zcc-host-daemon/output-activity';
 import { ScreenScanBlockedDetector } from '@zana-ai/zcc-server/services/agents/screen-scan-blocked-detector';
@@ -1140,7 +1142,7 @@ function maybeRenewWorkerLease(sessionId: string): void {
     return;
   }
   workerLeaseRenewAt.set(sessionId, nowMs + WORKER_LEASE_RENEW_THROTTLE_MS);
-  void squadExecutionService.renewWorkerLease(cohort.executionId, cohort.slotId).catch((error) =>
+  void squadExecutionService.renewWorkerLease(cohort.executionId, cohort.slotId, sessionId).catch((error) =>
     logMainError(`execution worker lease renew ${sessionId}`, error)
   );
 }
@@ -3427,6 +3429,7 @@ async function reconcileModernMembers(records?: readonly TeamLifecycleRecord[]):
           if (status.live) {
             if (worker.sessionId) executionDeliveryDrain.observe(worker.sessionId, status.status === 'idle' ? 'idle' : 'working');
             if (status.eventSequence > (previous?.eventSequence ?? 0) && status.status === 'active' && worker.modernContext?.executionId) {
+              // No PTY session id on the modern member path: unfenced by session (slot identity only).
               await squadExecutionService.renewWorkerLease(worker.modernContext.executionId, worker.slotId);
             }
           } else if (worker.sessionId) executionDeliveryDrain.remove(worker.sessionId);
@@ -3495,6 +3498,32 @@ export const nativeToolSettledHook = createNativeToolSettledHook({
   starts: nativeToolStarts,
   log: warnNativeToolPolicy
 });
+
+/**
+ * Per-claim signal: a cohort worker's own settled Write/Edit/MultiEdit/NotebookEdit call is recorded
+ * on its claim (confined to the Squad worktree; never a worktree watcher, since sibling units share it).
+ * Identity comes from the live PTY record, never the body (rule 1). Observational: errors are dropped.
+ */
+export function recordClaimWriteFromSettledEvent(
+  service: Pick<SquadExecutionService, 'recordWorkerToolEvent'>,
+  session: { projectId: string; cohort?: { executionId?: string; role?: string; slotId?: string } } | null | undefined,
+  projectId: string,
+  body: string,
+  sessionId?: string
+): Promise<void> {
+  const cohort = session?.cohort;
+  if (!session || session.projectId !== projectId || !cohort?.executionId || cohort.role !== 'worker' || !cohort.slotId) return Promise.resolve();
+  try {
+    const event: unknown = JSON.parse(body);
+    if (!event || typeof event !== 'object') return Promise.resolve();
+    const { tool_name: toolName, tool_input: input, hook_event_name: hookEvent } = event as Record<string, unknown>;
+    return Promise.resolve(service.recordWorkerToolEvent(cohort.executionId, cohort.slotId, { toolName, input, failed: hookEvent === 'PostToolUseFailure', ...(sessionId ? { sessionId } : {}) })).then(() => undefined, () => undefined);
+  } catch { return Promise.resolve(); }
+}
+const claimSignalSettledHook = async (projectId: string, sessionId: string, body: string): Promise<void> => {
+  await recordClaimWriteFromSettledEvent(squadExecutionService, ptys.getSession(sessionId), projectId, body, sessionId);
+  await nativeToolSettledHook(projectId, sessionId, body);
+};
 
 const productRouteNativeToolPolicyInventory = productRouteToolPolicyInventory({
   serverUrl: productServerUrl,
@@ -7422,6 +7451,7 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
   store: squadProposalStore,
   staging: squadAttachmentStaging,
   enabled: teamExecutionEnabled,
+  designDocs: (method, args) => runtimeSupervisor ? runtimeSupervisor.callPluginRpc('design-docs', method, args) : Promise.reject(new Error('plugin host is unavailable')),
   lookupProposer,
   projects: { get: (id) => store.listProjects().find((project) => project.id === id) },
   teams: { get: (id) => teams.list().find((team) => team.id === id) },
@@ -7574,7 +7604,12 @@ export async function judgePlanFindings(
 ): Promise<{ findings: SquadPlanFinding[]; bindings: SquadPlanBinding[] }> {
   const team = teamId ? teams.list().find((candidate) => candidate.id === teamId) : undefined;
   const units = plan.workUnits as ExecutionWorkUnitInput[];
-  if (!team) return { findings: buildPlanFindings({ units, slotRoutes: [], parserFindings: plan.findings, declaredSquad: plan.declaredSquad }), bindings: [] };
+  const titles = new Map(units.map((unit) => [unit.id, unit.title] as const));
+  const named = <T extends { stepId?: string }>(row: T): T & { stepTitle?: string } => {
+    const title = row.stepId ? titles.get(row.stepId) : undefined;
+    return title ? { ...row, stepTitle: title } : row;
+  };
+  if (!team) return { findings: buildPlanFindings({ units, slotRoutes: [], parserFindings: plan.findings, declaredSquad: plan.declaredSquad }).map(named), bindings: [] };
   const slots = expandTeamSlots(team);
   const models = await resolveTeamModelSnapshots(projectId, { teamId: team.id, slots: slots.map(() => ({ initialTask: '' })) });
   const slotRoutes = models.map((model) => ({ ...model, personaId: model.personaId ?? '' }));
@@ -7586,7 +7621,7 @@ export async function judgePlanFindings(
   });
   const counts = hardFindingCounts(findings);
   if (Object.keys(counts).length) logMainInfo('plan findings', `Squad ${team.id} blocking findings by requirement ${JSON.stringify(counts)}`);
-  return { findings, bindings: planBindings(units, slotRoutes, new Set(gate.degradedSlots.map((slot) => slot.slotId))) };
+  return { findings: findings.map(named), bindings: planBindings(units, slotRoutes, new Set(gate.degradedSlots.map((slot) => slot.slotId))).map(named) };
 }
 
 /** MCP deps for squad_propose / squad_plan_check; empty while Team jobs are off. */
@@ -7656,7 +7691,15 @@ const teamRoutingFor = (teamId: string) => teams.list().find((candidate) => cand
 const globalRoutingEnforcement = () => store.getConfig().teamRoutingEnforcementEnabled === true;
 
 const squadExecutionService = new SquadExecutionService({
+  personaName: (personaId) => personas.list().find((persona) => persona.id === personaId)?.name,
   noTurnWarnWindowMs: testNoTurnWarnWindowMs,
+  // 0 in config disables the reminder even under a test override; otherwise the build-gated override wins.
+  blockerReminderMs: () => {
+    const configured = store.getConfig().executionBlockerReminderMs;
+    return configured === 0 ? 0 : testVisibilityWindowMs('BLOCKER') ?? configured;
+  },
+  idleNoticeWindowMs: () => testVisibilityWindowMs('IDLE'),
+  heartbeatWarnWindowMs: () => testVisibilityWindowMs('HEARTBEAT'),
   resolveLaunchOptions: resolveSquadLaunchOptions,
   resolveNamedChecks: resolveSquadNamedChecks,
   runNamedCheck: runSquadNamedCheck,
@@ -7687,6 +7730,27 @@ const squadExecutionService = new SquadExecutionService({
       ? workerInjector.deliver(sessionId, text) : replyToSquadMember(sessionId, text),
    spawnDeferredWorker: (recordId, slotId) => deferredSeats.spawn(recordId, slotId),
    respawnWorker: (recordId, slotId) => workerRespawner.respawn(recordId, slotId),
+   // Owner `execution_slot_restart`: the card Restart path (same fences, no respawn budget); the engine rate-limits it.
+   restartWorker: (recordId, slotId) => restartSquadWorkerForOwner({
+     getSession: (id) => ptys.getSession(id),
+     listLifecycleRecords: () => teamLifecycle.list(),
+     launchIsClosing: (id) => teamLifecycle.launchIsClosing(id),
+     getExecution: async (projectId, executionId) => {
+       const found = await executionStore.getInProject(projectId, executionId);
+       return found && { state: found.state, callerPrincipalId: found.callerPrincipalId, teamLaunchRequestId: found.teamLaunchRequestId };
+     },
+     isTerminalExecutionState: (state) => isTerminalExecutionState(state as ExecutionRecord['state']),
+     respawnExited: async (id, slot) => {
+       const result = await workerRespawner.respawn(id, slot);
+       return result.ok ? { ok: true as const } : { ok: false as const, message: result.message };
+     },
+     restart: (id, opts) => squadWorkerRestarter.restart(id, opts),
+     getWorker: async (id, slot) => (await teamLifecycle.get(id))?.workers.find((worker) => worker.slotId === slot),
+     respawnSeat: async (id, slot) => {
+       const result = await workerRespawner.respawn(id, slot);
+       return result.ok ? result : { ok: false as const, message: result.message };
+     }
+   }, recordId, slotId),
    recycleSeat: (recordId, slotId) => seatRecycler.recycle(recordId, slotId),
    recordUnitDelivered: seatLifecycle.recordDelivered,
    // Keeps a worker parked on an open blocker out of the idle thread-session sweep (self-expiring timestamp).
@@ -7823,6 +7887,7 @@ const squadExecutionService = new SquadExecutionService({
   , claimRecoveryObserveEnabled: () => store.getConfig().executionClaimRecoveryObserveEnabled === true
   , claimRecoveryEnforceEnabled: () => store.getConfig().executionClaimRecoveryEnforceEnabled === true
   , planStartupGraceMs: () => store.getConfig().executionPlanStartupGraceMs ?? 0
+  , unitCheckpointsEnabled: () => store.getConfig().squadUnitCheckpointsEnabled !== false
   , isPlanCorrectionOpen: (executionId) => planCorrection.isPending(executionId)
    , getAgentState: (sessionId) => modernMemberStatus.has(sessionId)
      ? modernMemberStatus.get(sessionId)?.status === 'idle' ? 'idle' : 'working' : agentStatus.get(sessionId)
@@ -7834,6 +7899,7 @@ const squadExecutionService = new SquadExecutionService({
   // dead-agent zombie (the captured-PID reap targets the exited inner agent's
   // pid, not the wrapper's). Fire-and-forget; the pty layer owns the teardown.
   , closeWorkerSession: (sessionId) => { ptys.closeExpected(sessionId); }
+  , waitForWorkerSessionExit: (sessionId, timeoutMs) => waitForSessionExit(ptys, (id) => ptys.getSession(id) !== undefined, sessionId, timeoutMs)
   , routeFitObserveEnabled: () => store.getConfig().executionRouteFitObserveEnabled === true
   , readSessionStats: async (sessionId, options) => {
     const session = ptys.getSession(sessionId);
@@ -10211,6 +10277,8 @@ async function bootstrapNormal() {
        // A lifecycle Stop is the authoritative end of an interactive turn. The
        // tracker keeps fallback behaviour for harnesses that never send one.
        agentStatus.turnFinished(sessionId);
+       const turnCohort = ptys.getSession(sessionId)?.cohort;
+       if (turnCohort?.executionId && turnCohort.role === 'worker' && turnCohort.slotId) void squadExecutionService.recordWorkerTurn(turnCohort.executionId, turnCohort.slotId, sessionId).catch((error) => logMainError(`execution worker turn ${sessionId}`, error));
        wrapUpClose.onTurnFinished(sessionId);
        apiErrorResume.cancel(sessionId);
        disarm(apiErrorDispatchCtx, sessionId);
@@ -10372,7 +10440,7 @@ async function bootstrapNormal() {
     // server's signed native-tool-policy route instead.
     onNativeToolPolicyHook: nativeToolPolicyHook,
     ptyPluginTools,
-    onNativeToolSettledHook: nativeToolSettledHook,
+    onNativeToolSettledHook: claimSignalSettledHook,
     // Upper bound on the whole exchange; mcp-server.ts fails CLOSED (deny) if
     // this elapses, the inverse of overseerDecisionTimeoutMs's fail-open guard.
     nativeToolPolicyDecisionTimeoutMs: NATIVE_TOOL_POLICY_DECISION_TIMEOUT_MS,
@@ -11035,6 +11103,7 @@ async function bootstrapNormal() {
       executionClaimReconcileTimer ??= setInterval(() => {
         void reconcileModernMembers().then(() => squadExecutionService.reconcileActive()).catch((err) => logMainError('execution.reconcileActive', err));
         void squadExecutionService.redispatchStalled().catch((err) => logMainError('execution.redispatchStalled', err));
+        void squadExecutionService.sweepVisibility().catch((err) => logMainError('execution.sweepVisibility', err));
         // Deliver a queued coordinator wake BEFORE escalating its blocker: a remote
         // coordinator never emits a raw idle edge, so this poll is the only path that
         // gets the self-heal ask in front of it. Escalation is the fallback if it

@@ -160,7 +160,9 @@ export function createConfigStore(
     nativeAgentDiscoveryEnabled: true,
     executionClaimRecoveryObserveEnabled: true,
     executionClaimRecoveryEnforceEnabled: true,
-    executionPlanStartupGraceMs: 300_000
+    executionPlanStartupGraceMs: 300_000,
+    executionBlockerReminderMs: 1_800_000,
+    squadUnitCheckpointsEnabled: true
   });
 
   /** Defaults under `stored`; the default shell is resolved only when none is stored. */

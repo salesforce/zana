@@ -36,9 +36,12 @@ test('a worker that exits 1 raises a warning and Inbox row, and its card stays u
     await window.getByTestId('nav-agents').or(window.getByTestId('project-nav-agents')).click();
     // While the coordinator lives the exited worker stays visible inside its Squad card, past the 60 s linger.
     const nestedExit = window.locator('.agent-squad-worker.exited');
-    await expect(nestedExit).toHaveCount(1, { timeout: 30_000 });
+    // Single seat: Zana respawns it once and retries (#789), and the respawned seat exits too, so the Squad
+    // card holds the original and the respawned exited rows; neither disappears past the linger.
+    await expect.poll(() => nestedExit.count(), { timeout: 60_000 }).toBeGreaterThanOrEqual(1);
+    await expect.poll(() => nestedExit.count(), { timeout: 60_000 }).toBe(2);
     await window.waitForTimeout(65_000);
-    await expect(nestedExit).toHaveCount(1);
+    await expect(nestedExit).toHaveCount(2);
 
     // Workers of a Squad run always nest under the run's host card (the standalone Dismiss control
     // is for workers outside a run; see AgentBoard.workerExit.test.tsx). Stopping the run keeps the

@@ -2,7 +2,8 @@ import { product } from '../../lib/product-client.js';
 import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { Users, Search, FolderOpen, Play, ChevronDown, ChevronRight, Plus, Download, Upload, Copy, Pencil, Trash2, Crown, Star } from 'lucide-react';
-import type { Project, Team, Persona } from '@zana-ai/zcc-domain/product';
+import type { AppConfig, Project, Team, Persona } from '@zana-ai/zcc-domain/product';
+import { SquadAdvancedSettings } from '@/components/settings/SquadAdvancedSettings';
 import { useTeams, useData, useUi, usePersonas } from '@/store';
 import { resolveIcon } from '@/lib/resolveIcon';
 import { getScopedProjectId } from '@/lib/windowScope';
@@ -82,7 +83,13 @@ function tabCount(team: Team): number {
   return team.slots.reduce((sum, s) => sum + Math.max(1, Math.min(TEAM_SLOT_MAX, s.quantity ?? 1)), 0);
 }
 
-export function SquadsView() {
+export interface SquadsViewConfigProps {
+  config?: AppConfig;
+  onConfigDraft?: (config: AppConfig) => void;
+  onUpdate?: (patch: Partial<AppConfig>) => void | Promise<unknown>;
+}
+
+export function SquadsView({ config, onConfigDraft, onUpdate }: SquadsViewConfigProps = {}) {
   const allTeams = useTeams((s) => s.teams);
   const loading = useTeams((s) => s.loading);
   const projects = useData((s) => s.projects);
@@ -303,6 +310,9 @@ export function SquadsView() {
             )}
           </section>
         </div>
+        {config && onUpdate ? (
+          <SquadAdvancedSettings config={config} onConfigDraft={onConfigDraft} onUpdate={onUpdate} />
+        ) : null}
       {editor && (
         <SquadEditor
           team={editor.kind === 'open' ? editor.team : null}

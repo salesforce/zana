@@ -837,7 +837,7 @@ describe('execution store', () => {
     expect(blocked.state).toBe('BLOCKED');
     const blocker = blocked.blockers?.find((entry) => entry.workUnitId === 'unit');
     expect(blocker).toMatchObject({ audience: 'human', resolved: false });
-    expect(blocker?.question).toContain('never started a turn');
+    expect(blocker?.question).toContain('started a turn');
     // Idempotent: escalating an already-blocked unit refuses (no dup blocker / no churn).
     await expect(store.blockKickoffFailure(record.id, 'unit')).rejects.toThrow('work unit is not blockable for kickoff failure');
   }));

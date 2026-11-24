@@ -75,6 +75,10 @@ describe('stalled kickoff escalation honours routing', () => {
     clock.t += 700_000;
     replyToSession.mockClear();
     await service.redispatchStalled();
+    // #789: the only engineer seat is retried once before a person is asked.
+    expect((await store.get('execution-1'))!.workUnits![0]).toMatchObject({ state: 'CLAIMED', assignedSlotId: 'engineer:0' });
+    clock.t += 700_000;
+    await service.redispatchStalled();
     const record = (await store.get('execution-1'))!;
     expect(record.workUnits![0].state).toBe('BLOCKED');
     expect(record.workUnits![0].assignedSlotId).toBeUndefined();
@@ -116,6 +120,10 @@ describe('the service passes the routing enforcement flag to kickoff recovery', 
     const started = await service.start('owner', 'project-1', { version: 1, teamId: 'team-1', launchRequestId: 'request-1', summary: 'Build', slots: [{ initialTask: 'Run' }], coordinationMode: 'job-team', workUnits: [unit] } as never);
     if (!started.ok) throw new Error(started.message);
     await service.dispatchReady({ executionId: 'execution-1', projectId: 'project-1', slotId: 'orchestrator:lead', role: 'orchestrator' });
+    expect((await store.get('execution-1'))!.workUnits![0]).toMatchObject({ state: 'CLAIMED', assignedSlotId: 'engineer:0' });
+    clock.t += 700_000;
+    await service.redispatchStalled();
+    // #789: the only PASS seat is retried once before the block.
     expect((await store.get('execution-1'))!.workUnits![0]).toMatchObject({ state: 'CLAIMED', assignedSlotId: 'engineer:0' });
     clock.t += 700_000;
     await service.redispatchStalled();

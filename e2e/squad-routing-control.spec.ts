@@ -21,6 +21,7 @@ test('Squad routing enforcement persists through the built Electron editor', asy
   await window.getByTestId('settings-nav-squads').click();
   await window.getByRole('button', { name: 'Open E2E Routing Squad' }).click();
 
+  await window.getByTestId('team-advanced').locator(':scope > summary').click();
   const routing = window.getByLabel('Squad routing');
   await expect(routing).toContainText('Use default');
   await routing.click();
@@ -33,5 +34,6 @@ test('Squad routing enforcement persists through the built Electron editor', asy
   })).toBe(true);
 
   await window.getByRole('button', { name: 'Open E2E Routing Squad' }).click();
+  await window.getByTestId('team-advanced').locator(':scope > summary').click();
   await expect(window.getByLabel('Squad routing')).toContainText('On');
 });

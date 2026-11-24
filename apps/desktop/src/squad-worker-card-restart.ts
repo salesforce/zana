@@ -115,3 +115,47 @@ export async function restartSquadWorkerCard(
   const result = await deps.restart(session.id, { maySpawn: async () => !await deps.launchIsClosing(record.id) });
   return result.ok ? result : { ...result, ...(result.message ? { message: safeMessage(result.message) } : {}) };
 }
+
+export interface SquadWorkerOwnerRestartDeps extends SquadWorkerCardRestartDeps {
+  /** The lifecycle slot (main-owned) for a launch record, or undefined when the record or slot is gone. */
+  getWorker(recordId: string, slotId: string): Promise<{ sessionId?: string; process?: string } | undefined>;
+  /** Respawn a seat whose session record is gone (same path as the coordinator's `execution.worker.respawn`, minus its budget). */
+  respawnSeat(recordId: string, slotId: string): Promise<{ ok: true; sessionId: string } | { ok: false; message: string }>;
+}
+
+export type SquadWorkerOwnerRestartResult =
+  | { ok: true; sessionId: string; mode: 'respawned' | 'restarted' }
+  | { ok: false; reason: string; message: string };
+
+/**
+ * Owner-agent restart (`execution_slot_restart`): the card Restart path ({@link restartSquadWorkerCard}) driven by the lifecycle
+ * slot instead of a renderer-supplied session id, so it keeps every fence the card has. When the slot's session record is
+ * already gone (a dead worker with no terminal session), the seat is respawned directly. The caller (the engine) has already
+ * verified that the owner owns the run and that the slot belongs to it, and applies the owner rate limit.
+ */
+export async function restartSquadWorkerForOwner(
+  deps: SquadWorkerOwnerRestartDeps,
+  recordId: string,
+  slotId: string
+): Promise<SquadWorkerOwnerRestartResult> {
+  const worker = await deps.getWorker(recordId, slotId);
+  if (!worker) return { ok: false, reason: 'not-found', message: 'the worker slot was not found' };
+  const dead = worker.process !== undefined && TERMINAL_SLOT_PROCESSES.has(worker.process);
+  const card = worker.sessionId
+    ? await restartSquadWorkerCard(deps, worker.sessionId)
+    : { ok: false as const, reason: 'not-found' as const, message: undefined };
+  if (card.ok) {
+    const after = await deps.getWorker(recordId, slotId);
+    const sessionId = after?.sessionId ?? worker.sessionId!;
+    return { ok: true, sessionId, mode: sessionId !== worker.sessionId ? 'respawned' : 'restarted' };
+  }
+  if ((card.reason === 'not-found' || card.reason === 'not-squad-worker' || card.reason === 'not-a-worker') && dead) {
+    if (await deps.launchIsClosing(recordId)) return { ok: false, reason: 'run-closing', message: 'the Squad run is closing' };
+    const respawned = await deps.respawnSeat(recordId, slotId).catch((error: unknown) => {
+      console.error(`[main] squad owner restart: respawn of slot ${slotId} (record ${recordId}) failed`, error);
+      return { ok: false as const, message: 'the worker could not be restarted' };
+    });
+    return respawned.ok ? { ok: true, sessionId: respawned.sessionId, mode: 'respawned' } : { ok: false, reason: 'worker-exited', message: safeMessage(respawned.message) };
+  }
+  return { ok: false, reason: card.reason, message: card.message ?? `restart refused: ${card.reason}` };
+}

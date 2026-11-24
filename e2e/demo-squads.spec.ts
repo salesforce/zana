@@ -57,8 +57,13 @@ const NARRATION: Array<{ caption: string; ms: number }> = process.env.ZCC_DEMO_N
 const GOAL = 'Build the Atlas site: a Home page and an About page, with a shared navigation label.';
 
 async function tap(page: Page, target: Locator): Promise<void> {
-  await target.scrollIntoViewIfNeeded();
-  const box = await target.boundingBox();
+  // A card re-renders as its run changes state (Working to Done); scrolling a node that was replaced
+  // mid-call throws instead of retrying, so look the element up again until it holds still.
+  let box: Awaited<ReturnType<Locator['boundingBox']>> = null;
+  await expect(async () => {
+    await target.scrollIntoViewIfNeeded({ timeout: 2_000 });
+    box = await target.boundingBox();
+  }).toPass({ timeout: 15_000, intervals: [250, 500, 1_000] });
   // Hidden Linux windows can throttle each animated move to one frame per second.
   // The visible cursor animation is needed only for a demo recording.
   if (box && process.env.ZCC_E2E_RECORD_VIDEO) await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 14 });
@@ -205,7 +210,7 @@ test('demo: define and launch a Squad', async ({ app }) => {
     await beat(600);
 
     await caption('Crown the orchestrator: it starts first, plans and delegates');
-    await tap(page, editor.getByLabel('Mark as orchestrator').nth(0));
+    await tap(page, editor.getByRole('button', { name: 'Orchestrator', exact: true }).nth(0));
     await beat(1400);
 
     await caption('Optional: opening prompt, default project, worktree and launch policy');

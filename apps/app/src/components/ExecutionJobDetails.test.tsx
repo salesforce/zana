@@ -73,6 +73,28 @@ describe('ExecutionJobDetails phase 5 projection', () => {
     expect(screen.queryByRole('button', { name: 'Respond' })).toBeNull();
   });
 
+  it('scrolls an open blocker into view once, and never for a closed run', async () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+    const open: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
+    open.execution.currentBlocker = { id: 'blocker-open', workUnitId: 'unit-1', slotId: 'slot-1', question: 'Which color?', waitingSince: Date.now() - 360_000 };
+    (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(open);
+    const { unmount } = render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+    await screen.findByText('Which color?');
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('execution-blocker-wait').textContent).toMatch(/^Waiting 6m/);
+    unmount();
+
+    scrollIntoView.mockClear();
+    const closed: ExecutionBoardSnapshot = structuredClone(open);
+    closed.execution.state = 'STOPPED';
+    (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(closed);
+    render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+    await screen.findByText('Which color?');
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+
   const timedOut = (timeoutRecovery?: { available: boolean; reason?: string }): ExecutionBoardSnapshot => {
     const snapshot: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
     snapshot.execution.state = 'STOPPED';

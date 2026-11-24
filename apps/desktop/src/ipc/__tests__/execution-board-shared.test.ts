@@ -260,7 +260,7 @@ it('projects Modern squad members from the team lifecycle onto their execution o
 
 it('stop and fix the plan: main re-validates project, run and blocker before stopping, and keeps the run record', async () => {
   const channel = state.windows.get(IPC.executionBoard.stopAndFixPlan)!;
-  const run = { ...execution, id: 'execution', projectId: 'registered', state: 'BLOCKED', stateVersion: 5, workUnits: [], blockers: [
+  const run = { ...execution, id: 'execution', projectId: 'registered', state: 'BLOCKED', stateVersion: 5, workUnits: [{ id: 'a', title: 'Write A', dependencies: [], history: [] }], blockers: [
     { id: 'no-route:1:a:1:0', workUnitId: 'a', question: 'No worker can do step a.', noRoute: true, resolved: false },
     { id: 'plain', workUnitId: 'a', question: 'q', resolved: false },
     { id: 'done', workUnitId: 'a', question: 'q', noRoute: true, resolved: true }
@@ -280,11 +280,19 @@ it('stop and fix the plan: main re-validates project, run and blocker before sto
   const ok = await channel({ id: 8 }, 'registered', 'execution', 'no-route:1:a:1:0');
   expect(ok).toMatchObject({ ok: true, value: { executionId: 'execution' } });
   expect(stopForPlanCorrection).toHaveBeenCalledExactlyOnceWith('execution');
-  expect(appendOnce).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'registered', executionId: 'execution', dedupeKey: 'plan-fix:execution:no-route:1:a:1:0' }));
+  expect(appendOnce).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'registered', executionId: 'execution', dedupeKey: 'plan-fix:execution:no-route:1:a:1:0', comments: expect.stringContaining('a: Write A') }));
   // A failing Inbox append does not undo the stop.
   appendOnce.mockRejectedValueOnce(new Error('inbox down'));
   await expect(channel({ id: 8 }, 'registered', 'execution', 'no-route:1:a:1:0')).resolves.toMatchObject({ ok: true });
   expect(logMainError).toHaveBeenCalled();
+  // A blocker whose unit is no longer on the run (or a run with no units) still names the step by its id.
+  for (const workUnits of [[], undefined]) {
+    appendOnce.mockClear();
+    getRecord.mockImplementation(async () => ({ ...run, workUnits }));
+    await expect(channel({ id: 8 }, 'registered', 'execution', 'no-route:1:a:1:0')).resolves.toMatchObject({ ok: true });
+    expect(appendOnce).toHaveBeenCalledWith(expect.objectContaining({ comments: expect.stringMatching(/Step a could not be given/) }));
+  }
+  getRecord.mockImplementation(async (projectId: string, id: string) => projectId === 'registered' && id === 'execution' ? run : undefined);
   // A vanished run after the stop reports not found; an ended run is refused without stopping again.
   stopForPlanCorrection.mockResolvedValueOnce(undefined);
   await expect(channel({ id: 8 }, 'registered', 'execution', 'no-route:1:a:1:0')).resolves.toMatchObject({ code: 'NOT_FOUND' });

@@ -54,6 +54,7 @@ let planTierFitDep: SquadProposalServiceDeps['planTierFit'];
 let planFindingsDep: SquadProposalServiceDeps['planFindings'];
 let canonicalDep: SquadProposalServiceDeps['canonicalPlanText'];
 let previewDep: SquadProposalServiceDeps['resolveLaunchPreview'];
+let designDocsDep: SquadProposalServiceDeps['designDocs'];
 
 const sendToProposer = vi.fn<NonNullable<SquadProposalServiceDeps['sendToProposer']>>();
 
@@ -71,6 +72,7 @@ function build(over: { staging?: StagingStore | null; maxRecords?: number; noSen
     teamHostProblem: () => hostProblem,
     expandTeamSlots: () => Array.from({ length: slotCount }),
     resolveSquadPlan: resolveSquadPlan as never,
+    ...(designDocsDep ? { designDocs: (...a: Parameters<NonNullable<SquadProposalServiceDeps['designDocs']>>) => designDocsDep!(...a) } : {}),
     planTierFit: (...a) => planTierFitDep?.(...a) ?? Promise.resolve([]),
     ...(canonicalDep ? { canonicalPlanText: (...a: Parameters<NonNullable<SquadProposalServiceDeps['canonicalPlanText']>>) => canonicalDep!(...a) } : {}),
     ...(planFindingsDep ? { planFindings: (...a: Parameters<NonNullable<SquadProposalServiceDeps['planFindings']>>) => planFindingsDep!(...a) } : {}),
@@ -137,6 +139,7 @@ beforeEach(() => {
   planTierFitDep = undefined;
   planFindingsDep = undefined;
   canonicalDep = undefined;
+  designDocsDep = undefined;
   previewDep = async ({ projectId }) => ({
     launchOptions: {},
     resolvedLaunch: resolveAllLaunch({}),
@@ -397,13 +400,13 @@ describe('checkPlan tier fit (advisory)', () => {
     resolveSquadPlan.mockReturnValue({ workUnits: units });
     const planTierFit = vi.fn(async () => [finding(kind)]);
     const res = await withFit(planTierFit).checkPlan(route, { text: '# p', teamId: 't1' });
-    expect(res).toEqual({ ok: true, value: { ok: true, steps: [{ id: 'u1', title: 'One', dependencies: [], writeScope: [] }], tierFit: { findings: [finding(kind)] }, note: NOT_JUDGED } });
+    expect(res).toEqual({ ok: true, value: { ok: true, steps: [{ id: 'u1', title: 'One', dependencies: [], writeScope: [], skippedIfFails: [] }], tierFit: { findings: [finding(kind)] }, note: NOT_JUDGED } });
     expect(planTierFit).toHaveBeenCalledWith(route.projectId, 't1', units);
   });
 
   it('omits tierFit with no findings, no teamId, no dep, or a failing dep', async () => {
     resolveSquadPlan.mockReturnValue({ workUnits: units });
-    const plain = { ok: true, value: { ok: true, steps: [{ id: 'u1', title: 'One', dependencies: [], writeScope: [] }], note: NOT_JUDGED } };
+    const plain = { ok: true, value: { ok: true, steps: [{ id: 'u1', title: 'One', dependencies: [], writeScope: [], skippedIfFails: [] }], note: NOT_JUDGED } };
     expect(await withFit(async () => []).checkPlan(route, { text: '# p', teamId: 't1' })).toEqual(plain);
     const spy = vi.fn(async () => [finding('over-tiered')]);
     expect(await withFit(spy).checkPlan(route, { text: '# p' })).toEqual(plain);
@@ -1113,7 +1116,7 @@ describe('checkPlan', () => {
     expect(code(await s.checkPlan(route, {}))).toBe('INVALID');
     expect(code(await s.checkPlan(route, { path: 'plan.md', text: 'x' }))).toBe('INVALID');
     expect(await s.checkPlan(route, { path: 'plan.md' })).toMatchObject({ ok: true, value: { ok: true, steps: [
-      { id: 'u1', writeScope: ['a.ts'] }, { id: 'u2', dependencies: ['u1'], writeScope: [] }] } });
+      { id: 'u1', writeScope: ['a.ts'], skippedIfFails: ['u2'] }, { id: 'u2', dependencies: ['u1'], writeScope: [], skippedIfFails: [] }] } });
     expect(resolveSquadPlan).toHaveBeenCalledWith('provided', ['# plan']);
     expect(await s.checkPlan(route, { text: 'inline' })).toMatchObject({ ok: true, value: { ok: true } });
     resolveSquadPlan.mockReturnValue({ planError: 'bad' });
@@ -1176,6 +1179,21 @@ describe('review', () => {
     expect(issueSources).toHaveBeenCalledWith(7, 'p1', [join(root, 'proj', 'plan.md')], expect.objectContaining({
       roots: [join(root, 'proj'), homeDir, cloneDir], home: homeDir
     }));
+  });
+  it('carries the skip impact of each step in the prefill: only steps that skip something, capped with a hidden count', async () => {
+    const r = await svc.service.review(7, 'prop-1', allow);
+    if (!r.ok) throw new Error(JSON.stringify(r));
+    expect(r.value.planSkipImpact).toEqual([{ stepId: 'u1', title: 'One', skips: ['u2'], skipTitles: ['Two'] }]);
+    expect(r.value).not.toHaveProperty('planSkipImpactHidden');
+    const units = Array.from({ length: 70 }, (_, i) => ({ id: `s${i}`, title: `S${i}`, dependencies: i ? [`s${i - 1}`] : [], files: [] }));
+    resolveSquadPlan.mockReturnValue({ workUnits: units });
+    const big = build();
+    await big.service.propose(route, input);
+    const many = await big.service.review(7, 'prop-1', allow);
+    if (!many.ok) throw new Error(JSON.stringify(many));
+    expect(many.value.planSkipImpact).toHaveLength(60);
+    expect(many.value.planSkipImpactHidden).toBe(9);
+    expect(many.value.planSkipImpact![0]!.skips).toHaveLength(69);
   });
   it('caps the findings and the binding table in the prefill and says how many were left out, blocking first', async () => {
     const finding = (severity: 'blocking' | 'warning' | 'repair', i: number) => ({ stepId: `s${i}`, requirement: 'plan' as const, severity, candidateSlots: [], suggestion: '', detail: 'x' });
@@ -1852,5 +1870,89 @@ describe('attachments kept for review', () => {
       svc = build({ staging: null });
       expect(await svc.service.sweepStaged()).toBe(0);
     });
+  });
+});
+
+describe('doc:// plan sources', () => {
+  const PLAN = '## Execution Plan\n### a: One\n- **Work:** x';
+  const docRpc = (over: { projectId?: string | null; size?: number; encoding?: string; content?: string; missing?: boolean } = {}): NonNullable<SquadProposalServiceDeps['designDocs']> =>
+    vi.fn(async (method: string, args: Record<string, unknown>) => {
+      if (args.doc !== 'dd_abc123' || over.missing) throw new Error('not found');
+      if (method === 'get') {
+        return { id: 'dd_abc123', projectId: over.projectId === undefined ? 'p1' : over.projectId, entryPath: 'plan.md', files: [{ path: 'plan.md', size: over.size ?? PLAN.length }] };
+      }
+      return { path: args.path, content: over.content ?? PLAN, encoding: over.encoding ?? 'utf8' };
+    }) as never;
+  const withDocs = (rpc: SquadProposalServiceDeps['designDocs']) => { designDocsDep = rpc; return build(); };
+
+  it('squad_plan_check reads the doc through the plugin and judges its text', async () => {
+    const rpc = docRpc();
+    const res = await withDocs(rpc).service.checkPlan(route, { path: 'doc://dd_abc123' });
+    expect(res).toMatchObject({ ok: true, value: { ok: true } });
+    expect(resolveSquadPlan).toHaveBeenCalledWith('provided', [PLAN]);
+    expect(rpc).toHaveBeenCalledWith('get', { doc: 'dd_abc123' });
+    expect(rpc).toHaveBeenCalledWith('readFile', { doc: 'dd_abc123', path: 'plan.md' });
+  });
+
+  it('propose snapshots the doc as an attachment and writes nothing into the project', async () => {
+    const before = realpathSync(join(root, 'proj'));
+    const s = withDocs(docRpc());
+    const res = await s.service.propose(route, { ...input, sources: ['doc://dd_abc123/plan.md'] });
+    expect(res.ok).toBe(true);
+    expect(resolveSquadPlan.mock.calls.at(-1)![1]).toContain(PLAN);
+    const record = (await s.store.list())[0]!;
+    expect(record.sources).toHaveLength(1);
+    expect(record.sources[0]).toMatchObject({ attachment: true, relPath: 'design-doc-dd_abc123-plan.md' });
+    expect(record.sources[0]!.path.startsWith(before)).toBe(false);
+    expect(await fsp.readdir(join(root, 'proj'))).toEqual(['docs', 'plan.md']);
+  });
+
+  it('refuses another project\'s doc, an unassigned doc, an unknown doc and a missing file, saying nothing about existence for the first two', async () => {
+    const other = await withDocs(docRpc({ projectId: 'p9' })).service.checkPlan(route, { path: 'doc://dd_abc123' });
+    expect(other).toMatchObject({ ok: false, code: 'SOURCE_NOT_FILE' });
+    expect(code(await withDocs(docRpc({ projectId: null })).service.checkPlan(route, { path: 'doc://dd_abc123' }))).toBe('SOURCE_NOT_FILE');
+    expect(code(await withDocs(docRpc({ missing: true })).service.checkPlan(route, { path: 'doc://dd_abc123' }))).toBe('SOURCE_NOT_FILE');
+    expect(code(await withDocs(docRpc()).service.checkPlan(route, { path: 'doc://dd_abc123/nope.md' }))).toBe('SOURCE_NOT_FILE');
+    expect(code(await withDocs(docRpc()).service.propose(route, { ...input, sources: ['doc://dd_zzz'] }))).toBe('SOURCE_NOT_FILE');
+    expect(code(await withDocs(docRpc({ projectId: 'p9' })).service.propose(route, { ...input, sources: ['doc://dd_abc123'] }))).toBe('SOURCE_NOT_FILE');
+  });
+
+  it('refuses oversize, binary and malformed doc sources, and every doc source when design docs are unavailable', async () => {
+    expect(code(await withDocs(docRpc({ size: 5 * 1024 * 1024 })).service.checkPlan(route, { path: 'doc://dd_abc123' }))).toBe('SOURCE_TOO_LARGE');
+    expect(code(await withDocs(docRpc({ content: 'x'.repeat(4 * 1024 * 1024 + 1) })).service.checkPlan(route, { path: 'doc://dd_abc123' }))).toBe('SOURCE_TOO_LARGE');
+    expect(code(await withDocs(docRpc({ encoding: 'base64' })).service.checkPlan(route, { path: 'doc://dd_abc123' }))).toBe('SOURCE_NOT_FILE');
+    expect(code(await withDocs(docRpc()).service.checkPlan(route, { path: 'doc://dd_abc123/../x' }))).toBe('SOURCE_NOT_FILE');
+    designDocsDep = undefined;
+    expect(await build().service.checkPlan(route, { path: 'doc://dd_abc123' })).toMatchObject({ ok: false, code: 'SOURCE_NOT_ALLOWED' });
+    expect(code(await build().service.propose(route, { ...input, sources: ['doc://dd_abc123'] }))).toBe('SOURCE_NOT_ALLOWED');
+  });
+});
+
+describe('checkPlan lint output', () => {
+  it('propose refuses a plan with no steps and says why', async () => {
+    resolveSquadPlan.mockReturnValue({ planError: 'no executable steps found' });
+    const res = await svc.service.propose(route, { ...input, goal: '# Notes\n\nprose only.' });
+    expect(res).toMatchObject({ ok: false, code: 'INVALID_PLAN', message: expect.stringContaining('no executable steps found. ') });
+  });
+
+  it('explains "no executable steps found" with a diagnosis finding while keeping the stable reason', async () => {
+    resolveSquadPlan.mockReturnValue({ planError: 'no executable steps found' });
+    const res = await svc.service.checkPlan(route, { text: '## Notes\n### Idea\nprose' });
+    expect(res).toMatchObject({ ok: true, value: { ok: false, reason: 'no executable steps found', findings: [{ requirement: 'plan', severity: 'warning' }] } });
+    const detail = (res as unknown as { value: { findings: Array<{ detail: string }> } }).value.findings[0]!.detail;
+    expect(detail).toMatch(/no "## Execution Plan" section/);
+  });
+
+  it('flags a 16-step serial chain when no Squad is named, and not a short or wide plan', async () => {
+    planFindingsDep = async (_p, _t, plan) => ({ findings: [], bindings: [], ...{ _n: plan.workUnits.length } });
+    const chain = Array.from({ length: 16 }, (_, i) => ({ id: `s${i}`, title: `S${i}`, dependencies: i ? [`s${i - 1}`] : [] }));
+    resolveSquadPlan.mockReturnValue({ workUnits: chain });
+    const res = await build().service.checkPlan(route, { text: '# p' });
+    expect(res).toMatchObject({ ok: true, value: { findings: [{ requirement: 'plan', severity: 'warning' }] } });
+    expect((res as unknown as { value: { findings: Array<{ detail: string }> } }).value.findings[0]!.detail).toContain('width is 1 across 16 steps');
+    resolveSquadPlan.mockReturnValue({ workUnits: chain.slice(0, 3) });
+    expect(await build().service.checkPlan(route, { text: '# p' })).toMatchObject({ value: { findings: [] } });
+    resolveSquadPlan.mockReturnValue({ workUnits: chain.map((c) => ({ ...c, dependencies: [] })) });
+    expect(await build().service.checkPlan(route, { text: '# p' })).toMatchObject({ value: { findings: [] } });
   });
 });

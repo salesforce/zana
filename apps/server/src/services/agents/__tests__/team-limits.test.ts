@@ -27,4 +27,11 @@ describe('sanitizeTeamLimits', () => {
       expect(sanitizeTeamLimits({ maxConcurrent: bad })).toBeUndefined();
     }
   });
+
+  it('sanitizes the output-only ceiling like the other clocks', () => {
+    expect(sanitizeTeamLimits({ claimOutputCeilingMs: 1_800_000.7 })).toEqual({ claimOutputCeilingMs: 1_800_000 });
+    expect(sanitizeTeamLimits({ claimOutputCeilingMs: 5 })).toEqual({ claimOutputCeilingMs: TEAM_LIMIT_BOUNDS.claimOutputCeilingMs.min });
+    expect(sanitizeTeamLimits({ claimOutputCeilingMs: DAY * 9 })).toEqual({ claimOutputCeilingMs: DAY });
+    expect(sanitizeTeamLimits({ claimOutputCeilingMs: -1, claimStallMs: 300_000 })).toEqual({ claimStallMs: 300_000 });
+  });
 });

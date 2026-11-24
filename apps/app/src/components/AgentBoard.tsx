@@ -5,6 +5,7 @@ import { Bot, AlertCircle, Zap, Moon, CheckCircle2, HelpCircle, CheckCheck, Paus
 import type { AgentState, ExecutionBoardProjection, IdleResolution, IdleTriageResult, OverseerActivity, Persona, ScheduledTask, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { scheduleSummary } from '@zana-ai/zcc-domain/schedule-spec';
 import { profileIcon, personaIcon } from '../lib/profileIcon.js';
+import { squadWorkerVisibility, squadWorkerVisibilityText } from '../lib/squad-worker-visibility.js';
 import { isRecentlyFinished, isRetainedWorkerExit } from '../lib/sessionBuckets.js';
 import { sortProjectsForDisplay, usePersonas, useData, useScheduler, useTeams, useUi } from '../store.js';
 import { agentSessionTransport, isModernSquadThread, squadTransportClass, squadTransportKind } from '../lib/squad-transport.js';
@@ -388,11 +389,24 @@ export function partitionExecutionMembers(
     // card in the same project as a stand-in; executionHost() falls back to
     // the hardcoded 'Project'/'claude' placeholder only when even that misses.
     const template = items.find((item) => item.projectId === execution.projectId);
-    const host = executionHost(template, execution);
+    // Borrow only the project look from the template. Cloning its session would reuse a live
+    // worker's id and cohort, rendering that worker once per finished run and nesting the
+    // finished run under the live Squad.
+    const host = executionHost(
+      template && { projectId: template.projectId, projectName: template.projectName, projectColor: template.projectColor, liveSubagents: 0 } as AgentCard,
+      execution,
+      true
+    );
     syntheticByExecution.set(execution.executionId, host);
     top.push(host);
   }
   return { top, workersByHost };
+}
+
+/** Card line for a Squad waiting on a human answer, so the wait is visible without opening Squad details. */
+export function blockerWaitText(execution: ExecutionBoardProjection, now: number): string {
+  const since = execution.currentBlocker?.waitingSince;
+  return since === undefined ? 'Needs your answer' : `Needs your answer · waiting ${formatDuration(now - since)}`;
 }
 
 /** A Job needs attention only while its details expose an answer the user can act on. */
@@ -705,6 +719,9 @@ function SquadWorkers({
   const hidden = workers.length - visible.length;
   return (
     <div className="agent-squad-workers">
+      {execution?.startedFrom?.title?.trim() && (
+        <div className="agent-squad-owner" data-testid="squad-owner">Owner {execution.startedFrom.title.trim()}</div>
+      )}
       {visible.map((w) => {
         const { session: t } = w;
         const exited = t.status === 'exited';
@@ -716,6 +733,8 @@ function SquadWorkers({
           : undefined;
         const activity = assignment ? assignment.title : exited ? 'Exited' : 'Waiting for assignment';
         const dur = formatDuration((exited ? t.finishedAt ?? t.createdAt : now) - t.createdAt);
+        const visibility = exited ? undefined : squadWorkerVisibility(execution, slotId, now);
+        const visibilityText = visibility ? squadWorkerVisibilityText(visibility, now, { includeSquad: false, includeOwner: false }) : '';
         return (
           <button
             key={t.id}
@@ -729,6 +748,15 @@ function SquadWorkers({
             <span className="agent-squad-worker-label">{slotLabel}</span>
             <FleetKindChip kind={w.modernThreadId ? 'thread' : 'agent'} />
             <span className="agent-squad-worker-dur">{exited ? `ran ${dur}` : dur}</span>
+            {visibility && visibilityText && (
+              <span
+                className={`agent-squad-worker-visibility${visibility.stale ? ' is-stale' : ''}`}
+                data-testid="squad-worker-visibility"
+                data-stale={visibility.stale ? 'true' : 'false'}
+              >
+                {visibilityText}
+              </span>
+            )}
           </button>
         );
       })}
@@ -1092,6 +1120,11 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
           >
             <triageBadge.icon size={11} aria-hidden="true" />
             <span className="agent-card-triage-label">{c.triage!.summary || triageBadge.label}</span>
+          </span>
+        )}
+        {execution && executionNeedsAttention(execution) && (
+          <span className="agent-card-blocker-wait" data-testid="agent-card-blocker-wait">
+            {blockerWaitText(execution, now)}
           </span>
         )}
         <span className="agent-card-meta">

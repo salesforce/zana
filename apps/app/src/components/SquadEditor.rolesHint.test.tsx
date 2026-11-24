@@ -44,13 +44,25 @@ describe('slotNeedsRolesHint', () => {
 });
 
 describe('Squad editor roles hint', () => {
-  it('shows the hint only on the unlabeled, roleless slot, and never says Workspace', () => {
+  it('marks only the unlabeled, roleless slot and explains it once in the legend, never saying Workspace', () => {
     render(<SquadEditor team={team} mode="edit" onClose={vi.fn()} />);
-    const hints = screen.getAllByText(SLOT_ROLES_HINT);
-    expect(hints).toHaveLength(1);
+    expect(screen.getAllByTestId('team-slot-roles-marker')).toHaveLength(1);
+    const marker = screen.getByTestId('team-slot-roles-marker');
+    expect(marker.getAttribute('tabindex')).toBeNull();
+    expect(marker.getAttribute('aria-hidden')).toBe('true');
+    expect(screen.getAllByLabelText('Slot label').filter((i) => i.getAttribute('aria-describedby') === 'team-slot-roles-legend')).toHaveLength(1);
+    expect(screen.getAllByText(SLOT_ROLES_HINT)).toHaveLength(1);
+    expect(screen.getByTestId('team-slot-legend').contains(screen.getByText(SLOT_ROLES_HINT))).toBe(true);
     expect(SLOT_ROLES_HINT).toMatch(/Squad definition/);
     expect(SLOT_ROLES_HINT).toMatch(/register_teams/);
     expect(SLOT_ROLES_HINT).not.toMatch(/workspace/i);
+  });
+
+  it('omits marker and legend line when every slot has roles or a label', () => {
+    const ok: Team = { ...team, slots: [team.slots[0]!, team.slots[2]!, team.slots[3]!] };
+    render(<SquadEditor team={ok} mode="edit" onClose={vi.fn()} />);
+    expect(screen.queryByTestId('team-slot-roles-marker')).toBeNull();
+    expect(screen.queryByText(SLOT_ROLES_HINT)).toBeNull();
   });
 
   it('keeps slot roles through a save', async () => {

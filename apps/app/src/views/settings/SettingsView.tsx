@@ -327,7 +327,7 @@ export function SettingsView() {
         ) : tab === 'personas' ? (
           <PersonasPanel />
         ) : tab === 'squads' ? (
-          <SquadsPanel />
+          <SquadsPanel config={config} onConfigDraft={setConfig} onUpdate={update} />
         ) : tab === 'usage' ? (
           <UsagePanel />
         ) : tab === 'performance' ? (

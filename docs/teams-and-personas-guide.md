@@ -264,7 +264,7 @@ non-empty `files` scope before a durable plan registers.
 
 #### Run limits
 
-A Squad can set three optional limits in the Squad editor. Leave a field blank to keep
+A Squad can set four optional limits in the Squad editor. Leave a field blank to keep
 the default.
 
 | Limit | Allowed range | Default |
@@ -272,6 +272,7 @@ the default.
 | Max sessions (`maxConcurrent`) | 1 to 32 | 32 sessions |
 | Claim wall-clock (minutes) | 1 minute to 24 hours | 20 minutes |
 | Claim stall (minutes) | 1 minute to 24 hours | 10 minutes |
+| Output-only ceiling (minutes) | 1 minute to 24 hours | 30 minutes |
 
 Main validates the limits on every save: invalid values are dropped and out-of-range
 values are clamped. The limits apply to every run of that saved Squad: runs started with
@@ -285,7 +286,13 @@ sets how long a claimed worker can show no turn before the no-turn warning fires
 **Max sessions** is a launch cap, not a throttle. It counts the coordinator plus every
 worker. A roster larger than the cap is refused at launch, and the limit does not queue
 workers or reduce how many are busy at once. To run fewer workers, define a Squad with
-fewer worker slots. Claim limits (wall-clock and stall) apply to every claimed unit.
+fewer worker slots. Claim limits (wall-clock and stall) apply to every claimed unit. The **output-only ceiling** bounds a worker that keeps printing output but sends no turn and changes no file; that worker is exempt from the other two claim limits.
+
+The editor groups the form into Roster, Prompt & project, Worktree, Run limits and a collapsed Advanced section (routing, lean workers, keep orchestrator, default planning, launch approval). Each seat has icon toggles: start only when its first unit is ready, start each unit in a fresh session, and the orchestrator crown. The first two show as unavailable on the orchestrator row.
+
+#### Waiting-for-you reminders
+
+A Squad blocker that needs a person (not the coordinator) and stays unanswered raises one reminder per blocker: a run warning, an Inbox row "Squad still needs your answer", and, while no Zana window is focused, a native desktop notification (the row is posted at the `loud` Inbox level, so it uses the same banner, dock badge and click-through as other loud entries). The wait window is `AppConfig.executionBlockerReminderMs`, set in Settings > Squads > Advanced > Squad question reminders in minutes: blank is the default (30), `0` turns reminders off, otherwise 1-1440. Main clamps the stored value (`normalizeConfig`), so the renderer check is advisory. Names in the reminder read `id: title`.
 
 #### Launching from Settings
 
@@ -570,6 +577,12 @@ goal" is refused; the agent proposes a plan it has written and checked instead
 - The 32-tab cap per team launch means a team with many high-quantity slots will be truncated.
 - `baseProfile: "claude-yolo"` ignores `permissionMode` (it forces skip-permissions regardless).
 - Extension-contributed teams/personas are in-memory and read-only — they vanish when the extension is disabled.
+
+### Unit checkpoints
+
+Each Squad unit gets a git-based checkpoint when it completes or fails: a patch per changed file against the checkout's HEAD, captured from the working tree by diffing against the state recorded at claim time. Edits made by shell commands are recorded too, but they are inferred rather than seen, so they are report-only: listed for the owner and never restored. A failed unit's own file-edit-tool writes are restored when it is safe (files no other unit touched and that were clean at claim time); everything else is left for the owner. No commits, stashes or branches are created.
+
+When a checkpoint is partial or cannot be taken, the run's Inbox gets a "Squad checkpoint needs review" row, one per unit (`id: title`). Turn the feature off in **Settings > Squads > Advanced > Checkpoint each unit** (default on, `squadUnitCheckpointsEnabled`).
 
 ## Internal Comparison Guidance
 

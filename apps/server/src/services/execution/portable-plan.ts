@@ -780,6 +780,151 @@ function withFailureMeta(failure: { ok: false; reason: string }): Extract<Portab
   return { ...failure, parserVersion: PARSER_VERSION, findings: [{ severity: 'blocking', requirement: 'plan', message: failure.reason }] };
 }
 
+/** The parse error when a plan has no step the parser recognises. Tests and callers match this exact text; the why is in `diagnoseNoSteps`. */
+export const NO_EXECUTABLE_STEPS_REASON = 'no executable steps found';
+
+/**
+ * Why a text yielded no executable steps, in one plain sentence naming what the parser saw and what it needs.
+ * Pure and bounded: it only counts headings. Never throws on odd input.
+ */
+export function diagnoseNoSteps(text: string): string {
+  if (typeof text !== 'string' || !text.trim()) return 'The plan is empty.';
+  const extracted = extractSquadPlan(text);
+  if (!extracted.ok) return `${extracted.reason}.`;
+  const lines = extracted.text.split(/\r?\n/);
+  const fence = new FenceTracker();
+  let h2Plan = false;
+  let planSectionHeadings = 0;
+  let markedHeadings = 0;
+  let allH3 = 0;
+  let inPlan = false;
+  for (const line of lines) {
+    const wasOpen = fence.open;
+    if (fence.step(line) || wasOpen) continue;
+    const section = /^\s*(#{1,2})\s+(.*?)\s*$/.exec(line);
+    if (section) {
+      inPlan = section[1] === '##' && stripInlineComment(section[2]).toLowerCase() === 'execution plan';
+      if (inPlan) h2Plan = true;
+      continue;
+    }
+    const heading = HEADING.exec(line);
+    if (!heading) continue;
+    allH3 += 1;
+    if (STEP_MARKER.test(line)) markedHeadings += 1;
+    if (inPlan) planSectionHeadings += 1;
+  }
+  const grammar = 'A step is a "### <id>: <title>" heading under "## Execution Plan" (or marked <!-- executable-step -->) followed by a "Work:" label.';
+  if (markedHeadings > 0) return `${markedHeadings} marked step heading${markedHeadings === 1 ? '' : 's'} found, but none had a usable body. ${grammar}`;
+  if (!h2Plan && allH3 === 0) return `No "## Execution Plan" section and no "###" step headings were found, so the text reads as prose. ${grammar}`;
+  if (!h2Plan) return `${allH3} "###" heading${allH3 === 1 ? '' : 's'} found, but no "## Execution Plan" section and no <!-- executable-step --> marker. ${grammar}`;
+  if (planSectionHeadings === 0) return `The "## Execution Plan" section has no "###" step headings. ${grammar}`;
+  return `${planSectionHeadings} heading${planSectionHeadings === 1 ? '' : 's'} under "## Execution Plan" found, but none looked like "<id>: <title>" with a "Work:" label. ${grammar}`;
+}
+
+/**
+ * Path heuristics for the mixed-unit lint. A server contract path is one under `apps/server/` or a shared contract
+ * package; a UI path is one under `apps/app/` or a plugin's `src/app/`. Prefix-based on purpose: a wrong guess only
+ * produces a warning, and the prefixes match this repository's layout.
+ */
+const SERVER_CONTRACT_PATH = /(^|\/)(apps\/server\/|packages\/(domain|desktop-contract|plugin-sdk)\/)/;
+const UI_PATH = /(^|\/)(apps\/app\/|plugins\/[^/]+\/src\/app\/)/;
+const normalizeScopePath = (path: string): string => path.trim().replace(/\\/g, '/').replace(/^\.\//, '');
+
+/** One `warning` finding per step whose write scope spans a server contract path and a UI path (E5). */
+export function lintMixedContractAndUi(units: readonly Pick<PortablePlanWorkUnitInput, 'id' | 'files'>[]): PortablePlanFinding[] {
+  const findings: PortablePlanFinding[] = [];
+  for (const unit of units) {
+    const files = (unit.files ?? []).map(normalizeScopePath);
+    const server = files.find((file) => SERVER_CONTRACT_PATH.test(file));
+    const ui = files.find((file) => UI_PATH.test(file));
+    if (server && ui) {
+      findings.push({
+        severity: 'warning', requirement: 'plan', stepId: unit.id,
+        message: `Step ${unit.id} changes a server contract (${server}) and UI (${ui}) in one step. Split it so the contract lands first and the UI step depends on it; two workers can then finish each half, and a failure in one half does not discard the other.`
+      });
+    }
+  }
+  return findings;
+}
+
+/** Plans larger than this skip the width computation (it is quadratic in steps). */
+export const MAX_WIDTH_UNITS = 300;
+
+export type PlanReachability = {
+  ids: string[];
+  /** reach[i] = indexes of every step i depends on, transitively. */
+  reach: Array<Set<number>>;
+};
+
+/**
+ * Transitive dependencies of every step, shared by the width computation and the skip-impact preview. Dependencies
+ * naming unknown steps are ignored. Undefined when the plan is empty, has duplicate ids, or is cyclic.
+ */
+export function planReachability(units: readonly { id: string; dependencies?: readonly string[] }[]): PlanReachability | undefined {
+  const n = units.length;
+  if (n === 0) return undefined;
+  const index = new Map(units.map((unit, i) => [unit.id, i]));
+  if (index.size !== n) return undefined;
+  const direct = units.map((unit) => (unit.dependencies ?? []).map((dep) => index.get(dep)).filter((i): i is number => i !== undefined));
+  const reach: Array<Set<number> | undefined> = new Array(n).fill(undefined);
+  const visiting = new Set<number>();
+  let cyclic = false;
+  const visit = (i: number): Set<number> => {
+    const done = reach[i];
+    if (done) return done;
+    if (visiting.has(i)) { cyclic = true; return new Set(); }
+    visiting.add(i);
+    const all = new Set<number>();
+    for (const dep of direct[i]) { all.add(dep); for (const up of visit(dep)) all.add(up); }
+    visiting.delete(i);
+    reach[i] = all;
+    return all;
+  };
+  for (let i = 0; i < n; i += 1) visit(i);
+  if (cyclic) return undefined;
+  return { ids: units.map((unit) => unit.id), reach: reach as Array<Set<number>> };
+}
+
+/**
+ * For each step, the steps that would be skipped if it fails: everything that depends on it directly or transitively,
+ * in plan order. Empty when the plan is cyclic or has duplicate ids (those are rejected elsewhere).
+ */
+export function planSkippedIfFails(units: readonly { id: string; dependencies?: readonly string[] }[]): Map<string, string[]> {
+  const result = new Map<string, string[]>(units.map((unit) => [unit.id, []]));
+  const graph = planReachability(units);
+  if (!graph) return result;
+  graph.reach.forEach((ancestors, dependent) => {
+    for (const ancestor of ancestors) result.get(graph.ids[ancestor])!.push(graph.ids[dependent]);
+  });
+  return result;
+}
+
+/**
+ * Critical-path width: the most steps that can run at the same time, i.e. the largest set of steps none of which
+ * depends (directly or transitively) on another. By Dilworth's theorem this is the step count minus a maximum
+ * matching over the transitive closure. Dependencies naming unknown steps are ignored. Undefined when the plan is
+ * empty, too large, or cyclic (the DAG check owns that error).
+ */
+export function planCriticalPathWidth(units: readonly { id: string; dependencies?: readonly string[] }[]): number | undefined {
+  const n = units.length;
+  if (n === 0 || n > MAX_WIDTH_UNITS) return undefined;
+  const graph = planReachability(units);
+  if (!graph) return undefined;
+  const reach = graph.reach;
+  const matchOfRight = new Array<number>(n).fill(-1);
+  const augment = (left: number, seen: boolean[]): boolean => {
+    for (const right of reach[left]!) {
+      if (seen[right]) continue;
+      seen[right] = true;
+      if (matchOfRight[right] < 0 || augment(matchOfRight[right], seen)) { matchOfRight[right] = left; return true; }
+    }
+    return false;
+  };
+  let matching = 0;
+  for (let i = 0; i < n; i += 1) if (augment(i, new Array<boolean>(n).fill(false))) matching += 1;
+  return n - matching;
+}
+
 export function parsePortablePlan(text: string): PortablePlanParse {
   const result = parsePlanDocument(text);
   return result.ok ? result : withFailureMeta(result);
@@ -817,7 +962,7 @@ function parsePlanDocument(raw: string): DocumentParse {
     }
   }
   const blocks = collected.blocks;
-  if (!blocks.length) return { ok: false, reason: 'no executable steps found' };
+  if (!blocks.length) return { ok: false, reason: NO_EXECUTABLE_STEPS_REASON };
 
   const units: PortablePlanWorkUnitInput[] = [];
   const normalizations: string[] = [];
@@ -854,6 +999,7 @@ function parsePlanDocument(raw: string): DocumentParse {
 
   normalizations.push(...documentNotes.map((note) => note.message));
   findings.push(...documentNotes);
+  findings.push(...lintMixedContractAndUi(units));
   const { declaredSquad, ...launch } = parsedLaunch.launch;
   return {
     ok: true,
