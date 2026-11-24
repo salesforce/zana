@@ -71,6 +71,8 @@
   .basic-ui .basic-ui-shell-heading { margin-right: auto; }
   .basic-ui .basic-ui-sidebar { height: 100%; }
 }
+/* Basic has no mobile back/return control, so the menu mirrors the mode switch's 12px inset. */
+.app-shell.basic-ui[data-mobile='true'] .titlebar { padding-left: 12px; }
 .app-shell.basic-ui[data-mobile='true'] .basic-ui-mode-switch { right: 12px; }
 .app-shell:not(.basic-ui)[data-mobile='true'] .basic-ui-mode-switch { right: 112px; }
 .app-shell:not(.basic-ui)[data-mobile='true'] .titlebar:has(.mobile-thread-controls-slot > *) .basic-ui-mode-switch {
