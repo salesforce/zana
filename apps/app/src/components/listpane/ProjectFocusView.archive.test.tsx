@@ -29,7 +29,7 @@ vi.mock('../../lib/windowScope.js', () => ({ getScopedProjectId: () => null }));
 vi.mock('../ListPaneResizer.js', () => ({ ListPaneResizer: () => null }));
 vi.mock('./ProjectDot.js', () => ({ ProjectDot: () => null }));
 vi.mock('./ProjectRollupDot.js', () => ({ ProjectRollupDot: () => null }));
-vi.mock('../AppPageHeader.js', () => ({ AppPageHeader: ({ children }: { children: ReactNode }) => <>{children}</> }));
+vi.mock('../AppPageHeader.js', () => ({ AppPageHeader: ({ children, actions }: { children: ReactNode; actions?: ReactNode }) => <>{children}{actions}</> }));
 vi.mock('../agentCardActions.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../agentCardActions.js')>()),
   useAgentCardActions: () => ({ actions: [], setMenu: vi.fn(), menu: null }),
@@ -75,4 +75,14 @@ describe('ProjectFocusView row remove button', () => {
     expect(confirm).not.toHaveBeenCalled();
     expect(closeTerminal).toHaveBeenCalledWith('e1', 'project');
   });
+});
+
+it('opens the focused project in a new desktop window', () => {
+  const openNew = vi.fn();
+  vi.stubGlobal('cc', { windows: { openNew } });
+  try {
+    renderView();
+    fireEvent.click(screen.getByRole('button', { name: 'Open this project in a new window' }));
+    expect(openNew).toHaveBeenCalledExactlyOnceWith('project');
+  } finally { vi.unstubAllGlobals(); }
 });

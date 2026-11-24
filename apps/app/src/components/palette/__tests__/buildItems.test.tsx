@@ -140,6 +140,17 @@ describe('buildPaletteItems', () => {
     expect(buildPaletteItems(baseCtx()).some(item => item.key.startsWith('open-window:'))).toBe(false);
   });
 
+  it('opens the selected project in a new desktop window and closes the palette', () => {
+    const openNew = vi.fn();
+    const onClose = vi.fn();
+    vi.stubGlobal('window', { cc: { windows: { openNew } } });
+    try {
+      buildPaletteItems(baseCtx({ onClose })).find(item => item.key === 'open-window:p1')!.run();
+      expect(openNew).toHaveBeenCalledExactlyOnceWith('p1');
+      expect(onClose).toHaveBeenCalledOnce();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it('names the platform file manager on the reveal action', () => {
     const original = Object.getOwnPropertyDescriptor(navigator, 'platform');
     const labelOn = (platform: string) => {

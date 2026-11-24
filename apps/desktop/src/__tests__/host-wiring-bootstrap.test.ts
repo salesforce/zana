@@ -31,6 +31,7 @@ const h = vi.hoisted(() => {
     drainOpts: undefined as any,
     handoffOpts: undefined as any,
     ipcCtx: undefined as any,
+    trayDeps: undefined as import('../tray.js').TrayDeps | undefined,
     mcpDeps: undefined as any,
     ptys: undefined as any,
     quit: undefined as any,
@@ -126,6 +127,16 @@ vi.mock('electron', () => {
     Notification: class { static isSupported() { return false; } },
     clipboard: loose()
   };
+});
+
+vi.mock('../tray.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../tray.js')>();
+  return { ...actual, TrayController: class extends actual.TrayController {
+    constructor(deps: import('../tray.js').TrayDeps) {
+      super(deps);
+      h.trayDeps = deps;
+    }
+  } };
 });
 
 vi.mock('../companion-host.js', async importOriginal => {
@@ -1794,6 +1805,34 @@ describe('host bootstrap wiring', () => {
     await vi.waitFor(() => expect(errors.mock.calls.some(c => String(c[0]).includes('deepLink.deliver'))).toBe(true));
     expect(deliveries()).toHaveLength(1);
     h.contentsDestroyed = alive;
+  });
+
+  it('sends navigation only to the primary window when a project window is open', async () => {
+    const primary = ctx().mainWindow();
+    expect(ctx().openNewWindow({})).toBe(false);
+    expect(ctx().openNewWindow('unknown-project')).toBe(false);
+    expect(ctx().openNewWindow(project.id)).toBe(true);
+    const secondary = h.lastWin;
+    expect(secondary.id).not.toBe(primary.id);
+    const primarySend = vi.spyOn(primary.webContents, 'send');
+    const secondarySend = vi.spyOn(secondary.webContents, 'send');
+    const alive = h.contentsDestroyed;
+    try {
+      ctx().markRendererReady(primary);
+      h.trayDeps!.openScheduler('task');
+      h.trayDeps!.focusSession('session', project.id);
+      await vi.waitFor(() => expect(primarySend).toHaveBeenCalledWith('app:focusSession', 'session', project.id));
+      expect(primarySend).toHaveBeenCalledWith('app:openScheduler', 'task');
+      expect(secondarySend).not.toHaveBeenCalledWith('app:openScheduler', 'task');
+      expect(secondarySend).not.toHaveBeenCalledWith('app:focusSession', 'session', project.id);
+      primarySend.mockImplementationOnce(() => { throw new Error('window closed'); });
+      expect(await ctx().sendToMainWindow('app:openScheduler')).toBe(false);
+      h.contentsDestroyed = () => true;
+      expect(await ctx().sendToMainWindow('app:openScheduler')).toBe(false);
+      expect(await ctx().leaveProjectWindow(primary, 'projects')).toBe(false);
+    } finally {
+      primarySend.mockRestore(); secondarySend.mockRestore(); h.contentsDestroyed = alive;
+    }
   });
 
   it('quits without confirmation when configured and releases services and timers', async () => {

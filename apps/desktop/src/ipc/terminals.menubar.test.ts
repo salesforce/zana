@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
+import { IPC } from '@zana-ai/zcc-desktop-contract';
+import { bindIpcCtx } from './ctx.js';
+import { safeProductHandle } from './shared-product-registration.js';
 
 vi.mock('electron', () => ({ ipcMain: {}, app: { getPath: () => '/tmp' } }));
 vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({ store: { listProjects: () => [] } }));
 
-import { focusMenubarAgent } from './terminals.js';
+vi.mock('./shared-product-registration.js', () => ({ productHandle: vi.fn(), safeProductHandle: vi.fn() }));
+
+import { focusMenubarAgent, registerTerminalsIpc } from './terminals.js';
 
 function deps(session: { projectId: string } | null = null) {
   return {
@@ -45,4 +50,15 @@ describe('focusMenubarAgent', () => {
     await focusMenubarAgent(value, 'cli', 's1', 'p1');
     expect(value.sendToMainWindow).toHaveBeenCalledWith('app:focusSession', 's1', 'p1');
   });
+});
+
+it('routes menu-bar views to the primary window and only shows it for Dashboard', async () => {
+  const value = deps();
+  bindIpcCtx({ ...value, ptys: { on: vi.fn() } } as never);
+  registerTerminalsIpc();
+  const [, open] = vi.mocked(safeProductHandle).mock.calls.find(([channel]) => channel === IPC.menubar.open)!;
+  for (const view of ['agents', 'settings', 'scheduler', 'dashboard']) await open(view);
+  expect(value.sendToMainWindow.mock.calls).toEqual([['app:openAgents'], ['app:openSettings'], ['app:openScheduler']]);
+  expect(value.showMainWindow).toHaveBeenCalledTimes(4);
+  expect(value.menubar.hide).toHaveBeenCalledTimes(4);
 });
