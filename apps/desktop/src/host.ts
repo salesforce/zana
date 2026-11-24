@@ -8007,7 +8007,7 @@ teamPlanHandoff = new TeamPlanHandoff({
     return result.ok ? { ok: true } : { ok: false, message: result.message };
   },
   nudge: (sessionId, text) => ptys.reply(sessionId, text),
-  reportStalled: createStallNotice((input) => inboxStore.append(input), logMainError),
+  reportStalled: createStallNotice(inboxStore.append.bind(inboxStore), logMainError),
   cleanup: (projectRoot, executionId) => cleanupHandoffFiles(projectRoot, executionId),
   logError: (message, error) => logMainError(message, error),
   logInfo: logMainInfo,

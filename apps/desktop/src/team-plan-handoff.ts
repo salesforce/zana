@@ -525,7 +525,7 @@ export class TeamPlanHandoff {
         entry.exhausted = true;
         this.emit(ctx, () => ({ stage: 'nudge-exhausted', reason: boundTraceReason(reason), nudges: entry.nudges }));
         try {
-          this.deps.reportStalled?.(ctx, boundTraceReason(reason) ?? reason);
+          this.deps.reportStalled?.(ctx, boundTraceReason(reason)!);
         } catch (error) {
           this.deps.logError(`team plan handoff stall report ${ctx.sessionId}`, error);
         }

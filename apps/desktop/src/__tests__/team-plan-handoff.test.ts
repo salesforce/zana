@@ -541,6 +541,23 @@ describe('TeamPlanHandoff.onCoordinatorIdle', () => {
     await vi.waitFor(() => expect(logError).toHaveBeenCalledOnce());
   });
 
+  it('reports a stall once even when a valid plan keeps being rejected by the host', async () => {
+    const reportStalled = vi.fn();
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/root/.zana/execution-plan-exec-1.md' }),
+      register: async () => ({ ok: false, message: 'nope' }),
+      nudge: () => {},
+      cleanup: async () => {},
+      logError: () => {},
+      maxNudges: 0,
+      reportStalled
+    });
+    await handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(reportStalled).toHaveBeenCalledOnce();
+  });
+
   it('survives a throwing stall report', async () => {
     const logError = vi.fn();
     const handoff = new TeamPlanHandoff({
