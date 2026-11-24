@@ -37,6 +37,31 @@ export function writeFakeCli(
   const script = join(bin, `${name}.mjs`);
   const shim = join(bin, `${name}.cmd`);
   writeFileSync(script, body);
-  writeFileSync(shim, `@echo off\r\n"${nodePath}" "${script}" %*\r\n`);
+  writeFileSync(shim, `@echo off\r\n"${quoteForCmdBatch(nodePath)}" "${quoteForCmdBatch(script)}" %*\r\n`);
   return [script, shim];
+}
+
+/**
+ * Makes a path safe inside the double quotes of a `.cmd` line. Inside quotes
+ * cmd still expands `%VAR%` in a batch file, so each `%` is doubled; `& | < > ^ ( )`
+ * are literal there. `!` only matters under delayed expansion, which a batch
+ * file does not enable by default. A quote or line break cannot be quoted, and
+ * is not valid in a Windows path, so it is refused rather than half-escaped.
+ */
+export function quoteForCmdBatch(path: string): string {
+  if (/["\r\n]/.test(path)) throw new Error(`Path cannot be written into a .cmd shim: ${JSON.stringify(path)}`);
+  return path.replaceAll('%', '%%');
+}
+
+/**
+ * Title of the ACP Stop test. Linux and macOS deliver a catchable SIGTERM that
+ * the fake agent resists, so the app must escalate to SIGKILL. Windows has no
+ * such signal (`kill` is TerminateProcess), so only tree reaping is exercised
+ * there; the title says so, to keep a green Windows run from being read as
+ * proof of the escalation.
+ */
+export function acpStopTestTitle(platform: NodeJS.Platform = process.platform): string {
+  return canObserveSigterm(platform)
+    ? 'Stop reaps a SIGTERM-resistant ACP child through the built provider'
+    : 'Stop reaps the ACP child process tree through the built provider (Windows: no SIGTERM escalation)';
 }

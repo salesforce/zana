@@ -2,7 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync,
 import { basename, delimiter, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test, expect } from './fixtures/app.js';
-import { canObserveSigterm, writeFakeCli } from './fixtures/fake-cli.js';
+import { acpStopTestTitle, canObserveSigterm, writeFakeCli } from './fixtures/fake-cli.js';
 import { fixtureProcessState } from './fixtures/process-state.js';
 import { waitForThreadProvider } from './fixtures/thread-providers.js';
 
@@ -139,7 +139,7 @@ test('recording preserves large UTF-8 provider output, resumed turns, and app sh
   expect(existsSync(recordDir)).toBe(false);
 });
 
-test('Stop reaps a SIGTERM-resistant ACP child through the built provider', async ({ app }) => {
+test(acpStopTestTitle(), async ({ app }) => {
   test.setTimeout(120_000);
   await waitForThreadProvider(app.window, 'acp-opencode');
   const root = join(app.home, 'acp-stop-project');
