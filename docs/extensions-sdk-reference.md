@@ -86,9 +86,9 @@ another plugin's thread. Detect per-thread support with
 `sdk.capabilities.forThread({ threadId })`: descriptor `thread-interactions`
 must be available, and `sdk.threads.interactions` must exist on older hosts.
 This descriptor is separate from the plugin UI `interactions` descriptor.
-Expected errors carry `name: 'PluginThreadInteractionError'`, `code` and `status`;
-match those fields across workers. Full fields, grant construction and error
-codes are in the [server SDK reference](../apps/server/src/plugins/builtin-skills/zcc-plugin-authoring/references/server-sdk.md).
+Expected errors carry `name: 'PluginThreadInteractionError'`, `code` and `status`.
+Match those fields across workers. See the `zcc-plugin-authoring` server SDK
+reference for the response fields, grant construction and error codes.
 
 Pass `deferFirstTurn: true` and omit `prompt` to create an empty thread. The first message starts its provider session.
 
