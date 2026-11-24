@@ -76,7 +76,7 @@ import {
   REMOTE_TOOL_PROXY_DISALLOWED_TOOLS
 } from './remote-tool-proxy.js';
 import { REMOTE_FS_TOOL_NAMES } from './remote-fs-mcp-tools.js';
-import { terminatePtyProcessTree } from './pty-termination.js';
+import { terminatePtyProcessTree, windowsPtyAlreadyKilled } from './pty-termination.js';
 import { clearInheritedSessionIdentity, sessionIdentityEnv } from './session-identity-env.js';
 
 // Electron-Vite emits an ESM `require` shim for the main bundle. Keep this
@@ -2884,14 +2884,18 @@ export class PtyManager extends EventEmitter {
     // the process. macOS caps PTYs at kern.tty.ptmx_max (default 511); a slow
     // leak here eventually makes EVERY new pty.spawn throw the misleading
     // "posix_spawnp failed." (node-pty reports a failed posix_openpt() with that
-    // same message). destroy() is idempotent + caught, so it's a harmless no-op
-    // on the normal path and the load-bearing cleanup on the reap path.
+    // same message). destroy() is idempotent + caught on Unix, so it's a harmless
+    // no-op on the normal path and the load-bearing cleanup on the reap path.
+    // On Windows destroy() is `kill()`, which closes the pseudoconsole again: it
+    // is NOT a no-op after close()/terminatePtyProcessTree already released the
+    // pty, and a second native close corrupts the heap (node-pty#983, exit code
+    // 0xC0000374). So it is skipped for a pty that was already killed.
     // `destroy()` lives on the concrete Unix/Windows terminal, not the public
     // `IPty` type — reach for it defensively so a node-pty version without it
-    // (or a Windows build) is a no-op rather than a type error.
+    // is a no-op rather than a type error.
     const disposable = live.proc as pty.IPty & { destroy?: () => void };
     try {
-      disposable.destroy?.();
+      if (!windowsPtyAlreadyKilled(disposable)) disposable.destroy?.();
     } catch {
       /* socket already torn down (normal exit) — nothing to release */
     }

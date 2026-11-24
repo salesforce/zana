@@ -10,6 +10,22 @@ export type WindowsTreeStop = (pid: number) => void;
 
 const DEFAULT_HARD_KILL_AFTER_MS = 2_000;
 
+/**
+ * Windows ptys whose native kill has already run. node-pty 1.2.0-beta.15 closes
+ * the pseudoconsole on every `kill()` while the pty's native record still
+ * exists, and does not mark it closed (microsoft/node-pty#983). A second kill
+ * frees the same pseudoconsole again and corrupts the heap (exit code
+ * 0xC0000374). The record outlives the first kill until its exit watcher runs,
+ * so every repeat caller (close then exit finalization, host shutdown after a
+ * stop) must find the pty already released.
+ */
+const killedWindowsPtys = new WeakSet<object>();
+
+/** True once {@link terminatePtyProcessTree} released this Windows pty. */
+export function windowsPtyAlreadyKilled(handle: object): boolean {
+  return process.platform === 'win32' && killedWindowsPtys.has(handle);
+}
+
 function processGroupAlive(pid: number): boolean {
   if (process.platform === 'win32') return false;
   try {
@@ -60,6 +76,10 @@ export function terminatePtyProcessTree(
   const hardKillAfterMs = options.hardKillAfterMs ?? DEFAULT_HARD_KILL_AFTER_MS;
   const pid = handle.pid;
   if (process.platform === 'win32') {
+    // Once only: a repeat call would close the pseudoconsole a second time
+    // (see killedWindowsPtys) and a second taskkill could hit a reused PID.
+    if (killedWindowsPtys.has(handle)) return;
+    killedWindowsPtys.add(handle);
     // node-pty reports 0 until the pseudoconsole has connected. taskkill walks
     // descendants by parentage, so it is started before the plain kill to
     // narrow (not remove) the window in which the root has exited and its PID

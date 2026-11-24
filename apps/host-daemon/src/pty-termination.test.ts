@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { registerSpawnedTreeRoot } from '@zana-ai/zcc-agent-process-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { terminatePtyProcessTree, type KillablePtyHandle } from './pty-termination.js';
+import { terminatePtyProcessTree, windowsPtyAlreadyKilled, type KillablePtyHandle } from './pty-termination.js';
 
 const realPlatform = process.platform;
 
@@ -153,5 +153,49 @@ describe('terminatePtyProcessTree on POSIX', () => {
     vi.advanceTimersByTime(100);
     expect(groupKill).toHaveBeenCalledWith(-4242, 0);
     expect(groupKill).toHaveBeenCalledWith(-4242, 'SIGKILL');
+  });
+});
+
+describe('terminatePtyProcessTree repeat calls on Windows', () => {
+  it('releases the pseudoconsole once: a second call neither kills nor taskkills again', () => {
+    setPlatform('win32');
+    const handle = windowsPtyHandle();
+    const stopWindowsTree = vi.fn();
+
+    terminatePtyProcessTree(handle, { stopWindowsTree });
+    terminatePtyProcessTree(handle, { stopWindowsTree });
+    terminatePtyProcessTree(handle, { stopWindowsTree });
+
+    // node-pty 1.2.0-beta.15 closes the pseudoconsole on each kill() and a
+    // second close corrupts the heap (0xC0000374, microsoft/node-pty#983).
+    expect(handle.kill).toHaveBeenCalledTimes(1);
+    expect(stopWindowsTree).toHaveBeenCalledTimes(1);
+    expect(windowsPtyAlreadyKilled(handle)).toBe(true);
+  });
+
+  it('tracks each pty separately', () => {
+    setPlatform('win32');
+    const first = windowsPtyHandle(100);
+    const second = windowsPtyHandle(200);
+    const stopWindowsTree = vi.fn();
+
+    terminatePtyProcessTree(first, { stopWindowsTree });
+    terminatePtyProcessTree(second, { stopWindowsTree });
+
+    expect(first.kill).toHaveBeenCalledTimes(1);
+    expect(second.kill).toHaveBeenCalledTimes(1);
+    expect(windowsPtyAlreadyKilled(windowsPtyHandle())).toBe(false);
+  });
+
+  it('does not suppress a repeat kill on POSIX', () => {
+    setPlatform('linux');
+    vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const handle = { pid: 4242, kill: vi.fn() };
+
+    terminatePtyProcessTree(handle, { hardKillAfterMs: 0 });
+    terminatePtyProcessTree(handle, { hardKillAfterMs: 0 });
+
+    expect(handle.kill).toHaveBeenCalledTimes(2);
+    expect(windowsPtyAlreadyKilled(handle)).toBe(false);
   });
 });
