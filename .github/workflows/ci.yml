@@ -19,6 +19,10 @@ on:
         required: false
         type: string
 
+# Least privilege: no job in this workflow writes to the repository or PRs.
+permissions:
+  contents: read
+
 # A new push to a PR cancels the previous run for that PR — no point burning
 # minutes on a commit that's already superseded. main pushes use the ref so they
 # don't cancel each other.
