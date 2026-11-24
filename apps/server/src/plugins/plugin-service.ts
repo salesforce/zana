@@ -3156,6 +3156,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       const isActive = () => !stopped && lifecycleGeneration === generation;
       starting = (async () => {
       const timer = createPluginStartupTimer();
+      let outcome: 'finished' | 'failed' | 'cancelled' = 'cancelled';
+      try {
       await timer.step('ensureActivationRecovery', () => ensureActivationRecovery());
       if (!isActive()) return;
       await timer.step('retireRetiredFirstPartyPlugins', () => retireRetiredFirstPartyPlugins());
@@ -3178,6 +3180,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       // Plugins load concurrently (capped), each after the plugins it requires.
       await loadPluginsConcurrently(ordered, {
         shouldContinue: isActive,
+        onError: (error, node) => logPluginFailure(node.id, 'startup load failed after an earlier startup failure', error),
         load: async (node) => {
           if (live.has(node.id)) return;
           const epoch = lifecycleEpoch(node.id);
@@ -3185,6 +3188,16 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         }
       });
       if (!isActive()) return;
+      // Plugins finish loading in a varying order; keep the registry order the
+      // dependency-ordered start used so contributions stay deterministic.
+      const startupIds = new Set(ordered.map((node) => node.id));
+      const arranged = [...live].filter(([id]) => !startupIds.has(id));
+      for (const node of ordered) {
+        const entry = live.get(node.id);
+        if (entry) arranged.push([node.id, entry]);
+      }
+      live.clear();
+      for (const [id, entry] of arranged) live.set(id, entry);
       await timer.step('applyMissingRequiredPluginStatus', () => applyMissingRequiredPluginStatus());
       if (!isActive()) return;
       await timer.step('emitCapabilities', () => emitCapabilities());
@@ -3201,8 +3214,14 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       appliedDevelopmentMode = developmentEnabled();
       started = true;
       startupFailed = false;
-      timer.finish();
+      outcome = 'finished';
       void checkInstalledUpdates(true).catch(() => undefined);
+      } catch (error) {
+        outcome = 'failed';
+        throw error;
+      } finally {
+        timer.finish(outcome);
+      }
       })();
       const attempt = starting;
       void attempt.catch(() => { if (starting === attempt) { starting = null; startupFailed = true; } });

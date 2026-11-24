@@ -89,4 +89,46 @@ describe('loadPluginsConcurrently', () => {
     });
     expect(started).toEqual(['a']);
   });
+
+  it('treats a synchronous throw like a rejection and waits for running loads before rethrowing', async () => {
+    const slow = gate();
+    let slowDone = false;
+    let settled = false;
+    const result = loadPluginsConcurrently([node('slow'), node('bad')], {
+      load: (n) => {
+        if (n.id === 'bad') throw new Error('sync boom');
+        return slow.promise.then(() => { slowDone = true; });
+      }
+    }).then(() => 'ok', (error: Error) => { settled = true; return error.message; });
+    await tick();
+    expect(settled).toBe(false);
+    slow.open();
+    expect(await result).toBe('sync boom');
+    expect(slowDone).toBe(true);
+  });
+
+  it('reports later load errors through onError and rethrows only the first', async () => {
+    const reported: string[] = [];
+    const slow = gate();
+    const result = loadPluginsConcurrently([node('first'), node('second')], {
+      onError: (error, n) => reported.push(`${n.id}: ${(error as Error).message}`),
+      load: async (n) => {
+        if (n.id === 'first') throw new Error('one');
+        await slow.promise;
+        throw new Error('two');
+      }
+    }).catch((error: Error) => error.message);
+    await tick();
+    slow.open();
+    expect(await result).toBe('one');
+    expect(reported).toEqual(['second: two']);
+  });
+
+  it('fails instead of returning when plugins are left waiting on each other', async () => {
+    const started: string[] = [];
+    await expect(loadPluginsConcurrently([node('free'), node('a', ['b']), node('b', ['a'])], {
+      load: async (n) => { started.push(n.id); }
+    })).rejects.toThrow('plugin load order is stuck waiting on: a, b');
+    expect(started).toEqual(['free']);
+  });
 });

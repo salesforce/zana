@@ -11,6 +11,8 @@ export interface PluginLoadOptions<T extends PluginLoadNode> {
   /** Checked before each plugin starts; false stops scheduling new work. */
   shouldContinue?: () => boolean;
   concurrency?: number;
+  /** Called for every load error after the first one, which is rethrown. */
+  onError?: (error: unknown, node: T) => void;
 }
 
 /**
@@ -20,7 +22,9 @@ export interface PluginLoadOptions<T extends PluginLoadNode> {
  * `nodes` are ignored, as in the topological sort. If a load throws, nothing new
  * starts, running loads finish, and the first error is rethrown.
  *
- * `nodes` must already be free of require cycles (see `sortPluginsByRequires`).
+ * `nodes` must already be free of require cycles (see `sortPluginsByRequires`); if
+ * plugins are left waiting with nothing running and scheduling was not stopped,
+ * the load order is stuck and an error naming them is thrown.
  */
 export async function loadPluginsConcurrently<T extends PluginLoadNode>(
   nodes: readonly T[],
@@ -41,13 +45,23 @@ export async function loadPluginsConcurrently<T extends PluginLoadNode>(
       const index = waiting.findIndex(ready);
       if (index < 0) break;
       const [node] = waiting.splice(index, 1);
-      running.set(node.id, options.load(node).then(
+      // A synchronous throw takes the same failure path as a rejection.
+      let pending: Promise<void>;
+      try { pending = Promise.resolve(options.load(node)); } catch (error) { pending = Promise.reject(error); }
+      running.set(node.id, pending.then(
         () => { finished.add(node.id); running.delete(node.id); },
-        (error: unknown) => { if (!failed) { failed = true; firstError = error; } finished.add(node.id); running.delete(node.id); }
+        (error: unknown) => {
+          if (!failed) { failed = true; firstError = error; } else options.onError?.(error, node);
+          finished.add(node.id);
+          running.delete(node.id);
+        }
       ));
     }
     if (running.size === 0) break;
     await Promise.race(running.values());
   }
   if (failed) throw firstError;
+  if (waiting.length > 0 && (options.shouldContinue?.() ?? true)) {
+    throw new Error(`plugin load order is stuck waiting on: ${waiting.map((node) => node.id).join(', ')}`);
+  }
 }

@@ -10,8 +10,8 @@ export interface PluginStartupTimerOptions {
 export interface PluginStartupTimer {
   /** Runs one step, records its duration and warns when it is slow. */
   step<T>(label: string, run: () => Promise<T>): Promise<T>;
-  /** Logs the total with the slowest steps. Call once, when startup completes. */
-  finish(): void;
+  /** Logs the total with the slowest steps. Call once, however startup ends. */
+  finish(outcome?: 'finished' | 'failed' | 'cancelled'): void;
 }
 
 /**
@@ -36,10 +36,10 @@ export function createPluginStartupTimer(options: PluginStartupTimerOptions = {}
         if (ms >= PLUGIN_STARTUP_SLOW_STEP_MS) warn(`[plugins] slow startup step ${label} took ${ms}ms`);
       }
     },
-    finish() {
+    finish(outcome = 'finished') {
       const slowest = [...steps].sort((a, b) => b.ms - a.ms).slice(0, 3)
         .map((entry) => `${entry.label} ${entry.ms}ms`).join(', ');
-      info(`[plugins] startup finished in ${now() - startedAt}ms${slowest ? ` (slowest: ${slowest})` : ''}`);
+      info(`[plugins] startup ${outcome} in ${now() - startedAt}ms${slowest ? ` (slowest: ${slowest})` : ''}`);
     }
   };
 }

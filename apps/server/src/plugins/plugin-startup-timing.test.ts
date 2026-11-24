@@ -43,4 +43,11 @@ describe('createPluginStartupTimer', () => {
     expect(infos).toEqual(['[plugins] startup finished in 0ms']);
     expect(() => createPluginStartupTimer().finish()).not.toThrow();
   });
+
+  it.each(['failed', 'cancelled'] as const)('labels a startup that %s', async (outcome) => {
+    const { timer, infos, advance } = harness();
+    await timer.step('a', async () => { advance(40); });
+    timer.finish(outcome);
+    expect(infos).toEqual([`[plugins] startup ${outcome} in 40ms (slowest: a 40ms)`]);
+  });
 });
