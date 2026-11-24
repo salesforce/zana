@@ -934,7 +934,7 @@ export function createPluginApi(
         complete: async (args) => {
           assertLive();
           if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
-          const result = await completePluginAssistant(options.productContext, { ...args, signal: args.signal ? AbortSignal.any([args.signal, assistantLifecycle.signal]) : assistantLifecycle.signal });
+          const result = await completePluginAssistant(options.productContext, { ...args, signal: args.signal ? AbortSignal.any([args.signal, assistantLifecycle.signal]) : assistantLifecycle.signal }, pluginId);
           assertLive();
           return result;
         }

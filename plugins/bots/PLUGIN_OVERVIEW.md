@@ -32,3 +32,13 @@ Save a login, card or contact and choose the bots that may use it. Select **All 
 Bots are global. The project you set only decides where the bot's threads run. If you don't set one, the Default Project is used. Each bot runs with **full** permissions, including its background jobs.
 
 Click a bot in the Basic sidebar to open its main thread. The first click creates an empty chat. Sending a message or running a routine can also create the thread. Opening or messaging a bot restores its archived thread, or creates a new one if its thread was deleted. A bot can run at most 3 background jobs at once, and keeps the last 50 job records.
+
+## Zana Helper
+
+Open **Bots → Zana Helper** for answers about Zana or feedback on a prompt you paste in. **Browse Zana guides** works without an AI provider or internet access. Answers include links to the relevant guides for your installed Zana version.
+
+Zana Helper uses the Default Project’s AI provider for text-only answers. If you use Claude Code or Codex, it uses that provider’s sign-in. The guides are available with any provider. **Hide Zana Helper** removes it from the Bots list. Use **Restore Zana Helper** in the list to bring it back with its saved conversation.
+
+## Choose a bot provider
+
+For a bot you created, open **Bots**, select the bot, and go to **Settings → Provider and model**. An explicit provider takes effect when a new conversation starts. **Project default** follows the CLI agent default for the bot’s project. Without a project override, find it under **Settings → Configuration → AI Harness → Defaults → Default for CLI agents**.

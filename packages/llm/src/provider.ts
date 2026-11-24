@@ -18,6 +18,8 @@ export interface LlmRunRequest {
   signal?: AbortSignal;
   /** Text-only helpers must not inherit CLI tools or MCP servers. */
   disableTools?: boolean;
+  /** Isolate native CLI settings and integrations as well as disabling tools. */
+  isolated?: boolean;
 }
 
 /**

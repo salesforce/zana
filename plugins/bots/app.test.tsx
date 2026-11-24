@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 
 const state = vi.hoisted(() => ({
   rpc: { call: vi.fn() },
-  navigate: { toThread: vi.fn(), openPanelAgent: vi.fn((_options: unknown) => true) as ReturnType<typeof vi.fn> | undefined },
+  navigate: { toThread: vi.fn(), toPluginPanel: vi.fn(), openPanelAgent: vi.fn((_options: unknown) => true) as ReturnType<typeof vi.fn> | undefined },
   realtime: [] as Array<(payload?: unknown) => void>,
   registered: [] as unknown[]
 }));
@@ -18,7 +18,7 @@ vi.mock('@zana-ai/zcc-plugin-sdk/app', () => ({
     ? <textarea aria-label={editor.label} value={content} disabled={editor.disabled} onChange={event => editor.onChange(event.target.value)} />
     : <div className={className}>{content}</div>,
   useZccNavigate: () => state.navigate,
-  useRealtime: (_channel: string, handler: (payload?: unknown) => void) => { state.realtime.push(handler); }
+  useRealtime: (channel: string, handler: (payload?: unknown) => void) => { if (channel === 'bots:changed') state.realtime.push(handler); }
 }));
 
 import { BasicBots, BotAvatar, BotsPanel, BotThreadIcon, BotThreadProfile, BotThreadTitle, botState, cronFor } from './app.tsx';
@@ -36,6 +36,7 @@ const fresh = { ...scout, id: 'fresh', name: 'Fresh', color: undefined, personal
 function route(handlers: Record<string, (args: any) => unknown>) {
   state.rpc.call.mockImplementation(async (method: string, args: unknown) => {
     const handler = handlers[method] ?? (method === 'jobs' ? () => [] : method === 'nextRuns' ? () => ({digest: 1795509000000}) : undefined) ?? (method === 'catalog' ? () => ({ projects: [], providers: [], models: [], modelError: null }) : undefined);
+    if (method === 'helperProfile' && !handler) return null;
     if (!handler) throw new Error(`unexpected ${method}`);
     return handler(args);
   });
@@ -730,4 +731,31 @@ it('converts an existing AI prompt to a ten-minute price check in place', async 
   await waitFor(() => expect(state.rpc.call).toHaveBeenCalledWith('updateRoutine', { bot: 'scout', routineId: 'digest', patch: {
     name: 'Digest', kind: 'price', cron: '*/10 * * * *', asset: 'ETH', currencies: ['USD', 'EUR']
   } }));
+});
+
+it('opens the built-in Helper and preserves the conversation when hiding and restoring it', async () => {
+  const profile: { hidden: boolean; version: string; turns: Array<{ question: string; answer: string; sources: [] }> } = {
+    hidden: false, version: '2.7.0', turns: []
+  };
+  route({
+    list: () => [scout],
+    helperProfile: () => ({ ...profile }),
+    helperVisibility: ({ hidden }) => { profile.hidden = hidden; return { ...profile }; },
+    helperAsk: ({ question }) => {
+      profile.turns = [...profile.turns, { question, answer: 'Choose a project in the sidebar.', sources: [] }];
+    }
+  });
+
+  render(<BotsPanel />);
+  const helper = await screen.findByRole('button', { name: /Zana Helper Built-in/ });
+  expect(screen.getByRole('navigation', { name: 'Bots' }).querySelector('.bt-item')).toBe(helper);
+  fireEvent.click(helper);
+  fireEvent.click(screen.getByRole('button', { name: 'How do I add a project?' }));
+  expect(screen.getByRole('textbox', { name: 'Message Zana Helper' })).toHaveProperty('value', 'How do I add a project?');
+  fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
+  await screen.findByText('Choose a project in the sidebar.');
+  fireEvent.click(screen.getByRole('button', { name: 'Hide Zana Helper' }));
+  await waitFor(() => expect(screen.queryByRole('button', { name: /Zana Helper Built-in/ })).toBeNull());
+  fireEvent.click(screen.getByRole('button', { name: 'Restore Zana Helper' }));
+  expect(await screen.findByText('Choose a project in the sidebar.')).toBeTruthy();
 });

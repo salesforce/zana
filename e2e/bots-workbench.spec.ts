@@ -497,3 +497,20 @@ test('a ten-minute direct routine posts in the main chat without starting a prov
   const { events } = await (await page.request.get(api + '/events')).json();
   expect(events.filter((event: { type: string }) => event.type === 'client/turn/requested')).toHaveLength(0);
 });
+
+test('shows the built-in Zana Helper with offline guides and reversible visibility', async ({ app }) => {
+  const page = app.window;
+  await page.locator('.nav-item').filter({ hasText: /^Bots$/ }).first().click();
+  const panel = page.locator('.bt-root');
+  const helper = panel.getByRole('button', { name: /Zana Helper Built-in/ });
+  await expect(helper).toBeVisible();
+  await expect(panel.getByRole('heading', { name: 'Zana Helper' })).toBeVisible();
+  await panel.locator('summary').filter({ hasText: /^Browse Zana guides$/ }).click();
+  await panel.getByRole('searchbox', { name: 'Search guides' }).fill('choose a bot provider');
+  await panel.getByText('Bots · Choose a bot provider', { exact: true }).click();
+  await expect(panel.getByText(/Settings → Configuration → AI Harness → Defaults → Default for CLI agents/)).toBeVisible();
+  await panel.getByRole('button', { name: 'Hide Zana Helper' }).click();
+  await expect(helper).toHaveCount(0);
+  await panel.getByRole('button', { name: 'Restore Zana Helper' }).click();
+  await expect(helper).toBeVisible();
+});

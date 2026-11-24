@@ -39,10 +39,9 @@ import type { PluginSdkProject, PluginSdkThreadSummary } from '@zana-ai/zcc-plug
 import { resolvePluginDefaultExecutionOptions, overlayCustomModels } from '../services/threads/thread-execution-options.js';
 import { readLastThreadExecution } from '../services/threads/thread-last-execution.js';
 import { asControlResult, callControlAsProductServer } from './cli-agent-ops.js';
-import type { Persona, PersonaInput, TeamInput } from '@zana-ai/zcc-domain/product';
+import type { PersonaInput, TeamInput } from '@zana-ai/zcc-domain/product';
 import { isProjectColor } from '@zana-ai/zcc-domain/project-colors';
-import { harnessEffectiveDefault, harnessVerifyBundle } from './harness-via-rpc.js';
-import { listJsonFiles } from './disk-json.js';
+import { harnessVerifyBundle } from './harness-via-rpc.js';
 import {
   AI_HARNESS_SETTINGS_HINT,
   PLUGIN_AI_HARNESS_SETTINGS_HINT,
@@ -50,7 +49,7 @@ import {
   pluginProviderAvailable,
   resolvePluginSpawnProvider
 } from './plugin-thread-spawn.js';
-import { pluginEffectiveHarnessDefault, productPluginSpawnRouting } from './plugin-harness-routing.js';
+import { pluginEffectiveHarnessDefault, productPluginSpawnRouting, productProjectHarnessDefault } from './plugin-harness-routing.js';
 import { slashPlanPromptInput } from './plugin-thread-routing.js';
 import { ThreadCreateError } from './thread-create.js';
 import { resolveProjectHost } from './project-host.js';
@@ -173,23 +172,6 @@ function toPluginThreadSummary(row: {
     createdAt: row.createdAt,
     parentThreadId: row.parentThreadId
   };
-}
-
-/** The project's effective AI harness, resolved like `GET /api/v1/harness/effective-default`. */
-export function productProjectHarnessDefault(
-  ctx: Pick<ProductHttpContext, 'toProjects' | 'hostHub' | 'config' | 'dataDir' | 'db'>,
-  projectId: string,
-  hostId?: string
-) {
-  const project = ctx.toProjects().find((row) => row.id === projectId);
-  if (!project) return Promise.resolve({ ok: false as const, code: 'NOT_FOUND' as const, message: 'Project not found' });
-  return harnessEffectiveDefault({
-    hub: ctx.hostHub,
-    project,
-    config: ctx.config.getConfig(),
-    personas: listJsonFiles(join(ctx.dataDir, 'personas')) as Persona[],
-    hostId: resolveProjectHost(ctx, hostId ?? project?.hostId)
-  });
 }
 
 /** `sdk.providers.list`: `available` reflects bridge state plus host install/enable when probeable. */

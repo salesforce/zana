@@ -15,3 +15,7 @@ Changing another bot from a thread needs a person's approval: through the `bot_r
 Instructions are read when a thread starts, and the conversation keeps the old role, so a name or personality edit on a bot with a live main thread sets `roleChanged`. The next delivery carries a trusted `roleChangeNotice` in its agent context (never in a message body, which bots must treat as untrusted), then clears the flag.
 
 Run the focused suite with `pnpm exec vitest run plugins/bots`. The private Electron check is `pnpm test:e2e -- e2e/bots-workbench.spec.ts`.
+
+Zana Helper uses the user-facing Markdown sources in [src/helper/generate-catalog.mjs](src/helper/generate-catalog.mjs). When a feature or UI path changes, update its guide in the same PR and run `node plugins/bots/src/helper/generate-catalog.mjs`. For a new guide, add its source to the generator and give it a representative question in [src/helper/catalog.guard.test.ts](src/helper/catalog.guard.test.ts). The guard compares the generated catalog with the guide sources and checks search examples. Reviewers verify that the guide matches the app.
+
+Same-version documentation corrections can publish from main independently of the desktop app. The Helper accepts only its bundled app version, using its last compatible catalog offline. A version bump must regenerate the catalog.

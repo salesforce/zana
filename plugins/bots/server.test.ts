@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFakePluginHost } from '@zana-ai/zcc-plugin-sdk/testing';
 import type { PluginSdkThreadSummary } from '@zana-ai/zcc-plugin-sdk/server';
 import plugin from './server.js';
@@ -780,5 +780,60 @@ describe('direct routine delivery', () => {
     expect((await run('routine', 'run', 'clock', 'stretch')).stderr).toContain('Update Zana');
     expect(spawns).toHaveLength(1);
     expect(sends).toHaveLength(0);
+  });
+});
+
+describe('Zana Helper', () => {
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Offline'))); });
+  afterEach(() => { vi.unstubAllGlobals(); });
+  it('uses the Default Project and saves only its own turns and trusted guide links', async () => {
+    const { harness, spawns } = await load();
+    const complete = vi.fn().mockResolvedValue({ text: 'Open Scheduler and choose New schedule.' });
+    harness.sdk.stub('assistant.complete', complete);
+    const result = await harness.callRpc('helperAsk', { question: 'How do I schedule a task?' });
+    expect(result).toMatchObject({
+      answer: 'Open Scheduler and choose New schedule.',
+      sources: expect.arrayContaining([expect.objectContaining({ title: 'Scheduler' })])
+    });
+    expect(complete).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'default',
+      instructions: expect.stringContaining('Zana Helper'),
+      prompt: expect.stringContaining('How do I schedule a task?')
+    }));
+    expect(spawns).toHaveLength(0);
+    await expect(harness.callRpc('helperVisibility', { hidden: true })).resolves.toMatchObject({ hidden: true, turns: [result] });
+    await expect(harness.callRpc('helperAsk', { question: 'Still there?' })).rejects.toThrow(/Restore/);
+    await expect(harness.callRpc('helperVisibility', { hidden: false })).resolves.toMatchObject({ hidden: false, turns: [result] });
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the same provider for follow-ups and keeps previous replies after a fresh start', async () => {
+    const { harness } = await load();
+    const complete = vi.fn().mockResolvedValue({ text: 'Ready.', providerId: 'codex' });
+    harness.sdk.stub('assistant.complete', complete);
+    await harness.callRpc('helperAsk', { question: 'First question' });
+    await harness.callRpc('helperAsk', { question: 'Follow-up' });
+    expect(complete).toHaveBeenLastCalledWith(expect.objectContaining({
+      expectedProviderId: 'codex',
+      prompt: expect.stringContaining('First question')
+    }));
+    await expect(harness.callRpc('helperNewConversation')).resolves.toMatchObject({
+      conversationTurns: 0, turns: [{ question: 'First question' }, { question: 'Follow-up' }]
+    });
+    await harness.callRpc('helperAsk', { question: 'New question' });
+    const next = complete.mock.calls.at(-1)![0];
+    expect(next.expectedProviderId).toBeUndefined();
+    expect(JSON.parse(next.prompt).previousTurns).toEqual([]);
+  });
+
+  it('validates questions and keeps the conversation unchanged when inference fails', async () => {
+    const { harness } = await load();
+    const complete = vi.fn().mockRejectedValue(new Error('Provider unavailable'));
+    harness.sdk.stub('assistant.complete', complete);
+    await expect(harness.callRpc('helperAsk', { question: '  ' })).rejects.toThrow(/up to/);
+    await expect(harness.callRpc('helperAsk', { question: 23 })).rejects.toThrow(/must be text/);
+    await expect(harness.callRpc('helperVisibility', { hidden: 'yes' })).rejects.toThrow(/must be a boolean/);
+    await expect(harness.callRpc('helperAsk', { question: 'Where are my projects?' })).rejects.toThrow(/Provider unavailable/);
+    await expect(harness.callRpc('helperProfile')).resolves.toMatchObject({ hidden: false, turns: [] });
   });
 });

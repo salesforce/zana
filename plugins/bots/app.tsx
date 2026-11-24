@@ -3,12 +3,15 @@ import { ChevronDown, Pin, Plus } from 'lucide-react';
 import { VaultPanel } from './src/vault/VaultPanel.js';
 import { Section, botSectionCss } from './src/BotSection.js';
 import { BotMemory } from './src/BotMemory.js';
+import { HelperPanel, useHelperProfile } from './src/helper/HelperPanel.js';
+import { HELPER_NAME } from './src/helper/shared.js';
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { definePluginApp, Markdown, useRealtime, useRpc, useZccNavigate, type BasicSidebarSectionProps, type PluginOwnedThreadIconProps, type PluginOwnedThreadTitleProps, type PluginThreadPanelProps } from '@zana-ai/zcc-plugin-sdk/app';
 import { BOT_COLORS, DIRECT_INTERVAL_MINUTES, MIN_ROUTINE_INTERVAL_MINUTES, ROUTINE_KINDS, type RoutineKind, botMemoryTag, defaultBotColor, defaultBotShape, describeCron, type BotRoutine, type BotShape } from './src/model.js';
 import type { BotJobView, BotView } from './src/service.js';
 
 const CHANNEL = 'bots:changed';
+const HELPER_ID = 'builtin:zana-helper';
 type BotState = 'new' | 'working' | 'asleep' | 'missing' | 'unknown';
 
 const muted: CSSProperties = { color: 'var(--text-muted)' };
@@ -321,6 +324,8 @@ function BasicBotRow({ bot, activeThreadId, opening, onOpen }: {
 
 export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread, registerThreads }: BasicSidebarSectionProps) {
   const { bots, loaded, error, refresh } = useBotList();
+  const helper = useHelperProfile();
+  const navigate = useZccNavigate();
   const [creating, setCreating] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const listId = useId();
@@ -356,7 +361,8 @@ export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread,
     .sort((a, b) => (b.pinnedAt ?? -1) - (a.pinnedAt ?? -1));
   // Search the whole roster, including the bots behind Show more.
   const visible = showAll || query ? matches : matches.slice(0, BASIC_BOT_LIMIT);
-  if (!matches.length && !error && (!loaded || query || !projectIds.length)) return null;
+  const showHelper = helper.profile?.hidden === false && HELPER_NAME.toLowerCase().includes(query);
+  if (!showHelper && !matches.length && !error && (!loaded || query || !projectIds.length)) return null;
   return <section className="bt-basic" aria-label="Bots">
     <style>{CSS + basicListCss}</style>
     <div className="bt-list-head">
@@ -373,6 +379,16 @@ export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread,
     {error && <p role="alert">Couldn’t load bots. <button type="button" onClick={() => void refresh()}>Retry</button></p>}
     {openError && <p role="alert" className="bt-alert">{openError}</p>}
     <div id={listId} className="bt-basic-list">
+      {showHelper && (
+        <button type="button" className="bt-item" onClick={() => navigate.toPluginPanel('bots', { subPath: 'helper' })}>
+          <BotAvatar bot={{ id: HELPER_ID, name: HELPER_NAME, color: '#3b82f6' }} size={26} />
+          <span><span className="bt-name">{HELPER_NAME}</span><small>Built-in</small></span>
+        </button>
+      )}
+      {helper.profile?.hidden && !query && (
+        <button type="button" className="bt-btn is-ghost is-sm" disabled={helper.saving}
+          onClick={() => void helper.setHidden(false)}>Restore Zana Helper</button>
+      )}
       {visible.map(bot => <BasicBotRow key={bot.id} bot={bot} activeThreadId={activeThreadId} opening={opening === bot.id}
         onOpen={() => void openBot(bot.id)} />)}
     </div>
@@ -383,12 +399,18 @@ export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread,
   </section>;
 }
 
-export function BotsPanel() {
+export function BotsPanel({ subPath = '' }: { subPath?: string } = {}) {
   const { bots, loaded, error, refresh } = useBotList();
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(subPath === 'helper' ? HELPER_ID : null);
+  useEffect(() => {
+    if (subPath === 'helper') setSelected(HELPER_ID);
+  }, [subPath]);
+  const helper = useHelperProfile();
+  const helperAvailable = helper.profile?.hidden === false;
+  const helperSelected = helperAvailable && (selected === HELPER_ID || (!selected && !bots.length));
   const [creating, setCreating] = useState(false);
   const bot = bots.find((row) => row.id === selected) ?? bots[0] ?? null;
-  const showCreate = creating || (loaded && bots.length === 0);
+  const showCreate = creating || (loaded && bots.length === 0 && !helperSelected);
 
   return (
     <div className="bt-root">
@@ -400,8 +422,24 @@ export function BotsPanel() {
             <button type="button" className="bt-btn is-ghost is-sm" onClick={() => setCreating(true)}>＋ New bot</button>
           </div>
           {error && <p role="alert" className="bt-alert">{error}</p>}
+          {helper.error && <p role="alert" className="bt-alert">{helper.error}</p>}
+          {helperAvailable && (
+            <button type="button" className="bt-item" aria-current={helperSelected && !showCreate ? 'true' : undefined}
+              onClick={() => { setSelected(HELPER_ID); setCreating(false); }}>
+              <BotAvatar bot={{ id: HELPER_ID, name: HELPER_NAME, color: '#3b82f6' }} size={26} />
+              <span><span className="bt-name">{HELPER_NAME}</span><small>Built-in</small></span>
+            </button>
+          )}
+          {helper.profile?.hidden && (
+            <button type="button" className="bt-btn is-ghost is-sm" disabled={helper.saving}
+              onClick={() => {
+                setSelected(HELPER_ID);
+                setCreating(false);
+                void helper.setHidden(false);
+              }}>Restore Zana Helper</button>
+          )}
           {bots.map((row) => {
-            const active = row.id === bot?.id && !showCreate;
+            const active = row.id === bot?.id && !showCreate && !helperSelected;
             const routines = row.routines.filter((r) => r.enabled).length;
             return (
               <button key={row.id} type="button" className="bt-item" aria-current={active ? 'true' : undefined}
@@ -417,10 +455,12 @@ export function BotsPanel() {
         <main className="bt-main">
           {showCreate ? (
             <CreateBot
-              canCancel={bots.length > 0}
+              canCancel={bots.length > 0 || helperAvailable}
               onCancel={() => setCreating(false)}
               onCreated={(id) => { setCreating(false); setSelected(id); void refresh(); }}
             />
+          ) : helperSelected ? (
+            <HelperPanel helper={helper} />
           ) : bot ? (
             <BotPage key={bot.id} bot={bot} onDeleted={() => { setSelected(null); void refresh(); }} />
           ) : (

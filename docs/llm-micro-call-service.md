@@ -20,6 +20,12 @@ The first (and currently only) consumer is **tab auto-naming**. The layer was bu
 
 ---
 
+## Project-selected plugin assistants
+
+Pass a registered `projectId` to `zcc.sdk.assistant.complete` to resolve the project's effective AI harness and model. This uses the selected provider's text transport and sends the supplied prompt and instructions. Project resolution contributes the provider, model, and host selection. Completion receives no project files, thread history, agent tools, or execution grants.
+
+Claude Code uses an isolated local print call. Codex uses the host's existing structured inference command and its Codex sign-in. A provider without a compatible text transport returns an actionable error. Pass the returned `providerId` as `expectedProviderId` on follow-ups containing conversation context so a default change is rejected before dispatch. Existing callers that omit `projectId` keep the legacy micro-call route.
+
 ## Architecture
 
 ```
