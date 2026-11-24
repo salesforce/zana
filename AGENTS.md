@@ -31,7 +31,7 @@ If one is explicitly requested, put it under `.worktrees/<branch-name>` so repo 
 ## Local verification
 
 - Day-to-day changed-code verification: `pnpm verify:fast`. It runs typecheck, `vitest run --changed origin/main`, and source-text guard tests. Full CI remains merge authority.
-- Pre-push verifies feature branches in an isolated snapshot with typecheck, changed tests, and source-text guards. Protected refs and unsafe push shapes run `pnpm verify:full`. Policy: `docs/native-runtime-isolation.md`.
+- Pre-push verifies feature branches in an isolated snapshot with typecheck, changed tests, and source-text guards. Protected refs and unsafe push shapes run `pnpm verify:full`, except on Windows, where `verify:full` cannot pass and those pushes get the change-aware fast path against `origin/main` instead (CI remains the merge authority); deletion-only pushes skip. Policy: `docs/native-runtime-isolation.md`.
 
 ### Optional TinyNod review and skips
 

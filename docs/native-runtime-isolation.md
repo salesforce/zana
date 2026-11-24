@@ -57,9 +57,14 @@ verification for any remote. On Windows the full suite cannot pass (hundreds of
 tests need POSIX tools or hit file-locking differences), so a push that would run
 `full` (a fork remote, a protected ref, an unknown ref) instead gets the
 change-aware fast path against `origin/main`'s merge base. It stays on `full`
-when no single pushed commit or non-empty diff can be selected. Temp clones named
-`zana-pre-push-*` that are over six hours old are removed when a fresh snapshot
-is made.
+when no single pushed commit or non-empty diff can be selected. The base is the
+local `origin/main`, never fetched by the hook; a stale one only widens the
+selected paths. This is a policy change for Windows: CI stays the merge
+authority. Deleting a protected ref was already skipped; the change is that a
+deletion to a remote other than `salesforce/zana` now skips too, on every
+platform. Temp clones named `zana-pre-push-*` with no activity (newest mtime of
+the folder and its direct children) for six hours are removed when a fresh
+snapshot is made, best effort: a failure is logged and never stops the push.
 
 The snapshot is a cached clone when one is free. Each repository keeps up to two
 per Node ABI, platform, and architecture under the user cache directory

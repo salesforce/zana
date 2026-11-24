@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
@@ -119,7 +119,7 @@ describe('windows pushes use the change-aware fast path', () => {
 
   it('keeps full verification off Windows and selects fast against origin/main on Windows', () => {
     expect(selectPush({ tuples: [feature], remoteUrl: FORK, ...services() })).toMatchObject({ action: 'full' });
-    expect(win()).toEqual({ action: 'fast', reason: expect.stringContaining('not verified GitHub'), paths: ['apps/server/src/a.ts'], oid: OID, base: BASE, feature: true });
+    expect(win()).toEqual({ action: 'fast', reason: expect.stringContaining('not verified GitHub'), paths: ['apps/server/src/a.ts'], oid: OID, base: BASE });
   });
 
   it('covers protected refs and unknown refs, and records why full was chosen', () => {
@@ -151,23 +151,86 @@ describe('windows pushes use the change-aware fast path', () => {
 });
 
 describe('sweepStaleTempClones', () => {
-  const OLD = 7 * 60 * 60 * 1000;
+  const HOUR = 60 * 60 * 1000;
+  const OLD = 7 * HOUR;
+  const age = (path: string, ageMs: number) => {
+    const when = new Date(Date.now() - ageMs);
+    utimesSync(path, when, when);
+  };
+  const tempDir = () => mkdtempSync(join(tmpdir(), 'sweep-test-'));
+  const clone = (dir: string, name: string, ageMs: number) => {
+    mkdirSync(join(dir, name));
+    age(join(dir, name), ageMs);
+  };
 
   it('removes only old pre-push clones and leaves other temp folders alone', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'sweep-test-'));
-    const make = (name: string, ageMs: number) => {
-      mkdirSync(join(dir, name));
-      const when = new Date(Date.now() - ageMs);
-      utimesSync(join(dir, name), when, when);
-    };
-    make('zana-pre-push-AbC123', OLD);
-    make('zana-pre-push-hooks-xYz789', OLD);
-    make('zana-pre-push-fresh1', 60_000);
-    make('zana-pre-push-keep', OLD);
-    make('unrelated-folder', OLD);
+    const dir = tempDir();
+    clone(dir, 'zana-pre-push-AbC123', OLD);
+    clone(dir, 'zana-pre-push-hooks-xYz789', OLD);
+    clone(dir, 'zana-pre-push-fresh1', 60_000);
+    clone(dir, 'zana-pre-push-keep', OLD);
+    clone(dir, 'unrelated-folder', OLD);
     writeFileSync(join(dir, 'zana-pre-push-file12'), 'x');
     expect(sweepStaleTempClones({ dir, log: () => {} })).toBe(2);
     expect(readdirSync(dir).sort()).toEqual(['unrelated-folder', 'zana-pre-push-file12', 'zana-pre-push-fresh1', 'zana-pre-push-keep']);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('keeps a clone whose folder looks old but whose contents were touched recently', () => {
+    const dir = tempDir();
+    clone(dir, 'zana-pre-push-Busy12', OLD);
+    mkdirSync(join(dir, 'zana-pre-push-Busy12', 'node_modules'));
+    age(join(dir, 'zana-pre-push-Busy12'), OLD);
+    clone(dir, 'zana-pre-push-Idle12', OLD);
+    mkdirSync(join(dir, 'zana-pre-push-Idle12', 'node_modules'));
+    age(join(dir, 'zana-pre-push-Idle12', 'node_modules'), OLD);
+    age(join(dir, 'zana-pre-push-Idle12'), OLD);
+    expect(sweepStaleTempClones({ dir, log: () => {} })).toBe(1);
+    expect(readdirSync(dir)).toEqual(['zana-pre-push-Busy12']);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('never throws: an unreadable temp dir is logged', () => {
+    const log = vi.fn();
+    expect(sweepStaleTempClones({ dir: join(tmpdir(), 'sweep-test-missing-dir'), log })).toBe(0);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('could not list'));
+  });
+
+  it('never throws when a clone vanishes between listing and stat, and stays silent about it', () => {
+    const dir = tempDir();
+    clone(dir, 'zana-pre-push-Gone12', OLD);
+    clone(dir, 'zana-pre-push-Next12', OLD);
+    const gone = Object.assign(new Error('gone'), { code: 'ENOENT' });
+    const stat = vi.fn((path: string) => {
+      if (path.endsWith('Gone12')) throw gone;
+      return statSync(path);
+    });
+    const log = vi.fn();
+    expect(sweepStaleTempClones({ dir, log, fs: { stat } })).toBe(1);
+    expect(log).not.toHaveBeenCalled();
+    expect(readdirSync(dir)).toEqual(['zana-pre-push-Gone12']);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('logs and continues when a stat is denied or a clone cannot be removed', () => {
+    const dir = tempDir();
+    clone(dir, 'zana-pre-push-Deny12', OLD);
+    clone(dir, 'zana-pre-push-Lock12', OLD);
+    clone(dir, 'zana-pre-push-Done12', OLD);
+    const denied = Object.assign(new Error('EPERM'), { code: 'EPERM' });
+    const stat = vi.fn((path: string) => {
+      if (path.endsWith('Deny12')) throw denied;
+      return statSync(path);
+    });
+    const remove = vi.fn((path: string, options: object) => {
+      if (path.endsWith('Lock12')) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' });
+      rmSync(path, options);
+    });
+    const log = vi.fn();
+    expect(sweepStaleTempClones({ dir, log, fs: { stat, remove } })).toBe(1);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Deny12'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Lock12'));
+    expect(readdirSync(dir).sort()).toEqual(['zana-pre-push-Deny12', 'zana-pre-push-Lock12']);
     rmSync(dir, { recursive: true, force: true });
   });
 });
