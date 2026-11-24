@@ -108,6 +108,22 @@ describe('AgentsListPane squad transport', () => {
     expect(worker.querySelector('.fleet-kind-chip')?.textContent).toBe('CLI Agent');
   });
 
+  it('shows the owner once on the Squad group, not on every worker row', async () => {
+    (window as unknown as { cc: { executionBoard: { listProject: ReturnType<typeof vi.fn> } } }).cc.executionBoard.listProject
+      .mockResolvedValue({ executions: [{ ...execution('e-x', 'modern', 'Live job'), startedFrom: { kind: 'thread', id: 't', title: 'Fix auth' } }] });
+    const session = (id: string, role: 'orchestrator' | 'worker', title: string) => ({
+      id, title, status: 'running', profile: 'claude', createdAt: Date.now(),
+      cohort: { cohortId: 'c1', teamId: 'modern', teamName: 'Modern squad', role, slotLabel: title, executionId: 'e-x' }
+    });
+    h.terminals = { p: [session('o1', 'orchestrator', 'Lead'), session('w1', 'worker', 'Helper'), session('w2', 'worker', 'Helper two')] };
+    render(<MemoryRouter><AgentsListPane /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText('Helper two')).toBeTruthy());
+    const owners = screen.getAllByTestId('squad-owner');
+    expect(owners).toHaveLength(1);
+    expect(owners[0].textContent).toBe('Owner Fix auth');
+    expect(document.body.textContent).not.toContain('owner Fix auth');
+  });
+
   it('groups Modern squad members like a CLI squad and drops them from the thread list', async () => {
     (window as unknown as { cc: { executionBoard: { listProject: ReturnType<typeof vi.fn> } } }).cc.executionBoard.listProject
       .mockResolvedValue({ executions: [{

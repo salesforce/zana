@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
-import { buildSquadBlockerReport, buildSquadReport, formatSquadDuration } from './report.js';
+import { buildSquadBlockerReport, buildSquadInboxReport, buildSquadReport, formatSquadDuration } from './report.js';
 
 const CLOSING = 'Tell the user. Do not change the Squad\'s work or answer its questions; answers go through the Inbox.';
 
@@ -197,5 +197,33 @@ describe('buildSquadReport failure reason', () => {
   });
   it('quotes the reason for an owner', () => {
     expect(buildSquadReport(record({ state: 'FAILED', finalSummary: undefined, failureReason: 'said "no"' }), { role: 'owner' })).toContain(`"Failed: said 'no'"`);
+  });
+});
+
+describe('buildSquadInboxReport', () => {
+  it('lists the outcome, location, units and summary on separate lines with nothing for an agent', () => {
+    const text = buildSquadInboxReport(record());
+    expect(text).toBe('"Ship it" completed after 42 min.\nWorked in the project folder.\nUnits: 2 done, 1 failed, 1 skipped.\n\nAll good.');
+    expect(text).not.toContain('Tell the user');
+    expect(text).not.toContain('[Squad report]');
+  });
+
+  it('keeps the summary\'s own lines and strips control characters', () => {
+    const text = buildSquadInboxReport(record({ finalSummary: '# Failed\r\n- unit a\u001b[31m\n\n\n\n- unit b' }));
+    expect(text).toContain('# Failed\n- unit a [31m\n\n- unit b');
+    expect(text).not.toContain('\u001b');
+  });
+
+  it('falls back to the failure reason, then to nothing, and names a kept worktree', () => {
+    const failed = record({ state: 'FAILED', finalSummary: undefined, failureReason: 'worker\ndied' } as never);
+    expect(buildSquadInboxReport(failed)).toContain('\n\nFailed: worker died');
+    const none = buildSquadInboxReport(record({ finalSummary: undefined }));
+    expect(none.endsWith('1 skipped.')).toBe(true);
+    const kept = record({ squadWorktree: { path: '/tmp/wt', branch: 'squad/x', baseBranch: 'main', ownership: 'managed' } as never });
+    expect(buildSquadInboxReport(kept, { worktree: 'kept' })).toContain('Branch squad/x, worktree kept at /tmp/wt.');
+  });
+
+  it('bounds a very long summary', () => {
+    expect(buildSquadInboxReport(record({ finalSummary: 'x'.repeat(5000) })).length).toBeLessThan(1700);
   });
 });

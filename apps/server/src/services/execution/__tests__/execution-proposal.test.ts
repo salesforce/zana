@@ -370,6 +370,9 @@ describe('onHumanBlocker', () => {
     await svc.dispatchReady(coordinator);
     clock.t += 700_000;
     await svc.redispatchStalled();
+    expect(onHumanBlocker).not.toHaveBeenCalled(); // #789: the lone seat is retried first
+    clock.t += 700_000;
+    await svc.redispatchStalled();
     expect(onHumanBlocker).toHaveBeenCalledOnce();
     expect(onHumanBlocker).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ audience: 'human', workUnitId: 'a' }));
   }));

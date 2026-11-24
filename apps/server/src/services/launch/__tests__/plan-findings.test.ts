@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { capSquadPlanFindings, formatSquadPlanFinding, SQUAD_PLAN_BINDING_CAP, SQUAD_PLAN_FINDING_CAP } from '@zana-ai/zcc-domain/squad-proposal';
-import { buildPlanFindings, hardFindingCounts, offeredRoleNames, planBindings, requiredRoleFindings } from '../plan-findings.js';
+import { buildPlanFindings, hardFindingCounts, offeredRoleNames, parallelismFindings, planBindings, requiredRoleFindings } from '../plan-findings.js';
 import type { SlotRouteSnapshotV1 } from '../../execution/routing-policy.js';
 
 const slots: SlotRouteSnapshotV1[] = [
@@ -157,5 +157,27 @@ describe('limits and failure paths (requirement 24)', () => {
     expect(capped.findings).toHaveLength(SQUAD_PLAN_FINDING_CAP);
     expect(capped.hidden).toBe(120 - SQUAD_PLAN_FINDING_CAP);
     expect(bindings.length - SQUAD_PLAN_BINDING_CAP).toBe(70);
+  });
+});
+
+describe('parallelismFindings', () => {
+  const chain = Array.from({ length: 16 }, (_, i) => ({ id: `s${i}`, dependencies: i ? [`s${i - 1}`] : [] }));
+  it('warns when worker slots exceed the critical-path width, as a plan warning in the parser finding shape', () => {
+    const [finding] = parallelismFindings(chain, 3);
+    expect(finding).toMatchObject({ severity: 'warning', requirement: 'plan' });
+    expect(finding!.message).toContain('width is 1 across 16 steps');
+    expect(finding!.message).toContain('3 worker slots, so 2 will sit idle');
+    expect(finding!.message).toContain('one at a time');
+  });
+  it('omits the serial hint for a partly parallel plan and stays quiet when slots fit', () => {
+    const wide = [{ id: 'a' }, { id: 'b' }, { id: 'c', dependencies: ['a', 'b'] }];
+    expect(parallelismFindings(wide, 4)[0]!.message).not.toContain('one at a time');
+    expect(parallelismFindings(wide, 2)).toEqual([]);
+    expect(parallelismFindings(wide, 1)).toEqual([]);
+    expect(parallelismFindings([{ id: 'a' }], 5)).toEqual([]);
+  });
+  it('reaches buildPlanFindings output for a rostered Squad', () => {
+    const findings = buildPlanFindings({ units: chain, slotRoutes: slots });
+    expect(findings.filter((f) => f.requirement === 'plan' && f.severity === 'warning')).toHaveLength(1); // two worker slots, width 1
   });
 });

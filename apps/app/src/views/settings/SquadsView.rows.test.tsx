@@ -175,3 +175,25 @@ describe('SquadsView default squad', () => {
     expect(document.activeElement?.textContent?.trim()).toBe('Delete');
   });
 });
+
+describe('SquadsView unit checkpoint toggle', () => {
+  it('is hidden without config, defaults on, and writes the flag through onUpdate/onConfigDraft', () => {
+    const { container, unmount } = render(<SquadsView />);
+    expect(screen.queryByRole('switch', { name: 'Checkpoint each unit' })).toBeNull();
+    unmount();
+    const onUpdate = vi.fn();
+    const onConfigDraft = vi.fn();
+    render(<SquadsView config={{} as never} onUpdate={onUpdate} onConfigDraft={onConfigDraft} />);
+    const toggle = screen.getByRole('switch', { name: 'Checkpoint each unit' });
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(toggle);
+    expect(onUpdate).toHaveBeenCalledWith({ squadUnitCheckpointsEnabled: false });
+    expect(onConfigDraft).toHaveBeenCalledWith({ squadUnitCheckpointsEnabled: false });
+    void container;
+  });
+
+  it('shows off when the flag is false', () => {
+    render(<SquadsView config={{ squadUnitCheckpointsEnabled: false } as never} onUpdate={vi.fn()} />);
+    expect(screen.getByRole('switch', { name: 'Checkpoint each unit' }).getAttribute('aria-checked')).toBe('false');
+  });
+});

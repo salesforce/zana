@@ -6,7 +6,7 @@ import type { ExecutionPolicyV1 } from './store.js';
  * schedule) may ask for a tighter run, never a wider one. Limits are re-sanitized here, so a stale
  * or hand-edited value cannot widen a run. Absent limits return the policy unchanged.
  */
-export function clampPolicyToSquadLimits<P extends Pick<ExecutionPolicyV1, 'maxConcurrent' | 'maxClaimWallClockMs' | 'maxClaimStallMs'>>(
+export function clampPolicyToSquadLimits<P extends Pick<ExecutionPolicyV1, 'maxConcurrent' | 'maxClaimWallClockMs' | 'maxClaimStallMs' | 'maxClaimOutputOnlyMs'>>(
   policy: P | undefined, rawLimits: unknown
 ): P | undefined {
   const limits = sanitizeTeamLimits(rawLimits);
@@ -16,11 +16,13 @@ export function clampPolicyToSquadLimits<P extends Pick<ExecutionPolicyV1, 'maxC
   const maxConcurrent = cap(policy?.maxConcurrent, limits.maxConcurrent);
   const maxClaimWallClockMs = cap(policy?.maxClaimWallClockMs, limits.claimWallClockMs);
   const maxClaimStallMs = cap(policy?.maxClaimStallMs, limits.claimStallMs);
+  const maxClaimOutputOnlyMs = cap(policy?.maxClaimOutputOnlyMs, limits.claimOutputCeilingMs);
   return {
     ...policy,
     ...(maxConcurrent === undefined ? {} : { maxConcurrent }),
     ...(maxClaimWallClockMs === undefined ? {} : { maxClaimWallClockMs }),
-    ...(maxClaimStallMs === undefined ? {} : { maxClaimStallMs })
+    ...(maxClaimStallMs === undefined ? {} : { maxClaimStallMs }),
+    ...(maxClaimOutputOnlyMs === undefined ? {} : { maxClaimOutputOnlyMs })
   } as P;
 }
 

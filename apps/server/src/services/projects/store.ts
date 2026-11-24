@@ -624,6 +624,9 @@ function normalizeThreadViewWindowBounds(
 /** Clamp bounds for a non-zero {@link AppConfig.executionPlanStartupGraceMs} (0 disables). */
 const MIN_STARTUP_GRACE_MS = 30_000;
 const MAX_STARTUP_GRACE_MS = 3_600_000;
+/** Clamp bounds for a non-zero {@link AppConfig.executionBlockerReminderMs} (0 disables). */
+const MIN_BLOCKER_REMINDER_MS = 60_000;
+const MAX_BLOCKER_REMINDER_MS = 86_400_000;
 
 function normalizeCompanionPlacement(
   placement: AppConfig['companionPlacement'] | undefined
@@ -1290,6 +1293,13 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.executionPlanStartupGraceMs === 'number' && Number.isFinite(input.executionPlanStartupGraceMs)) {
     const v = Math.round(input.executionPlanStartupGraceMs);
     normalized.executionPlanStartupGraceMs = v <= 0 ? 0 : Math.max(MIN_STARTUP_GRACE_MS, Math.min(MAX_STARTUP_GRACE_MS, v));
+  }
+  if (typeof input.executionBlockerReminderMs === 'number' && Number.isFinite(input.executionBlockerReminderMs)) {
+    const v = Math.round(input.executionBlockerReminderMs);
+    normalized.executionBlockerReminderMs = v <= 0 ? 0 : Math.max(MIN_BLOCKER_REMINDER_MS, Math.min(MAX_BLOCKER_REMINDER_MS, v));
+  }
+  if (typeof input.squadUnitCheckpointsEnabled === 'boolean') {
+    normalized.squadUnitCheckpointsEnabled = input.squadUnitCheckpointsEnabled;
   }
   if (typeof input.composerShowCliAgent === 'boolean') {
     normalized.composerShowCliAgent = input.composerShowCliAgent;

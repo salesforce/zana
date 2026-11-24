@@ -205,7 +205,7 @@ test('demo: define and launch a Squad', async ({ app }) => {
     await beat(600);
 
     await caption('Crown the orchestrator: it starts first, plans and delegates');
-    await tap(page, editor.getByLabel('Mark as orchestrator').nth(0));
+    await tap(page, editor.getByRole('button', { name: 'Orchestrator', exact: true }).nth(0));
     await beat(1400);
 
     await caption('Optional: opening prompt, default project, worktree and launch policy');

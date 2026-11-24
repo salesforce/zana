@@ -1,4 +1,5 @@
 import { boundedText, LargeTextPreview } from './LargeTextPreview.js';
+import { formatAge } from '@/lib/squad-worker-visibility';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { ExecutionBoardSnapshot } from '@zana-ai/zcc-domain/product';
 import { useUi } from '../store';
@@ -37,7 +38,8 @@ function limitsSummary(limits: NonNullable<ExecutionProjection['limits']>): stri
   return [
     `up to ${limits.maxConcurrent} sessions`,
     limits.claimWallClockMs === undefined ? undefined : `claim wall-clock ${durationLabel(limits.claimWallClockMs)}`,
-    limits.claimStallMs === undefined ? undefined : `claim stall ${durationLabel(limits.claimStallMs)}`
+    limits.claimStallMs === undefined ? undefined : `claim stall ${durationLabel(limits.claimStallMs)}`,
+    limits.claimOutputCeilingMs === undefined ? undefined : `output-only ceiling ${durationLabel(limits.claimOutputCeilingMs)}`
   ].filter(Boolean).join(' · ');
 }
 
@@ -266,6 +268,16 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
   const [busy, setBusy] = useState(false);
   const [replyDraft, setReplyDraft] = useState('');
   const requestIdentityRef = useRef<{ blockerId: string; text: string; id: string } | undefined>(undefined);
+  const blockerFormRef = useRef<HTMLFormElement>(null);
+  const scrolledBlockerRef = useRef<string | undefined>(undefined);
+  // An open blocker is the one thing here a person must act on, so bring it into view once per blocker
+  // instead of leaving it below the run summary in a short panel.
+  const openBlockerId = snapshot && !terminal.has(snapshot.execution.state) ? snapshot.execution.currentBlocker?.id : undefined;
+  useEffect(() => {
+    if (!openBlockerId || scrolledBlockerRef.current === openBlockerId) return;
+    scrolledBlockerRef.current = openBlockerId;
+    blockerFormRef.current?.scrollIntoView?.({ block: 'start' });
+  }, [openBlockerId]);
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, string>>({});
   const [artifactContent, setArtifactContent] = useState<Record<string, string>>({});
   const [followUpInstruction, setFollowUpInstruction] = useState('');
@@ -469,7 +481,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
         </div>;
       })}
       {snapshot.execution.currentBlocker && (
-        <form className="execution-blocker" onSubmit={(event) => {
+        <form ref={blockerFormRef} className="execution-blocker" onSubmit={(event) => {
           event.preventDefault();
           if (isTerminal) return;
           const blocker = snapshot.execution.currentBlocker!;
@@ -480,7 +492,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
           }
           void mutate(() => window.cc.executionBoard.respond(projectId, executionId, execution.stateVersion ?? 0, blocker.id, requestIdentityRef.current!.id, message), true);
         }}>
-          <div className="execution-blocker-heading"><h4>Current blocker</h4><span>{isTerminal ? 'Squad run closed' : 'Needs your response'}</span></div>
+          <div className="execution-blocker-heading"><h4>Current blocker</h4><span>{isTerminal ? 'Squad run closed' : 'Needs your response'}</span>{!isTerminal && snapshot.execution.currentBlocker.waitingSince !== undefined && <span className="execution-blocker-wait" data-testid="execution-blocker-wait">Waiting {formatAge(Date.now() - snapshot.execution.currentBlocker.waitingSince)}</span>}</div>
           <p className="execution-blocker-question">{snapshot.execution.currentBlocker.question}</p>
           {snapshot.execution.currentBlocker.options?.length ? <p className="execution-blocker-options">{snapshot.execution.currentBlocker.options.join(' · ')}</p> : null}
           {isTerminal && <p className="execution-blocker-terminal" role="status">Squad run {execution.state.toLowerCase()}. This blocker is retained as history and can no longer receive a response.</p>}

@@ -87,11 +87,12 @@ describe('Config pages are searchable (values, options, synonyms)', () => {
     expect(findSecretValueViolations([...config, ...keyboardSearchProvider(cfg({}))])).toEqual([]);
   });
 
-  it('keeps Advanced editor overrides flagged for reveal', () => {
+  it('keeps Advanced editor overrides and the Squads Advanced block flagged for reveal', () => {
     const adv = getStaticEntries().filter((e) => e.reveal === 'advanced').map((e) => e.id).sort();
     expect(adv).toEqual([
       'editor.code-app', 'editor.code-binary', 'editor.cursor-app', 'editor.cursor-binary',
-      'editor.intellij-app', 'editor.intellij-binary', 'editor.terminal-app'
+      'editor.intellij-app', 'editor.intellij-binary', 'editor.terminal-app',
+      'squads.blocker-reminder.minutes', 'squads.unit-checkpoints'
     ]);
   });
 });

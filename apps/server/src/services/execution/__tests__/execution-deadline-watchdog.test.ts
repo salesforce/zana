@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_BLOCKED_WAIT_MS, MAX_BLOCKED_WAIT_MS, effectiveBlockedWaitMs, ExecutionDeadlineWatchdog, deadlineTimings, executionProgressAnchor, nextDeadlineAt, planDeadline } from '../deadline-watchdog.js';
+import { OUTPUT_CEILING_DEADLINE_MARGIN_MS, claimOutputLive, outputOnlyCeilingFloor, DEFAULT_BLOCKED_WAIT_MS, MAX_BLOCKED_WAIT_MS, effectiveBlockedWaitMs, ExecutionDeadlineWatchdog, deadlineTimings, executionProgressAnchor, nextDeadlineAt, planDeadline } from '../deadline-watchdog.js';
 import type { ExecutionRecord } from '../store.js';
 
 const units = (progressAts: Array<number | undefined>): ExecutionRecord['workUnits'] =>
@@ -191,5 +191,38 @@ describe('ExecutionDeadlineWatchdog scheduling with blockers', () => {
     expect(f.setTimer).toHaveBeenLastCalledWith(expect.any(Function), 0); // genuinely overdue: fire now
     f.watchdog.schedule(record(), 6_000);
     expect(f.setTimer).toHaveBeenLastCalledWith(expect.any(Function), 1_000);
+  });
+});
+
+describe('output-only ceiling guard (the idle deadline cannot pre-empt the ceiling)', () => {
+  const claimed = (over: Record<string, unknown> = {}) => record({
+    request: { version: 1, launchKind: 'team', slots: [{ initialTask: 'work' }], resolvedModels: [], policy: { deadlineMs: 1, maxClaimOutputOnlyMs: 1_800_000 } },
+    workUnits: [{ id: 'a', state: 'CLAIMED', claimedAt: 1_000, progressAt: 1_000, outputLeaseExpiresAt: 50_000, ...over }] as unknown as ExecutionRecord['workUnits']
+  });
+
+  it('claimOutputLive is true only while the output lease is in the future', () => {
+    expect(claimOutputLive({}, 10)).toBe(false);
+    expect(claimOutputLive({ outputLeaseExpiresAt: 10 }, 10)).toBe(false);
+    expect(claimOutputLive({ outputLeaseExpiresAt: 11 }, 10)).toBe(true);
+  });
+
+  it('floors the idle deadline at progress + ceiling + margin for a claim that is still printing', () => {
+    const r = claimed();
+    expect(outputOnlyCeilingFloor(r, 2_000)).toBe(1_000 + 1_800_000 + OUTPUT_CEILING_DEADLINE_MARGIN_MS);
+    const plan = planDeadline(r, deadlineTimings(r)!, 2_000);
+    expect(plan?.phase).toBe('idle');
+    expect(plan!.at).toBeGreaterThanOrEqual(1_000 + 1_800_000 + OUTPUT_CEILING_DEADLINE_MARGIN_MS);
+    expect(nextDeadlineAt(r, 2_000)).toBe(plan!.at);
+  });
+
+  it('does not floor a silent claim, or a non-claimed unit', () => {
+    expect(outputOnlyCeilingFloor(claimed({ outputLeaseExpiresAt: undefined }), 2_000)).toBe(0);
+    expect(outputOnlyCeilingFloor(claimed({ state: 'READY' }), 2_000)).toBe(0);
+    expect(outputOnlyCeilingFloor(claimed({ progressAt: undefined, claimedAt: undefined }), 2_000)).toBe(0);
+  });
+
+  it('falls back to the default ceiling for a run persisted without one', () => {
+    const legacy = record({ workUnits: claimed().workUnits });
+    expect(outputOnlyCeilingFloor(legacy, 2_000)).toBeGreaterThan(0);
   });
 });

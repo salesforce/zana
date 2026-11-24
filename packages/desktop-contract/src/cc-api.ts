@@ -2134,7 +2134,7 @@ export interface CcApi {
     recheckProposalPlan(
       proposalId: string
     ): Promise<
-      | { ok: true; value: Pick<SquadLaunchPrefill, 'planFindings' | 'planFindingsHidden' | 'planBindings' | 'planBindingsHidden' | 'planSummary' | 'planStepCount' | 'planCanonicalText'> }
+      | { ok: true; value: Pick<SquadLaunchPrefill, 'planFindings' | 'planFindingsHidden' | 'planBindings' | 'planBindingsHidden' | 'planSummary' | 'planStepCount' | 'planCanonicalText' | 'planSkipImpact' | 'planSkipImpactHidden'> }
       | { ok: false; code: SquadProposalErrorCode; message: string }
     >;
     /** Send the plan's current Must fix problems to the conversation that proposed the launch. Main builds the text. */

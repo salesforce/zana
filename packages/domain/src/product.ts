@@ -2802,6 +2802,16 @@ export interface AppConfig {
    */
   executionPlanStartupGraceMs?: number;
   /**
+   * How long (ms) a human Squad blocker may wait unanswered before one reminder is posted to the Inbox.
+   * `0` disables the reminder; absent means the default (30 min). Old config files keep the default.
+   */
+  executionBlockerReminderMs?: number;
+  /**
+   * Per-unit git checkpoints for Squad runs: record what each unit changed in its checkout (by any means, including
+   * shell writes) and restore a failed unit's own edits. Default on; explicit false turns the feature off.
+   */
+  squadUnitCheckpointsEnabled?: boolean;
+  /**
    * Show CLI Agent in the New Chat / New agent launch switcher. Default ON.
    * At least one of this and {@link composerShowModern} must stay on.
    */
@@ -5262,17 +5272,22 @@ export interface TeamLimits {
   claimWallClockMs?: number;
   /** Output-silence ceiling for one claimed work unit, in ms. Absent keeps the 10 minute default. */
   claimStallMs?: number;
+  /** Ceiling for a claim whose worker keeps producing output but sends no turn heartbeat and changes no file.
+   *  Replaces the stall and wall-clock limits for such a claim. Absent keeps the 30 minute default. */
+  claimOutputCeilingMs?: number;
 }
 
-/** Defaults a Squad run uses when `claimWallClockMs` / `claimStallMs` are absent (mirrors the execution service). */
+/** Defaults a Squad run uses when `claimWallClockMs` / `claimStallMs` / `claimOutputCeilingMs` are absent (mirrors the execution service). */
 export const DEFAULT_CLAIM_WALL_CLOCK_MS = 20 * 60_000;
 export const DEFAULT_CLAIM_STALL_MS = 10 * 60_000;
+export const DEFAULT_CLAIM_OUTPUT_CEILING_MS = 30 * 60_000;
 
 /** Inclusive bounds {@link sanitizeTeamLimits} enforces; the editor shows the same ranges. */
 export const TEAM_LIMIT_BOUNDS = {
   maxConcurrent: { min: 1, max: 32 },
   claimWallClockMs: { min: 60_000, max: 24 * 60 * 60_000 },
-  claimStallMs: { min: 60_000, max: 24 * 60 * 60_000 }
+  claimStallMs: { min: 60_000, max: 24 * 60 * 60_000 },
+  claimOutputCeilingMs: { min: 60_000, max: 24 * 60 * 60_000 }
 } as const;
 
 /**
@@ -5284,7 +5299,7 @@ export function sanitizeTeamLimits(raw: unknown): TeamLimits | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const source = raw as Record<string, unknown>;
   const out: TeamLimits = {};
-  for (const key of ['maxConcurrent', 'claimWallClockMs', 'claimStallMs'] as const) {
+  for (const key of ['maxConcurrent', 'claimWallClockMs', 'claimStallMs', 'claimOutputCeilingMs'] as const) {
     const value = source[key];
     if (typeof value !== 'number' || !Number.isFinite(value) || value < 1) continue;
     const { min, max } = TEAM_LIMIT_BOUNDS[key];
@@ -7007,7 +7022,8 @@ export const EXECUTION_FAILURE_CODES = [
   'SEMANTIC_CONFLICT',
   'POLICY_ESCALATION',
   'NO_QUALIFIED_ROUTE',
-  'ROUTE_FACTS_UNAVAILABLE'
+  'ROUTE_FACTS_UNAVAILABLE',
+  'STALLED'
 ] as const;
 export type ExecutionFailureCode = typeof EXECUTION_FAILURE_CODES[number];
 export const EXECUTION_FAILURE_DETAIL_MAX_CHARS = 2_048;
@@ -7171,6 +7187,8 @@ export interface ExecutionBoardProjection {
      *  or Job Details. The renderer keys attention display off this (Rule 1: this
      *  is metadata, never the answer text). */
     audience?: 'human' | 'coordinator';
+    /** Epoch ms the wait for an answer began (creation, or escalation to a human); the Squad panel shows the wait from it. */
+    waitingSince?: number;
     response?: string;
     notice?: { status: 'PENDING' | 'ACKNOWLEDGED'; attempts: number; inboxItemId?: string };
     delivery?: {
@@ -7218,7 +7236,7 @@ export interface ExecutionBoardProjection {
     }>;
   };
   /** Effective run limits (policy value or the default that applies). */
-  limits?: { maxConcurrent: number; claimWallClockMs?: number; claimStallMs?: number };
+  limits?: { maxConcurrent: number; claimWallClockMs?: number; claimStallMs?: number; claimOutputCeilingMs?: number };
   finalSummary?: string;
   /** Sanitized, bounded reason the run ended FAILED. */
   failureReason?: string;

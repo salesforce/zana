@@ -216,6 +216,10 @@ describe('SquadExecutionService API-error recovery hooks', () => {
       await recordRecovery(store, unit, clock.t + 60_000);
       clock.t += 60_001;
       await service.redispatchStalled();
+      // #789: the only seat is re-dispatched once, then the next stall blocks to a human.
+      expect((await store.get('execution-1'))!.workUnits![0].state).toBe('CLAIMED');
+      clock.t += 700_000;
+      await service.redispatchStalled();
       expect((await store.get('execution-1'))!.workUnits![0].state).toBe('BLOCKED');
     }));
   });

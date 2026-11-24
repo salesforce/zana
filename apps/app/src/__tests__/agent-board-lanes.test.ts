@@ -11,6 +11,7 @@ import {
   visibleAgentLanes,
   groupCardsByProject,
   partitionExecutionMembers,
+  blockerWaitText,
   partitionSquads,
   scheduleBySessionId,
   formatDuration,
@@ -496,6 +497,27 @@ describe('partitionExecutionMembers', () => {
     expect(top[0].session.status).toBe('exited');
     expect(LANES.find((lane) => lane.match(top[0]))?.key).toBe('done');
   });
+
+  it('never reuses a live card session id for the host of an orphaned finished run', () => {
+    const orchestrator = memberCard('orch', 'co-live', 'orchestrator');
+    orchestrator.session.cohort = { ...orchestrator.session.cohort!, executionId: 'execution-live' };
+    const worker = memberCard('w1', 'co-live', 'worker');
+    worker.session.cohort = { ...worker.session.cohort!, executionId: 'execution-live' };
+    const projection = (executionId: string, state: ExecutionBoardProjection['state']): ExecutionBoardProjection => ({
+      executionId, projectId: 'p1', teamId: 't1', teamName: 'Squad', jobTitle: executionId, state, attempt: 1, createdAt: 1, updatedAt: 2
+    });
+    const { top, workersByHost } = partitionExecutionMembers(
+      [orchestrator, worker],
+      [projection('execution-live', 'RUNNING'), projection('old-1', 'FAILED'), projection('old-2', 'COMPLETED')]
+    );
+    const ids = [...top, ...[...workersByHost.values()].flat()].map((item) => item.session.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toEqual(expect.arrayContaining(['orch', 'w1', 'execution:old-1', 'execution:old-2']));
+    expect(top.filter((item) => item.session.id.startsWith('execution:')).every((item) => item.session.status === 'exited')).toBe(true);
+    // Finished runs stay their own cards; they are not folded into the live Squad's worker list.
+    expect([...workersByHost.values()].flat().map((item) => item.session.id).sort()).toEqual(['w1']);
+    expect(partitionSquads(top).workersByOrchestrator.get('orch') ?? []).toEqual([]);
+  });
 });
 
 describe('executionNeedsAttention', () => {
@@ -603,5 +625,18 @@ describe('closeableLaneAgents', () => {
         agentFleetItem(host)
       ]).map((c) => c.session.id)
     ).toEqual(['live', 'done']);
+  });
+});
+
+describe('blockerWaitText', () => {
+  const execution = (waitingSince?: number): ExecutionBoardProjection => ({
+    executionId: 'e1', projectId: 'p1', teamId: 't1', teamName: 'Squad', jobTitle: 'Job', state: 'BLOCKED', attempt: 1, createdAt: 1, updatedAt: 2,
+    currentBlocker: { id: 'b1', workUnitId: 'u', slotId: 's', question: 'q', ...(waitingSince !== undefined ? { waitingSince } : {}) }
+  });
+  it('shows how long the Squad has waited for an answer', () => {
+    expect(blockerWaitText(execution(1_000), 361_000)).toBe('Needs your answer · waiting 6m 0s');
+  });
+  it('omits the age when the wait start is unknown', () => {
+    expect(blockerWaitText(execution(), 361_000)).toBe('Needs your answer');
   });
 });

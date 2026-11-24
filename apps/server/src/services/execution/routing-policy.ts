@@ -172,3 +172,16 @@ export function compareCheapestFit(a: CheapestFitCandidate, b: CheapestFitCandid
   return (Number(a.deferred === true) - Number(b.deferred === true))
     || (Number(a.slotId === deprioritizeSlotId) - Number(b.slotId === deprioritizeSlotId));
 }
+
+/**
+ * Routing for the child unit of a scope re-split: it inherits the parent's tier and role constraints but never
+ * its pinned slot (the parent's worker is busy with the original scope). A contract change is routed at least
+ * at the `medium` (Standard) tier.
+ */
+export function splitChildRouting(parent: WorkUnitRoutingV1 | undefined, contract: boolean): WorkUnitRoutingV1 | undefined {
+  if (!parent && !contract) return undefined;
+  const { hardSlotId: _pinned, excludeSameWorkerAs: _excluded, ...inherited } = parent ?? { version: 1 as const };
+  const rank = (level: ModelLevel | undefined) => (level === undefined ? -1 : LEVELS.indexOf(level));
+  const minimumLevel = contract && rank(inherited.minimumLevel) < rank('medium') ? 'medium' : inherited.minimumLevel;
+  return { ...inherited, version: 1, ...(minimumLevel ? { minimumLevel } : {}) };
+}

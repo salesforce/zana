@@ -12,6 +12,7 @@ import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execut
 import { relaunchExecutionMonitor } from '@zana-ai/zcc-server/services/execution/relaunch-monitor';
 import { ExecutionSourceError } from '@zana-ai/zcc-server/services/execution/source-registry';
 import type { ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
+import { unitNoticeName } from '@zana-ai/zcc-server/services/execution/visibility-notices';
 import type {
   Result,
   TeamJobLaunchInput,
@@ -240,7 +241,7 @@ export function registerExecutionBoardIpc(): void {
           projectId,
           executionId,
           subject: 'Fix the plan, then launch again',
-          comments: `You stopped the run so the plan can be fixed. Work already done is kept. Step ${blocker.workUnitId} could not be given to anyone in the Squad: ${blocker.question}\n\nFix the plan (or ask the agent that wrote it to revise it), then launch the Squad again.`,
+          comments: `You stopped the run so the plan can be fixed. Work already done is kept. Step ${unitNoticeName(record.workUnits?.find((unit: { id: string }) => unit.id === blocker.workUnitId) ?? { id: blocker.workUnitId })} could not be given to anyone in the Squad: ${blocker.question}\n\nFix the plan (or ask the agent that wrote it to revise it), then launch the Squad again.`,
           dedupeKey: `plan-fix:${executionId}:${blockerId}`
         });
       } catch (error) {

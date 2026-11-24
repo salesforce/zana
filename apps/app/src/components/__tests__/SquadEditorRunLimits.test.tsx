@@ -80,6 +80,17 @@ describe('Squad editor run limits', () => {
     expect((await saveTeam()).limits).toEqual({ maxConcurrent: 6, claimWallClockMs: 2_700_000 });
   });
 
+  it('shows, validates and saves the output-only ceiling in minutes', async () => {
+    render(<SquadEditor team={{ ...base, limits: { claimOutputCeilingMs: 2_700_000 } }} mode="edit" onClose={vi.fn()} />);
+    expect(field(/Output-only ceiling/).value).toBe('45');
+    expect(field(/Output-only ceiling/).placeholder).toBe('30');
+    fireEvent.change(field(/Output-only ceiling/), { target: { value: '0' } });
+    expect((screen.getByRole('button', { name: /Save/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId('team-run-limits-error').textContent).toMatch(/Output-only ceiling must be/);
+    fireEvent.change(field(/Output-only ceiling/), { target: { value: '15' } });
+    expect((await saveTeam()).limits).toEqual({ claimOutputCeilingMs: 900_000 });
+  });
+
   it('blocks save and explains an out-of-range or fractional value', () => {
     render(<SquadEditor team={base} mode="edit" onClose={vi.fn()} />);
     const saveButton = screen.getByRole('button', { name: /Save/ }) as HTMLButtonElement;

@@ -30,6 +30,7 @@ import { usePaneContentSplitIndicator } from '@/components/sidebar/paneContentSp
 import { SplitPaneMiniMap } from '@/components/sidebar/SplitPaneMiniMap';
 import type { PaneContent } from '@/lib/split-layout';
 import { groupSessionsByTeamRun } from '@/lib/teamRunOrganization';
+import { squadWorkerVisibility, squadWorkerVisibilityText } from '@/lib/squad-worker-visibility';
 
 /**
  * The Agents section's column-2 list pane. Column 3 under the Agents nav is the
@@ -759,6 +760,7 @@ function AgentWorkerRow({
   const dur = formatDuration((exited ? t.finishedAt ?? t.createdAt : now) - t.createdAt);
   const label = t.cohort?.slotLabel || t.title;
   const isJob = !!t.cohort?.executionId && !row.modernThreadId;
+  const visibility = exited ? undefined : squadWorkerVisibility(row.execution, t.cohort?.slotId, now);
   const { onPointerDown, openInSplit, consumeClick } = usePaneContentSplitDrag({
     content: rowPaneContent(row, scopedProjectId),
     title: t.title
@@ -800,6 +802,15 @@ function AgentWorkerRow({
         </span>
       )}
       <span className="agents-worker-dur">{exited ? `ran ${dur}` : dur}</span>
+      {visibility && squadWorkerVisibilityText(visibility, now, { includeSquad: false, includeOwner: false }) && (
+        <span
+          className={`agents-worker-visibility${visibility.stale ? ' is-stale' : ''}`}
+          data-testid="squad-worker-visibility"
+          data-stale={visibility.stale ? 'true' : 'false'}
+        >
+          {squadWorkerVisibilityText(visibility, now, { includeSquad: false, includeOwner: false })}
+        </span>
+      )}
     </button>
   );
 }
@@ -923,7 +934,12 @@ function AgentSideListRow({
   return (
     <div className="agents-squad">
       {button}
-      <div className="agents-squad-workers">{workers.map(renderWorker)}</div>
+      <div className="agents-squad-workers">
+        {row.execution?.startedFrom?.title?.trim() && (
+          <div className="agents-squad-owner" data-testid="squad-owner">Owner {row.execution.startedFrom.title.trim()}</div>
+        )}
+        {workers.map(renderWorker)}
+      </div>
     </div>
   );
 }

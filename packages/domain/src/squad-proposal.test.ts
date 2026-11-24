@@ -13,6 +13,7 @@ import {
   formatSquadPlanDecision,
   formatSquadPlanFinding,
   formatSquadPlanFindingProblem,
+  squadStepName,
   formatSquadPlanSummary,
   squadFindingSeverityLabel,
   summarizeSquadPlanFindings,
@@ -493,5 +494,17 @@ describe('formatSquadPlanFindingProblem', () => {
     noRemedy(noStep);
     expect(formatSquadPlanFindingProblem(make({ stepId: undefined, requirement: 'required-role' }))).toMatch(/^The plan asks for a role/);
     expect(formatSquadPlanFindingProblem(make({ requirement: 'bogus' as never }))).toBe('Step s1: the plan has a problem.');
+  });
+});
+
+describe('step names in plan findings', () => {
+  const base = { requirement: 'plan' as const, severity: 'blocking' as const, candidateSlots: [], suggestion: '', stepId: 'r4', detail: 'bad.' };
+  it('shows id: title when a title is known', () => {
+    expect(formatSquadPlanFinding({ ...base, stepTitle: 'Read step 4' })).toContain('Step r4: Read step 4:');
+    expect(formatSquadPlanFindingProblem({ ...base, stepTitle: 'Read step 4' })).toBe('Step r4: Read step 4: bad.');
+  });
+  it('falls back to the bare id', () => {
+    expect(formatSquadPlanFindingProblem(base)).toBe('Step r4: bad.');
+    expect(squadStepName('r4', ' r4 ')).toBe('r4');
   });
 });

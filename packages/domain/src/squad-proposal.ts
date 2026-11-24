@@ -148,7 +148,22 @@ export interface SquadPlanStep {
   title: string;
   dependencies: string[];
   writeScope: string[];
+  /** Steps skipped if this one fails: every direct or transitive dependent, in plan order. Advisory preview. */
+  skippedIfFails?: string[];
 }
+
+/** One row of the launch card's skip-impact preview. */
+export interface SquadPlanSkipImpact {
+  stepId: string;
+  title: string;
+  /** Ids of the steps that would be skipped if this step fails. */
+  skips: string[];
+  /** Titles of those steps, in the same order as `skips`, so a person can tell what an id is. */
+  skipTitles?: string[];
+}
+
+/** Most skip-impact rows sent to the card; the plan check itself has no such cap. */
+export const SQUAD_PLAN_SKIP_IMPACT_CAP = 60;
 
 export interface SquadProposalRecord {
   launchPreview?: SquadLaunchPreview;
@@ -221,7 +236,8 @@ export const squadProposalRecordSchema = z.object({
     id: z.string().min(1),
     title: z.string(),
     dependencies: z.array(z.string()),
-    writeScope: z.array(z.string())
+    writeScope: z.array(z.string()),
+    skippedIfFails: z.array(z.string()).optional()
   })).optional(),
   state: z.enum(['staging', 'pending', 'launched', 'dismissed', 'expired']),
   staged: z.object({ bytes: z.number().int().nonnegative() }).optional(),
@@ -308,6 +324,8 @@ export const SQUAD_PLAN_FINDING_CAP = 50;
 export interface SquadPlanFinding {
   /** Absent for document-level findings (`squad`, and any plan-wide `plan` or `format` finding). */
   stepId?: string;
+  /** The step's title, so a person reads `id: title` rather than a bare id they may not know. */
+  stepTitle?: string;
   requirement: 'required-role' | 'prefer-role' | 'not-same-worker' | 'tier' | 'skill' | 'mcp' | 'format' | 'plan' | 'squad';
   severity: 'blocking' | 'warning' | 'repair';
   candidateSlots: { slotId: string; label?: string; personaId: string; reason: string }[];
@@ -321,6 +339,7 @@ export interface SquadPlanFinding {
 /** Which Squad slot a step will run on (or the offered slots when more than one qualifies). */
 export interface SquadPlanBinding {
   stepId: string;
+  stepTitle?: string;
   slotId?: string;
   label?: string;
   personaId?: string;
@@ -386,8 +405,14 @@ function tidyDetail(detail: string | undefined, stepId: string | undefined): str
   return /[.!?]$/.test(text) ? text : `${text}.`;
 }
 
+/** `id: title` when the title adds something, else the bare id. */
+export function squadStepName(stepId: string, title?: string): string {
+  const t = title?.trim();
+  return t && t !== stepId ? `${stepId}: ${t}` : stepId;
+}
+
 export function formatSquadPlanFinding(finding: SquadPlanFinding): string {
-  const step = finding.stepId ? `Step ${finding.stepId}` : 'The plan';
+  const step = finding.stepId ? `Step ${squadStepName(finding.stepId, finding.stepTitle)}` : 'The plan';
   const offered = nameList([...new Set(finding.candidateSlots.map(slotName))]);
   const fix = finding.suggestion ? ` ${finding.suggestion}` : '';
   const detail = tidyDetail(finding.detail, finding.stepId);
@@ -420,7 +445,7 @@ export function formatSquadPlanFinding(finding: SquadPlanFinding): string {
  * Agent-facing text and the Inbox card keep `formatSquadPlanFinding`.
  */
 export function formatSquadPlanFindingProblem(finding: SquadPlanFinding): string {
-  const step = finding.stepId ? `Step ${finding.stepId}` : 'The plan';
+  const step = finding.stepId ? `Step ${squadStepName(finding.stepId, finding.stepTitle)}` : 'The plan';
   const offered = nameList([...new Set(finding.candidateSlots.map(slotName))]);
   const detail = tidyDetail(finding.detail, finding.stepId);
   switch (finding.requirement) {
@@ -474,7 +499,7 @@ export function buildSquadPlanDecision(findings: readonly SquadPlanFinding[]): S
   const first = blocking[0];
   if (!first) return undefined;
   const options: SquadPlanDecision['options'] = [];
-  const step = first.stepId ? `step ${first.stepId}` : 'the plan';
+  const step = first.stepId ? `step ${squadStepName(first.stepId, first.stepTitle)}` : 'the plan';
   if (first.requirement === 'required-role') {
     const labels = [...new Set(first.candidateSlots.map(slotName))].slice(0, 3);
     for (const label of labels) {
@@ -550,6 +575,9 @@ export interface SquadLaunchPrefill {
   planBindings?: SquadPlanBinding[];
   planBindingsHidden?: number;
   planSummary?: string;
+  /** Per step, the steps skipped if it fails (only steps that skip something; capped). Advisory display data. */
+  planSkipImpact?: SquadPlanSkipImpact[];
+  planSkipImpactHidden?: number;
   /** The parsed steps re-rendered in the Squad plan grammar (what the Squad will run); within planTextBytes. Display only, never part of a digest. */
   planCanonicalText?: string;
 }

@@ -8,10 +8,11 @@ import {
   compareCheapestFit, evaluateSlotEligibility, preferMatchCount, preferRoleItems, slotOfferedRoles, slotRankingPriceUsd, splitRoleList,
   type SlotRouteSnapshotV1, type WorkUnitRoutingV1
 } from '../execution/routing-policy.js';
-import type { PortablePlanFinding } from '../execution/portable-plan.js';
+import { planCriticalPathWidth, type PortablePlanFinding } from '../execution/portable-plan.js';
 import { antiAffinityResults, type AdmissionCheck, type PlanUnitRouting, type TierFitFinding } from './preflight.js';
 
 export interface PlanFindingUnit extends PlanUnitRouting {
+  dependencies?: readonly string[];
   requires?: { skills?: readonly string[]; mcpServers?: readonly string[] };
 }
 
@@ -115,6 +116,21 @@ export function hardFindingCounts(findings: readonly SquadPlanFinding[]): Record
   return counts;
 }
 
+/**
+ * A `warning` (shape of a parser finding: requirement `plan`) when the Squad has more worker slots than the plan can
+ * use at once. Width counts steps no ordering rule forces apart, so slots above it sit idle for the whole run.
+ */
+export function parallelismFindings(units: readonly PlanFindingUnit[], workerSlots: number): PortablePlanFinding[] {
+  if (workerSlots < 2 || units.length < 2) return [];
+  const width = planCriticalPathWidth(units.map((unit) => ({ id: unit.id, dependencies: unit.dependencies })));
+  if (width === undefined || width >= workerSlots) return [];
+  const serial = width === 1 ? ' Every step waits for another, so it runs one at a time.' : '';
+  return [{
+    severity: 'warning', requirement: 'plan',
+    message: `Critical-path width is ${width} across ${units.length} steps, but this Squad has ${workerSlots} worker slots, so ${workerSlots - width} will sit idle.${serial} Remove "Depends on" lines that are not real ordering needs, or launch a smaller Squad.`
+  }];
+}
+
 export function buildPlanFindings(input: PlanFindingInput): SquadPlanFinding[] {
   const now = input.now ?? Date.now();
   const exempt = new Set((input.degradedSlots ?? []).map((slot) => slot.slotId));
@@ -130,6 +146,9 @@ export function buildPlanFindings(input: PlanFindingInput): SquadPlanFinding[] {
       requirement: 'squad', severity: 'warning', candidateSlots: [], suggestion: '',
       detail: `This plan was written for ${input.declaredSquad}, but you are launching it on ${launching}.`
     });
+  }
+  for (const finding of parallelismFindings(input.units, pool.length)) {
+    out.push({ requirement: finding.requirement, severity: finding.severity, candidateSlots: [], suggestion: '', detail: finding.message });
   }
   if (pool.length) {
     out.push(...requiredRoleFindings(input.units, pool));

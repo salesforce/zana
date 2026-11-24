@@ -34,6 +34,7 @@ function text(result: { content: Array<{ type: string; text?: string }> }): stri
 }
 
 function service() {
+  const respond = vi.fn(async (..._args: unknown[]) => ({ ok: true as const, value: { id: 'execution-1', state: 'RUNNING' } }));
   const executionRecord = {
     id: 'execution-1',
     jobTitle: 'Ship',
@@ -57,7 +58,14 @@ function service() {
     events: vi.fn(async () => [{ sequence: 1, summary: 'Execution reserved' }]),
     reportEvent: vi.fn(async () => ({ ok: true as const, value: { outcome: 'accepted', event: { sequence: 2 } } })),
     stop: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', state: 'STOPPED' } })),
-    respond: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', state: 'RUNNING' } })),
+    respond,
+    respondToSlotAsOwner: vi.fn(async (...args: unknown[]) => {
+      const delivered = await (respond as unknown as (...a: unknown[]) => Promise<{ ok: boolean }>)(...args);
+      return delivered.ok ? { ...delivered, sessionLive: true } : delivered;
+    }),
+    blockerSlotLive: vi.fn(async () => undefined),
+    restartSlotAsOwner: vi.fn(async () => ({ ok: true as const, value: { slotId: 's', sessionId: 'n', mode: 'restarted' as const, sessionLive: true as const } })),
+    releaseUnitAsOwner: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', stateVersion: 9 } })),
     resume: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', state: 'RUNNING' } }))
     ,controlWithHandoff: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', state: 'RUNNING' } }))
     ,retry: vi.fn(async () => ({ ok: true as const, value: { id: 'execution-1', attempt: 2, state: 'RUNNING' } }))
@@ -193,7 +201,7 @@ describe('execution MCP tools', () => {
     });
     expect((await tools.get('execution.work.claim')!({ executionId: 'execution-1', workUnitId: 'unit-1' })).isError).toBeFalsy();
     expect(resolveCohortBinding).toHaveBeenCalledWith('thread-1', 'project-1', undefined);
-    expect(execution.claimWork).toHaveBeenCalledWith(bound, 'unit-1', undefined);
+    expect(execution.claimWork).toHaveBeenCalledWith(bound, 'unit-1', undefined, 'thread-1');
   });
 
   it.each([
@@ -416,9 +424,9 @@ describe('execution MCP tools', () => {
     const answered = await respond({ executionId: 'execution-1', expectedStateVersion: 7, blockerId: 'b1', message: 'About Atlas', clientRequestId: 'c1' });
     expect(answered.isError).toBeFalsy();
     expect(JSON.parse(text(answered))).toEqual({ executionId: 'execution-1', blockerId: 'b1', stateVersion: 8, state: 'RUNNING' });
-    expect(execution.respondToHumanBlockerAsOwner).toHaveBeenCalledWith('thread-1', 'project-1', 'execution-1', 7, 'b1', 'c1', 'About Atlas');
+    expect(execution.respondToHumanBlockerAsOwner).toHaveBeenCalledWith('thread-1', 'project-1', 'execution-1', 7, 'b1', 'c1', 'About Atlas', undefined);
     await respond({ executionId: 'execution-1', expectedStateVersion: 7, blockerId: 'b1', message: 'again' });
-    expect(execution.respondToHumanBlockerAsOwner).toHaveBeenLastCalledWith('thread-1', 'project-1', 'execution-1', 7, 'b1', expect.stringMatching(/^mcp:/), 'again');
+    expect(execution.respondToHumanBlockerAsOwner).toHaveBeenLastCalledWith('thread-1', 'project-1', 'execution-1', 7, 'b1', expect.stringMatching(/^mcp:/), 'again', undefined);
     execution.respondToHumanBlockerAsOwner.mockResolvedValueOnce({ ok: false, code: 'NOT_FOUND', message: 'execution blocker not found' } as never);
     expect(text(await respond({ executionId: 'execution-1', expectedStateVersion: 7, blockerId: 'gone', message: 'x' }))).toBe('execution.respond failed: execution blocker not found');
     for (const bad of [{ slotId: 's', blockerId: 'b' }, {}]) {
@@ -440,7 +448,9 @@ describe('execution MCP tools', () => {
     });
     const respond = tools.get('execution.respond')!;
     expect((await respond({ executionId: 'execution-1', blockerId: 'b1', message: 'Atlas', clientRequestId: 'c1' })).isError).toBeFalsy();
-    expect(execution.respondToHumanBlockerAsOwner).toHaveBeenCalledWith('thread-1', 'project-1', 'execution-1', undefined, 'b1', 'c1', 'Atlas');
+    expect(execution.respondToHumanBlockerAsOwner).toHaveBeenCalledWith('thread-1', 'project-1', 'execution-1', undefined, 'b1', 'c1', 'Atlas', undefined);
+    expect((await respond({ executionId: 'execution-1', blockerId: 'b1', message: 'Atlas', clientRequestId: 'c2', scopeSplit: 'keep' })).isError).toBeFalsy();
+    expect(execution.respondToHumanBlockerAsOwner).toHaveBeenLastCalledWith('thread-1', 'project-1', 'execution-1', undefined, 'b1', 'c2', 'Atlas', 'keep');
     const noVersionSlot = await respond({ executionId: 'execution-1', slotId: 's', message: 'x' });
     expect(noVersionSlot.isError).toBe(true);
     expect(text(noVersionSlot)).toContain('expectedStateVersion is required with slotId');
@@ -632,6 +642,15 @@ describe('execution MCP tools', () => {
     }
   });
 
+  it('forwards the modern member generation with the claim so the service can fence a stale member', async () => {
+    const execution = service();
+    const binding = { executionId: 'execution-1', projectId: 'project-1', slotId: 'slot-1', role: 'worker' as const, memberFence: { bindingId: 'thread-9', generation: 7 } };
+    const { server, tools } = fakeServer();
+    registerExecutionTools(server as never, { sessionId: 'thread-9', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true, memberFence: binding.memberFence, resolveCohortBinding: () => binding });
+    await tools.get('execution.work.claim')!({ executionId: 'execution-1', workUnitId: 'unit-1' });
+    expect(execution.claimWork).toHaveBeenCalledWith(binding, 'unit-1', undefined, 'thread-9', 7);
+  });
+
   it('derives execution project slot and role from host cohort and ignores forged authority fields', async () => {
     const execution = service();
     const binding = { executionId: 'execution-1', projectId: 'project-1', slotId: 'slot-1', role: 'worker' as const };
@@ -639,7 +658,7 @@ describe('execution MCP tools', () => {
     registerExecutionTools(server as never, { sessionId: 'worker-session', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true, resolveCohortBinding: () => binding });
     await tools.get('execution.work.claim')!({ executionId: 'execution-1', workUnitId: 'unit-1', slotId: 'forged-slot', role: 'orchestrator' });
     await tools.get('execution.event')!({ executionId: 'execution-1', eventId: 'event-1', slotId: 'forged-slot', producerRole: 'orchestrator', type: 'progress', severity: 'info', summary: 'working' });
-    expect(execution.claimWork).toHaveBeenCalledWith(binding, 'unit-1', undefined);
+    expect(execution.claimWork).toHaveBeenCalledWith(binding, 'unit-1', undefined, 'worker-session');
     expect(execution.reportBoundEvent).toHaveBeenCalledWith(binding, expect.not.objectContaining({ slotId: expect.anything(), producerRole: expect.anything() }));
   });
 
@@ -1369,7 +1388,7 @@ describe('execution MCP tools', () => {
     } as never);
     const { server, tools } = fakeServer();
     registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true });
-    const payload = JSON.parse(text(await tools.get('execution.status')!({ executionId: 'execution-1' })));
+    const payload = JSON.parse(text(await tools.get('execution.status')!({ executionId: 'execution-1', mode: 'full' })));
     expect(payload.assembledResult.units).toEqual([{ id: 'unit-1', title: 'Unit', state: 'COMPLETED', result: 'safe' }]);
     expect(JSON.stringify(payload)).not.toContain('nested-secret');
     expect(JSON.stringify(payload)).not.toContain('also-secret');
@@ -1511,5 +1530,123 @@ describe('execution MCP tools', () => {
       expect(execution.events).toHaveBeenLastCalledWith('source', 'project-1', 'execution-1', 0, 100);
       expect(denied).toMatchObject({ isError: true });
     } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+  describe('compact results (AC9)', () => {
+    function fifteenUnitRecord() {
+      const big = 'x'.repeat(20_000);
+      return {
+        id: 'execution-1', projectId: 'p', teamId: 't', jobTitle: 'Ship', state: 'RUNNING', stateVersion: 12, attempt: 1, lastEventSequence: 80,
+        reportTo: { kind: 'thread', id: 'th', role: 'owner' },
+        squadWorktree: { path: '/w', branch: 'b', ownership: 'user', targetKind: 'worktree' },
+        deliveries: [{ id: 'd', payload: { text: 'secret response' } }],
+        workUnits: Array.from({ length: 15 }, (_, i) => ({
+          id: `u${i}`, title: `Unit ${i}`, task: big, dependencies: i ? [`u${i - 1}`] : [], state: i < 10 ? 'COMPLETED' : i === 10 ? 'CLAIMED' : 'PENDING',
+          assignedSlotId: `slot-${i}`, turnCount: 3, structuredResult: { big }, checkpoint: { files: [big] }, touched: [{ path: big }]
+        })),
+        blockers: [
+          { id: 'b1', workUnitId: 'u10', slotId: 'slot-10', question: big, options: ['a', 'b'], resolved: false },
+          { id: 'b2', workUnitId: 'u3', slotId: 'slot-3', question: 'old', resolved: true }
+        ],
+        assembledResult: { failures: [{ workUnitId: 'u2', code: 'STALLED' }] }
+      };
+    }
+    function setup(record: unknown) {
+      const execution = { ...service(), status: vi.fn(async () => record) };
+      const { server, tools } = fakeServer();
+      registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true });
+      return { execution, tools };
+    }
+
+    it('defaults MCP execution.status to a bounded compact view of a 15-unit run', async () => {
+      const { tools } = setup(fifteenUnitRecord());
+      const raw = text(await tools.get('execution.status')!({ executionId: 'execution-1' }));
+      expect(Buffer.byteLength(raw, 'utf8')).toBeLessThan(8 * 1024);
+      const compact = JSON.parse(raw);
+      expect(compact).toMatchObject({ mode: 'compact', id: 'execution-1', state: 'RUNNING', stateVersion: 12, reportTo: { role: 'owner' }, squadWorktree: { path: '/w', ownership: 'user' }, history: { tool: 'execution.history' } });
+      expect(compact.units).toHaveLength(15);
+      expect(compact.unitCounts).toEqual({ COMPLETED: 10, CLAIMED: 1, PENDING: 4 });
+      expect(compact.units[0].state).toBe('CLAIMED');
+      expect(compact.blockers).toHaveLength(1);
+      expect(compact.blockers[0].question.length).toBeLessThanOrEqual(300);
+      expect(compact.failures).toEqual([{ workUnitId: 'u2', code: 'STALLED' }]);
+      expect(raw).not.toContain('secret response');
+      expect(raw).not.toContain('"task"');
+    });
+
+    it('keeps the full record behind mode full and internal service callers unchanged', async () => {
+      const { assembledResult: _omit, ...withoutAssembled } = fifteenUnitRecord();
+      const { execution, tools } = setup(withoutAssembled);
+      const full = JSON.parse(text(await tools.get('execution.status')!({ executionId: 'execution-1', mode: 'full' })));
+      expect(full.workUnits[0].task.length).toBe(20_000);
+      expect(full).not.toHaveProperty('deliveries');
+      expect(full).not.toHaveProperty('mode');
+      // The service layer still returns the record itself; only the MCP projection narrows.
+      expect(execution.status).toHaveBeenCalledWith('session-1', 'project-1', 'execution-1');
+    });
+
+    it('caps units, blockers, and dependencies of a huge run and reports what was omitted', async () => {
+      const record = {
+        id: 'e', jobTitle: 'J', state: 'RUNNING',
+        workUnits: Array.from({ length: 100 }, (_, i) => ({ id: `u${i}`, title: 't', dependencies: Array.from({ length: 15 }, (_, d) => `d${d}`), state: i < 90 ? 'COMPLETED' : 'READY' })),
+        blockers: Array.from({ length: 30 }, (_, i) => ({ id: `b${i}`, workUnitId: 'u1', slotId: 's', question: 'q', audience: 'coordinator', options: ['1', '2', '3', '4', '5', '6'], resolved: false }))
+      };
+      const { tools } = setup(record);
+      const compact = JSON.parse(text(await tools.get('execution.status')!({ executionId: 'e' })));
+      expect(compact.units).toHaveLength(50);
+      expect(compact.unitsOmitted).toBe(50);
+      expect(compact.units.slice(0, 10).every((u: { state: string }) => u.state === 'READY')).toBe(true);
+      expect(compact.units[0].dependencies).toHaveLength(10);
+      expect(compact.units[0].dependenciesOmitted).toBe(5);
+      expect(compact.blockers).toHaveLength(20);
+      expect(compact.blockersOmitted).toBe(10);
+      expect(compact.blockers[0]).toMatchObject({ audience: 'coordinator', options: ['1', '2', '3', '4', '5'] });
+    });
+
+    it('tolerates a sparse record and reports a missing run as an error', async () => {
+      const sparse = JSON.parse(text(await setup({ id: 'e', jobTitle: 'J', state: 'FAILED', failureReason: 'r'.repeat(5000), finalSummary: 'done', summary: 's', dismissedAt: 5 }).tools.get('execution.status')!({ executionId: 'e' })));
+      expect(sparse).toMatchObject({ units: [], blockers: [], unitCounts: {}, dismissedAt: 5, finalSummary: 'done' });
+      expect(sparse.failureReason.length).toBeLessThanOrEqual(1000);
+      const missing = await setup(undefined).tools.get('execution.status')!({ executionId: 'e' });
+      expect(missing.isError).toBe(true);
+    });
+
+    it('returns a slot-respond receipt by default and the record in full mode', async () => {
+      const { execution, tools } = setup(undefined);
+      execution.respond.mockResolvedValue({ ok: true as const, value: { id: 'execution-1', state: 'RUNNING', stateVersion: 7, attempt: 2, workUnits: [{ id: 'u', task: 'x'.repeat(1000) }] } } as never);
+      const compact = JSON.parse(text(await tools.get('execution.respond')!({ executionId: 'execution-1', expectedStateVersion: 6, slotId: 's', message: 'go' })));
+      expect(compact).toEqual({ mode: 'compact', executionId: 'execution-1', state: 'RUNNING', stateVersion: 7, attempt: 2, sessionLive: true });
+      const full = JSON.parse(text(await tools.get('execution.respond')!({ executionId: 'execution-1', expectedStateVersion: 6, slotId: 's', message: 'go', mode: 'full' })));
+      expect(full.workUnits).toHaveLength(1);
+      execution.respond.mockResolvedValue({ ok: true as const, value: undefined } as never);
+      expect(JSON.parse(text(await tools.get('execution.respond')!({ executionId: 'execution-1', expectedStateVersion: 6, slotId: 's', message: 'go' })))).toMatchObject({ mode: 'compact', sessionLive: true });
+    });
+
+    it('pages history with a cursor, clips event text, and denies unauthorized or cohort callers', async () => {
+      const events = Array.from({ length: 12 }, (_, i) => ({
+        sequence: i + 1, summary: 'S'.repeat(2000), detail: 'D'.repeat(2000),
+        blocker: { question: 'Q'.repeat(2000), options: ['1', '2', '3', '4', '5', '6'] }, references: Array.from({ length: 8 }, () => ({ label: 'l', uri: 'u' }))
+      }));
+      const execution = { ...service(), events: vi.fn(async (_s: string, _p: string, _e: string, after: number, limit: number) => ({ events: events.filter((e) => e.sequence > after).slice(0, limit) })) };
+      const { server, tools } = fakeServer();
+      registerExecutionTools(server as never, { sessionId: 'session-1', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => true });
+      const first = JSON.parse(text(await tools.get('execution.history')!({ executionId: 'execution-1', limit: 5 })));
+      expect(first.events.map((e: { sequence: number }) => e.sequence)).toEqual([1, 2, 3, 4, 5]);
+      expect(first.nextCursor).toBe(5);
+      expect(execution.events).toHaveBeenLastCalledWith('session-1', 'project-1', 'execution-1', 0, 6);
+      expect(first.events[0].summary.length).toBe(400);
+      expect(first.events[0].detail.length).toBe(400);
+      expect(first.events[0].blocker.options).toHaveLength(5);
+      expect(first.events[0].references).toHaveLength(5);
+      const last = JSON.parse(text(await tools.get('execution.history')!({ executionId: 'execution-1', cursor: 10 })));
+      expect(last.events.map((e: { sequence: number }) => e.sequence)).toEqual([11, 12]);
+      expect(last).not.toHaveProperty('nextCursor');
+      const schema = z.object((getExecutionToolDescriptors().find((t) => t.name === 'execution.history')!.schema as z.ZodObject<z.ZodRawShape>).shape);
+      expect(schema.safeParse({ executionId: 'e', limit: 26 }).success).toBe(false);
+      expect(schema.safeParse({ executionId: 'e', cursor: 3, limit: 25 }).success).toBe(true);
+
+      const unauthorized = fakeServer();
+      registerExecutionTools(unauthorized.server as never, { sessionId: 'session-1', projectId: 'project-1', service: execution as never, validateRouteIdentity: () => false });
+      expect((await unauthorized.tools.get('execution.history')!({ executionId: 'execution-1' })).isError).toBe(true);
+    });
   });
 });

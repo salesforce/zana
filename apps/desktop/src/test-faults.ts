@@ -36,3 +36,18 @@ export function testNoTurnWarnWindowMs(env: NodeJS.ProcessEnv = process.env): nu
   const value = Number(raw);
   return value >= 1 && value <= MAX_TEST_NO_TURN_WARN_MS ? value : undefined;
 }
+
+const MAX_TEST_VISIBILITY_MS = 10 * 60_000;
+
+/**
+ * Build-gated override of a visibility window (`idle`, `heartbeat`, `blocker`), so an E2E run need not wait
+ * 3, 5 or 30 minutes. Reads `ZCC_TEST_<NAME>_NOTICE_MS`; absent, non-numeric, non-positive or oversized values
+ * yield undefined and leave the service default in force. Never read in a production build.
+ */
+export function testVisibilityWindowMs(name: 'IDLE' | 'HEARTBEAT' | 'BLOCKER', env: NodeJS.ProcessEnv = process.env): number | undefined {
+  if (typeof __ZCC_TEST_FAULTS__ === 'undefined' || !__ZCC_TEST_FAULTS__) return undefined;
+  const raw = env[`ZCC_TEST_${name}_NOTICE_MS`];
+  if (!raw || !/^\d+$/.test(raw)) return undefined;
+  const value = Number(raw);
+  return value >= 1 && value <= MAX_TEST_VISIBILITY_MS ? value : undefined;
+}

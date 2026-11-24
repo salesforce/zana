@@ -68,7 +68,7 @@ describe('today (characterization)', () => {
     expect(record.blockers).toEqual([expect.objectContaining({
       id: `no-progress:${record.attempt}:unit:${record.workUnits![0].attempt}`,
       workUnitId: 'unit', audience: 'human', resolved: false,
-      question: 'Work unit unit (Unit) made no progress on every eligible worker slot; its worker never started a turn. Check the worker terminal, then retry the unit or restart the run.'
+      question: 'Work unit "unit: Unit" made no progress on every eligible worker slot; none of those workers started a turn. Check the worker terminal, then retry the unit or restart the run.'
     })]);
   }));
 });
@@ -209,7 +209,7 @@ describe('blockKickoffFailure with recovery evidence', () => {
     let record = await running(store, ['slot-1']);
     record = await claimAndReclaim(store, record.id, 'slot-1');
     record = await store.blockKickoffFailure(record.id, 'unit');
-    expect(record.blockers![0].question).toBe('Work unit unit (Unit) made no progress on every eligible worker slot; its worker never started a turn. Check the worker terminal, then retry the unit or restart the run.');
+    expect(record.blockers![0].question).toBe('Work unit "unit: Unit" made no progress on every eligible worker slot; none of those workers started a turn. Check the worker terminal, then retry the unit or restart the run.');
   }));
 
   it('blocks an unrecovered API error with the dedicated question and guards the fence', async () => fixture(async (filePath) => {

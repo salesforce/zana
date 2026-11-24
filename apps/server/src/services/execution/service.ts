@@ -1,18 +1,21 @@
-import { DEFAULT_CLAIM_STALL_MS, DEFAULT_CLAIM_WALL_CLOCK_MS, isDurableCoordination, isOrchestratorSlotId, isRestfulAgentState, validateSquadExecutionTarget, type SquadExecutionTargetSelector, type AgentState, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SessionStats, type SquadBundleWorkflowMetadataV1, type TeamAvailabilityUnknown, type TeamCoordinationMode, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput, type TeamRequirementFailure } from '@zana-ai/zcc-domain/product';
+import { DEFAULT_CLAIM_OUTPUT_CEILING_MS, DEFAULT_CLAIM_STALL_MS, DEFAULT_CLAIM_WALL_CLOCK_MS, isDurableCoordination, isOrchestratorSlotId, isRestfulAgentState, validateSquadExecutionTarget, type SquadExecutionTargetSelector, type AgentState, type ExecutionFailureCode, type ExecutionSourceSnapshot, type SessionStats, type SquadBundleWorkflowMetadataV1, type TeamAvailabilityUnknown, type TeamCoordinationMode, type TeamLaunchAuthorizationInputSlot, type TeamLaunchAuthorizationResult, type TeamLaunchRequestInput, type TeamRequirementFailure } from '@zana-ai/zcc-domain/product';
 import { squadLaunchTextProblem } from '@zana-ai/zcc-domain/squad-proposal';
 import { fitRecoveryObjective } from './recovery-objective.js';
 import { createHash } from 'node:crypto';
+import { confineAndHashClaimWrite, captureBaseline, buildUnitCheckpoint, MAX_RESTORE_ATTEMPTS, type UnitCheckpoint, type GitRunner } from './unit-checkpoints.js';
 import { launchDigest } from '../launch/digest.js';
-import { EXECUTION_RETENTION_MS, boundReason, formatFailedSlots, unitSlotEligibility, levelCheckSkipped, type ExecutionRoutingPolicyV1, assignmentRequirementFailures, LOOP_LIMIT_BLOCKER_PREFIX, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
+import { singleSeatOf, EXECUTION_RETENTION_MS, boundReason, formatFailedSlots, unitSlotEligibility, levelCheckSkipped, type ExecutionRoutingPolicyV1, assignmentRequirementFailures, LOOP_LIMIT_BLOCKER_PREFIX, KICKOFF_FAILURE_BLOCK_THRESHOLD, isTerminalExecutionState, isWorkerRecoveryLive, NO_PROGRESS_CLAIM_REASON, WORK_CLAIM_LEASE_MS, WorkUnitRecoveryGuardError, executionReportTarget, type ActiveClaimCursor, type ExecutionCohortAuthority, type ExecutionDispatchAssignment, type ExecutionEvent, type ExecutionLaunchDisplayV1, type ExecutionLaunchKind, type ExecutionPolicyV1, type ExecutionRecord, type ExecutionWorkUnitInput, type RetainedRecoveryMode, type ResolvedModelSnapshotV1 } from './store.js';
+import { VisibilityNoticeState, IDLE_CAPACITY_NOTICE_MS, HEARTBEAT_WARN_MS, formatWait, resolveBlockerReminderMs, blockerWaitStart, workerNoticeLabel, blockerWaiter, unitNoticeName } from './visibility-notices.js';
 import { timeoutRecoveryBlockReason } from './timeout-recovery-policy.js';
 import type { createExecutionStore } from './store.js';
 import type { ExecutionArtifactRecord, createExecutionArtifactStore } from './artifact-store.js';
 import { isResumeGrantTerminal, type createResumeGrantStore } from './resume-grant-store.js';
 import type { createExecutionSourceRegistry } from './source-registry.js';
+import { assessScopeWidening, buildSplitChild, confirmSplitPrompt, splitChildId, splitDeliveryNote } from './scope-resplit.js';
 import { blockerCardSubject, humanBlockerDenial } from './human-blocker-denial.js';
 import { buildInboxQuestion } from '../inbox/inbox-question-schema.js';
 import type { InboxEntry, InboxInput } from '../inbox/inbox-store.js';
-import { BLOCKED_WAIT_WARN_LEAD_MS, DEADLINE_RECHECK_FLOOR_MS, ExecutionDeadlineWatchdog, deadlineTimings, nextDeadlineAt } from './deadline-watchdog.js';
+import { BLOCKED_WAIT_WARN_LEAD_MS, DEADLINE_RECHECK_FLOOR_MS, ExecutionDeadlineWatchdog, claimOutputLive, deadlineTimings, nextDeadlineAt } from './deadline-watchdog.js';
 import { ParkedWorkerHolds } from './parked-worker-hold.js';
 import { PlanReadinessWatchdog, type PlanReadinessExpiryReason } from './plan-readiness-watchdog.js';
 import { evaluateTeamAdmission, type TeamAdmissionInput, type TeamAdmissionResultV1 } from '../launch/preflight.js';
@@ -24,12 +27,25 @@ import { buildFeedbackPrompt, toEnvelope } from './retry-feedback.js';
 
 /** Wall-clock ceiling for a single bounded snapshot read. */
 const SNAPSHOT_TIMEOUT_MS = 15_000;
+/** Bounded wait for a dead seat's old session to exit before it is respawned. */
+const OLD_SESSION_EXIT_WAIT_MS = 5_000;
 /** Hard cap on event pages walked per snapshot (Rule 5: bound unbounded reads). */
 const MAX_SNAPSHOT_EVENT_PAGES = 1_000;
 const AUTO_FINALIZE_RETRY_MS = 1_000;
 const ROUTE_FACTS_TIMEOUT_MS = 15_000;
 const ROUTE_FACTS_CIRCUIT_RESET_MS = 30_000;
 const ACTIVE_CLAIM_PAGE_SIZE = 50;
+/** Worker-reported failure codes of a never-started claim that are retried (blocker / contract / routing codes never are). */
+const NO_START_RETRY_CODES: ReadonlySet<ExecutionFailureCode> = new Set<ExecutionFailureCode>(['UNKNOWN', 'WORK_FAILED', 'TRANSIENT', 'RESOURCE_EXHAUSTED']);
+/** What a run warning is about; the host posts one Inbox row per run, slot, kind and ref. */
+export type ExecutionRunWarningKind = 'worker-exit' | 'worker-no-turn' | 'worker-respawn' | 'worker-idle' | 'worker-heartbeat' | 'blocker-reminder' | 'unit-checkpoint';
+const NO_START_MARKER = 'worker reported no-start failure: ';
+/** Pause before a never-started claim is retried, so a seat that just failed to boot is not hammered. */
+export const NO_START_RETRY_PAUSE_MS = 30_000;
+/** Strip timestamps, uuids, run ids and numbers so a repeated failure compares equal. */
+function normalizeFailureText(text: string): string {
+  return text.replace(/\d{4}-\d{2}-\d{2}[T ][\d:.]+Z?/g, '<ts>').replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, '<id>').replace(/\b(?:exec|execution|run)[-_][\w-]+/gi, '<id>').replace(/\d+/g, '#').replace(/\s+/g, ' ').trim().slice(0, 200);
+}
 const PROVEN_DEAD_CLAIM_REASON = NO_PROGRESS_CLAIM_REASON.PROVEN_DEAD;
 /**
  * How long a `'coordinator'` self-heal blocker may sit unanswered before the
@@ -52,6 +68,8 @@ const AGENT_DEAD_CLAIM_REASON = NO_PROGRESS_CLAIM_REASON.AGENT_DEAD;
 const SILENT_WORKER_CLAIM_REASON = NO_PROGRESS_CLAIM_REASON.SILENT;
 const STALLED_WORKER_CLAIM_REASON = NO_PROGRESS_CLAIM_REASON.STALLED;
 const DEAD_WORKER_PROCESSES = new Set(['exited', 'spawn-failed', 'canceled']);
+/** Own rate limit of the owner's `execution_slot_restart`: one restart per slot per minute (does not use the respawn cap). */
+export const OWNER_RESTART_MIN_INTERVAL_MS = 60_000;
 const TELEMETRY_GAP_GRACE_SAMPLES = 3;
 class NamedCheckAdmissionError extends Error {}
 const MAX_NAMED_CHECK_FAILURE_OUTPUT_CHARS = 4_000;
@@ -107,6 +125,15 @@ const DEFAULT_DURABLE_CLAIM_WALL_CLOCK_MS = DEFAULT_CLAIM_WALL_CLOCK_MS;
 export const DEFAULT_DURABLE_CLAIM_STALL_MS = DEFAULT_CLAIM_STALL_MS;
 
 /**
+ * Default ceiling (30 min) for a durable claim whose worker keeps producing output but sends no turn
+ * heartbeat and changes no file. Output only renews the lease; `progressAt` moves on a turn or a file
+ * change, so this is the only clock for such a claim (it is exempt from the 10 min stall and 20 min wall
+ * clock). Configurable per run (`maxClaimOutputOnlyMs`) and per Squad (`claimOutputCeilingMs`).
+ */
+export const DEFAULT_DURABLE_CLAIM_OUTPUT_CEILING_MS = DEFAULT_CLAIM_OUTPUT_CEILING_MS;
+
+
+/**
  * Inject the durable-claim reclaim ceilings (wall-clock backstop + progress-aware stall) into a
  * launch policy for a durable worker-DAG coordination mode (job-team / structured / freeform)
  * when the caller left them unset. Pure: returns the policy unchanged for non-durable
@@ -125,10 +152,11 @@ export function withDurableClaimWallClockBackstop(
   policy: ExecutionPolicyV1 | undefined
 ): ExecutionPolicyV1 | undefined {
   if (!isDurableCoordination(mode)) return policy;
-  if (policy?.maxClaimWallClockMs !== undefined && policy.maxClaimStallMs !== undefined) return policy;
+  if (policy?.maxClaimWallClockMs !== undefined && policy.maxClaimStallMs !== undefined && policy.maxClaimOutputOnlyMs !== undefined) return policy;
   const next = { ...(policy ?? {}) };
   if (next.maxClaimWallClockMs === undefined) next.maxClaimWallClockMs = DEFAULT_DURABLE_CLAIM_WALL_CLOCK_MS;
   if (next.maxClaimStallMs === undefined) next.maxClaimStallMs = DEFAULT_DURABLE_CLAIM_STALL_MS;
+  if (next.maxClaimOutputOnlyMs === undefined) next.maxClaimOutputOnlyMs = DEFAULT_DURABLE_CLAIM_OUTPUT_CEILING_MS;
   return next;
 }
 
@@ -236,6 +264,10 @@ export interface RecycleOutcome { sessionId?: string; final?: true; declined?: t
 export type DeferredWorkerSpawnResult = { ok: true; sessionId: string } | { ok: false; message: string; retryable?: true };
 
 export interface ExecutionServiceDeps {
+  /** Per-unit checkpoints (claim baseline, patches, guarded restore of a failed unit). Absent = on; `false` = off. */
+  unitCheckpointsEnabled?: () => boolean;
+  /** Test seam replacing the git child process used by unit checkpoints. */
+  checkpointGit?: GitRunner;
   resolveNamedChecks?: (projectId: string, references: readonly string[]) => ExecutionResolvedCheckV1[] | Promise<ExecutionResolvedCheckV1[]>;
   /** Execute only record.resolvedChecks, never resolve current settings. */
   runNamedCheck?: (record: ExecutionRecord, reference: string, signal?: AbortSignal) => Promise<ExecutionCheckResultV1>;
@@ -296,6 +328,12 @@ export interface ExecutionServiceDeps {
   /** Per-slot respawn cap; defaults to {@link DEFAULT_WORKER_RESPAWN_CAP}. */
   workerRespawnCap?: number;
   /**
+   * Owner-initiated restart of one worker slot, through the same host paths as the UI card Restart (#837): an exited
+   * seat is respawned, a live session is relaunched in place, both behind the launch-closing fences. It does NOT use
+   * the coordinator's per-slot respawn budget; the engine rate-limits owner restarts itself.
+   */
+  restartWorker?: (recordId: string, slotId: string) => Promise<{ ok: true; sessionId: string; mode: 'respawned' | 'restarted' } | { ok: false; reason: string; message: string }>;
+  /**
    * Replace a seat's finished session with a fresh one and deliver the assignment to it (#579). Not awaited by
    * the engine: the worker's own completion call is still waiting on the dispatch that hands over the entry.
    * Failures are the host's to settle (a failed respawn releases the assignment undelivered).
@@ -320,7 +358,14 @@ export interface ExecutionServiceDeps {
    * Called after a worker warning (non-zero exit or no turn) is recorded on the run, so the host can post an
    * Inbox row. Failures are logged and never fail the engine.
    */
-  onRunWarning?: (record: ExecutionRecord, warning: { slotId: string; summary: string; kind: 'worker-exit' | 'worker-no-turn' | 'worker-respawn' }) => void | Promise<void>;
+  onRunWarning?: (record: ExecutionRecord, warning: { slotId: string; summary: string; kind: ExecutionRunWarningKind; ref?: string }) => void | Promise<void>;
+  /** Wait before an unanswered human blocker is surfaced once more; 0 disables, undefined uses the default (30 min). */
+  blockerReminderMs?: () => number | undefined;
+  /** Persona display name, so worker notices use the same label as the Agents board. */
+  personaName?: (personaId: string) => string | undefined;
+  /** Overrides of the idle-capacity (READY with an idle seat) and stale-heartbeat (CLAIMED) notice windows; E2E shortens them. */
+  idleNoticeWindowMs?: () => number | undefined;
+  heartbeatWarnWindowMs?: () => number | undefined;
   /**
    * How long a claimed worker may take no turn and emit no output before the run is warned. Defaults to the run's
    * claim stall limit; E2E shortens it through host config.
@@ -408,6 +453,12 @@ export interface ExecutionServiceDeps {
    * mesh-less — a no-op there keeps existing behaviour.
    */
   closeWorkerSession?: (sessionId: string) => void;
+  /**
+   * Resolves true once the session is gone (exited / unknown), false when it is still present after `timeoutMs`.
+   * Lets a respawn wait for the old session's shell to be reaped so it cannot act after the replacement starts.
+   * Absent in tests / mesh-less hosts: the respawn then proceeds without waiting.
+   */
+  waitForWorkerSessionExit?: (sessionId: string, timeoutMs: number) => Promise<boolean>;
   routeFitObserveEnabled?: () => boolean;
   /** Main-owned TranscriptSource bridge. Renderer and agents cannot submit usage. */
   readSessionStats?: (sessionId: string, options?: { fresh?: boolean }) => Promise<SessionStats | null>;
@@ -428,6 +479,8 @@ export interface ExecutionServiceDeps {
   now?: () => number;
   setTimer?: (fn: () => void, ms: number) => NodeJS.Timeout;
   clearTimer?: (timer: NodeJS.Timeout) => void;
+  /** Pause before a no-start retry (default {@link NO_START_RETRY_PAUSE_MS}); 0 disables it. Uses `setTimer` / `clearTimer`. */
+  noStartRetryPauseMs?: number;
   /**
    * E2E-only transient dispatch fault injector. When it returns `true` for an
    * execution, the current assignment batch is released undelivered instead of
@@ -719,6 +772,18 @@ function warnOnlyOnFailedSlots(mode: TeamCoordinationMode | undefined): boolean 
   return mode === 'freeform' || mode === 'job-team';
 }
 
+/** Claude tools whose call writes the file named by `file_path` / `notebook_path`. Bash writes are not visible here. */
+const CLAIM_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+/** Path a worker write tool named, or undefined for a non-write tool or a malformed input. */
+export function claimWritePath(toolName: unknown, input: unknown): string | undefined {
+  if (typeof toolName !== 'string' || !CLAIM_WRITE_TOOLS.has(toolName) || !input || typeof input !== 'object') return undefined;
+  const record = input as Record<string, unknown>;
+  const raw = toolName === 'NotebookEdit' ? record.notebook_path : record.file_path;
+  return typeof raw === 'string' && raw.length > 0 && raw.length <= 4_096 && !raw.includes('\0') ? raw : undefined;
+}
+
+export { confineAndHashClaimWrite };
+
 export class ExecutionService {
   private runCheckCompletions = new Map<string, { controller: AbortController; pending: Promise<readonly string[]> }>();
   private checkCompletions = new Map<string, { executionId: string; workUnitId: string; claimId?: string; claimGeneration?: number; controller: AbortController; running?: Promise<ExecutionCheckResultV1>; pending: ReturnType<ExecutionService['completeWorkChecked']> }>();
@@ -727,6 +792,8 @@ export class ExecutionService {
   private readonly usageTails = new Map<string, Promise<void>>();
   private readonly usageFlights = new Map<string, Promise<void>>();
   private readonly pendingBindingOwners = new Map<string, string>();
+  /** Last owner restart per `executionId:slotId` (the own rate limit of `execution_slot_restart`); pruned on every insert. */
+  private readonly ownerRestartAt = new Map<string, number>();
   private readonly mintFlights = new Map<string, Promise<ReturnType<ExecutionService['mintResumeGrantOnce']> extends Promise<infer T> ? T : never>>();
   private readonly autoFinalizeTimers = new Map<string, NodeJS.Timeout>();
   private readonly deadlineWatchdog: ExecutionDeadlineWatchdog;
@@ -737,6 +804,8 @@ export class ExecutionService {
   /** Claims already warned as taking no turn (`executionId:unitId:claimId`), bounded so it cannot grow without limit. */
   private readonly noTurnWarned = new Set<string>();
   private readonly exitWarned = new Set<string>();
+  /** Idle-capacity, stale-heartbeat and blocker-reminder dedupe; holds no timer and is dropped with the run. */
+  private readonly visibility = new VisibilityNoticeState();
   /** Worker slots with a respawn in flight (`executionId:slotId`); a second concurrent call refuses. */
   private readonly respawning = new Set<string>();
   private readonly routeFactCircuits = new Map<string, { state: CircuitState; openedAt?: number }>();
@@ -1172,9 +1241,13 @@ export class ExecutionService {
     const claimOf = (reason: string, force?: boolean) => ({
       workUnitId: unit.id, claimId: unit.claimId!, claimGeneration: unit.claimGeneration!, reason, ...(force ? { force } : {})
     });
+    // Clock model: a claim with output inside its output lease is exempt from the stall and wall-clock limits
+    // and has only the output-only ceiling on `progressAt` (checked below, before the lease gate, whatever
+    // the coordinator state); a claim without recent output keeps the wall clock and the stall limit.
+    const outputLive = claimOutputLive(unit, now);
     const maxWallClock = record.request.policy?.maxClaimWallClockMs;
     const lastWallClockProgressAt = unit.progressAt ?? unit.claimedAt;
-    if (maxWallClock !== undefined && lastWallClockProgressAt !== undefined && now - lastWallClockProgressAt >= maxWallClock) {
+    if (!outputLive && maxWallClock !== undefined && lastWallClockProgressAt !== undefined && now - lastWallClockProgressAt >= maxWallClock) {
       return { claim: claimOf(NO_PROGRESS_CLAIM_REASON.WALL_CLOCK, true) };
     }
     const worker = lifecycle.workers!.find((candidate) => candidate.slotId === unit.assignedSlotId && candidate.projectId === record.projectId);
@@ -1182,6 +1255,10 @@ export class ExecutionService {
     if (!worker || DEAD_WORKER_PROCESSES.has(proc)) return { claim: claimOf(PROVEN_DEAD_CLAIM_REASON, true) };
     if (worker.sessionId !== undefined && this.deps.getWorkerLiveness?.(worker.sessionId) === 'dead') {
       return { claim: claimOf(AGENT_DEAD_CLAIM_REASON, true), closeSessionId: worker.sessionId };
+    }
+    const ceiling = record.request.policy?.maxClaimOutputOnlyMs ?? DEFAULT_DURABLE_CLAIM_OUTPUT_CEILING_MS;
+    if (outputLive && lastWallClockProgressAt !== undefined && now - lastWallClockProgressAt >= ceiling) {
+      return { claim: claimOf(STALLED_WORKER_CLAIM_REASON, true) };
     }
     if (unit.leaseExpiresAt === undefined || unit.leaseExpiresAt > now) return {};
     const state = worker.sessionId === undefined ? undefined : this.deps.getAgentState?.(worker.sessionId);
@@ -1192,7 +1269,7 @@ export class ExecutionService {
     if (state !== undefined && isRestfulAgentState(state)) return { claim: claimOf(SILENT_WORKER_CLAIM_REASON) };
     const maxStall = record.request.policy?.maxClaimStallMs;
     const lastProgressAt = unit.progressAt ?? unit.claimedAt;
-    if (maxStall !== undefined && lastProgressAt !== undefined && now - lastProgressAt >= maxStall) {
+    if (!outputLive && maxStall !== undefined && lastProgressAt !== undefined && now - lastProgressAt >= maxStall) {
       return { claim: claimOf(STALLED_WORKER_CLAIM_REASON) };
     }
     return { renewSlot: unit.assignedSlotId };
@@ -1250,18 +1327,98 @@ export class ExecutionService {
   }
 
   /** Records the run warning and offers it to the host (Inbox). Never throws: a warning must not break recovery. */
-  private async raiseWorkerWarning(record: ExecutionRecord, slotId: string, summary: string, kind: 'worker-exit' | 'worker-no-turn' | 'worker-respawn'): Promise<void> {
+  private async raiseWorkerWarning(record: ExecutionRecord, slotId: string, summary: string, kind: ExecutionRunWarningKind, ref?: string): Promise<boolean> {
     const bounded = boundReason(summary);
     try {
       await this.deps.store.warning(record.id, { slotId, summary: bounded });
     } catch (error) {
       this.deps.logError?.(`Worker warning failed for ${record.id}`, error);
-      return;
+      return false;
     }
     try {
-      await this.deps.onRunWarning?.(record, { slotId: boundReason(slotId, 120), summary: bounded, kind });
+      await this.deps.onRunWarning?.(record, { slotId: boundReason(slotId, 120), summary: bounded, kind, ...(ref ? { ref: boundReason(ref, 200) } : {}) });
     } catch (error) {
       this.deps.logError?.(`Worker warning delivery failed for ${record.id}`, error);
+    }
+    return true;
+  }
+
+  /**
+   * Visibility sweep (reconcile cadence): one notice per claim for a `READY` unit that waits while a seat is
+   * idle, or a `CLAIMED` unit with no output progress; and one reminder per human blocker that waits. Extends
+   * {@link raiseWorkerWarning}; holds no timer, and a run that ended drops its state. Never throws.
+   */
+  async sweepVisibility(): Promise<void> {
+    const now = (this.deps.now ?? Date.now)();
+    let active: ExecutionRecord[];
+    try { active = await this.deps.store.listActive(); }
+    catch (error) { this.deps.logError?.('execution.sweepVisibility list failed', error); return; }
+    this.visibility.retainRuns(new Set(active.map((record) => record.id)));
+    for (const record of active) {
+      try {
+        await this.noticeUnitVisibility(record, now);
+        await this.remindHumanBlockers(record, now);
+      } catch (error) {
+        this.deps.logError?.(`execution.sweepVisibility failed for ${record.id}`, error);
+      }
+    }
+  }
+
+  private async noticeUnitVisibility(record: ExecutionRecord, now: number): Promise<void> {
+    const idleWindow = this.deps.idleNoticeWindowMs?.() ?? IDLE_CAPACITY_NOTICE_MS;
+    const heartbeatWindow = this.deps.heartbeatWarnWindowMs?.() ?? HEARTBEAT_WARN_MS;
+    const live = new Set<string>();
+    let lifecycle: ExtractedLifecycle | undefined;
+    let lifecycleRead = false;
+    const readLifecycle = async (): Promise<ExtractedLifecycle | undefined> => {
+      if (lifecycleRead) return lifecycle;
+      lifecycleRead = true;
+      try { lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId)); }
+      catch (error) { this.deps.logError?.(`Execution visibility lifecycle read failed for ${record.id}`, error); }
+      return lifecycle;
+    };
+    const units = record.workUnits ?? [];
+    const busySlots = new Set(units.filter((unit) => unit.state === 'CLAIMED' && unit.assignedSlotId).map((unit) => unit.assignedSlotId!));
+    for (const unit of units) {
+      if (unit.state === 'READY') {
+        // READY means every dependency is done; the clock starts when this sweep first sees the unit READY at this
+        // claim generation, so a retry pause or a reclaim restarts it.
+        const key = `ready:${unit.id}:${unit.claimGeneration ?? 0}`;
+        live.add(key);
+        const seen = this.visibility.observe(record.id, key, now);
+        if (!seen || seen.noticed || now - seen.since < idleWindow) continue;
+        const idle = (await readLifecycle())?.workers?.find((worker) => worker.slotId && worker.projectId === record.projectId
+          && !isOrchestratorSlotId(worker.slotId) && !!worker.process && !DEAD_WORKER_PROCESSES.has(worker.process) && !busySlots.has(worker.slotId));
+        if (!idle?.slotId) continue;
+        seen.noticed = true;
+        await this.raiseWorkerWarning(record, idle.slotId, `${workerNoticeLabel(record, idle.slotId, this.deps.personaName)} is idle while unit ${unitNoticeName(unit)} has been ready for ${formatWait(now - seen.since)}. Open the Squad on the Agents board; if the unit stays unclaimed, ask the owner to assign it or restart the run.`, 'worker-idle', `${unit.id}:${unit.claimGeneration ?? 0}`);
+      } else if (unit.state === 'CLAIMED' && unit.claimId && unit.assignedSlotId) {
+        const key = `claim:${unit.id}:${unit.claimId}`;
+        live.add(key);
+        const last = unit.progressAt ?? unit.claimedAt;
+        if (last === undefined || now - last < heartbeatWindow || isWorkerRecoveryLive(unit, now)) continue;
+        const seen = this.visibility.observe(record.id, key, now);
+        if (!seen || seen.noticed) continue;
+        const worker = (await readLifecycle())?.workers?.find((candidate) => candidate.slotId === unit.assignedSlotId && candidate.projectId === record.projectId);
+        // A worker that already exited is reported by its exit warning, not as a quiet heartbeat.
+        if (worker && DEAD_WORKER_PROCESSES.has(worker.process ?? '')) continue;
+        seen.noticed = true;
+        await this.raiseWorkerWarning(record, unit.assignedSlotId, `${workerNoticeLabel(record, unit.assignedSlotId, this.deps.personaName)} has been silent for ${formatWait(now - last)} on unit ${unitNoticeName(unit)}. Open its terminal on the Agents board; if it stays silent, restart that worker or stop the Squad.`, 'worker-heartbeat', `${unit.id}:${unit.claimId}`);
+      }
+    }
+    this.visibility.retainOnly(record.id, live);
+  }
+
+  private async remindHumanBlockers(record: ExecutionRecord, now: number): Promise<void> {
+    const open = (record.blockers ?? []).filter((blocker) => !blocker.resolved && blocker.audience !== 'coordinator');
+    this.visibility.retainReminded(record.id, new Set(open.map((blocker) => blocker.id)));
+    const reminderMs = resolveBlockerReminderMs(this.deps.blockerReminderMs?.());
+    if (reminderMs === 0) return;
+    for (const blocker of open) {
+      const waited = now - blockerWaitStart(blocker);
+      if (waited < reminderMs || !this.visibility.markReminded(record.id, blocker.id)) continue;
+      const delivered = await this.raiseWorkerWarning(record, blocker.slotId, `${blockerWaiter(record, blocker.slotId, this.deps.personaName)} has waited ${formatWait(waited)} for your answer on unit ${unitNoticeName(record.workUnits?.find((u) => u.id === blocker.workUnitId) ?? { id: blocker.workUnitId })} in "${record.jobTitle}". Open the Squad on the Agents board and answer the blocker.`, 'blocker-reminder', `${blocker.workUnitId}:${blocker.id}`);
+      if (!delivered) this.visibility.unmarkReminded(record.id, blocker.id);
     }
   }
 
@@ -1294,10 +1451,13 @@ export class ExecutionService {
    * claimed. A worker proven dead is skipped (its exit warns); a claim that is progressing never warns.
    */
   private async warnNoTurnWorkers(record: ExecutionRecord, lifecycle: ExtractedLifecycle | undefined, now: number): Promise<void> {
-    const window = this.deps.noTurnWarnWindowMs?.() ?? record.request.policy?.maxClaimStallMs ?? DEFAULT_DURABLE_CLAIM_STALL_MS;
+    const windowOverride = this.deps.noTurnWarnWindowMs?.();
+    const stallWindow = record.request.policy?.maxClaimStallMs ?? DEFAULT_DURABLE_CLAIM_STALL_MS;
     for (const unit of record.workUnits ?? []) {
       if (unit.state !== 'CLAIMED' || !unit.claimId || !unit.assignedSlotId || unit.claimedAt === undefined) continue;
       if ((unit.turnCount ?? 0) > 0 || (unit.progressAt ?? unit.claimedAt) > unit.claimedAt) continue;
+      // Same clock as the reclaim: a claim that is still printing output is only reclaimed at the output-only ceiling, so warn then.
+      const window = windowOverride ?? (claimOutputLive(unit, now) ? (record.request.policy?.maxClaimOutputOnlyMs ?? DEFAULT_DURABLE_CLAIM_OUTPUT_CEILING_MS) : stallWindow);
       if (now - unit.claimedAt < window) continue;
       const slotId = unit.assignedSlotId;
       const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === slotId && candidate.projectId === record.projectId);
@@ -1496,9 +1656,138 @@ export class ExecutionService {
         // Guard rejection: no untried slot / not reassignable → block to a human below.
         this.deps.logError?.(`Execution kickoff-failure reassignment skipped for ${reclaimed.id}/${unit.id}`, error);
       }
+      // #789: a role with ONE capable seat has no fresh slot to move to. Retry that seat once (and respawn it
+      // when its session is gone) before a person is asked. Roles with 2+ capable seats never get here: they
+      // were reassigned above, or have exhausted every seat and block.
+      if (await this.recoverSingleSeat(reclaimed, unit)) { changed = true; continue; }
       if (await this.blockKickoffToHuman(reclaimed, unit)) changed = true;
     }
     return changed;
+  }
+
+  /**
+   * Single-seat recovery for {@link escalateKickoffFailures}. Combined per-unit cap, per execution attempt:
+   * one same-seat retry AND one respawn (a respawn that succeeds also counts as the retry), on top of the
+   * unit's one STALLED READY-retry (store `reclaimExpiredClaims`) and the `kickoffFailures` threshold
+   * (`KICKOFF_FAILURE_BLOCK_THRESHOLD`, never-turned claims). Whatever is spent, the next failure blocks to a
+   * human. A dead seat (PROVEN_DEAD / AGENT_DEAD) is respawned through {@link respawnSlot} (lifecycle fences and
+   * per-slot cap apply). Behind the claim-recovery Enforce flag, like the reclaim that led here.
+   * Returns true when the unit was re-dispatched on its seat (the caller cascades).
+   */
+  private async recoverSingleSeat(reclaimed: ExecutionRecord, unit: NonNullable<ExecutionRecord['workUnits']>[number]): Promise<boolean> {
+    if (this.deps.claimRecoveryEnforceEnabled?.() !== true) return false;
+    const enforceRouting = this.deps.routingEnforcementEnabled?.(reclaimed) === true;
+    const seat = singleSeatOf(reclaimed, unit, enforceRouting);
+    if (!seat) return false;
+    const dead = seat.reason === PROVEN_DEAD_CLAIM_REASON || seat.reason === AGENT_DEAD_CLAIM_REASON;
+    try {
+      if (dead && seat.seatRecovery?.respawned === undefined) {
+        // Spend the respawn durably BEFORE running it. If this throws (unit no longer READY, persistence error) no
+        // respawn happens; if the settle below throws, the reservation still stands, so a second respawn can never follow.
+        await this.deps.store.recordSeatRecovery(reclaimed.id, unit.id, { kind: 'respawn-intent' }, { enforceRouting });
+        await this.quiesceOldSession(reclaimed, seat.slotId);
+        const outcome = await this.respawnSlot(reclaimed, seat.slotId);
+        if (!outcome.ok) this.deps.logError?.(`Execution single-seat respawn failed for ${reclaimed.id}/${seat.slotId}: ${outcome.code}`, new Error(outcome.message));
+        await this.deps.store.recordSeatRecovery(reclaimed.id, unit.id, { kind: 'respawn', ok: outcome.ok }, { enforceRouting });
+        return outcome.ok;
+      }
+      if (seat.seatRecovery?.retried) return false;
+      await this.deps.store.recordSeatRecovery(reclaimed.id, unit.id, { kind: 'retry' }, { enforceRouting });
+      return true;
+    } catch (error) {
+      if (!(error instanceof WorkUnitRecoveryGuardError)) this.deps.logError?.(`Execution single-seat recovery FAILED (persistence) for ${reclaimed.id}/${unit.id}`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Before a dead seat is respawned: close the old session (idempotent) and wait, bounded, until it has exited, so a
+   * shell that outlived its agent cannot act after the replacement starts. On timeout or error it logs and proceeds
+   * (the claim fence in the store still drops the old session's late signals).
+   */
+  private async quiesceOldSession(record: ExecutionRecord, slotId: string): Promise<void> {
+    const wait = this.deps.waitForWorkerSessionExit;
+    try {
+      const { sessionId } = await this.slotSessionState(record, slotId);
+      if (!sessionId) return;
+      this.deps.closeWorkerSession?.(sessionId);
+      if (!wait) return;
+      const exited = await wait(sessionId, OLD_SESSION_EXIT_WAIT_MS);
+      if (!exited) this.deps.logError?.(`Old session of ${record.id}/${slotId} still present after ${OLD_SESSION_EXIT_WAIT_MS}ms; respawning anyway`, new Error('old session exit wait timed out'));
+    } catch (error) {
+      this.deps.logError?.(`Old session of ${record.id}/${slotId} could not be quiesced before respawn`, error);
+    }
+  }
+
+  /**
+   * No-start retry. A worker-reported failure of a claim that never started (no turn, no file change) and that is
+   * not a blocker/contract/validation failure is treated as a kickoff failure rather than a terminal one: the claim
+   * is reclaimed as STALLED (never-started path, so `kickoffFailures` is bumped and the seat is recorded in
+   * `noProgressSlots`) and {@link escalateKickoffFailures} reassigns / retries the seat / respawns it, then blocks
+   * to a human at KICKOFF_FAILURE_BLOCK_THRESHOLD. Same budget as every other kickoff failure: no parallel counter.
+   * A repeat of the previous failure text (timestamps and ids stripped) is not retried, so a deterministic failure
+   * fails normally. Returns true when the claim was recovered here.
+   */
+  private async retryNoStartFailure(binding: ExecutionCohortBinding, workUnitId: string, failure: string, failureCode: ExecutionFailureCode, claim: { claimId: string; claimGeneration: number } | undefined, structuredResult: unknown): Promise<{ recovered: boolean; failure?: string }> {
+    if (!NO_START_RETRY_CODES.has(failureCode) || structuredResult !== undefined || this.deps.claimRecoveryEnforceEnabled?.() !== true) return { recovered: false };
+    try {
+      const first = await this.noStartRetryCandidate(binding, workUnitId, failure, claim);
+      if (first.kind === 'no') return { recovered: false };
+      if (first.kind === 'failed-again') return { recovered: false, failure: first.failure };
+      // Pause, then re-check: the claim may have moved on (or the run ended) while the seat settled.
+      if (!await this.pauseBeforeNoStartRetry()) return { recovered: false };
+      const second = await this.noStartRetryCandidate(binding, workUnitId, failure, claim);
+      if (second.kind === 'failed-again') return { recovered: false, failure: second.failure };
+      if (second.kind !== 'retry') return { recovered: false };
+      const reclaimed = await this.deps.store.reclaimExpiredClaims(second.recordId, [{
+        workUnitId, claimId: second.claimId, claimGeneration: second.claimGeneration, reason: NO_PROGRESS_CLAIM_REASON.STALLED, force: true,
+        detail: `${NO_START_MARKER}${second.normalized}`
+      }]);
+      await this.escalateKickoffFailures(reclaimed);
+      await this.cascadeDispatch(reclaimed.id);
+      return { recovered: true };
+    } catch (error) {
+      this.deps.logError?.(`Execution no-start retry failed for ${binding.executionId}/${workUnitId}`, error);
+      return { recovered: false };
+    }
+  }
+
+  /**
+   * Whether a worker-reported failure of `workUnitId` may be retried as a no-start kickoff failure. `failed-again`
+   * means a no-start retry already ran for this unit and it failed again (same text, or the kickoff budget is spent):
+   * the unit then fails with a reason naming it as `id: title`.
+   */
+  private async noStartRetryCandidate(binding: ExecutionCohortBinding, workUnitId: string, failure: string, claim: { claimId: string; claimGeneration: number } | undefined):
+    Promise<{ kind: 'no' } | { kind: 'failed-again'; failure: string } | { kind: 'retry'; recordId: string; claimId: string; claimGeneration: number; normalized: string }> {
+    const record = await this.deps.store.get(binding.executionId);
+    const unit = record?.workUnits?.find((candidate) => candidate.id === workUnitId);
+    if (!record || !unit || !isDurableCoordination(record.coordinationMode) || unit.state !== 'CLAIMED' || unit.assignedSlotId !== binding.slotId) return { kind: 'no' };
+    if (unit.claimId === undefined || unit.claimGeneration === undefined) return { kind: 'no' };
+    if (claim && (claim.claimId !== unit.claimId || claim.claimGeneration !== unit.claimGeneration)) return { kind: 'no' };
+    if ((unit.turnCount ?? 0) > 0 || unit.lastTurnAt !== undefined || (unit.touched?.length ?? 0) > 0) return { kind: 'no' };
+    if (record.blockers?.some((blocker) => !blocker.resolved && blocker.workUnitId === workUnitId)) return { kind: 'no' };
+    const normalized = normalizeFailureText(failure);
+    const previous = [...unit.history].reverse().find((entry) => entry.action === 'released' && entry.detail?.includes(NO_START_MARKER));
+    const label = unit.title ? `${unit.id}: ${unit.title}` : unit.id;
+    const failedAgain = (reason: string) => ({ kind: 'failed-again' as const, failure: `No-start retry of work unit ${label} failed (${reason}): ${failure}`.slice(0, 2_000) });
+    if ((unit.kickoffFailures ?? 0) >= KICKOFF_FAILURE_BLOCK_THRESHOLD) return previous ? failedAgain('retry budget spent') : { kind: 'no' };
+    if (previous?.detail?.endsWith(`${NO_START_MARKER}${normalized}`)) return failedAgain('same failure as the previous attempt');
+    return { kind: 'retry', recordId: record.id, claimId: unit.claimId, claimGeneration: unit.claimGeneration, normalized };
+  }
+
+  /** Bounded pause before a no-start retry. Resolves false when the service is disposed meanwhile (timer released). */
+  private pauseBeforeNoStartRetry(): Promise<boolean> {
+    const ms = this.deps.noStartRetryPauseMs ?? NO_START_RETRY_PAUSE_MS;
+    if (this.disposed) return Promise.resolve(false);
+    if (ms <= 0) return Promise.resolve(true);
+    const setTimer: (fn: () => void, ms: number) => NodeJS.Timeout = this.deps.setTimer ?? setTimeout;
+    const clearTimer: (timer: NodeJS.Timeout) => void = this.deps.clearTimer ?? clearTimeout;
+    return new Promise<boolean>((resolve) => {
+      const pause = { cancel: () => { clearTimer(timer); this.noStartPauses.delete(pause); resolve(false); } };
+      const timer = setTimer(() => { this.noStartPauses.delete(pause); resolve(!this.disposed); }, Math.min(ms, NO_START_RETRY_PAUSE_MS));
+      (timer as { unref?: () => void }).unref?.();
+      this.noStartPauses.add(pause);
+    });
   }
 
   /** Fire-and-forget `onHumanBlocker`; a throwing or rejecting hook is logged, never propagated. */
@@ -1608,7 +1897,13 @@ export class ExecutionService {
     const clearTimer = this.deps.clearTimer ?? clearTimeout;
     for (const timer of this.autoFinalizeTimers.values()) clearTimer(timer);
     this.autoFinalizeTimers.clear();
+    for (const timer of this.checkpointRetryTimers.values()) clearTimer(timer);
+    this.checkpointRetryTimers.clear();
+    this.disposed = true;
+    for (const pause of [...this.noStartPauses]) pause.cancel();
+    this.noStartPauses.clear();
     this.routeFactCircuits.clear();
+    this.visibility.clear();
     this.wakeConfirmations.dispose();
   }
 
@@ -1769,12 +2064,53 @@ export class ExecutionService {
     };
   }
 
-  async claimWork(binding: ExecutionCohortBinding, workUnitId: string, assignedSlotId?: string) {
+  /**
+   * Worker-initiated claim. `callerSessionId` is the MCP route session of the caller: a claim from a session that is not
+   * the slot's current one (an old session of a respawned seat) is refused, and an accepted claim is bound to the
+   * caller's session so the store's session fence covers its later lease / turn / write signals. Omitted (modern Squad
+   * member path, no PTY session) or an unknown slot session fails open, as in the store fence.
+   */
+  async claimWork(binding: ExecutionCohortBinding, workUnitId: string, assignedSlotId?: string, callerSessionId?: string, memberGeneration?: number) {
     if (binding.role !== 'worker') return deniedBound('coordinator must use execution.work.assign');
     const budget = await this.budgetAdmission(binding.executionId);
     if (!budget.ok) return budget;
+    if (callerSessionId !== undefined && await this.claimSessionStale(binding, callerSessionId, memberGeneration)) {
+      return deniedBound(`claim of ${workUnitId} refused: session ${callerSessionId} is no longer the live session of slot ${binding.slotId}`);
+    }
     await this.drainStaleChecks(binding.executionId);
-    return this.mutateBound(binding, (record) => this.deps.store.claimWork(record.id, record.stateVersion, binding, workUnitId, assignedSlotId));
+    const outcome = await this.captureClaimBaseline(await this.mutateBound(binding, (record) => this.deps.store.claimWork(record.id, record.stateVersion, binding, workUnitId, assignedSlotId)), workUnitId);
+    // A modern member carries no PTY session id on its later signals, so only a CLI claim is bound to its session.
+    if (callerSessionId !== undefined && memberGeneration === undefined && outcome.ok) {
+      const unit = (outcome as unknown as { value?: ExecutionRecord }).value?.workUnits?.find((candidate) => candidate.id === workUnitId);
+      if (unit?.state === 'CLAIMED' && unit.claimId && unit.assignedSlotId === binding.slotId) {
+        try { await this.deps.store.bindClaimSession(binding.executionId, workUnitId, unit.claimId, callerSessionId); }
+        catch (error) { this.deps.logError?.(`execution claim session bind failed for ${binding.executionId}/${workUnitId}`, error); }
+      }
+    }
+    return outcome;
+  }
+
+  /**
+   * True when the slot's current session is known and differs from the caller. A CLI seat is identified by its worker
+   * `sessionId`; a modern member (`memberGeneration` set) by its `threadId` and binding generation. Unknown identity fails open.
+   */
+  private async claimSessionStale(binding: ExecutionCohortBinding, sessionId: string, memberGeneration?: number): Promise<boolean> {
+    try {
+      const record = await this.deps.store.get(binding.executionId);
+      if (!record) return false;
+      if (memberGeneration === undefined) {
+        const { sessionId: current } = await this.slotSessionState(record, binding.slotId);
+        return current !== undefined && current !== sessionId;
+      }
+      const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId));
+      const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === binding.slotId && candidate.projectId === record.projectId) as { threadId?: unknown; generation?: unknown } | undefined;
+      if (!worker) return false;
+      if (typeof worker.threadId === 'string' && worker.threadId !== sessionId) return true;
+      return typeof worker.generation === 'number' && worker.generation !== memberGeneration;
+    } catch (error) {
+      this.deps.logError?.(`claim session check failed for ${binding.executionId}/${binding.slotId}`, error);
+      return false;
+    }
   }
 
   async assignWork(binding: ExecutionCohortBinding, workUnitId: string, assignedSlotId: string) {
@@ -1782,7 +2118,7 @@ export class ExecutionService {
     const budget = await this.budgetAdmission(binding.executionId);
     if (!budget.ok) return budget;
     await this.drainStaleChecks(binding.executionId);
-    return this.mutateBound(binding, (record) => this.deps.store.claimWork(record.id, record.stateVersion, binding, workUnitId, assignedSlotId));
+    return this.captureClaimBaseline(await this.mutateBound(binding, (record) => this.deps.store.claimWork(record.id, record.stateVersion, binding, workUnitId, assignedSlotId)), workUnitId);
   }
 
   async heartbeatWork(binding: ExecutionCohortBinding, workUnitId: string, claimId: string, claimGeneration: number, turnCount?: number) {
@@ -1797,12 +2133,166 @@ export class ExecutionService {
    * nothing and lets the lease expire. Best-effort + never throws — a failed renewal simply
    * lets the lease age toward its normal expiry. Not a cohort-principal call (no binding): the
    * store matches the unit currently CLAIMED by `slotId`. */
-  async renewWorkerLease(executionId: string, slotId: string): Promise<void> {
+  async renewWorkerLease(executionId: string, slotId: string, sessionId?: string): Promise<void> {
     try {
-      // Host-observed worker OUTPUT: advances both the lease and the stall clock (`progressAt`).
-      await this.deps.store.renewWorkerLease(executionId, slotId, { advanceProgress: true });
+      // Host-observed worker OUTPUT renews the lease and the output lease ONLY. It does not move `progressAt`:
+      // a worker can print forever while stuck. A turn heartbeat or a file change advances it (recordClaimSignal).
+      await this.deps.store.renewWorkerLease(executionId, slotId, { advanceProgress: false, output: true, ...(sessionId ? { sessionId } : {}) });
     } catch (error) {
       this.deps.logError?.(`execution worker lease renew failed (execution=${executionId}, slot=${slotId})`, error);
+    }
+  }
+
+  private checkpointsOn(): boolean { return this.deps.unitCheckpointsEnabled?.() !== false; }
+
+  /**
+   * Record the squad worktree's git state when a claim starts (the checkpoint baseline). Runs before the claim
+   * reply reaches the worker so no write can precede it. Never throws and never changes the claim outcome.
+   */
+  private async captureClaimBaseline<T extends { ok: boolean }>(outcome: T, workUnitId: string): Promise<T> {
+    try {
+      if (!outcome.ok || !this.checkpointsOn()) return outcome;
+      const record = (outcome as unknown as { value?: ExecutionRecord }).value;
+      const root = record?.squadWorktree?.path;
+      const unit = record?.workUnits?.find((candidate) => candidate.id === workUnitId);
+      if (!record || !root || !unit || unit.state !== 'CLAIMED' || !unit.claimId || unit.baseline?.claimId === unit.claimId) return outcome;
+      const baseline = await captureBaseline(root, unit.claimId, { ...(this.deps.checkpointGit ? { git: this.deps.checkpointGit } : {}), now: this.deps.now });
+      await this.deps.store.recordUnitCheckpoint(record.id, unit.id, { baseline });
+    } catch (error) {
+      this.deps.logError?.(`execution claim baseline failed (execution=${(outcome as { value?: { id?: string } }).value?.id}, unit=${workUnitId})`, error);
+    }
+    return outcome;
+  }
+
+  private readonly checkpointTails = new Map<string, Promise<void>>();
+  private readonly checkpointRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly noStartPauses = new Set<{ cancel: () => void }>();
+  private disposed = false;
+
+  /** Fire-and-forget entry used after unit transitions. */
+  private scheduleUnitCheckpoints(executionId: string): void {
+    if (!this.checkpointsOn()) return;
+    void this.settleUnitCheckpoints(executionId);
+  }
+
+  /**
+   * Save per-unit checkpoints for COMPLETED and FAILED units that have none, and restore a FAILED unit's own
+   * edits once its slot is quiet. Serialized per execution; never throws.
+   */
+  async settleUnitCheckpoints(executionId: string): Promise<void> {
+    if (!this.checkpointsOn()) return;
+    const tail = (this.checkpointTails.get(executionId) ?? Promise.resolve()).then(() => this.settleUnitCheckpointsOnce(executionId));
+    const guarded = tail.catch((error) => this.deps.logError?.(`execution unit checkpoint failed (execution=${executionId})`, error));
+    this.checkpointTails.set(executionId, guarded);
+    await guarded;
+    if (this.checkpointTails.get(executionId) === guarded) this.checkpointTails.delete(executionId);
+    await this.scheduleCheckpointRetry(executionId);
+  }
+
+  /** A FAILED unit whose slot was still mid-turn stays `pending`; with no later cascade (e.g. a finished run) nothing would retry it, so re-check on a short bounded timer. */
+  private async scheduleCheckpointRetry(executionId: string): Promise<void> {
+    if (this.checkpointRetryTimers.has(executionId)) return;
+    const record = await this.deps.store.get(executionId).catch(() => undefined);
+    if (!record?.workUnits?.some((unit) => unit.state === 'FAILED' && unit.checkpoint?.state === 'pending' && (unit.checkpoint.attempts ?? 0) < MAX_RESTORE_ATTEMPTS)) return;
+    const setTimer = this.deps.setTimer ?? setTimeout;
+    const timer = setTimer(() => { this.checkpointRetryTimers.delete(executionId); void this.settleUnitCheckpoints(executionId); }, 1000);
+    (timer as { unref?: () => void }).unref?.();
+    this.checkpointRetryTimers.set(executionId, timer as ReturnType<typeof setTimeout>);
+  }
+
+  private async slotQuiet(record: ExecutionRecord, unit: ExecutionRecord['workUnits'] extends (infer U)[] | undefined ? NonNullable<U> : never): Promise<boolean> {
+    const slot = unit.assignedSlotId;
+    if (!slot) return true;
+    if ((record.workUnits ?? []).some((other) => other.id !== unit.id && other.state === 'CLAIMED' && other.assignedSlotId === slot)) return false;
+    if (!this.deps.getAgentState) return true;
+    try {
+      const lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId));
+      const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === slot && candidate.projectId === record.projectId);
+      if (worker?.sessionId && !DEAD_WORKER_PROCESSES.has(worker.process ?? '') && this.deps.getAgentState(worker.sessionId) === 'working') return false;
+    } catch (error) {
+      this.deps.logError?.(`execution checkpoint quiesce probe failed for ${record.id}/${slot}`, error);
+      return false;
+    }
+    return true;
+  }
+
+  private async settleUnitCheckpointsOnce(executionId: string): Promise<void> {
+    const record = await this.deps.store.get(executionId);
+    const root = record?.squadWorktree?.path;
+    if (!record || !root) return;
+    const units = record.workUnits ?? [];
+    for (const unit of units) {
+      if (unit.state !== 'COMPLETED' && unit.state !== 'FAILED') continue;
+      if (!unit.baseline && !(unit.touched?.length)) continue;
+      const previous = unit.checkpoint;
+      if (previous && previous.state !== 'pending') continue;
+      const failed = unit.state === 'FAILED';
+      const quiet = failed ? await this.slotQuiet(record, unit) : true;
+      const attempts = (previous?.attempts ?? 0) + 1;
+      const giveUp = failed && !quiet && attempts >= MAX_RESTORE_ATTEMPTS;
+      const siblings = units.filter((other) => other.id !== unit.id && ((other.touched?.length ?? 0) > 0 || other.baseline !== undefined)).map((other) => ({
+        id: other.id,
+        touched: (other.touched ?? []).map((entry) => ({ path: entry.path, hash: entry.hash })),
+        concurrent: other.state === 'CLAIMED' || other.state === 'BLOCKED'
+          || (other.state !== 'PENDING' && other.state !== 'READY' && (other.checkpoint === undefined || other.checkpoint.at >= (unit.baseline?.at ?? 0)))
+      }));
+      const built = await buildUnitCheckpoint(root, {
+        id: unit.id, state: unit.state, touched: (unit.touched ?? []).map((entry) => ({ path: entry.path, hash: entry.hash })),
+        ...(unit.baseline ? { baseline: unit.baseline } : {})
+      }, siblings, { restore: failed && quiet, ...(this.deps.checkpointGit ? { git: this.deps.checkpointGit } : {}), now: this.deps.now });
+      let artifact = previous?.artifact;
+      if (!artifact) {
+        const name = `checkpoint/${unit.id}/${unit.claimGeneration ?? 0}`;
+        try {
+          const stored = await this.deps.artifacts.put({ executionId: record.id, attempt: record.attempt, projectId: record.projectId, name, mediaType: 'application/json', content: built.artifactContent });
+          if (stored.outcome !== 'conflict') artifact = name;
+        } catch (error) { this.deps.logError?.(`execution checkpoint artifact failed (execution=${record.id}, unit=${unit.id})`, error); }
+      }
+      let checkpoint: UnitCheckpoint = { ...built.checkpoint, attempts, ...(artifact ? { artifact } : {}) };
+      if (failed && !quiet) {
+        checkpoint = giveUp
+          ? { ...checkpoint, state: 'partial', skipped: [...checkpoint.skipped, ...(unit.touched ?? []).slice(0, 100).map((entry) => ({ path: entry.path, reason: 'not-quiesced' }))], reason: 'slot never went quiet; nothing restored' }
+          : { ...checkpoint, state: 'pending' };
+      }
+      await this.deps.store.recordUnitCheckpoint(record.id, unit.id, { checkpoint });
+      const reported = checkpoint.restored.length || checkpoint.deleted.length || checkpoint.skipped.length;
+      const degraded = checkpoint.state === 'partial' || checkpoint.state === 'unavailable';
+      if (checkpoint.state !== 'pending' && ((failed && reported) || degraded)) {
+        const skippedText = checkpoint.skipped.length ? ` (${checkpoint.skipped.slice(0, 5).map((entry) => `${entry.path}: ${entry.reason}`).join('; ')})` : '';
+        const summary = degraded && !(failed && reported)
+          ? `Checkpoint for unit ${unitNoticeName(unit)} is ${checkpoint.state}${checkpoint.reason ? ` (${checkpoint.reason})` : ''}: ${checkpoint.skipped.length} file(s) were not captured or restored${skippedText}. Review that unit's changes in the checkout.`
+          : `Unit ${unitNoticeName(unit)} failed: restored ${checkpoint.restored.length}, deleted ${checkpoint.deleted.length}, left ${checkpoint.skipped.length} file(s) for the owner${skippedText}`;
+        await this.raiseWorkerWarning(record, unit.assignedSlotId ?? 'unknown', summary, 'unit-checkpoint', `${unit.id}:${unit.claimGeneration ?? 0}`);
+      }
+    }
+  }
+
+  /**
+   * Record a finished turn for the unit CLAIMED by `slotId` (the harness Stop hook). Best-effort;
+   * never throws. Signal only: it does not renew the lease or advance `progressAt`.
+   */
+  async recordWorkerTurn(executionId: string, slotId: string, sessionId?: string): Promise<void> {
+    try { await this.deps.store.recordClaimSignal(executionId, slotId, { turn: true, ...(sessionId ? { sessionId } : {}) }); }
+    catch (error) { this.deps.logError?.(`execution worker turn signal failed (execution=${executionId}, slot=${slotId})`, error); }
+  }
+
+  /**
+   * Record a write from the claim's OWN settled tool call (`tool_name` / `tool_input` of the worker
+   * session's PostToolUse). The path is confined to the execution's worktree, so a sibling's edit or a
+   * path outside the tree never counts. Best-effort; never throws.
+   */
+  async recordWorkerToolEvent(executionId: string, slotId: string, event: { toolName: unknown; input: unknown; cwd?: string; failed?: boolean; sessionId?: string }): Promise<void> {
+    try {
+      if (event.failed) return;
+      const raw = claimWritePath(event.toolName, event.input);
+      if (!raw) return;
+      const root = (await this.deps.store.get(executionId))?.squadWorktree?.path;
+      if (!root) return;
+      const write = await confineAndHashClaimWrite(root, event.cwd, raw);
+      if (!write) return;
+      await this.deps.store.recordClaimSignal(executionId, slotId, { writes: [write], ...(event.sessionId ? { sessionId: event.sessionId } : {}) });
+    } catch (error) {
+      this.deps.logError?.(`execution worker write signal failed (execution=${executionId}, slot=${slotId})`, error);
     }
   }
 
@@ -2218,6 +2708,7 @@ export class ExecutionService {
   private async cascadeDispatch(executionId: string, deprioritizeSlotId?: string): Promise<void> {
     // Every blocker-resolving mutation cascades afterwards, so this re-derives the parked-worker hold.
     this.syncParkedHolds(executionId);
+    this.scheduleUnitCheckpoints(executionId);
     try {
       const existing = await this.deps.store.get(executionId);
       if (!existing) return;
@@ -2298,6 +2789,9 @@ export class ExecutionService {
    */
   private async pushAssignments(record: ExecutionRecord, assignments: ExecutionDispatchAssignment[]): Promise<void> {
     if (!assignments.length) return;
+    // Engine dispatch claims units itself (no worker `claimWork`), so record each checkpoint baseline here, before
+    // the assignment text reaches the worker and no write can precede it.
+    for (const assignment of assignments) await this.captureClaimBaseline({ ok: true as const, value: record }, assignment.workUnitId);
     // E2E-only transient fault: release this batch undelivered to reproduce the
     // 0-CLAIMED wedge. Home-gated in host; a no-op in production.
     if (this.deps.stallFirstDispatch?.(record.id) === true) {
@@ -2379,6 +2873,13 @@ export class ExecutionService {
     return { sessionId: worker.sessionId };
   }
 
+  /** Fence the freshly dispatched claim to the session it is delivered to (late signals of a replaced session are then ignored). Best-effort. */
+  private async bindAssignmentSession(executionId: string, assignment: ExecutionDispatchAssignment, sessionId: string): Promise<void> {
+    if (!assignment.claimId) return;
+    try { await this.deps.store.bindClaimSession(executionId, assignment.workUnitId, assignment.claimId, sessionId); }
+    catch (error) { this.deps.logError?.(`execution claim session bind failed for ${executionId}/${assignment.workUnitId}`, error); }
+  }
+
   /** Push one assignment's text to a live session; the receipt rules are explained inline. */
   private async deliverAssignment(record: ExecutionRecord, assignment: ExecutionDispatchAssignment, sessionId: string, lifecycleRecordId?: string): Promise<void> {
     const text = assignmentText(record, assignment);
@@ -2399,6 +2900,7 @@ export class ExecutionService {
       // never a resend to the same member that may hold it. Requires claim recovery
       // observe+enforce (config default on).
       try {
+        await this.bindAssignmentSession(record.id, assignment, sessionId);
         const receipt = await this.deps.deliverAssignment(sessionId, text, correlation);
         // Runtime completion is delivery evidence, never an authenticated work outcome.
         if (receipt.state === 'rejected') await this.releaseUndeliveredAssignments(record.id, [assignment]);
@@ -2413,6 +2915,7 @@ export class ExecutionService {
       // Idle-gated: never inject an assignment into a mid-turn worker (the
       // cascade fires from the worker's own completion, so it is busy). Falls
       // back to the raw reply when the host doesn't wire the idle-gated dep.
+      await this.bindAssignmentSession(record.id, assignment, sessionId);
       const deliver = this.deps.deliverToWorker ?? this.deps.replyToSession;
       const delivered = await deliver(sessionId, text);
       if (delivered) {
@@ -2608,6 +3111,12 @@ export class ExecutionService {
 
   async failWork(binding: ExecutionCohortBinding, workUnitId: string, failure: string, failureCode: ExecutionFailureCode = 'UNKNOWN', claim?: { claimId: string; claimGeneration: number }, requireClaim = false, structuredResult?: unknown) {
     if (binding.role !== 'worker') return deniedBound('only assigned worker can fail work');
+    const retry = await this.retryNoStartFailure(binding, workUnitId, failure, failureCode, claim, structuredResult);
+    if (retry.failure !== undefined) failure = retry.failure;
+    if (retry.recovered) {
+      const current = await this.deps.store.get(binding.executionId);
+      if (current) return { ok: true as const, value: current };
+    }
     const outcome = await this.mutateBound(binding, (record) => claim
       ? this.deps.store.failWork(record.id, record.stateVersion, binding, workUnitId, failure, failureCode, claim, requireClaim, structuredResult)
       : this.deps.store.failWork(record.id, record.stateVersion, binding, workUnitId, failure, failureCode, undefined, requireClaim, structuredResult));
@@ -2764,6 +3273,11 @@ export class ExecutionService {
     if (isOrchestratorSlotId(slotId)) return deniedBound('the coordinator slot cannot be respawned');
     const record = await this.getBound(binding);
     if (!record) return deniedBound('execution not found for bound cohort');
+    return this.respawnSlot(record, slotId);
+  }
+
+  /** Respawn core shared by the coordinator tool and single-seat kickoff recovery: same fences, same per-slot cap. */
+  private async respawnSlot(record: ExecutionRecord, slotId: string): Promise<{ ok: true; value: { slotId: string; sessionId: string; respawn: number; cap: number } } | { ok: false; code: string; message: string }> {
     if (isResumeGrantTerminal(record.state)) return terminalBound(record);
     if (record.state !== 'RUNNING') return { ok: false, code: 'INVALID', message: `execution is ${record.state.toLowerCase()}; a worker can only be respawned while it is running` };
     const known = (record.authorizationContext?.slots ?? []).some((slot) => !isOrchestratorSlotId(slot.slotId) && slot.slotId === slotId);
@@ -2814,6 +3328,122 @@ export class ExecutionService {
     } finally {
       this.respawning.delete(key);
     }
+  }
+
+  /** Live = a session is bound to the slot and its process is not over. */
+  private async slotSessionState(record: ExecutionRecord, slotId: string): Promise<{ known: boolean; live: boolean; sessionId?: string }> {
+    let lifecycle: ExtractedLifecycle | undefined;
+    try { lifecycle = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId)); } catch (error) {
+      this.deps.logError?.(`slot liveness read failed for ${record.id}/${slotId}`, error);
+    }
+    const worker = lifecycle?.workers?.find((candidate) => candidate.slotId === slotId && candidate.projectId === record.projectId);
+    if (!worker) return { known: false, live: false };
+    const live = !!worker.sessionId && !DEAD_WORKER_PROCESSES.has(worker.process ?? '');
+    return { known: true, live, ...(worker.sessionId ? { sessionId: worker.sessionId } : {}) };
+  }
+
+  /**
+   * Owner-agent restart of one worker slot (`execution_slot_restart`). A wrapper over the host's card-Restart / respawn
+   * paths (`deps.restartWorker`): it adds no restart logic of its own. It does not spend the coordinator's per-slot respawn
+   * budget; instead each slot may be restarted once per {@link OWNER_RESTART_MIN_INTERVAL_MS}. A live session that is
+   * mid-turn is not restarted (same quiesce rule as unit checkpoints): retry once it is idle.
+   */
+  async restartSlotAsOwner(callerPrincipalId: string, projectId: string, executionId: string, slotId: string): Promise<{ ok: true; value: { slotId: string; sessionId: string; mode: 'respawned' | 'restarted'; sessionLive: true } } | { ok: false; code: string; message: string }> {
+    if (typeof slotId !== 'string' || !slotId.trim() || slotId.length > 120) return { ok: false, code: 'INVALID', message: 'invalid worker slot' };
+    const record = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
+    if (!record) return { ok: false, code: 'NOT_FOUND', message: 'execution not found for caller' };
+    if (isOrchestratorSlotId(slotId)) return { ok: false, code: 'DENIED', message: 'the coordinator slot cannot be restarted' };
+    if (isResumeGrantTerminal(record.state)) return { ok: false, code: 'TERMINAL', message: `execution is ${record.state.toLowerCase()}` };
+    if (record.state !== 'RUNNING') return { ok: false, code: 'INVALID', message: `execution is ${record.state.toLowerCase()}; a worker can only be restarted while it is running` };
+    if (!(record.authorizationContext?.slots ?? []).some((slot) => !isOrchestratorSlotId(slot.slotId) && slot.slotId === slotId)) {
+      return { ok: false, code: 'NOT_FOUND', message: `unknown worker slot "${boundReason(slotId, 120)}"` };
+    }
+    const restart = this.deps.restartWorker;
+    if (!restart) return { ok: false, code: 'UNAVAILABLE', message: 'worker restart is not available on this host' };
+    const key = `${record.id}:${slotId}`;
+    if (this.respawning.has(key)) return { ok: false, code: 'BUSY', message: `worker ${slotId} is already being restarted` };
+    this.respawning.add(key);
+    try {
+      const now = (this.deps.now ?? Date.now)();
+      const last = this.ownerRestartAt.get(key);
+      if (last !== undefined && now - last < OWNER_RESTART_MIN_INTERVAL_MS) {
+        const waitS = Math.ceil((OWNER_RESTART_MIN_INTERVAL_MS - (now - last)) / 1000);
+        return { ok: false, code: 'RATE_LIMITED', message: `worker ${slotId} was restarted moments ago; wait ${waitS}s before restarting it again` };
+      }
+      const state = await this.slotSessionState(record, slotId);
+      if (!state.known) return { ok: false, code: 'NOT_FOUND', message: `worker ${slotId} has no launched session to restart` };
+      if (state.live && state.sessionId && this.deps.getAgentState?.(state.sessionId) === 'working') {
+        return { ok: false, code: 'NOT_QUIET', message: `worker ${slotId} is mid-turn and may have edits in flight; retry once it is idle` };
+      }
+      // Spend the rate-limit slot before the host call so a looping owner cannot churn sessions even when restarts fail.
+      for (const [entry, at] of this.ownerRestartAt) if (now - at >= OWNER_RESTART_MIN_INTERVAL_MS) this.ownerRestartAt.delete(entry);
+      this.ownerRestartAt.set(key, now);
+      let lifecycleRecordId: string | undefined;
+      try { lifecycleRecordId = extractLifecycleInfo(await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId))?.recordId; } catch { lifecycleRecordId = undefined; }
+      if (!lifecycleRecordId) return { ok: false, code: 'NOT_FOUND', message: `worker ${slotId} has no launched session to restart` };
+      let outcome: Awaited<ReturnType<typeof restart>>;
+      try { outcome = await restart(lifecycleRecordId, slotId); } catch (error) {
+        this.deps.logError?.(`owner slot restart failed for ${record.id}/${slotId}`, error);
+        outcome = { ok: false, reason: 'restart-failed', message: 'the worker could not be restarted' };
+      }
+      if (!outcome.ok) return { ok: false, code: 'RESTART_FAILED', message: `${outcome.reason}: ${boundReason(outcome.message)}` };
+      return { ok: true, value: { slotId, sessionId: outcome.sessionId, mode: outcome.mode, sessionLive: true } };
+    } finally {
+      this.respawning.delete(key);
+    }
+  }
+
+  /**
+   * Owner-agent release of a CLAIMED unit back to READY (`execution_unit_release`). Reuses the board release
+   * (`releaseWorkFromBoard`: owner authority, unit must be CLAIMED, claim cleared, dispatch cascades). The worker-bound
+   * `execution.work.release` stays worker-only. Reads the latest state version, so a concurrent write retries once.
+   */
+  async releaseUnitAsOwner(callerPrincipalId: string, projectId: string, executionId: string, workUnitId: string) {
+    if (typeof workUnitId !== 'string' || !workUnitId.trim() || workUnitId.length > 256) return { ok: false as const, code: 'INVALID', message: 'invalid work unit' };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const record = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
+      if (!record) return { ok: false as const, code: 'NOT_FOUND', message: 'execution not found for caller' };
+      if (isResumeGrantTerminal(record.state)) return { ok: false as const, code: 'TERMINAL', message: `execution is ${record.state.toLowerCase()}` };
+      const unit = record.workUnits?.find((candidate) => candidate.id === workUnitId);
+      if (!unit) return { ok: false as const, code: 'NOT_FOUND', message: 'work unit not found' };
+      if (unit.state !== 'CLAIMED') return { ok: false as const, code: 'INVALID', message: `work unit is ${unit.state.toLowerCase()}, not claimed` };
+      const outcome = await this.releaseWorkFromBoard(callerPrincipalId, projectId, executionId, record.stateVersion, workUnitId);
+      if (outcome.ok || outcome.code !== 'CONFLICT' || attempt === 1) return outcome;
+    }
+    return { ok: false as const, code: 'CONFLICT', message: 'stale execution state' };
+  }
+
+  /**
+   * Owner message to a worker slot with liveness (`execution_respond {slotId}`). A dead session is restarted first (same
+   * path and rate limit as {@link restartSlotAsOwner}); if that fails, the message is not sent and the refusal says why.
+   */
+  async respondToSlotAsOwner(callerPrincipalId: string, projectId: string, executionId: string, expectedStateVersion: number, slotId: string, message: string) {
+    const record = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
+    if (!record) return { ok: false as const, code: 'NOT_FOUND', message: 'execution not found for caller' };
+    let state = isOrchestratorSlotId(slotId) || isResumeGrantTerminal(record.state) ? undefined : await this.slotSessionState(record, slotId);
+    let restarted: 'respawned' | 'restarted' | undefined;
+    if (state?.known && !state.live) {
+      const result = await this.restartSlotAsOwner(callerPrincipalId, projectId, executionId, slotId);
+      if (!result.ok) return { ok: false as const, code: result.code, message: `slot ${slotId} session is not live and could not be restarted: ${result.message}`, sessionLive: false as const };
+      restarted = result.value.mode;
+      state = { known: true, live: true, sessionId: result.value.sessionId };
+    }
+    // Restarting spends state versions (events), so the caller's expected version is refreshed after a restart.
+    const version = restarted ? (await this.deps.store.get(record.id))?.stateVersion ?? expectedStateVersion : expectedStateVersion;
+    const delivered = await this.respond(callerPrincipalId, projectId, executionId, version, slotId, message);
+    const sessionLive = state?.live ?? false;
+    return delivered.ok
+      ? { ...delivered, sessionLive, ...(restarted ? { restarted } : {}) }
+      : { ...delivered, sessionLive };
+  }
+
+  /** Liveness of the session that owns a blocker's slot, for the blocker-answer result. Never restarts. */
+  async blockerSlotLive(callerPrincipalId: string, projectId: string, executionId: string, blockerId: string): Promise<boolean | undefined> {
+    const record = await this.getAuthorizedForControl(callerPrincipalId, projectId, executionId);
+    const blocker = record?.blockers?.find((candidate) => candidate.id === blockerId);
+    if (!record || !blocker || isOrchestratorSlotId(blocker.slotId)) return undefined;
+    const state = await this.slotSessionState(record, blocker.slotId);
+    return state.known ? state.live : undefined;
   }
 
   private async notifyRespawnWarning(record: ExecutionRecord, slotId: string, summary: string): Promise<void> {
@@ -3510,7 +4140,7 @@ export class ExecutionService {
    * it refuses coordinator-audience blockers, and with no `expectedStateVersion` it uses the latest
    * version (retrying on a concurrent write): the open blocker id already prevents a double answer.
    */
-  async respondToHumanBlockerAsOwner(callerPrincipalId: string, projectId: string, executionId: string, expectedStateVersion: number | undefined, blockerId: string, clientRequestId: string, message: string) {
+  async respondToHumanBlockerAsOwner(callerPrincipalId: string, projectId: string, executionId: string, expectedStateVersion: number | undefined, blockerId: string, clientRequestId: string, message: string, scopeSplit?: 'split' | 'keep') {
     if (!blockerId.trim() || !clientRequestId.trim() || !message.trim() || Buffer.byteLength(message, 'utf8') > MAX_BLOCKER_ANSWER_BYTES) {
       return { ok: false as const, code: 'INVALID', message: 'invalid execution blocker delivery request' };
     }
@@ -3520,7 +4150,7 @@ export class ExecutionService {
       const blocker = record.blockers?.find((candidate) => candidate.id === blockerId && !candidate.resolved);
       if (!blocker) return { ok: false as const, code: 'NOT_FOUND', message: 'execution blocker not found' };
       if (blocker.audience === 'coordinator') return { ok: false as const, code: 'DENIED', message: `blocker ${blocker.id} is for the coordinator, not the owner` };
-      const result = await this.enqueueOwnedBlocker(record, expectedStateVersion ?? record.stateVersion, blocker, clientRequestId, message, false);
+      const result = await this.enqueueOwnedBlocker(record, expectedStateVersion ?? record.stateVersion, blocker, clientRequestId, message, false, scopeSplit ?? 'auto');
       if (result.ok || result.code !== 'CONFLICT' || expectedStateVersion !== undefined || attempt >= 4) return result;
     }
   }
@@ -3904,7 +4534,8 @@ export class ExecutionService {
     if (!record) return { ok: false as const, code: 'NOT_FOUND', message: 'execution not found for caller' };
     const blocker = record.blockers?.find((candidate) => candidate.id === blockerId && !candidate.resolved);
     if (!blocker) return { ok: false as const, code: 'NOT_FOUND', message: 'execution blocker not found' };
-    return this.enqueueOwnedBlocker(record, expectedStateVersion, blocker, clientRequestId, text, resume);
+    // Inbox / board answer (not the owner agent): same split guards, but never a confirm refusal it cannot act on.
+    return this.enqueueOwnedBlocker(record, expectedStateVersion, blocker, clientRequestId, text, resume, 'decided');
   }
 
   private async deliverOwned(record: ExecutionRecord, expectedStateVersion: number, slotId: string, text: string, resume: boolean) {
@@ -3928,10 +4559,48 @@ export class ExecutionService {
     }
     if (blockers.length > 1) return { ok: false as const, code: 'CONFLICT', message: 'execution slot has multiple unresolved blockers; select exact blocker' };
     const blocker = blockers[0];
-    return this.enqueueOwnedBlocker(record, expectedStateVersion, blocker, `${record.id}:${expectedStateVersion}:${blocker.id}`, text, resume);
+    return this.enqueueOwnedBlocker(record, expectedStateVersion, blocker, `${record.id}:${expectedStateVersion}:${blocker.id}`, text, resume, 'decided');
   }
 
-  private async enqueueOwnedBlocker(record: ExecutionRecord, expectedStateVersion: number, blocker: NonNullable<ExecutionRecord['blockers']>[number], clientRequestId: string, text: string, resume: boolean) {
+  /**
+   * Scope re-split (AC6) for an owner answer: decide whether `text` widens the blocked unit's scope. Returns the child to
+   * create and the worker-facing text, a refusal asking the owner to confirm, or nothing. Never throws.
+   */
+  private planScopeSplit(record: ExecutionRecord, blocker: NonNullable<ExecutionRecord['blockers']>[number], clientRequestId: string, text: string, mode: 'auto' | 'split' | 'keep' | 'decided'):
+    { kind: 'none' } | { kind: 'replay'; text: string } | { kind: 'confirm'; message: string } | { kind: 'split'; child: ExecutionWorkUnitInput; text: string } {
+    if (mode === 'keep' || blocker.noRoute || blocker.audience === 'coordinator') return { kind: 'none' };
+    const prior = record.deliveries?.find((delivery) => delivery.clientRequestId === clientRequestId);
+    // A retried request replays its stored delivery (which may carry the split note); it never splits twice.
+    if (prior) return prior.payload.text.startsWith(text) ? { kind: 'replay', text: prior.payload.text } : { kind: 'none' };
+    const unit = record.workUnits?.find((candidate) => candidate.id === blocker.workUnitId);
+    if (!unit || unit.state === 'COMPLETED' || unit.state === 'FAILED' || unit.state === 'SKIPPED') return { kind: 'none' };
+    const assessment = assessScopeWidening(unit, text);
+    if (assessment.verdict === 'none') return { kind: 'none' };
+    if (assessment.verdict === 'undecidable') {
+      // 'decided' (non-owner paths: Inbox / board answers) has nobody to confirm with, so an undecidable answer is delivered unchanged.
+      if (mode === 'decided') return { kind: 'none' };
+      return mode === 'split'
+        ? { kind: 'confirm', message: `scope split requested for unit ${unit.id} but the response names no file outside its scope; name the files the new unit must own.` }
+        : { kind: 'confirm', message: confirmSplitPrompt(unit.id, assessment) };
+    }
+    const childId = splitChildId(record.workUnits ?? [], unit.id);
+    const child = buildSplitChild(unit, childId, assessment, text);
+    const note = splitDeliveryNote(unit.id, childId, assessment.addedFiles);
+    if (Buffer.byteLength(text + note, 'utf8') > MAX_BLOCKER_ANSWER_BYTES) {
+      if (mode === 'decided') return { kind: 'none' };
+      return { kind: 'confirm', message: `answer plus the scope-split note exceeds ${MAX_BLOCKER_ANSWER_BYTES} bytes; shorten it.` };
+    }
+    return { kind: 'split', child, text: text + note };
+  }
+
+  private async enqueueOwnedBlocker(record: ExecutionRecord, expectedStateVersion: number, blocker: NonNullable<ExecutionRecord['blockers']>[number], clientRequestId: string, text: string, resume: boolean, scopeSplit?: 'auto' | 'split' | 'keep' | 'decided') {
+    let split: { child: ExecutionWorkUnitInput } | undefined;
+    if (scopeSplit !== undefined) {
+      const plan = this.planScopeSplit(record, blocker, clientRequestId, text, scopeSplit);
+      if (plan.kind === 'confirm') return { ok: false as const, code: 'CONFIRM_SPLIT', message: plan.message };
+      if (plan.kind === 'replay') text = plan.text;
+      if (plan.kind === 'split') { text = plan.text; split = { child: plan.child }; }
+    }
     if (blocker.noRoute) {
       // No worker owns this blocker, so there is nothing to deliver: the reply ends the step directly.
       try {
@@ -3949,11 +4618,17 @@ export class ExecutionService {
       enqueued = await this.deps.store.enqueueBlockerDelivery(record.id, expectedStateVersion, {
         clientRequestId,
         blockerId: blocker.id,
-        text
+        text,
+        ...(split ? { split } : {})
       });
     } catch (error) {
       if (error instanceof Error && error.message === 'stale execution state') return { ok: false as const, code: 'CONFLICT', message: error.message, current: await this.deps.store.get(record.id) };
       return { ok: false as const, code: 'INVALID', message: error instanceof Error ? error.message : String(error) };
+    }
+    if (enqueued.splitChildId) {
+      // The child is READY (or waits on its dependencies); route it now rather than at the next tick.
+      this.syncParkedHolds(record.id);
+      try { await this.cascadeDispatch(record.id); } catch (error) { this.deps.logError?.(`execution scope-split dispatch failed for ${record.id}`, error); }
     }
     const rawLifecycle = await this.deps.getTeamLaunch(record.callerPrincipalId, record.teamLaunchRequestId);
     const lifecycle = extractLifecycleInfo(rawLifecycle);
@@ -3973,7 +4648,7 @@ export class ExecutionService {
     if (targetSessionId) {
       try { this.deps.triggerDeliveryDrain?.(targetSessionId); } catch {}
     }
-    return { ok: true as const, pending: true as const, notified, delivery: enqueued.delivery, value: enqueued.record, resumeRequested: resume };
+    return { ok: true as const, pending: true as const, notified, delivery: enqueued.delivery, value: enqueued.record, resumeRequested: resume, ...(enqueued.splitChildId ? { splitChildId: enqueued.splitChildId } : {}) };
   }
 
   private async deliverLegacyMessage(record: ExecutionRecord, expectedStateVersion: number, slotId: string, text: string, resume: boolean) {

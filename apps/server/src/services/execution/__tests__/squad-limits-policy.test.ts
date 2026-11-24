@@ -19,6 +19,12 @@ describe('clampPolicyToSquadLimits', () => {
     expect(clampPolicyToSquadLimits({ maxConcurrent: 1, maxClaimWallClockMs: 9_000_000 }, limits))
       .toEqual({ maxConcurrent: 1, maxClaimWallClockMs: 600_000 });
   });
+  it('maps and clamps the output-only ceiling (claimOutputCeilingMs -> maxClaimOutputOnlyMs)', () => {
+    expect(clampPolicyToSquadLimits(undefined, { claimOutputCeilingMs: 1_800_000 })).toEqual({ maxClaimOutputOnlyMs: 1_800_000 });
+    expect(clampPolicyToSquadLimits({ maxClaimOutputOnlyMs: 9_000_000 } as never, { claimOutputCeilingMs: 1_800_000 })).toEqual({ maxClaimOutputOnlyMs: 1_800_000 });
+    expect(clampPolicyToSquadLimits({ maxClaimOutputOnlyMs: 60_000 } as never, { claimOutputCeilingMs: 1_800_000 })).toEqual({ maxClaimOutputOnlyMs: 60_000 });
+    expect(clampPolicyToSquadLimits(undefined, { claimOutputCeilingMs: 5 })).toEqual({ maxClaimOutputOnlyMs: 60_000 });
+  });
   it('re-sanitizes out-of-range saved values', () => {
     expect(clampPolicyToSquadLimits({ maxConcurrent: 40 }, { maxConcurrent: 500, claimStallMs: 5 }))
       .toEqual({ maxConcurrent: 32, maxClaimStallMs: 60_000 });

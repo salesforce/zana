@@ -1,7 +1,7 @@
 import { product } from '../lib/product-client.js';
 import { PrecedenceStrip } from './PrecedenceStrip.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { X, Trash2, Copy, Pencil, Plus, GripVertical, Crown } from 'lucide-react';
+import { X, Trash2, Copy, Pencil, Plus, GripVertical, Crown, Timer, RefreshCw, TriangleAlert } from 'lucide-react';
 import { ImprovePromptButton } from './ImprovePromptButton.js';
 import { stableDraftJson } from '../lib/stable-draft-json.js';
 import type { Persona, SquadTransport, Team, TeamInput, TeamSlot } from '@zana-ai/zcc-domain/product';
@@ -11,7 +11,7 @@ import { personaIcon } from '../lib/profileIcon.js';
 import { PERSONA_ICON_NAMES, personaIconByName } from '../lib/profileIcon.js';
 import { useInstalledSkillNames } from '../lib/use-uninstalled-skills.js';
 import { catalogueName } from '../lib/use-mcp-catalogue.js';
-import { TEAM_LIMIT_BOUNDS, DEFAULT_CLAIM_WALL_CLOCK_MS, DEFAULT_CLAIM_STALL_MS, ALWAYS_ALLOWED_MCP_SERVERS, effectiveMcpServers, mcpAllowlistCovers, uninstalledAllowlistSkills, type McpServerRef } from '@zana-ai/zcc-domain/product';
+import { TEAM_LIMIT_BOUNDS, DEFAULT_CLAIM_WALL_CLOCK_MS, DEFAULT_CLAIM_STALL_MS, DEFAULT_CLAIM_OUTPUT_CEILING_MS, ALWAYS_ALLOWED_MCP_SERVERS, effectiveMcpServers, mcpAllowlistCovers, uninstalledAllowlistSkills, type McpServerRef } from '@zana-ai/zcc-domain/product';
 import { getScopedProjectId } from '../lib/windowScope.js';
 import { getThreadModelCatalog, subscribeThreadModelCatalog } from './thread/pickers/thread-model-catalog.js';
 import { unknownPersonaModels } from '../lib/persona-model-warning.js';
@@ -280,7 +280,7 @@ function TeamDetail({
   );
 }
 
-const FRESH_SESSION_HELP = "The seat closes its session after each unit and starts a new one for the next, so a long run doesn't carry earlier units in its context. Each new session waits its turn to start, like any seat. Plan-driven Squads only.";
+const FRESH_SESSION_LEGEND = 'Start each unit in a fresh session (a long run does not carry earlier units in its context)';
 
 /** Working copy of a slot in the form. */
 interface SlotDraft {
@@ -311,17 +311,19 @@ interface TeamDraft {
   maxConcurrent: string;
   claimWallClockMin: string;
   claimStallMin: string;
+  claimOutputCeilingMin: string;
   transport: SquadTransport;
   defaultPlanning: '' | 'infer' | 'provided';
   launchApproval: '' | LaunchApproval;
   slots: SlotDraft[];
 }
 
-interface LimitsDraft { maxConcurrent: string; claimWallClockMin: string; claimStallMin: string }
+interface LimitsDraft { maxConcurrent: string; claimWallClockMin: string; claimStallMin: string; claimOutputCeilingMin: string }
 
 const LIMIT_MINUTES = {
   wall: { min: TEAM_LIMIT_BOUNDS.claimWallClockMs.min / 60_000, max: TEAM_LIMIT_BOUNDS.claimWallClockMs.max / 60_000 },
-  stall: { min: TEAM_LIMIT_BOUNDS.claimStallMs.min / 60_000, max: TEAM_LIMIT_BOUNDS.claimStallMs.max / 60_000 }
+  stall: { min: TEAM_LIMIT_BOUNDS.claimStallMs.min / 60_000, max: TEAM_LIMIT_BOUNDS.claimStallMs.max / 60_000 },
+  ceiling: { min: TEAM_LIMIT_BOUNDS.claimOutputCeilingMs.min / 60_000, max: TEAM_LIMIT_BOUNDS.claimOutputCeilingMs.max / 60_000 }
 };
 
 /** Whole minutes for the editor, clamped to bounds: 90000 ms shows 2, not an unsaveable 1.5. */
@@ -341,6 +343,7 @@ function limitsDraftProblem(draft: LimitsDraft): string | undefined {
   if (parseLimit(draft.maxConcurrent, c.min, c.max) === 'invalid') return `Max sessions must be a whole number from ${c.min} to ${c.max}.`;
   if (parseLimit(draft.claimWallClockMin, LIMIT_MINUTES.wall.min, LIMIT_MINUTES.wall.max) === 'invalid') return `Claim wall-clock must be whole minutes from ${LIMIT_MINUTES.wall.min} to ${LIMIT_MINUTES.wall.max}.`;
   if (parseLimit(draft.claimStallMin, LIMIT_MINUTES.stall.min, LIMIT_MINUTES.stall.max) === 'invalid') return `Claim stall must be whole minutes from ${LIMIT_MINUTES.stall.min} to ${LIMIT_MINUTES.stall.max}.`;
+  if (parseLimit(draft.claimOutputCeilingMin, LIMIT_MINUTES.ceiling.min, LIMIT_MINUTES.ceiling.max) === 'invalid') return `Output-only ceiling must be whole minutes from ${LIMIT_MINUTES.ceiling.min} to ${LIMIT_MINUTES.ceiling.max}.`;
   return undefined;
 }
 
@@ -348,10 +351,12 @@ function limitsInput(draft: LimitsDraft): { limits?: NonNullable<TeamInput['limi
   const maxConcurrent = parseLimit(draft.maxConcurrent, TEAM_LIMIT_BOUNDS.maxConcurrent.min, TEAM_LIMIT_BOUNDS.maxConcurrent.max);
   const wall = parseLimit(draft.claimWallClockMin, LIMIT_MINUTES.wall.min, LIMIT_MINUTES.wall.max);
   const stall = parseLimit(draft.claimStallMin, LIMIT_MINUTES.stall.min, LIMIT_MINUTES.stall.max);
+  const ceiling = parseLimit(draft.claimOutputCeilingMin, LIMIT_MINUTES.ceiling.min, LIMIT_MINUTES.ceiling.max);
   const limits = {
     ...(typeof maxConcurrent === 'number' ? { maxConcurrent } : {}),
     ...(typeof wall === 'number' ? { claimWallClockMs: wall * 60_000 } : {}),
-    ...(typeof stall === 'number' ? { claimStallMs: stall * 60_000 } : {})
+    ...(typeof stall === 'number' ? { claimStallMs: stall * 60_000 } : {}),
+    ...(typeof ceiling === 'number' ? { claimOutputCeilingMs: ceiling * 60_000 } : {})
   };
   return Object.keys(limits).length ? { limits } : {};
 }
@@ -385,6 +390,7 @@ function draftForTeam(team: Team | null): TeamDraft {
     maxConcurrent: team?.limits?.maxConcurrent === undefined ? '' : String(team.limits.maxConcurrent),
     claimWallClockMin: team?.limits?.claimWallClockMs === undefined ? '' : String(wholeMinutes(team.limits.claimWallClockMs, LIMIT_MINUTES.wall)),
     claimStallMin: team?.limits?.claimStallMs === undefined ? '' : String(wholeMinutes(team.limits.claimStallMs, LIMIT_MINUTES.stall)),
+    claimOutputCeilingMin: team?.limits?.claimOutputCeilingMs === undefined ? '' : String(wholeMinutes(team.limits.claimOutputCeilingMs, LIMIT_MINUTES.ceiling)),
     transport: team?.transport ?? 'CLI',
     defaultPlanning: team?.defaultPlanning ?? '',
     launchApproval: team?.launchApproval ?? '',
@@ -445,6 +451,7 @@ function TeamForm({
   const [maxConcurrent, setMaxConcurrent] = useState(initialDraft.current.maxConcurrent);
   const [claimWallClockMin, setClaimWallClockMin] = useState(initialDraft.current.claimWallClockMin);
   const [claimStallMin, setClaimStallMin] = useState(initialDraft.current.claimStallMin);
+  const [claimOutputCeilingMin, setClaimOutputCeilingMin] = useState(initialDraft.current.claimOutputCeilingMin);
   const [transport, setTransport] = useState<SquadTransport>(initialDraft.current.transport);
   const [defaultPlanning, setDefaultPlanning] = useState<'' | 'infer' | 'provided'>(initialDraft.current.defaultPlanning);
   const [launchApproval, setLaunchApproval] = useState<'' | LaunchApproval>(initialDraft.current.launchApproval);
@@ -454,7 +461,7 @@ function TeamForm({
   const draft = {
     name, icon, description, initialPrompt, orchestratorPersonaId, defaultProjectId,
     worktreeIsolation, worktreeOnComplete, routingEnforced, retainOrchestrator,
-    leanWorkers, maxConcurrent, claimWallClockMin, claimStallMin, transport, defaultPlanning, launchApproval, slots
+    leanWorkers, maxConcurrent, claimWallClockMin, claimStallMin, claimOutputCeilingMin, transport, defaultPlanning, launchApproval, slots
   } satisfies TeamDraft;
   const isDirty = stableDraftJson(draft) !== stableDraftJson(initialDraft.current);
 
@@ -464,7 +471,7 @@ function TeamForm({
 
   const tabs = totalTabs(slots.map((s) => ({ personaId: s.personaId, quantity: s.quantity })));
   const hasValidSlot = slots.some((s) => s.personaId.trim().length > 0);
-  const limitsProblem = limitsDraftProblem({ maxConcurrent, claimWallClockMin, claimStallMin });
+  const limitsProblem = limitsDraftProblem({ maxConcurrent, claimWallClockMin, claimStallMin, claimOutputCeilingMin });
   const canSave = name.trim().length > 0 && hasValidSlot && !saving && !limitsProblem;
   const isBuiltinTeam = team?.id.startsWith('builtin:') ?? false;
 
@@ -575,6 +582,22 @@ function TeamForm({
     [workerSlots, personaById]
   );
 
+  const isolationValue = worktreeIsolation === true ? 'on' : worktreeIsolation === false ? 'off' : 'inherit';
+  const limitBad = (key: keyof LimitsDraft): boolean =>
+    limitsDraftProblem({ maxConcurrent: '', claimWallClockMin: '', claimStallMin: '', claimOutputCeilingMin: '', [key]: { maxConcurrent, claimWallClockMin, claimStallMin, claimOutputCeilingMin }[key] }) !== undefined;
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  // Advanced stays collapsed unless something inside needs attention.
+  const advancedHasWarning = mcpRows.some((r) => r.missing.length > 0)
+    || allWorkersMcpRestricted
+    || (leanWorkers && workerPersonasWithSkills.length > 0);
+  const advancedSummary = [
+    `Routing: ${routingEnforced === true ? 'on' : routingEnforced === false ? 'off' : 'default'}`,
+    `Lean workers: ${leanWorkers ? 'on' : 'off'}`,
+    `Keep orchestrator: ${retainOrchestrator ? 'on' : 'off'}`,
+    `Planning: ${defaultPlanning === 'infer' ? 'infer' : defaultPlanning === 'provided' ? 'provided' : 'default'}`,
+    `Approval: ${launchApproval === 'review' ? 'review' : launchApproval === 'direct' ? 'direct' : 'Project'}`
+  ].join(' · ');
+
   const save = async () => {
     if (!canSave) return;
     setSaving(true);
@@ -608,7 +631,7 @@ function TeamForm({
       routingEnforced,
       retainOrchestrator,
       ...(leanWorkers ? { leanWorkers: true as const } : {}),
-      ...limitsInput({ maxConcurrent, claimWallClockMin, claimStallMin }),
+      ...limitsInput({ maxConcurrent, claimWallClockMin, claimStallMin, claimOutputCeilingMin }),
       transport,
       ...(defaultPlanning ? { defaultPlanning } : {}),
       ...(launchApproval ? { launchApproval } : {}),
@@ -717,6 +740,7 @@ function TeamForm({
           <span className="settings-help">One transport applies to every worker and orchestrator.</span>
         </div>
 
+        <h4 className="team-editor-section">Roster</h4>
         <div className="scheduler-form-field">
           <div className="team-slots-head">
             <label>
@@ -781,15 +805,33 @@ function TeamForm({
                         ...personas.map((persona) => ({ value: persona.id, label: persona.name }))
                       ]}
                     />
-                    <input
-                      className="team-slot-label-input"
-                      type="text"
-                      value={slot.label}
-                      onChange={(e) => updateSlot(idx, { label: e.target.value })}
-                      placeholder="Role label (blank = persona name)"
-                      title="Role label shown in the squad. Leave blank to use the persona name."
-                      aria-label="Slot label"
-                    />
+                    {(() => {
+                      const noRoles = slotNeedsRolesHint({ roles: slot.roles, label: slot.label }, personaById.get(slot.personaId));
+                      return (
+                        <span className={`team-slot-label-wrap${noRoles ? ' has-roles-warning' : ''}`}>
+                          <input
+                            className="team-slot-label-input"
+                            type="text"
+                            value={slot.label}
+                            onChange={(e) => updateSlot(idx, { label: e.target.value })}
+                            placeholder="Role label (blank = persona name)"
+                            title="Role label shown in the squad. Leave blank to use the persona name."
+                            aria-label="Slot label"
+                            aria-describedby={noRoles ? 'team-slot-roles-legend' : undefined}
+                          />
+                          {noRoles && (
+                            <span
+                              className="team-slot-roles-marker"
+                              aria-hidden="true"
+                              title="No roles: a plan cannot pick this slot by role"
+                              data-testid="team-slot-roles-marker"
+                            >
+                              <TriangleAlert size={14} aria-hidden />
+                            </span>
+                          )}
+                        </span>
+                      );
+                    })()}
                     <span className="composer-control-tooltip team-slot-qty-tip" data-tooltip="Tabs to open for this slot">
                       <input
                         className="team-slot-qty"
@@ -808,46 +850,40 @@ function TeamForm({
                         aria-label="Tab count"
                       />
                     </span>
-                    {slotNeedsRolesHint({ roles: slot.roles, label: slot.label }, personaById.get(slot.personaId)) && (
-                      <p className="settings-help team-slot-roles-hint" role="note">{SLOT_ROLES_HINT}</p>
-                    )}
-                    {transport !== 'MODERN' && orchestratorPersonaId !== slot.personaId && (
-                      <label className="team-slot-on-demand">
-                        <input
-                          type="checkbox"
-                          checked={slot.startOnDemand}
-                          onChange={(e) => updateSlot(idx, { startOnDemand: e.target.checked })}
-                        />
-                        Start only when its first unit is ready
-                      </label>
-                    )}
-                    {transport !== 'MODERN' && orchestratorPersonaId !== slot.personaId && (
-                      <>
-                        <label className="team-slot-fresh-session">
-                          <input
-                            type="checkbox"
-                            checked={slot.freshContextPerUnit}
-                            onChange={(e) => updateSlot(idx, { freshContextPerUnit: e.target.checked })}
-                          />
-                          Start each unit in a fresh session
-                        </label>
-                        <span className="team-slot-fresh-session team-slot-fresh-session-help">{FRESH_SESSION_HELP}</span>
-                      </>
-                    )}
-                    <button
-                      type="button"
-                      className={`icon-button team-slot-orch-toggle composer-control-tooltip ${orchestratorPersonaId === slot.personaId ? 'is-active' : ''}`}
-                      onClick={() =>
-                        setOrchestratorPersonaId(
-                          orchestratorPersonaId === slot.personaId ? '' : slot.personaId
-                        )
-                      }
-                      aria-pressed={orchestratorPersonaId === slot.personaId}
-                      aria-label="Mark as orchestrator"
-                      data-tooltip="Orchestrator — launched first, carries the opening prompt"
-                    >
-                      <Crown size={14} />
-                    </button>
+                    {(() => {
+                      const isOrch = orchestratorPersonaId === slot.personaId;
+                      const plan = transport !== 'MODERN';
+                      // The orchestrator keeps its two plan-only toggles visible but unavailable, so the row shape never shifts.
+                      const toggle = (key: 'startOnDemand' | 'freshContextPerUnit', Icon: typeof Timer, name: string, why: string) => (
+                        <button
+                          type="button"
+                          className={`icon-button team-slot-toggle composer-control-tooltip ${isOrch ? 'is-unavailable' : slot[key] ? 'is-active' : ''}`}
+                          onClick={() => { if (!isOrch) updateSlot(idx, { [key]: !slot[key] }); }}
+                          aria-pressed={isOrch ? false : slot[key]}
+                          aria-disabled={isOrch || undefined}
+                          aria-label={name}
+                          data-tooltip={isOrch ? why : name}
+                        >
+                          <Icon size={14} />
+                        </button>
+                      );
+                      return (
+                        <span className="team-slot-toggles">
+                          {plan && toggle('startOnDemand', Timer, 'Start only when its first unit is ready', 'Not available: the orchestrator always starts first')}
+                          {plan && toggle('freshContextPerUnit', RefreshCw, 'Start each unit in a fresh session', 'Not available: the orchestrator keeps one session for the whole run')}
+                          <button
+                            type="button"
+                            className={`icon-button team-slot-orch-toggle composer-control-tooltip ${isOrch ? 'is-active' : ''}`}
+                            onClick={() => setOrchestratorPersonaId(isOrch ? '' : slot.personaId)}
+                            aria-pressed={isOrch}
+                            aria-label="Orchestrator"
+                            data-tooltip="Orchestrator: launched first, carries the opening prompt"
+                          >
+                            <Crown size={14} />
+                          </button>
+                        </span>
+                      );
+                    })()}
                     <button
                       type="button"
                       className="icon-button team-slot-remove composer-control-tooltip"
@@ -862,175 +898,20 @@ function TeamForm({
               })}
             </ul>
           )}
-          {transport !== 'MODERN' && slots.length > 0 && (
-            <p className="settings-help">
-              The seat stays closed until the engine has work for it, so a late review or QA seat doesn't use a session while it waits. Plan-driven Squads only.
-            </p>
+          {slots.length > 0 && (
+            <div className="settings-help team-slot-legend" data-testid="team-slot-legend">
+              {transport !== 'MODERN' && (
+                <>
+                  <span><Timer size={12} aria-hidden /> Start only when its first unit is ready (a late review or QA seat uses no session while it waits)</span>
+                  <span><RefreshCw size={12} aria-hidden /> {FRESH_SESSION_LEGEND}</span>
+                </>
+              )}
+              <span><Crown size={12} aria-hidden /> Orchestrator, launched first with the opening prompt.{transport !== 'MODERN' ? ' The first two apply to plan-driven Squads only.' : ''}</span>
+              {slots.some((s) => slotNeedsRolesHint({ roles: s.roles, label: s.label }, personaById.get(s.personaId))) && (
+                <span id="team-slot-roles-legend" role="note" className="team-slot-roles-legend"><TriangleAlert size={12} aria-hidden /> {SLOT_ROLES_HINT}</span>
+              )}
+            </div>
           )}
-        </div>
-
-        <div className="scheduler-form-field">
-          <label htmlFor="team-prompt">Opening prompt</label>
-          <textarea
-            id="team-prompt"
-            value={initialPrompt}
-            onChange={(e) => setInitialPrompt(e.target.value)}
-            rows={3}
-            placeholder="Handed to the orchestrator's tab after it starts"
-          />
-          <ImprovePromptButton value={initialPrompt} onChange={setInitialPrompt} />
-        </div>
-
-        <div className="scheduler-form-field">
-          <label htmlFor="team-project">Default project</label>
-          <PopoverPicklist
-            id="team-project"
-            ariaLabel="Default project"
-            value={defaultProjectId}
-            onChange={setDefaultProjectId}
-            placeholder="None — choose at launch"
-            searchPlaceholder="Search projects"
-            options={[
-              { value: '', label: 'None — choose at launch' },
-              ...projects.map((project) => ({ value: project.id, label: project.name }))
-            ]}
-          />
-        </div>
-
-        <div className="scheduler-form-field">
-          <label htmlFor="team-worktree-isolation">Worktree isolation</label>
-          <PopoverPicklist
-            id="team-worktree-isolation"
-            ariaLabel="Squad worktree isolation"
-            searchable={false}
-            value={worktreeIsolation === true ? 'on' : worktreeIsolation === false ? 'off' : 'inherit'}
-            onChange={(next) => setWorktreeIsolation(next === 'on' ? true : next === 'off' ? false : undefined)}
-            options={[
-              { value: 'inherit', label: 'Use default' },
-              { value: 'on', label: 'On' },
-              { value: 'off', label: 'Off' }
-            ]}
-          />
-          <p className="settings-help">
-            Creates one shared branch and checkout for durable squad runs. Use default follows
-            the effective project-or-global setting; On forces a shared squad worktree; Off
-            disables it.
-          </p>
-          <PrecedenceStrip settingKey="launch.options" />
-        </div>
-
-        <div className="scheduler-form-field">
-          <label htmlFor="team-worktree-on-complete">When a run finishes</label>
-          <PopoverPicklist
-            id="team-worktree-on-complete"
-            ariaLabel="Squad worktree on completion"
-            searchable={false}
-            value={worktreeOnComplete ?? 'inherit'}
-            onChange={(next) => setWorktreeOnComplete(next === 'merge' || next === 'delete' ? next : undefined)}
-            options={[
-              { value: 'inherit', label: 'Keep worktree (default)' },
-              { value: 'merge', label: 'Merge everything into base branch, then remove' },
-              { value: 'delete', label: 'Delete worktree and branch' }
-            ]}
-          />
-          <p className="settings-help">
-            Only applies when the run used a shared Squad worktree. Delete removes the worktree
-            and its branch even with uncommitted or unmerged work, and cannot be undone. Merge
-            and Delete only apply to completed runs; failed or stopped runs always keep the worktree.
-          </p>
-        </div>
-
-        <div className="scheduler-form-field">
-          <label htmlFor="team-routing-enforced">Squad routing</label>
-          <PopoverPicklist
-            id="team-routing-enforced"
-            ariaLabel="Squad routing"
-            searchable={false}
-            value={routingEnforced === true ? 'on' : routingEnforced === false ? 'off' : 'inherit'}
-            onChange={(next) => setRoutingEnforced(next === 'on' ? true : next === 'off' ? false : undefined)}
-            options={[
-              { value: 'inherit', label: 'Use default' },
-              { value: 'on', label: 'On' },
-              { value: 'off', label: 'Off' }
-            ]}
-          />
-          <p className="settings-help">
-            Use default follows the global setting; On tier-routes work when supported; Off falls
-            back. Manual assignments are not checked.
-          </p>
-          <PrecedenceStrip settingKey="squad.routingEnforced" />
-        </div>
-
-        <div className="scheduler-form-field">
-          <label className="scheduler-checkbox-row scheduler-checkbox-row--end">
-            <span>Keep orchestrator running after completion</span>
-            <input
-              type="checkbox"
-              checked={retainOrchestrator}
-              onChange={(event) => setRetainOrchestrator(event.target.checked)}
-            />
-          </label>
-          <p className="settings-help">
-            Keeps the orchestrator open after a successful run. Workers still close; stopping or failing the run closes all agents.
-          </p>
-        </div>
-
-        <div className="scheduler-form-field">
-          <label className="scheduler-checkbox-row scheduler-checkbox-row--end">
-            <span>Lean workers</span>
-            <input
-              type="checkbox"
-              checked={leanWorkers}
-              onChange={(event) => setLeanWorkers(event.target.checked)}
-            />
-          </label>
-          <p className="settings-help">
-            Workers start with only the zcc-inbox skill, which makes their first model call smaller. The orchestrator is unaffected. A context filter, not a security boundary.
-          </p>
-          <PrecedenceStrip settingKey="squad.leanWorkers" />
-          {leanWorkers && workerPersonasWithSkills.length > 0 && (
-            <p className="settings-help" data-testid="team-lean-persona-skills-notice">
-              This persona's skills apply even when lean is on: {workerPersonasWithSkills.map((s) => personaById.get(s.personaId)?.name ?? s.personaId).join(', ')}.
-            </p>
-          )}
-        </div>
-
-        <div className="scheduler-form-field" data-testid="team-run-limits">
-          <label htmlFor="team-max-concurrent">Run limits</label>
-          <div className="team-run-limits-row">
-            <input
-              id="team-max-concurrent"
-              type="number"
-              min={TEAM_LIMIT_BOUNDS.maxConcurrent.min}
-              max={TEAM_LIMIT_BOUNDS.maxConcurrent.max}
-              placeholder={String(TEAM_LIMIT_BOUNDS.maxConcurrent.max)}
-              aria-label="Max sessions"
-              value={maxConcurrent}
-              onChange={(event) => setMaxConcurrent(event.target.value)}
-            />
-            <input
-              type="number"
-              min={LIMIT_MINUTES.wall.min}
-              max={LIMIT_MINUTES.wall.max}
-              placeholder={String(DEFAULT_CLAIM_WALL_CLOCK_MS / 60_000)}
-              aria-label="Claim wall-clock (minutes)"
-              value={claimWallClockMin}
-              onChange={(event) => setClaimWallClockMin(event.target.value)}
-            />
-            <input
-              type="number"
-              min={LIMIT_MINUTES.stall.min}
-              max={LIMIT_MINUTES.stall.max}
-              placeholder={String(DEFAULT_CLAIM_STALL_MS / 60_000)}
-              aria-label="Claim stall (minutes)"
-              value={claimStallMin}
-              onChange={(event) => setClaimStallMin(event.target.value)}
-            />
-          </div>
-          <p className="settings-help">
-            Max sessions the run may open, counting the coordinator and every worker (default and maximum {TEAM_LIMIT_BOUNDS.maxConcurrent.max}; a roster larger than this is refused at launch), then the minutes one claimed unit may run (default {DEFAULT_CLAIM_WALL_CLOCK_MS / 60_000}) and may stay silent (default {DEFAULT_CLAIM_STALL_MS / 60_000}) before it is reclaimed. Leave a field blank to keep its default. Applies to runs started after saving.
-          </p>
-          {limitsProblem && <p className="settings-help" role="alert" data-testid="team-run-limits-error">{limitsProblem}</p>}
         </div>
 
         {unresolvedPersonaIds.length > 0 && (
@@ -1050,6 +931,283 @@ function TeamForm({
             Allowlisted skills not installed: {membersWithMissingSkills.map((m) => `${m.name} (${m.missing.join(', ')})`).join('; ')}. You can still save; launches will warn until they are installed.
           </p>
         )}
+
+        <h4 className="team-editor-section">Prompt &amp; project</h4>
+        <div className="scheduler-form-field">
+          <label htmlFor="team-prompt">Opening prompt</label>
+          <textarea
+            id="team-prompt"
+            value={initialPrompt}
+            onChange={(e) => setInitialPrompt(e.target.value)}
+            rows={3}
+            placeholder="Handed to the orchestrator's tab after it starts"
+          />
+          <ImprovePromptButton value={initialPrompt} onChange={setInitialPrompt} />
+        </div>
+
+
+        <div className="scheduler-form-field">
+          <label htmlFor="team-project">Default project</label>
+          <PopoverPicklist
+            id="team-project"
+            ariaLabel="Default project"
+            value={defaultProjectId}
+            onChange={setDefaultProjectId}
+            placeholder="None — choose at launch"
+            searchPlaceholder="Search projects"
+            options={[
+              { value: '', label: 'None — choose at launch' },
+              ...projects.map((project) => ({ value: project.id, label: project.name }))
+            ]}
+          />
+        </div>
+
+
+        <h4 className="team-editor-section">Worktree <span>one shared branch and checkout per run</span></h4>
+        <fieldset className="team-editor-fieldset" data-testid="team-worktree-isolation">
+          <legend>Isolation</legend>
+          <div className="team-editor-radios" role="radiogroup" aria-label="Squad worktree isolation">
+            {([['inherit', 'Project default', 'Follows the Project setting, then the Global one.'], ['on', 'Always use a worktree', ''], ['off', 'Never, work in the checkout', '']] as const).map(([value, label, hint]) => (
+              <label key={value}>
+                <input
+                  type="radio"
+                  name="team-worktree-isolation"
+                  value={value}
+                  checked={isolationValue === value}
+                  onChange={() => setWorktreeIsolation(value === 'on' ? true : value === 'off' ? false : undefined)}
+                />
+                <span>{label}{hint && <span className="team-editor-chip">{hint}</span>}</span>
+              </label>
+            ))}
+          </div>
+          <details className="team-editor-how">
+            <summary>How Isolation is decided</summary>
+            <PrecedenceStrip settingKey="launch.options" />
+          </details>
+        </fieldset>
+        <fieldset className="team-editor-fieldset" data-testid="team-worktree-on-complete">
+          <legend>When a run finishes</legend>
+          <div className="team-editor-radios" role="radiogroup" aria-label="Squad worktree on completion">
+            {([['inherit', 'Keep the worktree'], ['merge', 'Merge into the base branch, then remove it'], ['delete', 'Delete the worktree and its branch']] as const).map(([value, label]) => (
+              <label key={value}>
+                <input
+                  type="radio"
+                  name="team-worktree-on-complete"
+                  value={value}
+                  checked={(worktreeOnComplete ?? 'inherit') === value}
+                  onChange={() => setWorktreeOnComplete(value === 'inherit' ? undefined : value)}
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
+          {worktreeOnComplete === 'delete' && (
+            <p className="settings-help team-editor-danger" role="alert" data-testid="team-worktree-delete-warning">
+              Delete removes the branch even with uncommitted or unmerged work. It cannot be undone.
+            </p>
+          )}
+          {worktreeIsolation === false && (
+            <p className="settings-help" data-testid="team-worktree-never-note">
+              Isolation is Never for this Squad, but a launch or a plan that says <code>Worktree: true</code> can still turn it on. This choice applies then. Choosing a checkout at launch skips it.
+            </p>
+          )}
+          <p className="settings-help">Failed or stopped runs always keep the worktree.</p>
+        </fieldset>
+
+        <h4 className="team-editor-section">Run limits <span>Blank keeps the default. Applies to runs started after saving.</span></h4>
+        <div className="team-run-limits-grid" data-testid="team-run-limits">
+            <div className="team-limit-field">
+              <label htmlFor="team-max-concurrent">Max sessions</label>
+              <div className="team-limit-input">
+                <input
+                  id="team-max-concurrent"
+                  type="number"
+                  min={TEAM_LIMIT_BOUNDS.maxConcurrent.min}
+                  max={TEAM_LIMIT_BOUNDS.maxConcurrent.max}
+                  placeholder={String(TEAM_LIMIT_BOUNDS.maxConcurrent.max)}
+                  aria-invalid={limitBad('maxConcurrent') || undefined}
+                  aria-describedby="team-max-concurrent-help"
+                  value={maxConcurrent}
+                  onChange={(event) => setMaxConcurrent(event.target.value)}
+                />
+                <span>sessions</span>
+              </div>
+              <p className="settings-help" id="team-max-concurrent-help">Counts the orchestrator and every worker. Larger rosters are refused at launch. Default {TEAM_LIMIT_BOUNDS.maxConcurrent.max}.</p>
+            </div>
+            <div className="team-limit-field">
+              <label htmlFor="team-claim-wall">Claim wall-clock</label>
+              <div className="team-limit-input">
+                <input
+                  id="team-claim-wall"
+                  type="number"
+                  min={LIMIT_MINUTES.wall.min}
+                  max={LIMIT_MINUTES.wall.max}
+                  placeholder={String(DEFAULT_CLAIM_WALL_CLOCK_MS / 60_000)}
+                  aria-invalid={limitBad('claimWallClockMin') || undefined}
+                  aria-describedby="team-claim-wall-help"
+                  value={claimWallClockMin}
+                  onChange={(event) => setClaimWallClockMin(event.target.value)}
+                />
+                <span>min</span>
+              </div>
+              <p className="settings-help" id="team-claim-wall-help">How long one claimed unit may run before it is reclaimed. Default {DEFAULT_CLAIM_WALL_CLOCK_MS / 60_000}.</p>
+            </div>
+            <div className="team-limit-field">
+              <label htmlFor="team-claim-stall">Claim stall</label>
+              <div className="team-limit-input">
+                <input
+                  id="team-claim-stall"
+                  type="number"
+                  min={LIMIT_MINUTES.stall.min}
+                  max={LIMIT_MINUTES.stall.max}
+                  placeholder={String(DEFAULT_CLAIM_STALL_MS / 60_000)}
+                  aria-invalid={limitBad('claimStallMin') || undefined}
+                  aria-describedby="team-claim-stall-help"
+                  value={claimStallMin}
+                  onChange={(event) => setClaimStallMin(event.target.value)}
+                />
+                <span>min</span>
+              </div>
+              <p className="settings-help" id="team-claim-stall-help">How long a claimed unit may send no turn and change no file. Default {DEFAULT_CLAIM_STALL_MS / 60_000}.</p>
+            </div>
+            <div className="team-limit-field">
+              <label htmlFor="team-claim-ceiling">Output-only ceiling</label>
+              <div className="team-limit-input">
+                <input
+                  id="team-claim-ceiling"
+                  type="number"
+                  min={LIMIT_MINUTES.ceiling.min}
+                  max={LIMIT_MINUTES.ceiling.max}
+                  placeholder={String(DEFAULT_CLAIM_OUTPUT_CEILING_MS / 60_000)}
+                  aria-invalid={limitBad('claimOutputCeilingMin') || undefined}
+                  aria-describedby="team-claim-ceiling-help"
+                  value={claimOutputCeilingMin}
+                  onChange={(event) => setClaimOutputCeilingMin(event.target.value)}
+                />
+                <span>min</span>
+              </div>
+              <p className="settings-help" id="team-claim-ceiling-help">A worker that keeps printing but sends no turn and changes no file. Exempt from the first two. Default {DEFAULT_CLAIM_OUTPUT_CEILING_MS / 60_000}.</p>
+            </div>
+        </div>
+        {limitsProblem && <p className="settings-help team-editor-danger" role="alert" data-testid="team-run-limits-error">{limitsProblem}</p>}
+
+        <details
+          className="team-editor-advanced"
+          data-testid="team-advanced"
+          open={advancedOpen || advancedHasWarning}
+          onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
+        >
+          <summary>
+            Advanced <small data-testid="team-advanced-summary">{advancedSummary}</small>
+          </summary>
+          <div className="team-editor-advanced-body">
+        <div className="scheduler-form-field">
+          <label htmlFor="team-routing-enforced">Squad routing</label>
+          <PopoverPicklist
+            id="team-routing-enforced"
+            ariaLabel="Squad routing"
+            searchable={false}
+            value={routingEnforced === true ? 'on' : routingEnforced === false ? 'off' : 'inherit'}
+            onChange={(next) => setRoutingEnforced(next === 'on' ? true : next === 'off' ? false : undefined)}
+            options={[
+              { value: 'inherit', label: 'Use default' },
+              { value: 'on', label: 'On' },
+              { value: 'off', label: 'Off' }
+            ]}
+          />
+          <p className="settings-help">
+            Use default follows the global setting; On tier-routes work when supported; Off falls
+            back. Manual assignments are not checked.
+          </p>
+          <details className="team-editor-how">
+            <summary>How Squad routing is decided</summary>
+            <PrecedenceStrip settingKey="squad.routingEnforced" />
+          </details>
+        </div>
+
+
+        <div className="scheduler-form-field">
+          <label className="scheduler-checkbox-row scheduler-checkbox-row--end">
+            <span>Lean workers</span>
+            <input
+              type="checkbox"
+              checked={leanWorkers}
+              onChange={(event) => setLeanWorkers(event.target.checked)}
+            />
+          </label>
+          <p className="settings-help">
+            Workers start with only the zcc-inbox skill, which makes their first model call smaller. The orchestrator is unaffected. A context filter, not a security boundary.
+          </p>
+          <details className="team-editor-how">
+            <summary>How worker skills are decided</summary>
+            <PrecedenceStrip settingKey="squad.leanWorkers" />
+          </details>
+          {leanWorkers && workerPersonasWithSkills.length > 0 && (
+            <p className="settings-help" data-testid="team-lean-persona-skills-notice">
+              This persona's skills apply even when lean is on: {workerPersonasWithSkills.map((s) => personaById.get(s.personaId)?.name ?? s.personaId).join(', ')}.
+            </p>
+          )}
+        </div>
+
+
+        <div className="scheduler-form-field">
+          <label className="scheduler-checkbox-row scheduler-checkbox-row--end">
+            <span>Keep orchestrator running after completion</span>
+            <input
+              type="checkbox"
+              checked={retainOrchestrator}
+              onChange={(event) => setRetainOrchestrator(event.target.checked)}
+            />
+          </label>
+          <p className="settings-help">
+            Keeps the orchestrator open after a successful run. Workers still close; stopping or failing the run closes all agents.
+          </p>
+        </div>
+
+
+        <div className="scheduler-form-field">
+          <label htmlFor="team-default-planning">Default planning</label>
+          <PopoverPicklist
+            id="team-default-planning"
+            ariaLabel="Squad default planning"
+            searchable={false}
+            value={defaultPlanning}
+            onChange={(next) => setDefaultPlanning(next === 'infer' || next === 'provided' ? next : '')}
+            options={[
+              { value: '', label: 'Use the built-in default' },
+              { value: 'infer', label: 'Infer plan from goal' },
+              { value: 'provided', label: 'Plan provided in goal' }
+            ]}
+          />
+          <p className="settings-help">
+            Sets the planning mode when this Squad is picked in the composer or proposed by an agent.
+          </p>
+          <PrecedenceStrip settingKey="squad.planning" />
+        </div>
+
+
+        <div className="scheduler-form-field">
+          <label htmlFor="team-launch-approval">Launch approval</label>
+          <PopoverPicklist
+            id="team-launch-approval"
+            ariaLabel="Squad launch approval"
+            searchable={false}
+            value={launchApproval}
+            onChange={(next) => setLaunchApproval(isLaunchApproval(next) ? next : '')}
+            options={[
+              { value: '', label: 'Use the Project setting' },
+              { value: 'direct', label: 'Agents can launch directly if the Project allows' },
+              { value: 'review', label: 'Review before launch' }
+            ]}
+          />
+          <p className="settings-help">
+            Review before launch stops an agent from starting this Squad on its own. It proposes the run
+            and you press Launch from the Inbox. A Project set to Review before launch applies to this Squad
+            whatever is chosen here. Launching from the composer, schedules and triggers is not affected.
+          </p>
+          <PrecedenceStrip settingKey="squad.launchApproval" />
+        </div>
+
 
         {mcpRows.length > 0 && (
           <div className="scheduler-form-field" data-testid="team-mcp-summary">
@@ -1078,47 +1236,8 @@ function TeamForm({
           </div>
         )}
 
-        <div className="scheduler-form-field">
-          <label htmlFor="team-default-planning">Default planning</label>
-          <PopoverPicklist
-            id="team-default-planning"
-            ariaLabel="Squad default planning"
-            searchable={false}
-            value={defaultPlanning}
-            onChange={(next) => setDefaultPlanning(next === 'infer' || next === 'provided' ? next : '')}
-            options={[
-              { value: '', label: 'Use the built-in default' },
-              { value: 'infer', label: 'Infer plan from goal' },
-              { value: 'provided', label: 'Plan provided in goal' }
-            ]}
-          />
-          <p className="settings-help">
-            Sets the planning mode when this Squad is picked in the composer or proposed by an agent.
-          </p>
-          <PrecedenceStrip settingKey="squad.planning" />
-        </div>
-
-        <div className="scheduler-form-field">
-          <label htmlFor="team-launch-approval">Launch approval</label>
-          <PopoverPicklist
-            id="team-launch-approval"
-            ariaLabel="Squad launch approval"
-            searchable={false}
-            value={launchApproval}
-            onChange={(next) => setLaunchApproval(isLaunchApproval(next) ? next : '')}
-            options={[
-              { value: '', label: 'Use the Project setting' },
-              { value: 'direct', label: 'Agents can launch directly if the Project allows' },
-              { value: 'review', label: 'Review before launch' }
-            ]}
-          />
-          <p className="settings-help">
-            Review before launch stops an agent from starting this Squad on its own. It proposes the run
-            and you press Launch from the Inbox. A Project set to Review before launch applies to this Squad
-            whatever is chosen here. Launching from the composer, schedules and triggers is not affected.
-          </p>
-          <PrecedenceStrip settingKey="squad.launchApproval" />
-        </div>
+          </div>
+        </details>
 
         <p className="settings-help persona-form-hint">
           Launching opens one tab per slot quantity — the orchestrator first,

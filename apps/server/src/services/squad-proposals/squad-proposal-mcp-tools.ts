@@ -88,14 +88,14 @@ const FIELD_HELP = {
   teamId: 'The id of the Squad to propose (from list_teams).',
   goal: `What the Squad should accomplish (at most ${SQUAD_PROPOSAL_LIMITS.goalChars} characters).`,
   planning: "'infer': the orchestrator plans. 'provided': a portable plan in sources is used.",
-  sources: `Exact paths of the files to attach (design, plan); at most ${SQUAD_PROPOSAL_LIMITS.maxSources}. Relative paths are read from the project root; files outside it may be under the home folder or the clone root.`,
+  sources: `Exact paths of the files to attach (design, plan); at most ${SQUAD_PROPOSAL_LIMITS.maxSources}. Relative paths are read from the project root; files outside it may be under the home folder or the clone root. A design doc of this project can be named as doc://<doc id>/<file> (the plan file, or omit the file for its entry file); it is copied as a snapshot, so no file in the project is needed.`,
   attachments: `Files you wrote that are not on disk, given by value as { name, text }: sources and attachments share one budget of ${SQUAD_PROPOSAL_LIMITS.maxSources} items, 4 MiB each and 16 MiB in total. Names are plain file names (no folders); a clash is renumbered ("plan (1).md") or folded when the content is identical, and the result lists what each name became. Prefer sources for files already on disk.`,
   title: `Short card title (at most ${SQUAD_PROPOSAL_LIMITS.titleChars} characters).`,
   summary: `One-paragraph summary for the card (at most ${SQUAD_PROPOSAL_LIMITS.summaryChars} characters).`,
   completionInboxNotice: 'Post an Inbox notice when this agent-started Squad completes. Defaults to false.',
   acceptFindings: "Set true only after the user chose to review the plan with its Must fix findings still in it. Without it, a plan with a Must fix is refused with NEEDS_DECISION and the options to put to the user.",
   mode: "'review': the user reviews and launches it from the Inbox (default choice). 'now': start immediately, only when the user explicitly asked for that.",
-  planPath: 'Path of the plan file: relative to the project, or absolute (home folder or clone root).',
+  planPath: 'Path of the plan file: relative to the project, or absolute (home folder or clone root); or doc://<doc id>/<file> for a design doc of this project.',
   planText: 'The plan text (at most 1 MiB).',
   planTeamId: 'Optional Squad id (from list_teams): adds advisory tierFit warnings for that Squad\'s roster. Does not affect pass/fail.'
 } as const;

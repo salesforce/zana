@@ -60,9 +60,9 @@ describe('SquadEditor orchestrator toggle (edit form)', () => {
     const html = renderToStaticMarkup(
       <SquadEditor team={team} mode="edit" onClose={vi.fn()} />
     );
-    expect(html).toContain('aria-label="Mark as orchestrator"');
+    expect(html).toContain('aria-label="Orchestrator"');
     expect(html).toContain(
-      'data-tooltip="Orchestrator — launched first, carries the opening prompt"'
+      'data-tooltip="Orchestrator: launched first, carries the opening prompt"'
     );
     // The orchestrator slot's toggle is pressed.
     expect(html).toContain('aria-pressed="true"');
@@ -73,19 +73,23 @@ describe('SquadEditor orchestrator toggle (edit form)', () => {
       <SquadEditor team={{ ...team, worktreeIsolation: true }} mode="edit" onClose={vi.fn()} />
     );
 
-    expect(html).toContain('Worktree isolation');
+    expect(html).toContain('Isolation');
     expect(html).toContain('aria-label="Squad worktree isolation"');
-    expect(html).toContain('>On<');
-    expect(html).toContain('Use default follows the effective project-or-global setting');
-    expect(html).toContain('On forces a shared squad worktree; Off disables it');
+    expect(html).toContain('Always use a worktree');
+    expect(html).toContain('Project default');
+    expect(html).toContain('Never, work in the checkout');
   });
 
-  it('keeps an absent worktree setting at Use default', () => {
+  it('keeps an absent worktree setting at Project default', () => {
     const html = renderToStaticMarkup(
       <SquadEditor team={team} mode="edit" onClose={vi.fn()} />
     );
 
-    expect(html).toContain('>Use default</span>');
+    const inputs = html.match(/<input[^>]*name="team-worktree-isolation"[^>]*>/g) ?? [];
+    expect(inputs).toHaveLength(3);
+    const checked = inputs.filter((tag) => /\schecked/.test(tag));
+    expect(checked).toHaveLength(1);
+    expect(checked[0]).toContain('value="inherit"');
   });
 
   it('exposes squad routing tri-state settings with accurate help', () => {

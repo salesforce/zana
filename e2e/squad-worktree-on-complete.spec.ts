@@ -21,10 +21,10 @@ test('Squad worktree on-completion choice persists through the built Electron ed
   await window.getByTestId('settings-nav-squads').click();
   await window.getByRole('button', { name: 'Open E2E WT Squad' }).click();
 
-  const onComplete = window.getByLabel('Squad worktree on completion');
-  await expect(onComplete).toContainText('Keep worktree (default)');
-  await onComplete.click();
-  await window.getByRole('listbox', { name: 'Squad worktree on completion' }).getByRole('option', { name: 'Delete worktree and branch' }).click();
+  const onComplete = window.getByRole('radiogroup', { name: 'Squad worktree on completion' });
+  await expect(onComplete.getByRole('radio', { name: /^Keep the worktree/ })).toBeChecked();
+  await onComplete.getByRole('radio', { name: /^Delete the worktree and its branch/ }).check();
+  await expect(window.getByTestId('team-worktree-delete-warning')).toBeVisible();
   await window.getByRole('button', { name: 'Save', exact: true }).click();
 
   await expect.poll(() => window.evaluate(async () => {
@@ -33,5 +33,5 @@ test('Squad worktree on-completion choice persists through the built Electron ed
   })).toBe('delete');
 
   await window.getByRole('button', { name: 'Open E2E WT Squad' }).click();
-  await expect(window.getByLabel('Squad worktree on completion')).toContainText('Delete worktree and branch');
+  await expect(window.getByRole('radio', { name: /^Delete the worktree and its branch/ })).toBeChecked();
 });

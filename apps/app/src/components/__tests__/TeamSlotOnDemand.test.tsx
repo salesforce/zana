@@ -36,27 +36,33 @@ async function saveTeam() {
 }
 
 describe('REQ-1 the Team editor offers the on-demand checkbox', () => {
-  it('shows the checkbox with the plain help text for a CLI squad', () => {
+  it('shows a start-on-demand toggle per seat with a legend naming it', () => {
     render(<SquadEditor team={base} mode="edit" onClose={vi.fn()} />);
-    expect(screen.getAllByLabelText(CHECKBOX).length).toBeGreaterThan(0);
-    expect(screen.getByText(/The seat stays closed until the engine has work for it/)).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: CHECKBOX })).toHaveLength(2);
+    expect(screen.getByTestId('team-slot-legend').textContent).toMatch(/a late review or QA seat uses no session while it waits/);
   });
 
-  it('saves startOnDemand: true on the ticked row only', async () => {
+  it('saves startOnDemand: true on the pressed row only', async () => {
     render(<SquadEditor team={base} mode="edit" onClose={vi.fn()} />);
-    const boxes = screen.getAllByLabelText(CHECKBOX);
-    fireEvent.click(boxes[boxes.length - 1]!);
+    fireEvent.click(screen.getAllByRole('button', { name: CHECKBOX })[1]!);
     const saved = await saveTeam();
-    const worker = saved.slots.find((s) => s.personaId === 'p-worker')!;
-    expect(worker.startOnDemand).toBe(true);
+    expect(saved.slots.find((s) => s.personaId === 'p-worker')!.startOnDemand).toBe(true);
     expect(saved.slots.find((s) => s.personaId === 'p-orch')!.startOnDemand).toBeUndefined();
   });
 
-  it('shows a stored true as ticked and keeps it through a save', async () => {
+  it('keeps the orchestrator toggle disabled and never saves the flag for it', async () => {
+    render(<SquadEditor team={base} mode="edit" onClose={vi.fn()} />);
+    const orch = screen.getAllByRole('button', { name: CHECKBOX })[0]!;
+    expect(orch.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(orch);
+    expect(orch.getAttribute('aria-pressed')).toBe('false');
+    expect((await saveTeam()).slots[0]).not.toHaveProperty('startOnDemand');
+  });
+
+  it('shows a stored true as pressed and keeps it through a save', async () => {
     const team = { ...base, slots: [base.slots[0]!, { personaId: 'p-worker', quantity: 1, startOnDemand: true }] };
     render(<SquadEditor team={team} mode="edit" onClose={vi.fn()} />);
-    const boxes = screen.getAllByLabelText(CHECKBOX) as HTMLInputElement[];
-    expect(boxes[boxes.length - 1]!.checked).toBe(true);
+    expect(screen.getAllByRole('button', { name: CHECKBOX })[1]!.getAttribute('aria-pressed')).toBe('true');
     expect((await saveTeam()).slots[1]!.startOnDemand).toBe(true);
   });
 
@@ -70,7 +76,7 @@ describe('REQ-1 the Team editor offers the on-demand checkbox', () => {
 describe('REQ-8 the toggle is hidden where it cannot work', () => {
   it('hides the checkbox for a Modern squad', () => {
     render(<SquadEditor team={{ ...base, transport: 'MODERN' }} mode="edit" onClose={vi.fn()} />);
-    expect(screen.queryAllByLabelText(CHECKBOX)).toHaveLength(0);
+    expect(screen.queryAllByRole('button', { name: CHECKBOX })).toHaveLength(0);
   });
 });
 

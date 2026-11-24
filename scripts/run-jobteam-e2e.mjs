@@ -23,6 +23,8 @@ const JOBTEAM_SPECS = [
   'e2e/job-team-launch-complete-fault.spec.ts',
   'e2e/job-team-worker-exit.spec.ts',
   'e2e/job-team-worker-respawn.spec.ts',
+  'e2e/squad-checkpoints-resplit.spec.ts',
+  'e2e/claimed-worker-restart.spec.ts',
   'e2e/job-team-worker-restart.spec.ts',
   'e2e/job-team-run-limits.spec.ts',
   'e2e/job-team-no-turn-warning.spec.ts',

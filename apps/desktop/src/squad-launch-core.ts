@@ -304,12 +304,13 @@ export function unattendedRosterBlock(judged: { findings: readonly SquadPlanFind
 }
 
 /** Execution policy fields for a Squad's saved limits; absent limits leave the run defaults untouched. */
-export function squadLimitsPolicy(raw: unknown): { maxConcurrent?: number; maxClaimWallClockMs?: number; maxClaimStallMs?: number } {
+export function squadLimitsPolicy(raw: unknown): { maxConcurrent?: number; maxClaimWallClockMs?: number; maxClaimStallMs?: number; maxClaimOutputOnlyMs?: number } {
   const limits = sanitizeTeamLimits(raw);
   return {
     ...(limits?.maxConcurrent === undefined ? {} : { maxConcurrent: limits.maxConcurrent }),
     ...(limits?.claimWallClockMs === undefined ? {} : { maxClaimWallClockMs: limits.claimWallClockMs }),
-    ...(limits?.claimStallMs === undefined ? {} : { maxClaimStallMs: limits.claimStallMs })
+    ...(limits?.claimStallMs === undefined ? {} : { maxClaimStallMs: limits.claimStallMs }),
+    ...(limits?.claimOutputCeilingMs === undefined ? {} : { maxClaimOutputOnlyMs: limits.claimOutputCeilingMs })
   };
 }
 

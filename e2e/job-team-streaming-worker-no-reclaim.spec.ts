@@ -80,3 +80,31 @@ test('Job Team does NOT reclaim a live, streaming non-restful worker (output-act
     await teardownJobTeam(ctx);
   }
 });
+
+// Past-ceiling case (stalled-claim watchdog): output alone renews the lease but never counts as progress, so
+// a worker that only prints (no turn, no file change) is reclaimed once the output-only ceiling passes. The
+// owner sets a 4s ceiling here (production default 30 min); the lease is 2s and the sweep 750ms, so a
+// reclaim before the ceiling would mean the lease path, not the ceiling, did it.
+test('Job Team reclaims a streaming worker that makes no progress past the output-only ceiling', async ({ app }) => {
+  const ctx = createJobTeamContext(app, { tmpPrefix: 'zcc-cli-streaming-ceiling-', scenario: 'streaming-worker-ceiling' });
+  const { window, logPath } = ctx;
+
+  try {
+    const projectId = await launchJobTeamCliOwner(ctx, { workerQuantity: 1 });
+    const executionId = await findJobExecutionId(window, projectId, 'CLI Agent streaming job');
+    await expect.poll(() => (existsSync(logPath) ? readFileSync(logPath, 'utf8') : ''),
+      { timeout: 30_000, intervals: [500] }).toContain('streaming: went working');
+
+    const reclaimEvent = async () => window.evaluate(async ({ projectId, executionId }) => {
+      const snap = await window.cc.executionBoard.snapshot(projectId, executionId, 0);
+      return (snap?.events ?? []).find((event: { summary?: string }) =>
+        typeof event.summary === 'string' && event.summary.includes('expired work claim')) !== undefined;
+    }, { projectId, executionId });
+
+    await expect.poll(reclaimEvent, { timeout: 30_000, intervals: [500] }).toBe(true);
+  } catch (error) {
+    throw jobTeamFailure(ctx, error);
+  } finally {
+    await teardownJobTeam(ctx);
+  }
+});

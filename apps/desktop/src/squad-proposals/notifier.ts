@@ -3,7 +3,7 @@ import { executionReportTarget, isLocalReportRecord, isUserOwnedSquadWorktree, L
 import type { InboxInput } from '@zana-ai/zcc-server/services/inbox/inbox-store';
 import { shouldReplaySquadWorktreeTerminalEffects } from '../squad-worktree-lifecycle.js';
 import { createPtyReportQueue, type PtyReportQueueDeps } from './pty-report-queue.js';
-import { buildSquadBlockerReport, buildSquadReport, squadOutcomeLabel, type SquadWorktreeOutcome } from './report.js';
+import { buildSquadBlockerReport, buildSquadInboxReport, buildSquadReport, squadOutcomeLabel, type SquadWorktreeOutcome } from './report.js';
 
 type Blocker = NonNullable<ExecutionRecord['blockers']>[number];
 
@@ -28,7 +28,9 @@ export interface SquadProposalNotifierDeps extends PtyReportQueueDeps {
 export interface SquadRunWarning {
   slotId: string;
   summary: string;
-  kind: 'worker-exit' | 'worker-no-turn' | 'worker-respawn';
+  kind: 'worker-exit' | 'worker-no-turn' | 'worker-respawn' | 'worker-idle' | 'worker-heartbeat' | 'blocker-reminder' | 'unit-checkpoint';
+  /** Unit and claim (or blocker) the warning is about, so a second claim or blocker gets its own row. */
+  ref?: string;
 }
 
 /**
@@ -115,7 +117,7 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
   }
 
   /** An Inbox entry carrying a report's text for the run's project; false when it could not be written. */
-  async function postEntry(kind: 'result' | 'blocker' | 'warning', record: ExecutionRecord, subject: string, text: string, dedupeKey: string): Promise<boolean> {
+  async function postEntry(kind: 'result' | 'blocker' | 'warning', record: ExecutionRecord, subject: string, text: string, dedupeKey: string, notify?: 'loud'): Promise<boolean> {
     try {
       await deps.appendInbox({
         projectId: record.projectId,
@@ -125,7 +127,8 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
         // Routes Open to Squad details and hides the reply box: the run, not an agent, is the subject.
         squadNotice: 'proposal-result',
         dedupeKey,
-        report: true
+        report: true,
+        ...(notify ? { notify } : {})
       });
       return true;
     } catch (error) {
@@ -145,9 +148,17 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
   /** The Inbox row for a worker warning; the dedupe key keeps a repeated warning for one slot to one row. */
   async function onRunWarning(record: ExecutionRecord, warning: SquadRunWarning): Promise<void> {
     if (disposed || !record) return;
+    const subject = warning.kind === 'blocker-reminder'
+      ? `Squad still needs your answer: ${record.jobTitle}`
+      : warning.kind === 'unit-checkpoint'
+        ? `Squad checkpoint needs review: ${record.jobTitle}`
+        : `Squad worker needs attention: ${record.jobTitle}`;
+    // A reminder is a person who must answer: loud, so the desktop shows a native banner while unfocused
+    // (host `handleLoudInboxEntry`, which is the existing notification path). Other warnings stay quiet.
     await postEntry(
-      'warning', record, `Squad worker needs attention: ${record.jobTitle}`, warning.summary,
-      `squad-worker-warning:${record.id}:${record.attempt}:${warning.slotId}:${warning.kind}`
+      'warning', record, subject, warning.summary,
+      `squad-worker-warning:${record.id}:${record.attempt}:${warning.slotId}:${warning.kind}${warning.ref ? `:${warning.ref}` : ''}`,
+      warning.kind === 'blocker-reminder' ? 'loud' : undefined
     );
   }
 
@@ -197,7 +208,7 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
       if (!isLocalComposerRun(fresh) || fresh.attempt !== record.attempt) return;
       const outcome = worktreeOutcome(fresh, given);
       if (outcome === undefined) return;
-      const text = buildSquadReport(fresh, { ...(outcome === 'none' ? {} : { worktree: outcome }), role: 'proposer' });
+      const text = buildSquadInboxReport(fresh, outcome === 'none' ? {} : { worktree: outcome });
       // A retained Zana-managed checkout is not a finished hand-off: say so instead of calling it completed.
       // A user-owned target (project root or linked worktree) was never created here, so nothing is "kept".
       const label = outcome === 'kept' && fresh.state === 'COMPLETED' && !isUserOwnedSquadWorktree(fresh.squadWorktree) ? 'ended, worktree kept' : squadOutcomeLabel(fresh.state);
@@ -228,13 +239,15 @@ export function createSquadProposalNotifier(deps: SquadProposalNotifierDeps): Sq
       const outcome = worktreeOutcome(fresh, given);
       if (outcome === undefined) return;
       const text = buildSquadReport(fresh, { ...(outcome === 'none' ? {} : { worktree: outcome }), role: target.role });
+      // The Inbox row is for the person: same facts, none of the prompt addressed to the agent.
+      const inboxText = buildSquadInboxReport(fresh, outcome === 'none' ? {} : { worktree: outcome });
       // A proposer always gets the Inbox result entry. An owner has the run on its board, so it
       // only gets one once its conversation is confirmed gone; a transient failure never posts.
       const owner = target.role === 'owner';
-      const settle = settler(fresh, key, owner ? true : await postResult(fresh, text));
+      const settle = settler(fresh, key, owner ? true : await postResult(fresh, inboxText));
       // A failed Inbox post releases the claim, so a later report of this run tries again.
       const gone = owner
-        ? () => { void postResult(fresh, text).then((posted) => { if (posted) settle(); else claimed.delete(key); }); }
+        ? () => { void postResult(fresh, inboxText).then((posted) => { if (posted) settle(); else claimed.delete(key); }); }
         : settle;
       handedOff = true;
       if (targetLive === false) { gone(); return; }

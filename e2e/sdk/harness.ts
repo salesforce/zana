@@ -267,7 +267,7 @@ function presetBody(opts: FakeAgentOptions): string {
  * no re-asking the human. The test answers the question out-of-band via
  * `executionBoard.respond`.
  */
-export type JobTeamScenario = 'success' | 'unattended' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'kickoff-churn' | 'peer-handoff' | 'plan-correction' | 'plan-correction-silent' | 'api-error-nudge' | 'api-error-restart' | 'api-error-permanent' | 'no-route'
+export type JobTeamScenario = 'success' | 'unattended' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'streaming-worker-ceiling' | 'kickoff-churn' | 'kickoff-churn-single-seat' | 'peer-handoff' | 'plan-correction' | 'plan-correction-silent' | 'api-error-nudge' | 'api-error-restart' | 'api-error-permanent' | 'no-route'
   | 'worker-exit-1' | 'respawn-after-kill' | `spawn-throw-slot-${number}`;
 
 /** The behavior gates the generated coordinator script keys its behavior off. */
@@ -276,7 +276,11 @@ interface JobTeamScenarioFlags {
   failedDag: boolean;
   stalled: boolean;
   streaming: boolean;
+  /** Streaming worker whose owner sets a short output-only ceiling, so the ceiling (not the lease) reclaims it. */
+  streamingCeiling: boolean;
   churn: boolean;
+  /** Kickoff churn with ONE worker seat (#789: same-seat retry before the human block). */
+  churnSingleSeat: boolean;
   handoff: boolean;
   planCorrection: boolean;
   planCorrectionSilent: boolean;
@@ -298,8 +302,10 @@ function resolveScenarioFlags(scenario?: JobTeamScenario): JobTeamScenarioFlags 
     unattended: scenario === 'unattended',
     failedDag: scenario === 'failed-dag',
     stalled: scenario === 'stalled-worker',
-    streaming: scenario === 'streaming-worker',
-    churn: scenario === 'kickoff-churn',
+    streaming: scenario === 'streaming-worker' || scenario === 'streaming-worker-ceiling',
+    streamingCeiling: scenario === 'streaming-worker-ceiling',
+    churn: scenario === 'kickoff-churn' || scenario === 'kickoff-churn-single-seat',
+    churnSingleSeat: scenario === 'kickoff-churn-single-seat',
     handoff: scenario === 'peer-handoff',
     planCorrection: scenario === 'plan-correction',
     planCorrectionSilent: scenario === 'plan-correction-silent',
@@ -394,6 +400,8 @@ const STALLED = ${JSON.stringify(flags.stalled)};
 // reclaim this live worker. This is the discriminator vs STALLED (silent → reclaimed):
 // a streaming worker is healthy-long, not hung, so lease expiry must not fire.
 const STREAMING = ${JSON.stringify(flags.streaming)};
+// Past-ceiling variant: the same streaming worker, but the owner sets a 4s output-only ceiling.
+const STREAMING_CEILING = ${JSON.stringify(flags.streamingCeiling)};
 // Kickoff-churn repro (WS1 reassign + WS3 human block): a two-WORKER team whose
 // sole unit lands on a worker that CLAIMS but never turns (turnCount stays 0,
 // identical stall behavior to STALLED). Each wall-clock reclaim bumps the unit's
@@ -403,6 +411,7 @@ const STREAMING = ${JSON.stringify(flags.streaming)};
 // path forever. Reuses stalledWorker(); the only differences from STALLED are the
 // 2-worker slot count (so a fresh peer exists) and the distinct jobTitle.
 const CHURN = ${JSON.stringify(flags.churn)};
+const CHURN_SINGLE_SEAT = ${JSON.stringify(flags.churnSingleSeat)};
 // Peer-handoff repro (workflow-testing manual test): a TWO-worker team with ONE
 // unit. Whichever worker takes the FIRST claim (claimGeneration 1) holds it
 // NON-restful forever — no wall-clock ceiling and the lease far outlasts the
@@ -567,10 +576,11 @@ async function owner() {
     // that the output-activity lease heartbeat keeps a live worker from being reclaimed,
     // so no wall-clock ceiling may pre-empt it during the test window.
     ...((STALLED || CHURN) ? { maxClaimWallClockMs: 1000 } : {}),
+    ...(STREAMING_CEILING ? { maxClaimOutputOnlyMs: 4000 } : {}),
     // CHURN and HANDOFF deliberately fall to the else branch below (1 coordinator
     // + 2 WORKER slots): the second worker slot is the untried peer that WS1
     // reassigns onto (CHURN) or that completes the re-dispatched unit (HANDOFF).
-    slots: STALLED || STREAMING || APIERR || WORKER_EXIT_1 || RESPAWN_AFTER_KILL
+    slots: STALLED || STREAMING || CHURN_SINGLE_SEAT || APIERR || WORKER_EXIT_1 || RESPAWN_AFTER_KILL
       ? [
           { initialTask: 'Coordinate the durable execution.' },
           { initialTask: 'Run assigned work from the durable execution.' }
@@ -646,11 +656,11 @@ async function proposer() {
       log('snapshot[' + entry.label + ']', JSON.stringify({ ok: snap.ok, state: snap.ok && snap.value && snap.value.execution ? snap.value.execution.state : snap.error }));
       if (spec.observeExecutions) {
         const id = proposed.value.executionId;
-        const initial = await tryMcp('execution.status', { executionId: id });
+        const initial = await tryMcp('execution.status', { executionId: id, mode: 'full' });
         log('initial[' + entry.label + ']', JSON.stringify(initial));
         (async function () {
           for (let i = 0; i < 600; i++) {
-            const current = await tryMcp('execution.status', { executionId: id });
+            const current = await tryMcp('execution.status', { executionId: id, mode: 'full' });
             if (current.ok && ['COMPLETED', 'FAILED', 'STOPPED'].includes(current.value.state)) {
               log('terminal[' + entry.label + ']', JSON.stringify(current));
               return;
@@ -664,7 +674,21 @@ async function proposer() {
   }
   setIdle();
   log('proposer idle');
-  await new Promise(function () {});
+  // Owner calls: the spec drops .e2e-owner-call.json ({label, tool, input}) once it knows the executionId/slot; this
+  // launcher IS the run's owner, so the call is made with owner authority. Result is logged as owner-call[label].
+  const callFile = path.join(CWD, '.e2e-owner-call.json');
+  for (;;) {
+    if (fs.existsSync(callFile)) {
+      let req = null;
+      try { req = JSON.parse(fs.readFileSync(callFile, 'utf8')); } catch (e) { req = null; }
+      if (req) {
+        fs.unlinkSync(callFile);
+        const out = await tryMcp(req.tool, req.input);
+        log('owner-call[' + req.label + ']', JSON.stringify(out));
+      }
+    }
+    await sleep(250);
+  }
 }
 
 async function orchestrator() {
@@ -786,10 +810,10 @@ async function planCorrectionOrchestrator() {
   await new Promise(function () {});
 }
 
-async function handleNavigationLabel(outcomeFence) {
-  const blockerId = 'blk-navigation-label';
+async function handleNavigationLabel(outcomeFence, blockedUnitId, blockedBlockerId) {
+  const blockerId = blockedBlockerId || 'blk-navigation-label';
   const r = await tryMcp('execution.work.block', {
-    executionId: EXECUTION_ID, workUnitId: 'navigation-label', blockerId: blockerId,
+    executionId: EXECUTION_ID, workUnitId: blockedUnitId || 'navigation-label', blockerId: blockerId,
     question: 'Which label should result.txt use?', options: ['About', 'About Atlas'], ...outcomeFence
   });
   log('block', r.ok ? 'ok' : r.error);
@@ -918,6 +942,35 @@ async function doUnit(unitId) {
       const about = fs.readFileSync(path.join(CWD, 'about.txt'), 'utf8').trim();
       fs.writeFileSync(path.join(CWD, 'result.txt'), home + '\n' + about + '\nLABEL: ' + chosenLabel + '\n');
       await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: 'assemble', result: 'assembled', ...outcomeFence });
+    } else if (unitId === 'unit-a' || unitId === 'unit-b') {
+      const file = unitId === 'unit-a' ? 'a.txt' : 'b.txt';
+      fs.writeFileSync(path.join(CWD, file), unitId + ' done\n');
+      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: unitId + ' done', ...outcomeFence });
+    } else if (unitId === 'scope-parent') {
+      // Scope re-split: park on a durable question; the owner's answer names a file outside this unit's scope.
+      const answer = await handleNavigationLabel(outcomeFence, 'scope-parent', 'blk-scope-parent');
+      log('scope-parent answer', JSON.stringify(answer));
+      fs.writeFileSync(path.join(CWD, 'parent.txt'), 'parent done\n');
+      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: 'parent done', ...outcomeFence });
+    } else if (unitId.indexOf('scope-parent-split-') === 0) {
+      fs.mkdirSync(path.join(CWD, 'server'), { recursive: true });
+      fs.writeFileSync(path.join(CWD, 'server', 'contract.ts'), 'export const contract = 1;\n');
+      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: 'child done', ...outcomeFence });
+    } else if (unitId === 'ckpt-fail' || unitId === 'ckpt-pass') {
+      // Unit checkpoints: write through the same PostToolUse hook commands a real Claude worker runs, so main
+      // attributes each path to this claim; the failing unit then fails and main restores it from the git baseline.
+      const hooks = apiErrorHooks();
+      log('ckpt hooks PostToolUse=' + hooks.has('PostToolUse'));
+      const wrote = unitId === 'ckpt-fail' ? { 'tracked.txt': 'worker edit\n', 'owned.txt': 'worker created\n', 'predirty.txt': 'worker overwrote predirty\n' } : { 'sibling.txt': 'sibling done\n' };
+      Object.keys(wrote).forEach(function (name) {
+        fs.writeFileSync(path.join(CWD, name), wrote[name]);
+        hooks.run('PostToolUse', { hook_event_name: 'PostToolUse', tool_name: 'Write', tool_input: { file_path: path.join(CWD, name) }, tool_response: { success: true }, cwd: CWD });
+      });
+      if (unitId === 'ckpt-fail') {
+        await mcp('execution.work.fail', { executionId: EXECUTION_ID, workUnitId: unitId, failureCode: 'VALIDATION_FAILED', failure: 'Deterministic checkpoint failure', ...outcomeFence });
+      } else {
+        await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: 'sibling done', ...outcomeFence });
+      }
     } else {
       log('unknown unit', unitId);
       return;

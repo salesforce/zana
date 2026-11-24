@@ -2,8 +2,8 @@ import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect, launchApp, closeApp } from './fixtures/app.js';
 import {
-  createJobTeamContext, initSquadRepo, jobTeamFailure, launchJobTeamCliOwner, launchSquadFixture,
-  squadInitial, squadNowReceipt, squadTerminal, teardownJobTeam, waitForCoordinatorResult
+  coordinatorResult, createJobTeamContext, initSquadRepo, jobTeamFailure, launchJobTeamCliOwner, launchSquadFixture,
+  readCoordinatorLog, squadInitial, squadNowReceipt, squadTerminal, teardownJobTeam, waitForCoordinatorResult, type JobTeamContext
 } from './sdk/job-team-scenario.js';
 
 test.use({
@@ -260,4 +260,115 @@ test('restart refuses a user worktree branch that moved after the CLAIMED snapsh
     expect(existsSync(join(ctx.projectDir, 'api-error.txt'))).toBe(false);
   } catch (error) { throw jobTeamFailure(ctx, error); }
   finally { await teardownJobTeam(ctx); await closeApp(app.electron); }
+});
+
+// Owner recovery tools (AC2, AC3). The Squad launcher is the run's owner, so the spec hands it an owner call
+// (.e2e-owner-call.json) once the executionId and slots are known; the fake owner logs owner-call[<label>].
+let ownerCallSeq = 0;
+async function ownerCall(ctx: JobTeamContext, tool: string, input: Record<string, unknown>): Promise<{ ok: boolean; value?: Record<string, unknown>; error?: string }> {
+  const label = `${tool}#${++ownerCallSeq}`;
+  writeFileSync(join(ctx.projectDir, '.e2e-owner-call.json'), JSON.stringify({ label, tool, input }));
+  await expect.poll(() => coordinatorResult(ctx, `owner-call[${label}]`), { timeout: 30_000, intervals: [250] }).not.toBeNull();
+  return coordinatorResult<Record<string, unknown>>(ctx, `owner-call[${label}]`)!;
+}
+const board = (ctx: JobTeamContext, projectId: string, executionId: string) => ctx.window.evaluate(async ({ projectId, executionId }) => {
+  const snap = await window.cc.executionBoard.snapshot(projectId, executionId, 0);
+  return { version: snap?.execution.stateVersion as number, state: snap?.execution.state as string, units: snap?.execution.work?.assignments ?? [],
+    workers: (await window.cc.terminals.list(projectId)).filter(s => s.cohort?.executionId === executionId && s.cohort.role === 'worker')
+      .map(s => ({ id: s.id, slotId: s.cohort!.slotId as string })) };
+}, { projectId, executionId });
+
+test('owner slot_restart succeeds once then is rate limited; execution_respond reports sessionLive and restarts a dead slot', async ({ app }) => {
+  const ctx = createJobTeamContext(app, { tmpPrefix: 'owner-recovery-', scenario: 'respawn-after-kill' });
+  try {
+    const projectId = await launchSquadFixture(ctx, [{ label: 'recover', input: { mode: 'now', title: 'Owner recovery run' } }], { plan: [
+      '# Owner recovery plan',
+      '### unit-a: Write a <!-- executable-step -->', '- Work: Create a.txt.', '- Write scope: `a.txt`', '- Verification: Read a.txt.', '',
+      '### unit-b: Write b <!-- executable-step -->', '- Work: Create b.txt.', '- Write scope: `b.txt`', '- Verification: Read b.txt.', ''
+    ].join('\n'), workerQuantity: 2 });
+    const { executionId } = await squadNowReceipt(ctx, 'recover');
+    // The first worker process holds its claim (mid-turn); the other completes its unit and rests idle.
+    let view = await board(ctx, projectId, executionId);
+    await expect.poll(async () => {
+      view = await board(ctx, projectId, executionId);
+      return view.workers.length === 2 && view.units.filter(u => u.state === 'CLAIMED').length === 1 && view.units.filter(u => u.state === 'COMPLETED').length === 1;
+    }, { timeout: 90_000, intervals: [500] }).toBe(true);
+    const busySlot = view.units.find(u => u.state === 'CLAIMED')!.slotId!;
+    const idleSlot = view.workers.map(w => w.slotId).find(slot => slot !== busySlot)!;
+    expect(idleSlot).toBeTruthy();
+    const idleBefore = view.workers.find(w => w.slotId === idleSlot)!.id;
+
+    // A worker that is mid-turn may have edits in flight: the owner restart is refused rather than quiesced by force.
+    const midTurn = await ownerCall(ctx, 'execution.slot_restart', { executionId, slotId: busySlot });
+    expect(midTurn.ok).toBe(false);
+    expect(midTurn.error).toContain('NOT_QUIET');
+
+    // The idle slot restarts once ...
+    let first = await ownerCall(ctx, 'execution.slot_restart', { executionId, slotId: idleSlot });
+    for (let attempt = 0; !first.ok && /NOT_QUIET/.test(first.error ?? '') && attempt < 20; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      first = await ownerCall(ctx, 'execution.slot_restart', { executionId, slotId: idleSlot });
+    }
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    expect(first.value).toMatchObject({ slotId: idleSlot, sessionLive: true });
+    // A live idle session is relaunched in place (same session id, resumed), not replaced.
+    expect(first.value).toMatchObject({ sessionId: idleBefore, mode: 'restarted' });
+    await expect.poll(() => readCoordinatorLog(ctx), { timeout: 30_000 }).toContain(`resumed=true sid=${idleBefore}`);
+    // ... and a second restart of the same slot inside a minute is refused by the owner rate limit.
+    const second = await ownerCall(ctx, 'execution.slot_restart', { executionId, slotId: idleSlot });
+    expect(second.ok).toBe(false);
+    expect(second.error).toContain('RATE_LIMITED');
+
+    // execution_respond on a live slot reports sessionLive and does not restart it.
+    view = await board(ctx, projectId, executionId);
+    const live = await ownerCall(ctx, 'execution.respond', { executionId, slotId: busySlot, expectedStateVersion: view.version, message: 'status check' });
+    expect(live.ok, JSON.stringify(live)).toBe(true);
+    expect(live.value).toMatchObject({ sessionLive: true });
+    expect(live.value).not.toHaveProperty('restarted');
+
+    // A dead slot is restarted before delivery; the result still names the live session and how it came back.
+    const dead = view.workers.find(w => w.slotId === busySlot)!;
+    await ctx.window.evaluate(id => window.cc.terminals.close(id), dead.id);
+    await expect.poll(async () => (await board(ctx, projectId, executionId)).workers.some(w => w.slotId === busySlot), { timeout: 30_000 }).toBe(false);
+    let revived = { ok: false } as Awaited<ReturnType<typeof ownerCall>>;
+    for (let attempt = 0; !revived.ok && attempt < 5; attempt += 1) {
+      view = await board(ctx, projectId, executionId);
+      revived = await ownerCall(ctx, 'execution.respond', { executionId, slotId: busySlot, expectedStateVersion: view.version, message: 'continue please' });
+      if (!revived.ok && !/stale|CONFLICT/i.test(revived.error ?? '')) break;
+    }
+    expect(revived.ok, JSON.stringify(revived)).toBe(true);
+    expect(revived.value).toMatchObject({ sessionLive: true, restarted: expect.stringMatching(/^(respawned|restarted)$/) });
+    await expect.poll(async () => (await board(ctx, projectId, executionId)).workers.some(w => w.slotId === busySlot), { timeout: 30_000 }).toBe(true);
+  } catch (error) { throw jobTeamFailure(ctx, error); }
+  finally { await teardownJobTeam(ctx); }
+});
+
+test('owner unit_release returns a CLAIMED unit to READY and the seat is re-dispatched', async ({ app }) => {
+  const ctx = createJobTeamContext(app, { tmpPrefix: 'owner-release-', scenario: 'stalled-worker' });
+  try {
+    const projectId = await launchSquadFixture(ctx, [{ label: 'release', input: { mode: 'now', title: 'Owner release run' } }], { plan: [
+      '### stall-unit: Hold claim <!-- executable-step -->', '- Work: Hold assigned claim until stopped.',
+      '- Mode: read-only', '- Verification: Owner can release.', ''
+    ].join('\n') });
+    const { executionId } = await squadNowReceipt(ctx, 'release');
+    let generation = 0;
+    await expect.poll(async () => {
+      const unit = (await board(ctx, projectId, executionId)).units.find(u => u.workUnitId === 'stall-unit');
+      generation = unit?.claimGeneration ?? 0;
+      return unit?.state === 'CLAIMED' && generation >= 1;
+    }, { timeout: 60_000, intervals: [250] }).toBe(true);
+    const missing = await ownerCall(ctx, 'execution.unit_release', { executionId, workUnitId: 'no-such-unit' });
+    expect(missing.ok).toBe(false);
+    expect(missing.error).toContain('NOT_FOUND');
+    const released = await ownerCall(ctx, 'execution.unit_release', { executionId, workUnitId: 'stall-unit' });
+    expect(released.ok, JSON.stringify(released)).toBe(true);
+    expect(released.value).toMatchObject({ workUnitId: 'stall-unit', state: 'READY' });
+    // The engine re-dispatches the released unit: a new claim generation, and the history records the release.
+    await expect.poll(async () => (await board(ctx, projectId, executionId)).units.find(u => u.workUnitId === 'stall-unit')?.claimGeneration ?? 0,
+      { timeout: 60_000, intervals: [250] }).toBeGreaterThan(generation);
+    const record = await ctx.window.evaluate(async ({ projectId, executionId }) =>
+      (await window.cc.executionBoard.snapshot(projectId, executionId, 0))?.execution, { projectId, executionId });
+    expect(record.work?.assignments.find(u => u.workUnitId === 'stall-unit')?.state).toBe('CLAIMED');
+  } catch (error) { throw jobTeamFailure(ctx, error); }
+  finally { await teardownJobTeam(ctx); }
 });
