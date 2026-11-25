@@ -76,6 +76,13 @@ describe('Basic conversation rows', () => {
       expect(ids({ status: 'all' }, rows)).toEqual(['live', 'gone']);
     });
 
+    it('keeps active pins first in saved pin order, including pins without an order', () => {
+      const rows = [thread('recent', { updatedAt: 45 }), thread('second', { pinnedAt: 2, pinOrder: 2 }),
+        thread('legacy', { pinnedAt: 3 }), thread('first', { pinnedAt: 1, pinOrder: 1 }),
+        thread('retired', { archivedAt: 7, pinnedAt: 4, pinOrder: 0, updatedAt: 5 })];
+      expect(ids({ status: 'all' }, rows)).toEqual(['first', 'second', 'legacy', 'recent', 'retired']);
+    });
+
     it('limits to a last-activity window', () => {
       const rows = [thread('hour', { updatedAt: now - 1000 }), thread('days', { updatedAt: now - 3 * DAY }),
         thread('weeks', { createdAt: now - 20 * DAY }), thread('old', { updatedAt: now - 60 * DAY })];

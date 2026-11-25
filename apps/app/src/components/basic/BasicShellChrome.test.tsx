@@ -15,17 +15,25 @@ import { act, waitFor } from '@testing-library/react';
 
 const slots = vi.hoisted(() => ({ panels: [] as PluginNavPanelRegistration[] }));
 vi.mock('../../plugins/plugin-slots.js', () => ({ listNavPanels: () => slots.panels, subscribePluginSlots: () => () => {} }));
-const data = vi.hoisted(() => ({ threads: [] as ThreadListItem[], loading: false, scoped: null as string | null, ensure: vi.fn() }));
+const data = vi.hoisted(() => ({ threads: [] as ThreadListItem[], loading: false, scoped: null as string | null, ensure: vi.fn(), remove: vi.fn(), upsert: vi.fn() }));
+const actions = vi.hoisted(() => ({
+  archive: vi.fn(), unarchive: vi.fn(), pin: vi.fn(), unpin: vi.fn(), read: vi.fn(), unread: vi.fn(), rename: vi.fn(),
+  copy: vi.fn(), move: vi.fn(), toast: vi.fn()
+}));
 vi.mock('../../store.js', () => ({
   useData: (selector: (state: unknown) => unknown) => selector({ projects: [{ id: 'p1', name: 'Personal' }, { id: 'p2', name: 'Website', color: '#2f81f7' }] }),
+  useUi: { getState: () => ({ pushToast: actions.toast }) },
+  errorMessage: (error: Error) => error.message,
   SIDEBAR_MIN: 256, SIDEBAR_MAX: 480
 }));
 const archive = vi.hoisted(() => ({ listeners: new Set<() => void>(), history: vi.fn() }));
 vi.mock('../../thread-store.js', () => ({
-  useThreads: (selector: (state: unknown) => unknown) => selector(data),
+  useThreads: Object.assign((selector: (state: unknown) => unknown) => selector(data), { getState: () => data }),
   onThreadArchived: (listener: () => void) => { archive.listeners.add(listener); return () => archive.listeners.delete(listener); }
 }));
-vi.mock('../../lib/product-client.js', () => ({ product: { threads: { history: archive.history } } }));
+vi.mock('../../lib/product-client.js', () => ({ product: { threads: { ...actions, history: archive.history } } }));
+vi.mock('../../lib/copy-text.js', () => ({ copyTextOrFail: actions.copy }));
+vi.mock('../../lib/session-move.js', () => ({ useSessionMove: { getState: () => ({ open: actions.move }) } }));
 vi.mock('../../hooks/useEnsureThreads.js', () => ({ useEnsureThreads: () => data.ensure() }));
 vi.mock('../../hooks/useHosts.js', () => ({ useHosts: () => [{ id: 'local', isPrimary: true }], primaryHost: (hosts: { id: string }[]) => hosts[0] }));
 vi.mock('../../lib/windowScope.js', () => ({ getScopedProjectId: () => data.scoped }));
@@ -402,5 +410,108 @@ describe('Basic conversation view menu', () => {
     sidebar();
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Archived conversations could not be loaded'));
     expect(archive.history).toHaveBeenCalledWith({ archived: 'archived', offset: 0, projectId: 'p1' });
+  });
+});
+
+describe('Basic conversation row actions', () => {
+  const trigger = () => screen.getByRole('button', { name: 'Actions for Chat one' });
+  const item = (name: string) => screen.getByRole('menuitem', { name, exact: true });
+  const choose = (name: string) => { fireEvent.click(trigger()); fireEvent.click(item(name)); };
+
+  afterEach(() => {
+    Object.values(actions).forEach(mock => mock.mockReset());
+    data.remove.mockClear();
+    data.upsert.mockClear();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('opens by right-click or keyboard, returns focus on Escape and copies the row ID without opening it', async () => {
+    data.threads = [thread('one')];
+    const onNavigate = sidebar();
+    fireEvent.contextMenu(screen.getByTestId('basic-chat-row-one'));
+    expect(document.activeElement).toBe(item('Pin'));
+    fireEvent.keyDown(item('Pin'), { key: 'Escape' });
+    expect(document.activeElement).toBe(trigger());
+    fireEvent.keyDown(trigger(), { key: 'ArrowDown' });
+    fireEvent.click(item('Copy conversation ID'));
+    await waitFor(() => expect(actions.toast).toHaveBeenCalledWith('Conversation ID copied'));
+    expect(actions.copy).toHaveBeenCalledWith('one');
+    expect(onNavigate).not.toHaveBeenCalled();
+    expect(screen.getByTestId('route').textContent).toBe('/');
+  });
+
+  it.each([
+    ['Pin', 'pin', {}], ['Unpin', 'unpin', { pinnedAt: 1 }],
+    ['Mark as unread', 'unread', {}], ['Mark as read', 'read', { maxSeq: 5, lastReadSeq: 0 }]
+  ] as const)('wires %s to the existing thread action and refreshes the roster', async (label, method, patch) => {
+    data.threads = [thread('one', patch)];
+    const changed = thread('one', { updatedAt: 10 });
+    actions[method].mockResolvedValue({ thread: changed });
+    sidebar();
+    choose(label);
+    expect(actions[method]).toHaveBeenCalledWith('one');
+    await waitFor(() => expect(data.upsert).toHaveBeenCalledWith(changed));
+  });
+
+  it('uses the existing move dialog and lets users cancel or submit a rename', async () => {
+    data.threads = [thread('one')];
+    sidebar();
+    choose('Move to project…');
+    expect(actions.move).toHaveBeenCalledWith('one');
+    choose('Rename');
+    let dialog = within(screen.getByRole('dialog', { name: 'Rename conversation' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
+    expect(actions.rename).not.toHaveBeenCalled();
+    choose('Rename');
+    dialog = within(screen.getByRole('dialog', { name: 'Rename conversation' }));
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Title' }), { target: { value: 'Updated title' } });
+    actions.rename.mockResolvedValue({ thread: thread('one', { title: 'Updated title' }) });
+    fireEvent.click(dialog.getByRole('button', { name: 'Rename' }));
+    await waitFor(() => expect(data.upsert).toHaveBeenCalledWith(expect.objectContaining({ title: 'Updated title' })));
+    expect(actions.rename).toHaveBeenCalledWith('one', 'Updated title');
+  });
+
+  it('confirms archive and returns the selected conversation to Basic new chat', async () => {
+    data.threads = [thread('one')];
+    const confirm = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+    vi.stubGlobal('confirm', confirm);
+    actions.archive.mockResolvedValue({ ok: true });
+    sidebar('/threads/one');
+    choose('Archive');
+    expect(actions.archive).not.toHaveBeenCalled();
+    choose('Archive');
+    expect(confirm).toHaveBeenCalledWith('Archive “Chat one”?');
+    expect(actions.archive).toHaveBeenCalledWith('one');
+    await waitFor(() => expect(screen.getByTestId('route').textContent).toBe('/'));
+    expect(data.remove).toHaveBeenCalledWith('one');
+  });
+
+  it('reloads visible archive history when the archive response arrives before the roster event', async () => {
+    data.threads = [thread('one')];
+    useBasicConversationView.setState({ view: { ...DEFAULT_BASIC_CONVERSATION_VIEW, status: 'all' } });
+    archive.history.mockResolvedValue({ rows: [] });
+    actions.archive.mockResolvedValue({ ok: true });
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    sidebar('/threads/two');
+    await waitFor(() => expect(archive.history).toHaveBeenCalledTimes(1));
+    choose('Archive');
+    await waitFor(() => expect(archive.history).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId('route').textContent).toBe('/threads/two');
+  });
+
+  it('offers only copy and restore for archived conversations and handles a retry after failure', async () => {
+    archive.history.mockResolvedValue({ rows: [{ id: 'one', projectId: 'p1', providerId: 'fake', title: 'Chat one', updatedAt: 5, archivedAt: 6 }] });
+    useBasicConversationView.setState({ view: { ...DEFAULT_BASIC_CONVERSATION_VIEW, status: 'archived' } });
+    actions.unarchive.mockRejectedValueOnce(new Error('Environment unavailable')).mockResolvedValueOnce({ thread: thread('one') });
+    sidebar();
+    await screen.findByRole('button', { name: 'Actions for Chat one' });
+    fireEvent.click(trigger());
+    expect(screen.getAllByRole('menuitem').map(entry => entry.textContent)).toEqual(['Copy conversation ID', 'Restore']);
+    fireEvent.click(item('Restore'));
+    await waitFor(() => expect(actions.toast).toHaveBeenCalledWith('Environment unavailable', 'error'));
+    expect(data.upsert).not.toHaveBeenCalled();
+    choose('Restore');
+    await waitFor(() => expect(data.upsert).toHaveBeenCalledWith(thread('one')));
   });
 });

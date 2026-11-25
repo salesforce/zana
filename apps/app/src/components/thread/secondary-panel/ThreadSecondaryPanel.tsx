@@ -17,7 +17,6 @@ import {
   type FilePreviewScrollPositions
 } from './filePreviewScrollPositionContext.js';
 import './mobile-panel.css';
-import './thread-panel-controls.css';
 import { ThreadToolMenu, type ThreadToolMenuItem } from './ThreadToolMenu.js';
 import { BasicPanelChrome, basicPanelActiveSupported } from './BasicPanelChrome.js';
 import '../../basic/basic-conversation.css';

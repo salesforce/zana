@@ -38,7 +38,10 @@ export function basicConversationRows(
   const cutoff = windowCutoff(view.window, now);
   const projectById = new Map(projects.map(project => [project.id, project]));
   const rows: BasicConversationRow[] = [];
-  const ordered = [...threads].sort(compareThreads(view.sort));
+  const compare = compareThreads(view.sort);
+  const rank = (thread: ThreadListItem) => !thread.archivedAt && thread.pinnedAt != null
+    ? thread.pinOrder ?? Number.MAX_SAFE_INTEGER - 1 : Number.MAX_SAFE_INTEGER;
+  const ordered = [...threads].sort((a, b) => rank(a) - rank(b) || compare(a, b));
   for (const thread of ordered) {
     const archived = Boolean(thread.archivedAt);
     if ((view.status === 'active' && archived) || (view.status === 'archived' && !archived)) continue;

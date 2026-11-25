@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowRight, Check, Menu, PanelLeft, PanelLeftClose, PanelsTopLeft, Plus, Search, X } from 'lucide-react';
+import { ArrowRight, Check, Menu, PanelLeft, PanelLeftClose, PanelsTopLeft, Pin, Plus, Search, X } from 'lucide-react';
 import { ZanaIcon } from '../icons/ZanaIcon.js';
 import { SidebarResizer } from '../SidebarResizer.js';
 import { NewWindowButton } from '../sidebar/NewWindowButton.js';
@@ -8,7 +8,7 @@ import { SidebarFooterSlot } from '../sidebar/SidebarFooterSlot.js';
 import { useMobileNavDismiss } from '../mobile-nav-context.js';
 import { MobileActionSheet } from '../MobilePageHeader.js';
 import { useData } from '../../store.js';
-import { useThreads } from '../../thread-store.js';
+import { useThreads, type ThreadListItem } from '../../thread-store.js';
 import { useEnsureThreads } from '../../hooks/useEnsureThreads.js';
 import { useHosts, primaryHost } from '../../hooks/useHosts.js';
 import { getScopedProjectId } from '../../lib/windowScope.js';
@@ -18,6 +18,9 @@ import { threadRailStatus } from '../fleet-item.js';
 import { isUnreadThread } from '../../lib/unread-threads.js';
 import { basicConversationRows } from './basic-conversation-rows.js';
 import { BasicConversationMenu, basicConversationViewSummary } from './BasicConversationMenu.js';
+import { BasicConversationRowActions } from './BasicConversationRowActions.js';
+import { archiveThreadWithoutConfirm } from '../threadCardActions.js';
+import { product } from '../../lib/product-client.js';
 import { useBasicConversationView } from './basic-conversation-view.js';
 import { useArchivedConversations } from './useArchivedConversations.js';
 import { listNavPanels, subscribePluginSlots } from '../../plugins/plugin-slots.js';
@@ -98,6 +101,8 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
   const hosts = useHosts();
   const primaryHostId = primaryHost(hosts)?.id;
   const location = useLocation();
+  const pathname = useRef(location.pathname);
+  pathname.current = location.pathname;
   const activeId = threadIdFromPath(location.pathname) ?? null;
   const scopedProjectId = getScopedProjectId();
   const [query, setQuery] = useState('');
@@ -129,6 +134,18 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
   useEnsureThreads();
   const view = useBasicConversationView(s => s.view);
   const archived = useArchivedConversations(view.status !== 'active', scopedProjectId, primaryHostId);
+  const archiveConversation = (thread: ThreadListItem) => archiveThreadWithoutConfirm(thread, {
+    get pathname() { return pathname.current; },
+    projectId: scopedProjectId,
+    archive: product.threads.archive,
+    remove: id => {
+      const roster = useThreads.getState();
+      // The archive response can arrive before the roster update that refreshes history.
+      if (roster.threads.some(row => row.id === id)) archived.reload();
+      roster.remove(id);
+    },
+    navigate
+  }, newChatPath(scopedProjectId));
   const conversations = useMemo(() => {
     const represented = new Set([...sectionThreads].flat());
     const live = new Set(threads.map(thread => thread.id));
@@ -174,19 +191,22 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
         const title = thread.title || 'New conversation';
         // A live status already signals new activity; "Unread" covers finished, unseen replies.
         const unread = status === 'Idle' && activeId !== thread.id && !thread.archivedAt && isUnreadThread(thread);
-        const label = [title, showProject ? projectName : null, unread ? 'unread' : null].filter(Boolean).join(', ');
-        return <Link key={thread.id} className={`basic-ui-chat-row${activeId === thread.id ? ' is-active' : ''}${unread ? ' is-unread' : ''}`}
-          to={getThreadRoutePath(thread.id, scopedProjectId)} onClick={onNavigate} aria-current={activeId === thread.id ? 'page' : undefined}
-          aria-label={label} data-testid={`basic-chat-row-${thread.id}`}>
-          <span className="basic-ui-chat-name" title={title}>{title}</span>
-          {(showProject || status !== 'Idle' || thread.archivedAt || unread) && <span className="basic-ui-chat-meta">
-            {showProject && <span className="basic-ui-chat-project" title={projectName}
-              style={{ '--basic-chat-project-color': projectColor } as CSSProperties}>{projectName}</span>}
-            {thread.archivedAt ? <span className="basic-ui-chat-status">Archived</span> : null}
-            {unread && <span className="basic-ui-chat-status status-unread" data-testid={`basic-chat-unread-${thread.id}`}>Unread</span>}
-            {status !== 'Idle' && <span className={`basic-ui-chat-status status-${status === 'Working' ? 'working' : 'attention'}`}>{status === 'Needs you' ? 'Needs review' : status}</span>}
-          </span>}
-        </Link>;
+        const pinned = !thread.archivedAt && thread.pinnedAt != null;
+        const label = [title, showProject ? projectName : null, pinned ? 'pinned' : null, unread ? 'unread' : null].filter(Boolean).join(', ');
+        return <BasicConversationRowActions key={thread.id} thread={thread} title={title} onArchive={archiveConversation}>
+          <Link className={`basic-ui-chat-row${activeId === thread.id ? ' is-active' : ''}${unread ? ' is-unread' : ''}`}
+            to={getThreadRoutePath(thread.id, scopedProjectId)} onClick={onNavigate} aria-current={activeId === thread.id ? 'page' : undefined}
+            aria-label={label} data-testid={`basic-chat-row-${thread.id}`}>
+            <span className="basic-ui-chat-title">{pinned && <Pin size={12} aria-hidden="true" />}<span className="basic-ui-chat-name" title={title}>{title}</span></span>
+            {(showProject || status !== 'Idle' || thread.archivedAt || unread) && <span className="basic-ui-chat-meta">
+              {showProject && <span className="basic-ui-chat-project" title={projectName}
+                style={{ '--basic-chat-project-color': projectColor } as CSSProperties}>{projectName}</span>}
+              {thread.archivedAt ? <span className="basic-ui-chat-status">Archived</span> : null}
+              {unread && <span className="basic-ui-chat-status status-unread" data-testid={`basic-chat-unread-${thread.id}`}>Unread</span>}
+              {status !== 'Idle' && <span className={`basic-ui-chat-status status-${status === 'Working' ? 'working' : 'attention'}`}>{status === 'Needs you' ? 'Needs review' : status}</span>}
+            </span>}
+          </Link>
+        </BasicConversationRowActions>;
       })}
       {!conversations.length && <p className="basic-ui-sidebar-empty" role="status">{listLoading ? 'Loading conversations…' : query.trim() || viewSummary ? 'No matching conversations.' : 'Your conversations will appear here.'}</p>}
       {conversations.length > visible.length && <button type="button" className="basic-ui-more-chats" onClick={() => setLimit(value => value + PAGE)}>Show more conversations</button>}
