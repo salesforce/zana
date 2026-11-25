@@ -106,6 +106,24 @@ body,
   -webkit-user-select: text;
 }
 
+/* Error text must be copyable (a path or message to paste into a search or a
+   report). The global `user-select: none` made these unselectable. Buttons inside
+   (Try again, Fix) keep the chrome rule from `button` below. */
+.thread-file-preview-error,
+.thread-command-error,
+.modal-error,
+.launch-error,
+.cc-error,
+.peers-error,
+.machine-reconnect-error,
+.team-requirement-failure,
+.api-error-resume-error,
+.sidebar-navigation-error,
+.thread-file-preview-reveal-error {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 .thread-plan-panel,
 .thread-todo-checklist {
   user-select: text;
