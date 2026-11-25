@@ -2,7 +2,7 @@
 import { act,cleanup,fireEvent,render,screen,waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach,expect,it,vi } from 'vitest';
-const h=vi.hoisted(() => ({event:(_:any) => {},updated:(_:any) => {},reconnect:() => {},off:vi.fn(),get:vi.fn(),createTerminal:vi.fn(),addTab:vi.fn(),selectPin:vi.fn(),panelProps:null as any,bottomProps:null as any,diffProps:null as any,newTabProps:null as any,browserProps:[] as any[],activateTab:vi.fn(),setTabState:vi.fn(),dockEnabled:false,basicCompact:false,timeline:vi.fn(),upsert:vi.fn(),state:{tabs:[] as any[],isOpen:true,isMaximized:false,activeId:'info' as string | null,widthPx:320}}));
+const h=vi.hoisted(() => ({event:(_:any) => {},updated:(_:any) => {},reconnect:() => {},off:vi.fn(),get:vi.fn(),createTerminal:vi.fn(),addTab:vi.fn(),selectPin:vi.fn(),panelProps:null as any,bottomProps:null as any,diffProps:null as any,newTabProps:null as any,browserProps:[] as any[],activateTab:vi.fn(),setTabState:vi.fn(),dockEnabled:false,basicCompact:false,compact:false,open:vi.fn(),timeline:vi.fn(),upsert:vi.fn(),state:{tabs:[] as any[],isOpen:true,isMaximized:false,activeId:'info' as string | null,widthPx:320}}));
 vi.mock('../../hooks/useHosts.js', () => ({ useHosts: () => [] }));
 vi.mock('../../lib/product-client.js',() => ({product:{environments:{status:vi.fn(async () => ({branchName:null})),pullRequest:vi.fn(async () => ({pullRequest:null}))},terminals:{create:h.createTerminal},threads:{get:h.get,timeline:h.timeline,onEvent:(fn:any) => {h.event=fn;return h.off;},onUpdated:(fn:any) => {h.updated=fn;return h.off;}}}}));
 vi.mock('../../lib/product-ws.js',() => ({subscribeProductReconnect:(fn:any) => {h.reconnect=fn;return h.off;}}));
@@ -10,9 +10,9 @@ vi.mock('../../thread-store.js',async original => ({...await original<any>(),use
 vi.mock('../../store.js',() => ({useData:(pick:any) => pick({projects:[],dockableThreadToolsEnabled:h.dockEnabled})}));
 vi.mock('../../hooks/useRouteState.js',() => ({useRouteState:() => ({threadId:'a',isProjectFocused:false})}));
 vi.mock('../../hooks/useBasicPanelLayout.js', () => ({useBasicPanelLayout: (_ref:any, basic:boolean) => basic && h.basicCompact}));
-vi.mock('../../hooks/useCompactLayout.js',() => ({useCompactLayout:() => false}));
+vi.mock('../../hooks/useCompactLayout.js',() => ({useCompactLayout:() => h.compact}));
 vi.mock('../../components/useMobileThreadTitleTarget.js',() => ({useMobileThreadTitleTarget:() => null,useMobileThreadActionsTarget:() => null,useMobileThreadControlsTarget:() => null}));
-vi.mock('../../components/thread/secondary-panel/useThreadSecondaryPanel.js',() => ({useThreadSecondaryPanel:() => ({state:h.state,open:() => {},addTab:h.addTab,selectPin:h.selectPin,activateTab:h.activateTab,patchTab:() => {},setTabState:h.setTabState})}));
+vi.mock('../../components/thread/secondary-panel/useThreadSecondaryPanel.js',() => ({useThreadSecondaryPanel:() => ({state:h.state,open:h.open,addTab:h.addTab,selectPin:h.selectPin,activateTab:h.activateTab,patchTab:() => {},setTabState:h.setTabState})}));
 vi.mock('../../components/thread/secondary-panel/ThreadSecondaryPanel.js',() => ({ThreadSecondaryPanel:(props:any) => { if (props.dock?.side !== 'bottom') h.panelProps=props; else h.bottomProps=props; return <aside data-testid="secondary-panel">{props.children}</aside>; }}));
 vi.mock('../../components/thread/secondary-panel/BrowserTabDeck.js',() => ({BrowserTabDeck:(props:any) => {h.browserProps.push(props);return null;}}));
 vi.mock('../../components/thread/secondary-panel/useInAppBrowserPanel.js',() => ({useInAppBrowserPanel:() => {}}));
@@ -24,7 +24,7 @@ vi.mock('../../components/thread/pending-interactions/useOpenPendingInteractions
 vi.mock('../../components/ThreadCommandComposer.js',() => ({ThreadCommandComposer:({serviceTier}:any) => <div data-testid="composer-tier">{serviceTier ?? 'default'}</div>}));
 vi.mock('../../components/thread/ThreadTimeline.js',() => ({ThreadTimeline:({rows,hasOlder,loadingOlder,onLoadOlder,searchHitRowId,forceExpandedRowIds,loadError,onOpenDiff}:any) => <div><button onClick={() => onOpenDiff?.('a.ts')}>Open changed file</button>{rows.length} rows<div data-testid="selected-message">{searchHitRowId}</div><div data-testid="expanded-messages">{[...(forceExpandedRowIds ?? [])].join(',')}</div>{loadError && <div role="alert">{loadError}</div>}{hasOlder && <button disabled={loadingOlder} onClick={onLoadOlder}>Load older</button>}</div>}));
 vi.mock('../../components/thread/ThreadWorkspaceBanner.js',() => ({ThreadWorkspaceBanner:() => null}));
-vi.mock('../../components/thread/ThreadDetailOverflow.js',() => ({ThreadDetailOverflow:() => null}));
+vi.mock('../../components/thread/ThreadDetailOverflow.js',() => ({ThreadDetailOverflow:({onOpenTools}: { onOpenTools?: () => void }) => onOpenTools ? <button onClick={onOpenTools}>Open tools from agent actions</button> : null}));
 vi.mock('../../components/thread/ThreadDetailSearch.js',() => ({ThreadDetailSearch:() => null}));
 vi.mock('../../components/thread/timeline/ThreadBanners.js',() => ({ThreadDetailHeading:({title}:any) => <h1>{title}</h1>,ThreadDetailActions:({children}:any) => children,ThreadPromptModeCard:() => null,ThreadStatusBadge:() => null,ThreadTodoCard:() => null}));
 vi.mock('../../components/thread/timeline/ComposerStackCards.js',() => ({BackgroundCommandsCard:() => null,ModelFallbackCard:() => null,PromptContextBanner:() => null,QueuedMessagesCard:() => null}));
@@ -44,7 +44,7 @@ import { clearPluginSlots, interpretPluginApp } from '../../plugins/plugin-slots
 import { readThreadRecentItems } from '../../components/thread/secondary-panel/threadRecentItems.js';
 import { ThreadDetail } from './ThreadDetailView.js';
 import { getBasicUiMode, setBasicUiMode } from '../../lib/basic-ui.js';
-afterEach(() => {cleanup();setBasicUiMode('advanced');vi.clearAllMocks();h.dockEnabled=false;h.basicCompact=false;h.bottomProps=null;h.browserProps=[];localStorage.clear();});
+afterEach(() => {cleanup();setBasicUiMode('advanced');vi.clearAllMocks();h.dockEnabled=false;h.basicCompact=false;h.compact=false;h.bottomProps=null;h.browserProps=[];localStorage.clear();});
 
 const tabs = [
   { id: 't-new', kind: 'new-tab', title: 'New Tab' },
@@ -271,6 +271,34 @@ it('makes a narrow Basic result exclusive and restores the same composer on retu
   expect(screen.getByTestId('composer-tier')).toBe(composer);
   act(() => setBasicUiMode('advanced'));
   expect(screen.getByTestId('thread-detail').hasAttribute('data-basic-panel-compact')).toBe(false);
+});
+
+it('opens compact tools in both views and keeps the covered conversation inert', async () => {
+  h.compact = true;
+  h.basicCompact = true;
+  h.state = { tabs, isOpen: false, isMaximized: false, activeId: 'info', widthPx: 320 };
+  h.get.mockResolvedValue({ thread: { id: 'a', title: 'Mobile chat', status: 'idle', createdAt: 1 } });
+  h.timeline.mockResolvedValue({ rows: [], maxSeq: 0, status: 'idle' });
+  const ui = () => <MemoryRouter><ThreadDetail threadId="a" /></MemoryRouter>;
+  const view = render(ui());
+  await screen.findByRole('heading', { name: 'Mobile chat' });
+
+  fireEvent.click(screen.getByRole('button', { name: 'Open tools from agent actions' }));
+  expect(h.open).toHaveBeenCalledOnce();
+  expect(screen.queryByRole('button', { name: 'Show right panel' })).toBeNull();
+  const chat = screen.getByTestId('composer-tier').closest<HTMLElement>('.thread-detail-main')!;
+  h.state = { ...h.state, isOpen: true };
+  view.rerender(ui());
+  expect(chat.hidden).toBe(false);
+  expect(chat.hasAttribute('inert')).toBe(true);
+  expect(screen.queryByRole('button', { name: 'Open tools from agent actions' })).toBeNull();
+
+  h.state = { ...h.state, isOpen: false };
+  act(() => setBasicUiMode('basic'));
+  expect(chat.hasAttribute('inert')).toBe(false);
+  fireEvent.click(screen.getByRole('button', { name: 'Conversation actions' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Thread tools' }));
+  expect(h.open).toHaveBeenCalledTimes(2);
 });
 
 it('opens new-tab thread-storage matches as storage previews and records them as recents', async () => {
