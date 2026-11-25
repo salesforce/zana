@@ -28,6 +28,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { posixQuote } from '../lib/quote.js';
 import { attachmentName } from '../lib/attachments.js';
 import { persistComposerImages } from '../lib/prompt-attachments.js';
+import { launchLocationLabel } from '../lib/launch-location-label.js';
 import { ComposerProjectPicker } from './ComposerProjectPicker.js';
 import { composerProjectOptions, preferredComposerProjectId, resolveComposerProjectId, type ComposerProjectSelectionProps } from './composer-project-default.js';
 import { PluginComposerChrome } from '../plugins/PluginComposerChrome.js';
@@ -724,9 +725,7 @@ export function TeamComposer({
         {reviewedBound ? <p role="note">Reviewed launch policies and target are fixed. Prepare a new proposal to change them.</p> : null}
         <div aria-label="Effective launch settings" role="status">
           {selectedTeam && (launchPick === 'MODERN' && projectIsRemote ? <p className="team-launch-mode-note" role="alert" data-testid="team-launch-mode-note">Modern Squads need a local Project</p> : transportView.fallbackReason ? <p className="team-launch-mode-note" data-testid="team-launch-mode-note">{transportView.fallbackReason}</p> : null)}
-          {currentPreview?.preview ? <p>Location: {currentPreview.preview.location.kind === 'new-worktree'
-            ? `New worktree from ${currentPreview.preview.location.baseBranch} — isolation: ${currentPreview.preview.location.isolationSource}; path assigned at launch`
-            : `${currentPreview.preview.branch} — ${currentPreview.preview.path}${currentPreview.preview.location.kind === 'worktree' ? ' (user-owned)' : ' (Project)'}`}</p> : null}
+          {currentPreview?.preview ? <p>Location: {launchLocationLabel(currentPreview.preview)}</p> : null}
           {resolved?.push.value ? <p>Push allowed ({resolved.push.source})</p> : null}
           {resolved && resolved.onComplete.value !== 'leave' ? <p>{resolved.onComplete.value === 'merge' ? 'Merge' : 'Delete'} on completion ({resolved.onComplete.source})</p> : null}
           {!resolved ? <p>{!optionsValid.success ? 'Invalid launch options or incompatible target.' : currentPreview?.error ?? 'Validating launch plan, sources, and target…'}</p> : null}
