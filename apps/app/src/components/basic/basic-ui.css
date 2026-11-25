@@ -44,8 +44,21 @@
 .basic-ui-conversation-menu-toggle[aria-checked='true'] .basic-ui-conversation-menu-switch { background: var(--accent-blue); }
 .basic-ui-conversation-menu-toggle[aria-checked='true'] .basic-ui-conversation-menu-switch::after { left: 13px; }
 @media (prefers-reduced-motion: reduce) { .basic-ui-conversation-menu-switch, .basic-ui-conversation-menu-switch::after { transition: none; } }
-.basic-ui-chat-row { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 8px; text-decoration: none; color: var(--text-primary); }
-.basic-ui-chat-row:hover, .basic-ui-chat-row.is-active { background: var(--sidebar-hover); }
+.basic-ui-chat-item { display: flex; align-items: center; border-radius: 8px; }
+.basic-ui-chat-item:hover, .basic-ui-chat-item:focus-within, .basic-ui-chat-item:has(.is-active, [aria-expanded='true']) { background: var(--sidebar-hover); }
+.basic-ui-chat-row { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; padding: 8px 6px 8px 10px; border-radius: 8px; text-decoration: none; color: var(--text-primary); }
+.basic-ui-chat-title { display: flex; align-items: center; gap: 5px; }
+.basic-ui-chat-title > svg { flex-shrink: 0; color: var(--text-muted); }
+.basic-ui-chat-actions.basic-ui-conversation-menu-button { flex-shrink: 0; width: 28px; height: 28px; margin-right: 4px; }
+@media (hover: hover) and (pointer: fine) {
+  .basic-ui-chat-actions { opacity: 0; pointer-events: none; }
+  .basic-ui-chat-item:is(:hover, :has(:focus-visible)) .basic-ui-chat-actions,
+  .basic-ui-chat-actions[aria-expanded='true'] { opacity: 1; pointer-events: auto; }
+}
+.basic-ui .basic-ui-chat-row:focus-visible, .basic-ui .basic-ui-chat-actions:focus-visible { outline-offset: -2px; }
+@media (pointer: coarse) {
+  .basic-ui-chat-actions.basic-ui-conversation-menu-button { width: 44px; height: 44px; }
+}
 .basic-ui-chat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .basic-ui-chat-meta { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 10px; line-height: 14px; }
 .basic-ui-chat-project {

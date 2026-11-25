@@ -613,6 +613,14 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
     await sidePanel.getByRole('button', { name: 'Back to chat', exact: true }).click();
     await expect(sidePanel).toBeHidden();
     await phone.getByRole('button', { name: 'Open conversations', exact: true }).click();
+    const basicRow = drawer.getByTestId(`basic-chat-row-${threadId}`).locator('..');
+    const rowActions = basicRow.getByRole('button', { name: /^Actions for / });
+    await rowActions.tap();
+    const basicRowMenu = drawer.getByRole('menu', { name: /^Actions for / });
+    await expect(basicRowMenu.getByRole('menuitem', { name: 'Archive' })).toBeInViewport();
+    await phone.keyboard.press('Escape');
+    await expect(basicRowMenu).toHaveCount(0);
+    await expect(rowActions).toBeFocused();
     await drawer.getByRole('button', { name: 'Interface view Basic', exact: true }).click();
     await expect(interfaceSheet.getByRole('button', { name: 'Basic', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await interfaceSheet.getByRole('button', { name: 'Advanced', exact: true }).click();

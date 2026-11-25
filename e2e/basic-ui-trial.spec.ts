@@ -480,6 +480,70 @@ test('Basic conversation menu sorts, shows archived history and keeps the choice
   await page.evaluate(() => localStorage.removeItem('zana.basicSidebar.conversationView'));
 });
 
+test('Basic conversation row actions pin, rename, archive and restore a chat', async ({ app }) => {
+  const page = app.window;
+  await dismissConsentOverlays(page);
+  await resize(app, 900, 640);
+  const { ids: [first, second] } = await projectAndThreads(app, ['Release checklist', 'Deployment notes']);
+  await basic(page).click();
+
+  const row = sidebar(page).getByTestId(`basic-chat-row-${first}`);
+  const actions = (name: string) => sidebar(page).getByRole('button', { name: `Actions for ${name}`, exact: true });
+  const item = (name: string) => page.getByRole('menuitem', { name, exact: true });
+  await sidebar(page).getByTestId(`basic-chat-row-${second}`).click();
+  await expect(page).toHaveURL(new RegExp(`/threads/${second}$`));
+  const releaseActions = actions('Release checklist');
+  await expect(releaseActions).toHaveCSS('opacity', '0');
+  await row.hover();
+  await expect(releaseActions).toHaveCSS('opacity', '1');
+  const heading = sidebar(page).getByRole('heading', { name: 'Conversations', exact: true });
+  await heading.hover();
+  await expect(releaseActions).toHaveCSS('opacity', '0');
+  await row.press('Tab');
+  await expect(releaseActions).toBeFocused();
+  await expect(releaseActions).toHaveCSS('opacity', '1');
+  await page.keyboard.press('ArrowDown');
+  await expect(item('Pin')).toBeFocused();
+  await expect(releaseActions).toHaveCSS('opacity', '1');
+  await page.keyboard.press('Escape');
+  await expect(actions('Release checklist')).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await item('Pin').click();
+  await expect(sidebar(page).locator('.basic-ui-chat-row').first()).toHaveAttribute('aria-label', /Release checklist.*pinned/);
+  await expect(page).toHaveURL(new RegExp(`/threads/${second}$`));
+
+  await row.hover();
+  await releaseActions.click();
+  await item('Rename').click();
+  const rename = page.getByRole('dialog', { name: 'Rename conversation' });
+  await rename.getByRole('textbox', { name: 'Title' }).fill('Release handoff');
+  await rename.getByRole('button', { name: 'Rename' }).click();
+  await expect(row).toContainText('Release handoff');
+  await row.click();
+  await expect(page).toHaveURL(new RegExp(`/threads/${first}$`));
+  await actions('Release handoff').click();
+  page.once('dialog', dialog => dialog.accept());
+  await item('Archive').click();
+  await expect(row).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Advanced view' })).toHaveAttribute('aria-pressed', 'false');
+  await expect(page).not.toHaveURL(new RegExp(`/threads/${first}$`));
+
+  const selectStatus = async (name: string) => {
+    await sidebar(page).getByRole('button', { name: 'Conversation view options' }).click();
+    await page.getByRole('menuitem', { name: /^Status/ }).click();
+    await page.getByRole('menuitemradio', { name, exact: true }).click();
+    await page.keyboard.press('Escape');
+  };
+  await selectStatus('Archived');
+  await expect(row).toContainText('Archived');
+  await row.hover();
+  await actions('Release handoff').click();
+  await item('Restore').click();
+  await expect(row).toHaveCount(0);
+  await selectStatus('Active');
+  await expect(row).toContainText('Release handoff');
+});
+
 test('Basic is opt-in, keeps a full searchable conversation list, and restores Advanced splits', async ({ app }, testInfo) => {
   const page = app.window;
   await dismissConsentOverlays(page);
