@@ -1,5 +1,29 @@
 import { useEffect, useRef, type RefObject } from 'react';
 
+const claimedEscapes = new WeakSet<Event>();
+
+/** Attribute the composer editor carries to opt in to the Escape rule below. */
+export const ESC_CLOSES_DIALOG_ATTR = 'data-esc-closes-dialog';
+
+/** An editor feature (e.g. closing its typeahead menu) consumed this Escape; the dialog must stay open. */
+export function claimEscape(event: Event): void {
+  claimedEscapes.add(event);
+}
+
+/**
+ * ProseMirror calls preventDefault on every Escape keydown it receives, so a focused
+ * composer editor always arrives defaultPrevented. For editors that opt in with
+ * {@link ESC_CLOSES_DIALOG_ATTR} that alone must not block the dialog; only an
+ * explicit claim (`claimEscape`) does. Every other default-prevented Escape
+ * (nested pickers, plugin editors) still wins over the dialog.
+ */
+function escapeHandledElsewhere(e: KeyboardEvent): boolean {
+  if (!e.defaultPrevented) return false;
+  if (claimedEscapes.has(e)) return true;
+  const target = e.target;
+  return !(target instanceof Element && target.closest(`[${ESC_CLOSES_DIALOG_ATTR}]`));
+}
+
 /**
  * Modal-dialog focus affordances shared by the agent launchers:
  *   - Escape calls `onClose`,
@@ -14,25 +38,6 @@ import { useEffect, useRef, type RefObject } from 'react';
  * unmount focus-restore mid-life, yanking focus back to the dialog's first
  * field on every parent render — the bug this guards against.
  */
-const claimedEscapes = new WeakSet<Event>();
-
-/** An editor feature (e.g. closing its typeahead menu) consumed this Escape; the dialog must stay open. */
-export function claimEscape(event: Event): void {
-  claimedEscapes.add(event);
-}
-
-/**
- * ProseMirror calls preventDefault on every Escape keydown it sees, so a focused
- * editor always arrives defaultPrevented. That alone must not block the dialog;
- * only an explicit claim (or a non-editor handler) does.
- */
-function escapeHandledElsewhere(e: KeyboardEvent): boolean {
-  if (!e.defaultPrevented) return false;
-  if (claimedEscapes.has(e)) return true;
-  const target = e.target;
-  return !(target instanceof Element && target.closest('.ProseMirror'));
-}
-
 export function useDialogFocusTrap(
   dialogRef: RefObject<HTMLElement | null>,
   onClose: (() => void) | undefined,

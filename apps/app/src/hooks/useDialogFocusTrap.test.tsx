@@ -75,7 +75,7 @@ function editorEscape(editor: Element, claim: boolean) {
 function EditorFixture({ close }: { close: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   useDialogFocusTrap(ref, close);
-  return <div ref={ref} role="dialog"><div className="tiptap ProseMirror" contentEditable data-testid="pm" /><div data-testid="plain" /></div>;
+  return <div ref={ref} role="dialog"><div className="tiptap ProseMirror" contentEditable data-esc-closes-dialog="true" data-testid="pm" /><div className="ProseMirror" contentEditable data-testid="other-editor" /><div data-testid="plain" /></div>;
 }
 it('closes on Escape from a ProseMirror editor even though the editor prevented default', () => {
   const close = vi.fn();
@@ -93,5 +93,11 @@ it('still ignores a default-prevented Escape from outside an editor', () => {
   const close = vi.fn();
   render(<EditorFixture close={close} />);
   editorEscape(screen.getByTestId('plain'), false);
+  expect(close).not.toHaveBeenCalled();
+});
+it('does not close on a default-prevented Escape from an editor that has not opted in (plugin editors)', () => {
+  const close = vi.fn();
+  render(<EditorFixture close={close} />);
+  editorEscape(screen.getByTestId('other-editor'), false);
   expect(close).not.toHaveBeenCalled();
 });

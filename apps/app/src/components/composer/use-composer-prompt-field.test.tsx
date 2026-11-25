@@ -17,7 +17,7 @@ vi.mock('../../lib/native-capabilities.js', () => ({ nativeCapabilities: native 
 const attachments = vi.hoisted(() => ({ desktop: false, pickFiles: vi.fn(async (): Promise<string[]> => []) }));
 const suggestionState = vi.hoisted(() => ({ commands: [] as Array<{ name: string; description: string }>, menuOpen: false }));
 const claim = vi.hoisted(() => ({ claimEscape: vi.fn() }));
-vi.mock('../../hooks/useDialogFocusTrap.js', () => ({ claimEscape: claim.claimEscape }));
+vi.mock('../../hooks/useDialogFocusTrap.js', () => ({ claimEscape: claim.claimEscape, ESC_CLOSES_DIALOG_ATTR: 'data-esc-closes-dialog' }));
 const editorState = vi.hoisted(() => ({
   json: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'before' }] }] } as unknown,
   options: undefined as undefined | {

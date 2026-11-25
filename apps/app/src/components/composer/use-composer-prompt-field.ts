@@ -12,7 +12,7 @@ import { apiJson } from '../../lib/fetch-with-app-surface.js';
 import { COMPOSER_COMMANDS_RELOAD_EVENT } from '../../lib/composer-commands-reload.js';
 import { isHostUnavailableError } from '../../lib/host-unavailable.js';
 import { product } from '../../lib/product-client.js';
-import { claimEscape } from '../../hooks/useDialogFocusTrap.js';
+import { claimEscape, ESC_CLOSES_DIALOG_ATTR } from '../../hooks/useDialogFocusTrap.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { PROJECT_DRAG_MIME, projectFromDrag } from '../../lib/project-drag.js';
 import {
@@ -271,6 +271,7 @@ export function useComposerPromptField({
       attributes: {
         class: 'ui-command-composer-input thread-command-editor',
         'data-testid': testId,
+        [ESC_CLOSES_DIALOG_ATTR]: 'true',
         ...(ariaLabel ? { 'aria-label': ariaLabel } : {})
       },
       handleDrop: (_view, event) => {
