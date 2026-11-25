@@ -67,7 +67,7 @@ import { parseProfile } from '@zana-ai/zcc-domain/launch-provider';
 import { scheduleSummary } from '@zana-ai/zcc-domain/schedule-spec';
 import { scheduleRunQuerySchema, scheduleRunRefsSchema } from '@zana-ai/zcc-server/services/scheduler/schedule-run-schemas';
 import { scheduleDefinitionPatchSchema } from '@zana-ai/zcc-server/services/scheduler/schedule-manage-mcp-tools';
-import { parsePluginToolApprovalRequest, type PluginApprovalResult } from '@zana-ai/zcc-server/http/plugin-approval-proof';
+import { PLUGIN_APPROVAL_TTL_MS, parsePluginToolApprovalRequest, type PluginApprovalResult } from '@zana-ai/zcc-server/http/plugin-approval-proof';
 
 /** Caps a single request line so a malformed/hostile client can't balloon memory. */
 const MAX_REQUEST_BYTES = 256 * 1024;
@@ -75,6 +75,12 @@ const MAX_REQUEST_BYTES = 256 * 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
 /** Authenticated plugin scripts/install preparation may take several minutes. */
 const PLUGIN_CLI_TIMEOUT_MS = 300_000;
+
+/** Approval timer length: the parser already bounds it; clamp again where the timer is armed. */
+export function boundedApprovalTimerMs(requested: number | undefined): number {
+  if (requested === undefined || !Number.isFinite(requested)) return PLUGIN_APPROVAL_TTL_MS;
+  return Math.min(Math.max(Math.trunc(requested), 1), PLUGIN_APPROVAL_TTL_MS);
+}
 /**
  * Ceiling on simultaneous in-flight connections (CLAUDE.md #5 — bound unbounded
  * work on the main event loop). The CLI is one-request-per-connection and short;
@@ -1161,7 +1167,7 @@ async function handleConnection(
       const request = parsePluginToolApprovalRequest(authd.args);
       if (request.ok) {
         clearTimeout(timer);
-        timer = setTimeout(() => finish({ ok: true, value: { approved: false, reason: 'timeout' } }), request.value.timeoutMs!);
+        timer = setTimeout(() => finish({ ok: true, value: { approved: false, reason: 'timeout' } }), boundedApprovalTimerMs(request.value.timeoutMs));
       }
     }
     try {
