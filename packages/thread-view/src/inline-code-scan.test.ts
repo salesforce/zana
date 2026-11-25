@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { LINEAR_TIME_BUDGET_MS, allStrings } from "@zana-ai/zcc-domain/linear-time-testing";
 import { scanInlineCode } from "./inline-code-scan.js";
 
 // The regex this scanner replaced; kept as the oracle.
@@ -10,17 +11,6 @@ function reference(text: string) {
     length: m[0].length,
     content: m[2]!,
   }));
-}
-
-function* allStrings(alphabet: readonly string[], maxTokens: number): Generator<string> {
-  let layer = [""];
-  yield "";
-  for (let n = 1; n <= maxTokens; n += 1) {
-    const next: string[] = [];
-    for (const prefix of layer) for (const token of alphabet) next.push(prefix + token);
-    yield* next;
-    layer = next;
-  }
 }
 
 describe("scanInlineCode", () => {
@@ -59,7 +49,7 @@ describe("scanInlineCode", () => {
     for (const input of ["`".repeat(100_000), "`a".repeat(50_000), "`".repeat(50_000) + "x"]) {
       const start = performance.now();
       scanInlineCode(input);
-      expect(performance.now() - start).toBeLessThan(2_000);
+      expect(performance.now() - start).toBeLessThan(LINEAR_TIME_BUDGET_MS);
     }
   });
 });

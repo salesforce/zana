@@ -1,16 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { LINEAR_TIME_BUDGET_MS, allStrings } from "@zana-ai/zcc-domain/linear-time-testing";
 import { parseBearerToken } from "./bearer-token.js";
-
-function* allStrings(alphabet: readonly string[], maxTokens: number): Generator<string> {
-  let layer = [""];
-  yield "";
-  for (let n = 1; n <= maxTokens; n += 1) {
-    const next: string[] = [];
-    for (const prefix of layer) for (const token of alphabet) next.push(prefix + token);
-    yield* next;
-    layer = next;
-  }
-}
 
 describe("parseBearerToken", () => {
   it("extracts the token case-insensitively", () => {
@@ -46,6 +36,6 @@ describe("parseBearerToken", () => {
     const input = `Bearer${" ".repeat(100_000)}\n`;
     const start = performance.now();
     expect(parseBearerToken(input)).toBeUndefined();
-    expect(performance.now() - start).toBeLessThan(2_000);
+    expect(performance.now() - start).toBeLessThan(LINEAR_TIME_BUDGET_MS);
   });
 });

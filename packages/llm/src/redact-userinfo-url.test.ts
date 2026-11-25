@@ -1,20 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { LINEAR_TIME_BUDGET_MS, allStrings } from '@zana-ai/zcc-domain/linear-time-testing';
 import { redactUserinfoUrls } from './redact-userinfo-url.js';
 import { redactTranscript } from './redact-transcript.js';
 
 // The regex this scanner replaced; kept as the oracle.
 const REFERENCE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@[^\s/]+/gi;
-
-function* allStrings(alphabet: readonly string[], maxTokens: number): Generator<string> {
-  let layer = [''];
-  yield '';
-  for (let n = 1; n <= maxTokens; n += 1) {
-    const next: string[] = [];
-    for (const prefix of layer) for (const token of alphabet) next.push(prefix + token);
-    yield* next;
-    layer = next;
-  }
-}
 
 describe('redactUserinfoUrls', () => {
   it('redacts credential URLs and leaves the rest', () => {
@@ -42,6 +32,6 @@ describe('redactUserinfoUrls', () => {
     const input = 'a.'.repeat(100_000);
     const start = performance.now();
     expect(redactUserinfoUrls(input, 'R')).toBe(input);
-    expect(performance.now() - start).toBeLessThan(2_000);
+    expect(performance.now() - start).toBeLessThan(LINEAR_TIME_BUDGET_MS);
   });
 });
