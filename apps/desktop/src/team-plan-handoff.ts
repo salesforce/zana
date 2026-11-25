@@ -365,6 +365,12 @@ export interface PlanHandoffDeps {
    * if no working edge is ever reported, the next idle edge nudges as usual.
    */
   requireTurnStart?: boolean;
+  /**
+   * Bounded timed re-check: after the first idle edge, look for a registrable plan every
+   * `intervalMs` until `windowMs` has passed (keep it inside the startup grace). It only reads and
+   * registers a valid plan; it never nudges, so it cannot spend the nudge budget.
+   */
+  timedRecheck?: { intervalMs: number; windowMs: number };
   /** DIAGNOSTIC: one bounded line per idle edge and per decision that sends nothing; observes only. */
   diagnose?(line: PlanHandoffDiagnostic): void;
 }
@@ -422,6 +428,9 @@ interface HandoffState {
   sessionId?: string;
   /** Plan the host last rejected (path + content digest): once exhausted it is not re-submitted unchanged. */
   lastRejected?: string;
+  /** Pending timed re-check, cleared on registration, release or window end. */
+  timer?: ReturnType<typeof setTimeout>;
+  recheckDeadline?: number;
 }
 
 /**
@@ -439,7 +448,47 @@ export class TeamPlanHandoff {
 
   /** Drop per-execution state on team dismissal / terminal settlement. */
   forget(executionId: string): void {
+    this.release(executionId);
+  }
+
+  private release(executionId: string): void {
+    const entry = this.state.get(executionId);
+    if (entry?.timer) clearTimeout(entry.timer);
     this.state.delete(executionId);
+  }
+
+  private scheduleRecheck(ctx: CoordinatorHandoffContext, entry: HandoffState): void {
+    const cfg = this.deps.timedRecheck;
+    if (!cfg || entry.timer || entry.done) return;
+    entry.recheckDeadline ??= Date.now() + cfg.windowMs;
+    if (Date.now() >= entry.recheckDeadline) return;
+    entry.timer = setTimeout(() => {
+      entry.timer = undefined;
+      void this.timedRecheckTick(ctx, entry);
+    }, cfg.intervalMs);
+    entry.timer.unref?.();
+  }
+
+  private async timedRecheckTick(ctx: CoordinatorHandoffContext, entry: HandoffState): Promise<void> {
+    if (entry.done || this.state.get(ctx.executionId) !== entry) return;
+    if (!entry.inFlight) {
+      entry.inFlight = true;
+      try {
+        const planless = await this.deps.isPlanless(ctx.projectId, ctx.executionId);
+        if (!planless) {
+          entry.done = true;
+          return;
+        }
+        const read = await this.deps.readAuthoredPlan(ctx.projectRoot, ctx.executionId);
+        this.diag(ctx, { event: 'skip', note: `timed re-check: ${read.status}` });
+        if (read.status === 'ok') await this.handleOk(entry, this.deps.maxNudges ?? 2, ctx, read);
+      } catch (error) {
+        this.deps.logError(`team plan handoff recheck ${ctx.sessionId}`, error);
+      } finally {
+        entry.inFlight = false;
+      }
+    }
+    if (!entry.done && this.state.get(ctx.executionId) === entry) this.scheduleRecheck(ctx, entry);
   }
 
   /** The host saw the coordinator working: its first turn has started, so an idle edge now means a finished turn. */
@@ -452,7 +501,7 @@ export class TeamPlanHandoff {
   /** Release every entry owned by an exited orchestrator session (the run is over for the handoff). */
   forgetSession(sessionId: string): void {
     for (const [executionId, entry] of this.state) {
-      if (entry.sessionId === sessionId) this.state.delete(executionId);
+      if (entry.sessionId === sessionId) this.release(executionId);
     }
   }
 
@@ -470,6 +519,7 @@ export class TeamPlanHandoff {
     entry.sessionId = ctx.sessionId;
     this.diag(ctx, { event: 'edge', nudges: entry.nudges, inFlight: entry.inFlight, turnStarted: !!entry.turnStarted, ...(entry.done ? { note: 'done' } : {}) });
     if (entry.done) return;
+    this.scheduleRecheck(ctx, entry);
     if (entry.inFlight) {
       // Never drop an edge: the running pass may have read the file before it was written.
       entry.rerun = true;

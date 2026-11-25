@@ -8020,7 +8020,8 @@ teamPlanHandoff = new TeamPlanHandoff({
     log: warnLog
   }),
   diagnose: planHandoffDiagnostics(warnLog),
-  requireTurnStart: true
+  requireTurnStart: true,
+  timedRecheck: { intervalMs: 15_000, windowMs: 270_000 }
 });
 const apiErrorDispatchCtx: DispatchCtx = createApiErrorDispatchCtx({
   ptys,

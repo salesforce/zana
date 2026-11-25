@@ -1215,3 +1215,85 @@ describe('stall notice against the real inbox store', () => {
     }
   });
 });
+
+describe('TeamPlanHandoff bounded timed re-check', () => {
+  const ctx: CoordinatorHandoffContext = {
+    sessionId: 's-t', projectId: 'p-1', projectRoot: '/root', executionId: 'exec-t', slotId: 'orchestrator:lead'
+  };
+  const units: ExecutionWorkUnitInput[] = [{ id: 'a', title: 'A', task: 'do a', dependencies: [] }];
+
+  function build(read: { current: AuthoredPlanRead }, planless = { v: true }) {
+    const register = vi.fn(async () => ({ ok: true }));
+    const nudge = vi.fn();
+    const readAuthoredPlan = vi.fn(async () => read.current);
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => planless.v,
+      readAuthoredPlan,
+      register,
+      nudge,
+      cleanup: async () => {},
+      logError: () => {},
+      maxNudges: 2,
+      timedRecheck: { intervalMs: 1000, windowMs: 3500 }
+    });
+    return { handoff, register, nudge, readAuthoredPlan };
+  }
+
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('registers a plan that appears after the last idle edge, without sending a nudge', async () => {
+    const read = { current: { status: 'missing' } as AuthoredPlanRead };
+    const { handoff, register, nudge } = build(read);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(nudge).toHaveBeenCalledTimes(1);
+    read.current = { status: 'ok', units, realPath: '/root/.zana/p.md' };
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(register).toHaveBeenCalledTimes(1);
+    expect(nudge).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(register).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops re-checking when the window ends', async () => {
+    const read = { current: { status: 'missing' } as AuthoredPlanRead };
+    const { handoff, readAuthoredPlan, nudge } = build(read);
+    await handoff.onCoordinatorIdle(ctx);
+    const afterEdge = readAuthoredPlan.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(20000);
+    const ticks = readAuthoredPlan.mock.calls.length - afterEdge;
+    expect(ticks).toBeGreaterThan(0);
+    expect(ticks).toBeLessThanOrEqual(4);
+    expect(nudge).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops when the execution already has a plan, and when the session is released', async () => {
+    const read = { current: { status: 'missing' } as AuthoredPlanRead };
+    const planless = { v: true };
+    const first = build(read, planless);
+    await first.handoff.onCoordinatorIdle(ctx);
+    planless.v = false;
+    await vi.advanceTimersByTimeAsync(1000);
+    const reads = first.readAuthoredPlan.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(first.readAuthoredPlan.mock.calls.length).toBe(reads);
+
+    const second = build(read);
+    await second.handoff.onCoordinatorIdle(ctx);
+    const before = second.readAuthoredPlan.mock.calls.length;
+    second.handoff.forgetSession('s-t');
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(second.readAuthoredPlan.mock.calls.length).toBe(before);
+  });
+
+  it('survives a failing read inside a tick and keeps going', async () => {
+    const read = { current: { status: 'missing' } as AuthoredPlanRead };
+    const { handoff, readAuthoredPlan, register } = build(read);
+    await handoff.onCoordinatorIdle(ctx);
+    readAuthoredPlan.mockRejectedValueOnce(new Error('disk'));
+    await vi.advanceTimersByTimeAsync(1000);
+    read.current = { status: 'ok', units, realPath: '/root/.zana/p.md' };
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(register).toHaveBeenCalledTimes(1);
+  });
+});
