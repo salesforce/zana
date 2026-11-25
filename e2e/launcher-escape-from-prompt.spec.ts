@@ -52,6 +52,9 @@ test('Esc closes the launch dialog from the focused prompt box on every tab', { 
     await expect(modal).toBeVisible();
     await modal.locator('[data-launch-mode="agent"]').click();
     await modal.locator('.ProseMirror').first().click();
+    // The launcher keeps its draft across close and reopen, so start from an empty box: "/" only opens the menu at the start.
+    await window.keyboard.press('Control+A');
+    await window.keyboard.press('Backspace');
     await window.keyboard.type('/');
     const menu = window.getByTestId('composer-typeahead-menu');
     await expect(menu).toBeVisible();
