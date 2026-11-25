@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ControlError } from './errors.js';
 import { ProductHttpClient, probeHealth } from './http.js';
+import { trimTrailingSlashes } from './trim-slashes.js';
 import { DEFAULT_DEV_URL, DEFAULT_PROD_URL, type ConnectOptions, type ProviderMode } from './types.js';
 
 export interface ResolvedConnect {
@@ -16,7 +17,7 @@ function defaultDataDirFor(serverUrl: string, override?: string): string {
   if (override) return override;
   if (process.env.ZCC_DATA_DIR) return process.env.ZCC_DATA_DIR;
   if (process.env.ZCC_CENTER_DIR) return process.env.ZCC_CENTER_DIR;
-  const trimmed = serverUrl.replace(/\/+$/, '');
+  const trimmed = trimTrailingSlashes(serverUrl);
   if (trimmed === DEFAULT_DEV_URL) return join(homedir(), '.zcc-dev');
   return join(homedir(), '.zcc');
 }
@@ -35,7 +36,8 @@ export async function resolveConnect(opts: ConnectOptions = {}): Promise<Resolve
     );
   }
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const explicit = (opts.serverUrl ?? process.env.ZCC_SERVER_URL)?.replace(/\/+$/, '');
+  const explicitRaw = opts.serverUrl ?? process.env.ZCC_SERVER_URL;
+  const explicit = explicitRaw === undefined ? undefined : trimTrailingSlashes(explicitRaw);
   let serverUrl: string;
   if (explicit) {
     if (!(await probeHealth(explicit, fetchImpl))) {
