@@ -32,7 +32,7 @@ describe('AgentsBoard', () => {
     expect(board).toContain('No agents yet');
     expect(board).toContain('setLauncherOpen(true)');
     expect(board).toContain('data-testid="agents-board-new-thread"');
-    expect(board).toContain('{showToolbar && (');
+    expect(board).toContain('{showToolbar && !selectedExecution && (');
     expect(board).toContain('const showToolbar = fleet.length > 0 || executions.length > 0 || !includeScheduled');
     expect(board).toContain('<ScheduledColumnToggle />');
 

@@ -139,8 +139,17 @@ test('Squads groups the run and solo agents, filters both views and opens the re
     if (!recording) await page.screenshot({ path: testInfo.outputPath('squad-map.png') });
     await caption('Map shows who is connected. Dashed lines show work dependencies.');
 
+    if (!recording) {
+      await app.electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1120, 640));
+      await click(page, attention);
+      await expect(page.locator('.agents-board-content[data-execution-open]')).toBeFocused();
+      await page.keyboard.press('Escape');
+      await expect(attention).toBeFocused();
+    }
     await click(page, attention);
     const job = page.getByLabel('Squad details', { exact: true });
+    const closeDetails = job.getByRole('button', { name: 'Close details', exact: true });
+    await expect(squads).toBeHidden();
     const blocker = job.getByRole('region', { name: question, exact: true });
     await expect(blocker.getByRole('heading', { name: question })).toBeVisible();
     const response = blocker.getByRole('textbox', { name: 'Your answer' });
@@ -152,7 +161,9 @@ test('Squads groups the run and solo agents, filters both views and opens the re
     await caption('The question leads. Suggestions are plain text, and the free-text field is ready to use.');
     const diagnostics = blocker.getByText('Delivery details', { exact: true });
     await click(page, diagnostics);
-    await expect(blocker.getByText('Inbox notice', { exact: true })).toBeVisible();
+    await expect(blocker.getByText('Inbox item', { exact: true })).toBeInViewport({ ratio: 1 });
+    await expect(closeDetails).toBeInViewport({ ratio: 1 });
+    if (!recording) await page.screenshot({ path: testInfo.outputPath('blocker-diagnostics.png') });
     await caption('Open Delivery details to see technical information when you need it.', 2700);
     await click(page, diagnostics);
     if (recording) {
@@ -171,7 +182,8 @@ test('Squads groups the run and solo agents, filters both views and opens the re
     await expect(blocker.getByText('Answer delivered', { exact: true })).toBeVisible();
     await expect(blocker.locator('.execution-blocker-receipt')).toContainText('About Atlas');
     await caption('Answer delivered confirms the worker received it.', 2800);
-    await click(page, job.getByRole('button', { name: 'Close details' }));
+    await click(page, closeDetails);
+    await expect(squads.getByRole('button', { name: 'Map', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await click(page, squads.getByRole('button', { name: 'Overview', exact: true }));
     await expect(attention).toBeHidden({ timeout: 20_000 });
     await caption('The run receives the response. Overview clears the question once it is answered.', 4000);

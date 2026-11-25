@@ -14714,6 +14714,36 @@ body.resizing-col .explorer-resizer:active::after {
   background: var(--bg);
 }
 .execution-details > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+.agents-board-content[data-execution-open] > :not(.execution-details) { display: none; }
+
+.agents-board-content[data-execution-open] > .execution-details {
+  --execution-gutter: clamp(12px, 2vw, 28px);
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  padding: 0 var(--execution-gutter) 14px;
+  scroll-padding-block-start: 58px;
+  background: var(--bg-panel);
+}
+
+.agents-board-content[data-execution-open] > .execution-details > header {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+  margin-inline: calc(-1 * var(--execution-gutter));
+  padding: 10px var(--execution-gutter);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.agents-board-content[data-execution-open] > .execution-details > header > strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .execution-details-close { flex: none; }
 .execution-details-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .execution-details-primary-actions { margin: 12px 0 16px; }

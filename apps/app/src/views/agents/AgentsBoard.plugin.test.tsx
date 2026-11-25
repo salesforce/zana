@@ -52,8 +52,16 @@ it('projects the scoped fleet, preserves runtime provenance and routes inspect c
   expect(fixtures.inspect).toHaveBeenCalledWith('a1', 'p1', expect.any(Function));
   fireEvent.click(screen.getByRole('button', { name: 'Stale item' }));
   expect(screen.queryByTestId('execution')).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-  expect(screen.getByTestId('execution').textContent).toBe('p1:j1');
+  const run = screen.getByRole('button', { name: 'Review' });
+  run.focus();
+  fireEvent.click(run);
+  const details = screen.getByTestId('execution');
+  expect(details.textContent).toBe('p1:j1');
+  const board = details.closest('[data-execution-open]');
+  expect(document.activeElement).toBe(board);
+  fireEvent.keyDown(board!, { key: 'Escape' });
+  expect(screen.queryByTestId('execution')).toBeNull();
+  expect(document.activeElement).toBe(run);
 });
 it('routes a Modern squad worker to its thread and the Modern host to Job details', async () => {
   fixtures.executions = [{
