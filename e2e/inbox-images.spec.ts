@@ -38,7 +38,7 @@ test('Inbox decodes image attachments through desktop IPC and mobile HTTP', asyn
   test.setTimeout(150_000);
   const desktop = app.window;
   await desktop.getByTestId('nav-inbox').click();
-  await desktop.locator('.inbox-row').filter({ hasText: 'Image attachment regression' }).click();
+  await desktop.getByRole('button', { name: /Image attachment regression/ }).click();
   await expectDecoded(desktop.getByRole('img', { name: pngPath, exact: true }), 1, 1);
   await expect(desktop.getByText('File is binary — not rendered.')).toHaveCount(0);
   await desktop.getByRole('option', { name: 'relocated.svg', exact: true }).click();
@@ -69,12 +69,7 @@ test('Inbox decodes image attachments through desktop IPC and mobile HTTP', asyn
     expect((await context.request.post(`${serverUrl}/_mobile/session`, { headers: { authorization: `Bearer ${credential.credential}` } })).ok()).toBe(true);
     const mobile = await context.newPage();
     await mobile.goto(`${serverUrl}/inbox`);
-    // Desktop already marked this report read, so its project starts folded.
-    const group = mobile.locator('.inbox-project-subhead').filter({ hasText: 'Image project' });
-    await group.tap();
-    if (await group.getAttribute('aria-expanded') === 'false') await group.tap();
-    await expect(group).toHaveAttribute('aria-expanded', 'true');
-    await mobile.locator('.inbox-row').filter({ hasText: 'Image attachment regression' }).tap();
+    await mobile.getByRole('button', { name: /Image attachment regression/ }).tap();
     await expect(mobile.locator('.inbox-doc-image')).toHaveCount(0);
     await mobile.getByRole('button', { name: 'screenshot #1.PNG', exact: true }).tap();
     await expectDecoded(mobile.getByRole('img', { name: pngPath, exact: true }), 1, 1);

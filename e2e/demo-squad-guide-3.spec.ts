@@ -115,6 +115,7 @@ test('demo: watch a Squad run', async ({ app }) => {
     await demo.section({ number: 3, title: 'When a worker asks', subtitle: 'Inbox → Needs your answer', hint: 'A question is not an error' });
     await page.keyboard.press('Escape').catch(() => {});
     await tap(page, page.getByTestId('nav-inbox'));
+    await page.getByRole('button', { name: 'Split view', exact: true }).click();
     const pinned = page.locator('.inbox-questions-pinned');
     await expect(pinned.getByText('Needs your answer', { exact: true })).toBeVisible({ timeout: 15_000 });
     await tap(page, pinned.locator('.inbox-row, [role="button"], button').first());

@@ -229,6 +229,7 @@ export async function openSquadReview(ctx: JobTeamContext, title: string) {
   const ownerModal = window.getByRole('dialog', { name: /^Agent / }).first();
   if (await ownerModal.count()) await ownerModal.getByRole('button', { name: 'Close' }).click();
   await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
+  await window.getByRole('button', { name: 'Split view', exact: true }).click();
   const row = window.locator('.inbox-row').filter({ hasText: `Squad launch ready: ${title}` }).first();
   await expect(row).toBeVisible({ timeout: 30_000 });
   await row.click();
@@ -327,6 +328,7 @@ export async function answerJobBlockerThroughUi(args: {
   await expect(details.getByText('About · About Atlas', { exact: true })).toBeVisible();
 
   await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
+  await window.getByRole('button', { name: 'Split view', exact: true }).click();
   const pinned = window.locator('.inbox-questions-pinned');
   await expect(pinned.getByText('Needs your answer', { exact: true })).toBeVisible({ timeout: 15_000 });
   await pinned.getByText(jobTitle, { exact: true }).click();

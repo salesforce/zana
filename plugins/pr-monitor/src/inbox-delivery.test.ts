@@ -54,4 +54,13 @@ describe('inbox-delivery', () => {
       inboxDeliveriesForDeltas([delta({ pr: muted })], { ...DEFAULT_PR_MONITOR_SETTINGS, sendToInbox: true })
     ).toEqual([]);
   });
+
+  it('offers an agent draft for failing checks only', () => {
+    const deliveries = inboxDeliveriesForDeltas(
+      [delta({ newStatus: 'failed' }), delta({ newStatus: 'green' })],
+      { ...DEFAULT_PR_MONITOR_SETTINGS, sendToInbox: true }
+    );
+    expect(deliveries[0]?.offerAgentFix).toBe(true);
+    expect(deliveries[1]?.offerAgentFix).toBeUndefined();
+  });
 });

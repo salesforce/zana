@@ -304,6 +304,10 @@ describe('product plugin sdk confinement', () => {
     const { entries } = await inbox.read({ projectId: project.id });
     expect(entries[0]?.comments).toBe('PR turned green');
     expect(entries[0]?.extensionSource).toEqual({ extensionId: 'pr-monitor' });
+    expect(entries[0]?.offerAgentFix).toBeUndefined();
+    await productPushInbox(ctx, { pluginId: 'pr-monitor', projectId: project.id, comments: 'Checks failed', offerAgentFix: true });
+    const result = await inbox.read({ projectId: project.id });
+    expect(result.entries[0]).toMatchObject({ comments: 'Checks failed', offerAgentFix: true, extensionSource: { extensionId: 'pr-monitor' } });
   });
 
   it('resolves the bundled plugins root from dataDir unless overridden', () => {

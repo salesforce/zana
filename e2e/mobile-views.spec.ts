@@ -279,6 +279,7 @@ test('Main views and populated Inbox fit phone and tablet screens', async ({ app
           await sheet.getByRole('button', { name: 'Close actions', exact: true }).click();
         }
         if (name === 'inbox') {
+          await page.getByRole('button', { name: 'Split view', exact: true }).click();
           const firstRow = page.locator('.inbox-row.unread').first();
           await expect(firstRow).toBeVisible();
           const title = (await firstRow.locator('.inbox-row-title').boundingBox())!;

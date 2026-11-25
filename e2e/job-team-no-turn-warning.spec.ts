@@ -40,7 +40,7 @@ test('a claimed worker with no turn raises one warning and one Inbox row', async
     expect(seen[0]).toMatch(/Worker \S+ has taken no turn for/);
 
     await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
-    const rows = window.locator('.inbox-row').filter({ hasText: /has taken no turn/ });
+    const rows = window.getByRole('button', { name: /has taken no turn/ });
     await expect(rows.first()).toBeVisible({ timeout: 30_000 });
     await expect(rows).toHaveCount(1);
   } catch (error) { throw jobTeamFailure(ctx, error); }

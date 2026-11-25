@@ -54,6 +54,7 @@ for (const theme of ['light', 'dark'] as const) {
 
     await test.step('Inbox includes the sticky toolbar and reply dock', async () => {
       await page.getByTestId('nav-inbox').click();
+      await page.getByRole('button', { name: 'Split view', exact: true }).click();
       await page.locator('.inbox-row').filter({ hasText: 'Reading surface report' }).click();
       const surfaces = ['.inbox-view', '.inbox-list-pane', '.inbox-detail-header', '.inbox-detail-dock'];
       await expectBackgrounds(page, surfaces, panel);

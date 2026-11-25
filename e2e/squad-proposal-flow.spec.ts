@@ -95,6 +95,7 @@ async function closeAgentModal(window: Page): Promise<void> {
 async function openInboxCard(window: Page, subject: string) {
   await closeAgentModal(window);
   await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
+  await window.getByRole('button', { name: 'Split view', exact: true }).click();
   const row = window.locator('.inbox-row').filter({ hasText: subject }).first();
   await expect(row).toBeVisible({ timeout: 30_000 });
   await row.click();
@@ -539,7 +540,7 @@ test.describe('CLI Agent proposer', () => {
       await closeAgentModal(window);
       await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
       await expect(window.locator('.inbox-view')).toBeVisible();
-      await expect(window.locator('.inbox-row').filter({ hasText: 'Squad launch ready' })).toHaveCount(0);
+      await expect(window.getByRole('button', { name: /Squad launch ready/ })).toHaveCount(0);
     } catch (error) {
       throw jobTeamFailure(ctx, error);
     } finally {

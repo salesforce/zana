@@ -388,7 +388,7 @@ export function createPluginApi(
       set: JsonObject;
       remove: readonly string[];
     }) => Promise<JsonObject>;
-    pushInbox?: (args: { pluginId: string; projectId: string; comments: string }) => Promise<{ id: string }>;
+    pushInbox?: (args: { pluginId: string; projectId: string; comments: string; offerAgentFix?: true }) => Promise<{ id: string }>;
     listProjects?: (args: { pluginId: string }) => Promise<Array<{ id: string; name: string; path?: string; icon?: ProjectIcon }>>;
     productContext?: import('../http/product-context.js').ProductHttpContext;
     /** Names the manifest allows this plugin to set on remote machines (`zcc.extra.remoteEnvironment`). */
@@ -1606,7 +1606,7 @@ export function createPluginApi(
           const comments = typeof args?.comments === 'string' ? args.comments : '';
           if (!projectId) throw new Error('projectId is required');
           if (!comments.trim()) throw new Error('comments is required');
-          return options.pushInbox({ pluginId, projectId, comments });
+          return options.pushInbox({ pluginId, projectId, comments, ...(args.offerAgentFix === true && { offerAgentFix: true }) });
         }
       },
       projects: {

@@ -57,6 +57,8 @@ describe('createPrMonitorPlugin', () => {
       id: 'inb-1'
     });
     expect(pushed).toEqual([{ projectId: 'p1', comments: 'hello' }]);
+    await harness.callRpc('pushInbox', { projectId: 'p1', comments: 'checks failed', offerAgentFix: true });
+    expect(pushed[1]).toEqual({ projectId: 'p1', comments: 'checks failed', offerAgentFix: true });
     await expect(harness.callRpc('storageSet', { value: 1 })).rejects.toThrow(/key/);
     await expect(harness.callRpc('pushInbox', { projectId: '', comments: '' })).rejects.toThrow(/projectId/);
     await harness.dispose();
@@ -120,13 +122,13 @@ describe('createPrMonitorPlugin', () => {
 
   it('posts inbox entries from the background poll and swallows push failures', async () => {
     vi.useFakeTimers();
-    const pushed: string[] = [];
+    const pushed: Array<{ projectId: string; offerAgentFix?: true }> = [];
     const { zcc, harness } = createFakePluginHost({
       pluginId: 'pr-monitor',
       listProjects: async () => [{ id: 'p1', name: 'Alpha' }],
       pushInbox: async (args) => {
         if (args.comments.includes('boom')) throw new Error('inbox down');
-        pushed.push(args.projectId);
+        pushed.push({ projectId: args.projectId, ...('offerAgentFix' in args && args.offerAgentFix === true && { offerAgentFix: true }) });
         return { id: 'inb' };
       }
     });
@@ -155,12 +157,13 @@ describe('createPrMonitorPlugin', () => {
         ok: true,
         deltas: [
           { url: pr.url, oldStatus: 'yellow', newStatus: 'green', pr },
+          { url: pr.url, oldStatus: 'green', newStatus: 'failed', pr },
           { url: pr.url, oldStatus: 'green', newStatus: 'failed', pr: { ...pr, title: 'boom' } }
         ]
       })
     });
     await vi.advanceTimersByTimeAsync(0);
-    expect(pushed).toEqual(['p1']);
+    expect(pushed).toEqual([{ projectId: 'p1' }, { projectId: 'p1', offerAgentFix: true }]);
     expect(harness.published).toEqual([
       {
         event: PRS_CHANGED_CHANNEL,
@@ -168,10 +171,12 @@ describe('createPrMonitorPlugin', () => {
           prs: [],
           deltas: [
             { url: pr.url, oldStatus: 'yellow', newStatus: 'green', pr },
+            { url: pr.url, oldStatus: 'green', newStatus: 'failed', pr },
             { url: pr.url, oldStatus: 'green', newStatus: 'failed', pr: { ...pr, title: 'boom' } }
           ],
           inAppDeltas: [
             { url: pr.url, oldStatus: 'yellow', newStatus: 'green', pr },
+            { url: pr.url, oldStatus: 'green', newStatus: 'failed', pr },
             { url: pr.url, oldStatus: 'green', newStatus: 'failed', pr: { ...pr, title: 'boom' } }
           ]
         }

@@ -118,6 +118,7 @@ test('Inbox keeps readable titles, report markers, and keyboard selection in bot
   try {
     const win = app.window;
     await win.getByRole('link', { name: 'Inbox', exact: false }).first().click();
+    await win.getByRole('button', { name: 'Split view', exact: true }).click();
     const row = win.locator('.inbox-row').filter({ hasText: 'Design review ready' });
     await expect(row).toBeVisible();
     await expect(row.locator('.inbox-row-report-badge')).toHaveText('Report');

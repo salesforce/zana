@@ -35,7 +35,7 @@ import { listThreadProviders } from '../services/threads/thread-provider-catalog
 import type { ProductHttpContext } from './product-context.js';
 import { conversationThreadOutput } from '../plugins/thread-events.js';
 import { readHostFile } from './files-via-host.js';
-import type { PluginSdkProject, PluginSdkThreadSummary } from '@zana-ai/zcc-plugin-sdk/server';
+import type { PluginSdkInboxPushArgs, PluginSdkProject, PluginSdkThreadSummary } from '@zana-ai/zcc-plugin-sdk/server';
 import { resolvePluginDefaultExecutionOptions, overlayCustomModels } from '../services/threads/thread-execution-options.js';
 import { readLastThreadExecution } from '../services/threads/thread-last-execution.js';
 import { asControlResult, callControlAsProductServer } from './cli-agent-ops.js';
@@ -60,7 +60,7 @@ import { attributedPromptInput } from '../plugins/plugin-message-source.js';
 
 export async function productPushInbox(
   ctx: Pick<ProductHttpContext, 'projects' | 'inbox'>,
-  args: { pluginId: string; projectId: string; comments: string }
+  args: PluginSdkInboxPushArgs & { pluginId: string }
 ): Promise<{ id: string }> {
   const project = ctx.projects.list().find((row) => row.id === args.projectId);
   if (!project) throw new Error('unrecognized projectId');
@@ -68,7 +68,8 @@ export async function productPushInbox(
     projectId: args.projectId,
     projectLabel: project.name,
     comments: args.comments,
-    extensionSource: { extensionId: args.pluginId }
+    extensionSource: { extensionId: args.pluginId },
+    ...(args.offerAgentFix === true && { offerAgentFix: true })
   });
   return { id: entry.id };
 }

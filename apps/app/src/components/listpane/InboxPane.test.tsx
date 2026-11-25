@@ -5,9 +5,9 @@ import { MOBILE_THREAD_TITLE_ID, MOBILE_THREAD_CONTROLS_ID } from '../useMobileT
 import { resolve } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-const layout = vi.hoisted(() => ({ compact: false }));
+const layout = vi.hoisted(() => ({ compact: false, scope: null as string | null, pending: false, saved: false }));
 vi.mock('../../hooks/useCompactLayout.js', () => ({ useCompactLayout: () => layout.compact }));
-afterEach(() => { cleanup(); layout.compact = false; vi.clearAllMocks(); });
+afterEach(() => { cleanup(); Object.assign(layout, { compact: false, scope: null, pending: false, saved: false }); vi.clearAllMocks(); });
 
 const setInboxTab = vi.fn();
 const setInboxGrouping = vi.fn();
@@ -17,6 +17,8 @@ const reloadInbox = vi.fn(async (_opts?: { notify?: boolean }) => true);
 
 vi.mock('../../store.js', () => ({
   INBOX_LIST_MIN: 345,
+  useData: (selector: (state: { projects: { id: string; name: string }[] }) => unknown) =>
+    selector({ projects: [{ id: 'p1', name: 'Checkout' }] }),
   useInbox: (selector: (state: { entries: unknown[] }) => unknown) =>
     selector({
       entries: [
@@ -30,7 +32,7 @@ vi.mock('../../store.js', () => ({
     selector({ keptIds: {} }),
   useInboxCollapsed: (selector: (state: { byKey: Record<string, boolean>; setMany: typeof setManyCollapsed }) => unknown) =>
     selector({ byKey: {}, setMany: setManyCollapsed }),
-  useInboxScopeProjectId: () => null,
+  useInboxScopeProjectId: () => layout.scope,
   clearInbox: vi.fn(),
   reloadInbox: (opts?: { notify?: boolean }) => reloadInbox(opts),
   useSaved: (selector: (state: { records: { id: string; projectId: string }[] }) => unknown) =>
@@ -42,7 +44,7 @@ vi.mock('../../store.js', () => ({
     setInboxGrouping: typeof setInboxGrouping;
   }) => unknown) =>
     selector({
-      inboxTab: 'feed',
+      inboxTab: layout.saved ? 'saved' : 'feed',
       setInboxTab,
       inboxGrouping: 'project',
       setInboxGrouping
@@ -50,11 +52,82 @@ vi.mock('../../store.js', () => ({
 }));
 
 vi.mock('../ListPaneResizer.js', () => ({ ListPaneResizer: () => null }));
-vi.mock('../InboxSidebar.js', () => ({ InboxSidebar: () => null }));
+vi.mock('../InboxSidebar.js', () => ({
+  InboxSidebar: ({ needsActionOnly, hideEmpty }: { needsActionOnly: boolean; hideEmpty: boolean }) =>
+    <div data-testid="feed" data-needs-action={needsActionOnly} data-hide-empty={hideEmpty} />
+}));
 vi.mock('../SavedSidebar.js', () => ({ SavedSidebar: () => null }));
+vi.mock('../InboxPendingThreads.js', () => ({
+  useInboxPendingThreads: () => layout.pending ? [{ id: 'pending' }] : [],
+  InboxPendingThreads: () => <div>Pending requests</div>
+}));
 
 import { InboxPane } from './InboxPane.js';
 import { readSourceText } from '../../__tests__/helpers/source-text.js';
+
+it('shares Needs action and search between layouts, and keeps pending links out of report and Saved filters', () => {
+  layout.scope = 'p1';
+  layout.pending = true;
+  const onChangeLayout = vi.fn();
+  const view = render(<InboxPane onChangeLayout={onChangeLayout} />);
+  const controls = screen.getByRole('group', { name: 'Inbox layout' });
+  const fullWidth = within(controls).getByRole('button', { name: 'Full-width' });
+  const split = within(controls).getByRole('button', { name: 'Split view' });
+  expect(split.getAttribute('aria-pressed')).toBe('true');
+  const search = screen.getByRole('textbox', { name: 'Search inbox' }) as HTMLInputElement;
+  fireEvent.change(search, { target: { value: 'checkout' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Needs action' }));
+  fireEvent.click(fullWidth);
+  expect(onChangeLayout).toHaveBeenLastCalledWith(true);
+  view.rerender(<InboxPane fullWidth onChangeLayout={onChangeLayout} />);
+  expect(screen.getByRole('heading', { name: 'Inbox' })).toBeTruthy();
+  expect(screen.getByText('Checkout')).toBeTruthy();
+  expect(search.value).toBe('checkout');
+  expect(fullWidth.getAttribute('aria-pressed')).toBe('true');
+  expect(screen.getByTestId('feed').getAttribute('data-needs-action')).toBe('true');
+  expect(screen.getByText('Pending requests')).toBeTruthy();
+  expect(screen.getByTestId('feed').getAttribute('data-hide-empty')).toBe('true');
+  fireEvent.click(screen.getByRole('button', { name: 'Reports 1' }));
+  expect(screen.queryByText('Pending requests')).toBeNull();
+  fireEvent.click(split);
+  expect(onChangeLayout).toHaveBeenLastCalledWith(false);
+  layout.saved = true;
+  view.rerender(<InboxPane onChangeLayout={onChangeLayout} />);
+  expect(screen.queryByRole('group', { name: 'Inbox layout' })).toBeNull();
+});
+
+it('uses the cross-project feed heading and opens the overview from full-width', () => {
+  const onShowOverview = vi.fn();
+  render(<InboxPane fullWidth onShowOverview={onShowOverview} />);
+  expect(screen.getByText('Updates and requests across your projects')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Inbox overview' }));
+  expect(onShowOverview).toHaveBeenCalledOnce();
+});
+
+it('keeps the wide toolbar and remembers independent Feed and Saved searches', () => {
+  const view = render(<InboxPane toolbarLayout="wide" fullWidth />);
+  const heading = screen.getByRole('heading', { name: 'Inbox' });
+  const tabs = screen.getByRole('tablist', { name: 'Inbox view' });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Search inbox' }), { target: { value: 'checkout' } });
+
+  layout.saved = true;
+  view.rerender(<InboxPane toolbarLayout="wide" />);
+  const savedSearch = screen.getByRole<HTMLInputElement>('textbox', { name: 'Search saved reports' });
+  expect(screen.getByRole('heading', { name: 'Inbox' })).toBe(heading);
+  expect(screen.getByRole('tablist', { name: 'Inbox view' })).toBe(tabs);
+  expect(savedSearch.value).toBe('');
+  fireEvent.change(savedSearch, { target: { value: 'daily' } });
+
+  layout.saved = false;
+  view.rerender(<InboxPane toolbarLayout="wide" fullWidth />);
+  expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Search inbox' }).value).toBe('checkout');
+  layout.saved = true;
+  view.rerender(<InboxPane toolbarLayout="wide" />);
+  expect(savedSearch.value).toBe('daily');
+  fireEvent.click(screen.getByRole('button', { name: 'Clear filter' }));
+  expect(savedSearch.value).toBe('');
+  expect(document.activeElement).toBe(savedSearch);
+});
 
 describe('InboxPane tabs', () => {
   it('exposes Feed and Saved tabs, not a Reports tab', () => {
@@ -75,6 +148,21 @@ describe('InboxPane tabs', () => {
     expect(html).toContain('>Unread 1<');
     expect(html).toContain('>Reports 1<');
     expect(html).toContain('aria-pressed="false"');
+  });
+
+  it('keeps independently named filter chips when Unread and Reports are active together', () => {
+    render(<InboxPane />);
+    const unread = screen.getByRole('button', { name: 'Unread 1' });
+    const reports = screen.getByRole('button', { name: 'Reports 1' });
+    fireEvent.click(unread);
+    fireEvent.click(reports);
+    expect(screen.getByRole('button', { name: 'Unread 1' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Reports 1' }).getAttribute('aria-pressed')).toBe('true');
+    expect(unread.getAttribute('title')).toBe('Clear unread filter');
+    expect(reports.getAttribute('title')).toBe('Clear reports filter');
+    fireEvent.click(reports);
+    expect(unread.getAttribute('aria-pressed')).toBe('true');
+    expect(reports.getAttribute('aria-pressed')).toBe('false');
   });
 
   it('keeps an overflow trigger labeled Inbox actions beside the tablist', () => {
@@ -151,9 +239,12 @@ describe('Inbox refresh', () => {
     render(<InboxPane />);
     const refresh = screen.getByRole('button', { name: 'Refresh inbox' });
     expect(refresh.nextElementSibling?.getAttribute('aria-label')).toBe('Inbox actions');
+    refresh.focus();
     fireEvent.click(refresh);
     expect(reloadInbox).toHaveBeenCalledExactlyOnceWith({ notify: true });
     expect(refresh.getAttribute('aria-busy')).toBe('true');
+    expect(refresh.getAttribute('aria-disabled')).toBe('true');
+    expect(document.activeElement).toBe(refresh);
     expect(refresh.querySelector('svg')?.getAttribute('class')).toContain('spin');
     fireEvent.click(refresh);
     expect(reloadInbox).toHaveBeenCalledOnce();
@@ -168,6 +259,31 @@ describe('Inbox refresh', () => {
   });
 });
 
+it('supports keyboard navigation in the desktop actions menu and returns focus when it closes', () => {
+  render(<InboxPane />);
+  const trigger = screen.getByRole('button', { name: 'Inbox actions' });
+  fireEvent.click(trigger);
+  const menu = screen.getByRole('menu', { name: 'Inbox actions' });
+  const project = within(menu).getByRole('menuitemradio', { name: 'Group by project' });
+  const time = within(menu).getByRole('menuitemradio', { name: 'Group by time' });
+  const clear = within(menu).getByRole('menuitem', { name: 'Clear inbox' });
+  expect(document.activeElement).toBe(project);
+  fireEvent.keyDown(project, { key: 'ArrowDown' });
+  expect(document.activeElement).toBe(time);
+  fireEvent.keyDown(time, { key: 'End' });
+  expect(document.activeElement).toBe(clear);
+  fireEvent.keyDown(clear, { key: 'Home' });
+  fireEvent.keyDown(project, { key: 'ArrowUp' });
+  expect(document.activeElement).toBe(clear);
+  fireEvent.keyDown(clear, { key: 'Escape' });
+  expect(screen.queryByRole('menu')).toBeNull();
+  expect(document.activeElement).toBe(trigger);
+  fireEvent.click(trigger);
+  fireEvent.click(screen.getByRole('menuitemradio', { name: 'Group by time' }));
+  expect(setInboxGrouping).toHaveBeenCalledWith('time');
+  expect(document.activeElement).toBe(trigger);
+});
+
 describe('mobile Inbox header', () => {
   function mount(onShowOverview = vi.fn()) {
     layout.compact = true;
@@ -178,8 +294,10 @@ describe('mobile Inbox header', () => {
     expect(screen.getByRole('heading').textContent).toBe('Inbox');
     expect(screen.getByRole('tab', { name: 'Feed, 1 unread' })).toBeTruthy();
     expect(screen.queryByRole('textbox')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Unread 1' }));
-    expect(screen.getByRole('button', { name: 'Show all messages' }).getAttribute('aria-pressed')).toBe('true');
+    const unread = screen.getByRole('button', { name: 'Unread 1' });
+    expect(unread.closest('.inbox-filter-row')).toBeTruthy();
+    fireEvent.click(unread);
+    expect(screen.getByRole('button', { name: 'Unread 1' }).getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(screen.getByRole('button', { name: 'Search inbox' }));
     const input = screen.getByRole('textbox', { name: 'Search inbox' });
     expect(document.activeElement).toBe(input);
@@ -188,6 +306,21 @@ describe('mobile Inbox header', () => {
     expect(screen.queryByRole('textbox')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Search inbox' }));
     expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe('');
+  });
+  it('restores the compact Feed search without taking focus from the tab', () => {
+    const view = mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Search inbox' }));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'checkout' } });
+    const targets = () => <><div id={MOBILE_THREAD_TITLE_ID} /><div id={MOBILE_THREAD_CONTROLS_ID} /><InboxPane /></>;
+    layout.saved = true;
+    view.rerender(targets());
+    expect(screen.queryByRole('textbox')).toBeNull();
+    const feed = screen.getByRole('tab', { name: 'Feed, 1 unread' });
+    feed.focus();
+    layout.saved = false;
+    view.rerender(targets());
+    expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Search inbox' }).value).toBe('checkout');
+    expect(document.activeElement).toBe(feed);
   });
   it('keeps grouping and reports in a single sheet, retaining their callbacks', () => {
     mount();
@@ -200,7 +333,7 @@ describe('mobile Inbox header', () => {
     more(); sheet = screen.getByRole('dialog');
     fireEvent.click(within(sheet).getByRole('button', { name: 'Reports 1' }));
     more();
-    expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Show all messages' }).getAttribute('aria-pressed')).toBe('true');
+    expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Reports 1' }).getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(screen.getByRole('button', { name: 'Mark 1 as read' }));
     expect(markAllRead).toHaveBeenCalledWith(['e1', 'e2']);
   });

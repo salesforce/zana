@@ -647,6 +647,8 @@ export interface InboxEntry {
    * unstamped rather than recorded as if verified.
    */
   extensionSource?: { extensionId: string };
+  /** An authenticated plugin offers an editable agent draft for this issue. */
+  offerAgentFix?: true;
   /**
    * OPTIONAL click-navigation redirect, set only by an extension's brokered
    * `ctx.inbox.push` (never the agent MCP tools or the renderer-panel path) and

@@ -37,12 +37,13 @@ test('bounded Inbox pages preserve cursors through built Electron HTTP and UI', 
   expect(second.data.entries[0].id).toBe('page-4899');
   expect(second.data.entries).toHaveLength(100);
   await page.getByTestId('nav-inbox').click();
-  await expect(page.locator('.inbox-row').filter({ hasText: 'Paged report 4999' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Paged report 4999/ })).toBeVisible();
 });
 
 test('inbox message header stays visible and usable while its content scrolls', async ({ app }, testInfo) => {
   const page = app.window;
   await page.getByTestId('nav-inbox').click();
+  await page.getByRole('button', { name: 'Split view', exact: true }).click();
   await page.locator('.inbox-row').filter({ hasText: 'Long inbox report' }).click();
   const pane = page.locator('.inbox-view-detail');
   const header = pane.locator('.inbox-detail-header');

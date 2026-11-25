@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { InboxEntry } from '@zana-ai/zcc-domain/product';
-import { inboxPreview, inboxSecondaryLine } from './inboxPresentation.js';
+import { buildInboxAgentPrompt, inboxOffersAgentFix, inboxPreview, inboxSecondaryLine } from './inboxPresentation.js';
 
 const TABLE = '| | |\n|---|---|\n| **Status** | CI green |\n| **Needs you** | Nothing |';
 
@@ -31,4 +31,18 @@ describe('inboxPreview with markdown tables', () => {
   it('still previews ordinary comments', () => {
     expect(inboxPreview(entry({ comments: '**Update** ready' }))).toBe('Update ready');
   });
+});
+
+it('builds an editable draft with project-relative docs and bounded comment text', () => {
+  expect(buildInboxAgentPrompt(entry({ docs: [{ path: 'checks.md' }], comments: 'x'.repeat(4001) }), 'Investigate.')).toBe(
+    `Investigate.\n\nRelated documents (paths relative to the project root):\n- checks.md\n\nMessage:\n${'x'.repeat(4000)}\n…(truncated)`
+  );
+  expect(buildInboxAgentPrompt(entry({ comments: '  ' }))).toBe('Act on the following inbox message from this project.');
+});
+
+it('does not offer an agent fix as a substitute for host-owned Inbox actions', () => {
+  const offer = { offerAgentFix: true, extensionSource: { extensionId: 'checks' } } as const;
+  expect(inboxOffersAgentFix(entry(offer))).toBe(true);
+  expect(inboxOffersAgentFix(entry({ ...offer, hostActionRequired: true }))).toBe(false);
+  expect(inboxOffersAgentFix(entry({ offerAgentFix: true }))).toBe(false);
 });

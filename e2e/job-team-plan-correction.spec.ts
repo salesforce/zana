@@ -123,6 +123,7 @@ async function readExecution(window: Page, projectId: string, executionId: strin
 /** Open the (single) "Plan correction required" Inbox card whose body contains `text`. */
 async function openCorrectionCard(window: Page, text: string): Promise<void> {
   await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
+  await window.getByRole('button', { name: 'Split view', exact: true }).click();
   await expect.poll(async () => {
     const rows = window.locator('.inbox-row').filter({ hasText: 'Plan correction required' });
     const count = await rows.count();
@@ -244,7 +245,7 @@ test('attended provided goal that is prose with no plan steps falls back to infe
 
     // No parked-for-correction card was ever raised.
     await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
-    await expect(window.locator('.inbox-row').filter({ hasText: 'Plan correction required' })).toHaveCount(0);
+    await expect(window.getByRole('button', { name: /Plan correction required/ })).toHaveCount(0);
     await expect(window.locator('.inbox-question').filter({ hasText: 'Plan requires revisions to proceed' })).toHaveCount(0);
     expect(coordinatorLog(s.projectDir)).not.toContain('plan-correction wake');
   } catch (error) {

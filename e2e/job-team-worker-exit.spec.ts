@@ -30,7 +30,7 @@ test('a worker that exits 1 raises a warning and Inbox row, and its card stays u
 
     // Inbox SIGNAL row.
     await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
-    await expect(window.locator('.inbox-row').filter({ hasText: /exited with code 1/ }).first()).toBeVisible({ timeout: 30_000 });
+    await expect(window.getByRole('button', { name: /exited with code 1/ }).first()).toBeVisible({ timeout: 30_000 });
 
     // The exited worker card is retained past the 60 s linger.
     await window.getByTestId('nav-agents').or(window.getByTestId('project-nav-agents')).click();
