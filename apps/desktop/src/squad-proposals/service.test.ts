@@ -55,6 +55,7 @@ let planFindingsDep: SquadProposalServiceDeps['planFindings'];
 let canonicalDep: SquadProposalServiceDeps['canonicalPlanText'];
 let previewDep: SquadProposalServiceDeps['resolveLaunchPreview'];
 let designDocsDep: SquadProposalServiceDeps['designDocs'];
+let resolveTransportDep: SquadProposalServiceDeps['resolveTransport'];
 
 const sendToProposer = vi.fn<NonNullable<SquadProposalServiceDeps['sendToProposer']>>();
 
@@ -70,6 +71,7 @@ function build(over: { staging?: StagingStore | null; maxRecords?: number; noSen
     teams: { get: (id) => (id === teamRecord.id ? teamRecord : undefined) },
     personas: { get: (id) => personaMap[id] },
     teamHostProblem: () => hostProblem,
+    ...(resolveTransportDep ? { resolveTransport: (...a: Parameters<NonNullable<SquadProposalServiceDeps['resolveTransport']>>) => resolveTransportDep!(...a) } : {}),
     expandTeamSlots: () => Array.from({ length: slotCount }),
     resolveSquadPlan: resolveSquadPlan as never,
     ...(designDocsDep ? { designDocs: (...a: Parameters<NonNullable<SquadProposalServiceDeps['designDocs']>>) => designDocsDep!(...a) } : {}),
@@ -140,6 +142,7 @@ beforeEach(() => {
   planFindingsDep = undefined;
   canonicalDep = undefined;
   designDocsDep = undefined;
+  resolveTransportDep = undefined;
   previewDep = async ({ projectId }) => ({
     launchOptions: {},
     resolvedLaunch: resolveAllLaunch({}),
@@ -233,6 +236,33 @@ describe('trusted launch preview', () => {
     for (const hidden of ['/trusted/worktree', 'feature/x', 'push:', 'checks:', 'worktree:']) expect(appendOnce.mock.calls[0]![0].comments).not.toContain(hidden);
     expect(await svc.service.review(7, 'prop-1', () => true)).toMatchObject({ ok: true, value: { launchOptions, launchPreview: preview } });
     expect(await svc.service.beginLaunch('prop-1', 'p1')).toMatchObject({ ok: true, value: { launchOptions, launchPreview: preview } });
+  });
+
+  it('pins the resolved transport at propose time and hands it back at launch', async () => {
+    const resolveTransport = vi.fn(() => ({ transport: 'MODERN' as const, source: 'caller' }));
+    resolveTransportDep = resolveTransport;
+    lookup = async () => ({ kind: 'thread', id: 's1', title: 'Chat', squadMember: false });
+    svc = build();
+    expect((await svc.service.propose(route, input)).ok).toBe(true);
+    expect(resolveTransport).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'MODERN');
+    expect(await svc.store.get('prop-1')).toMatchObject({ resolvedTransport: { transport: 'MODERN', source: 'caller' } });
+    resolveTransportDep = () => ({ transport: 'CLI', source: 'global' });
+    expect(await svc.service.beginLaunch('prop-1', 'p1')).toMatchObject({ ok: true, value: { resolvedTransport: { transport: 'MODERN', source: 'caller' } } });
+  });
+
+  it('refuses the proposal when the transport resolver refuses, instead of pinning CLI', async () => {
+    resolveTransportDep = () => ({ refusal: 'This Squad is set to Modern, which cannot run here: Modern Squads need a local Project' });
+    svc = build();
+    expect(await svc.service.propose(route, input)).toMatchObject({ ok: false, code: 'TRANSPORT_UNAVAILABLE', message: expect.stringContaining('local Project') });
+    expect(await svc.store.get('prop-1')).toBeUndefined();
+  });
+
+  it('passes a CLI caller for a terminal proposer', async () => {
+    const resolveTransport = vi.fn(() => ({ transport: 'CLI' as const, source: 'caller' }));
+    resolveTransportDep = resolveTransport;
+    svc = build();
+    expect((await svc.service.propose(route, input)).ok).toBe(true);
+    expect(resolveTransport).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'CLI');
   });
 
   it('refuses changed persisted target at launch, without fallback', async () => {

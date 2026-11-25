@@ -76,6 +76,7 @@ export async function launchJobTeamCliOwner(ctx: JobTeamContext, opts: {
 
   await window.evaluate((bin) => window.cc.config.set({
     teamJobLaunchEnabled: true,
+    squadDefaultTransport: 'CLI',
     sponsorPromptDismissed: true,
     claudeBinary: bin,
     defaultHarness: 'claude'

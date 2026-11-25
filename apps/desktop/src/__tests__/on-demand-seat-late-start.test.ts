@@ -27,7 +27,7 @@ beforeEach(() => {
   ];
   seq += 1;
   h.projects = [{ id: 'p1', name: 'Proj', path: projectDir }];
-  h.config = { version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null };
+  h.config = { squadDefaultTransport: 'CLI', version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null };
   h.personas = [persona('orch'), persona('w1'), persona('w2')];
   h.teams = [{
     id: 'team1', name: 'Team One', orchestratorPersonaId: 'orch',

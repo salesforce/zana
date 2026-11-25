@@ -12,7 +12,7 @@ vi.mock('@/store', () => ({
     selector({
       teams: [
         { id: 'user:zebra', name: 'Zebra 10', description: 'Last', source: 'user', slots: [] },
-        { id: 'builtin:core', name: 'Core squad', description: 'Core', source: 'builtin', slots: [] },
+        { id: 'builtin:core', name: 'Core squad', description: 'Core', source: 'builtin', slots: [], transport: 'CLI' },
         { id: 'user:alpha-10', name: 'Alpha 10', description: 'Ten', source: 'user', slots: [] },
         { id: 'user:accent', name: 'Álpha 1', description: 'Accent', source: 'user', slots: [] },
         { id: 'user:alpha-2', name: 'alpha 2', description: 'Two', source: 'user', slots: [] },

@@ -3,6 +3,7 @@ import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { Users, Search, FolderOpen, Play, ChevronDown, ChevronRight, Plus, Download, Upload, Copy, Pencil, Trash2, Crown, Star } from 'lucide-react';
 import type { AppConfig, Project, Team, Persona } from '@zana-ai/zcc-domain/product';
+import { SquadDefaultsSettings } from '@/components/settings/SquadDefaultsSettings';
 import { SquadAdvancedSettings } from '@/components/settings/SquadAdvancedSettings';
 import { useTeams, useData, useUi, usePersonas } from '@/store';
 import { resolveIcon } from '@/lib/resolveIcon';
@@ -11,7 +12,7 @@ import { personaIcon } from '@/lib/profileIcon';
 import { squadSearchId } from '@/lib/settings-search/providers/catalogues';
 import { SquadEditor } from '@/components/SquadEditor';
 import { SquadTransportChip } from '@/components/SquadTransportChip';
-import { squadTransport, squadTransportClass } from '@/lib/squad-transport';
+import { resolveSquadTransportView, squadTransportClass, useSquadTransportConfig } from '@/lib/squad-transport';
 import { sortCatalogueByName } from '@/lib/catalogue-sort';
 
 /**
@@ -311,6 +312,9 @@ export function SquadsView({ config, onConfigDraft, onUpdate }: SquadsViewConfig
           </section>
         </div>
         {config && onUpdate ? (
+          <SquadDefaultsSettings config={config} onConfigDraft={onConfigDraft} onUpdate={onUpdate} />
+        ) : null}
+        {config && onUpdate ? (
           <SquadAdvancedSettings config={config} onConfigDraft={onConfigDraft} onUpdate={onUpdate} />
         ) : null}
       {editor && (
@@ -470,7 +474,7 @@ function TeamRow({
   };
 
   const ChevronIcon = isExpanded ? ChevronDown : ChevronRight;
-  const transport = squadTransport(team);
+  const transport = resolveSquadTransportView(team, useSquadTransportConfig()).transport;
 
   return (
     <li

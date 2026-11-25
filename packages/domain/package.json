@@ -99,6 +99,11 @@
       "source": "./src/squad-proposal.ts",
       "default": "./src/squad-proposal.ts"
     },
+    "./squad-transport": {
+      "types": "./src/squad-transport.ts",
+      "source": "./src/squad-transport.ts",
+      "default": "./src/squad-transport.ts"
+    },
     "./launch-options": {
       "types": "./src/launch-options.ts",
       "source": "./src/launch-options.ts",

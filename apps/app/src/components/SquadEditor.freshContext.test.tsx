@@ -22,7 +22,7 @@ import { SquadEditor } from './SquadEditor';
 
 /** #579: the Team editor's "fresh session per unit" checkbox. */
 const base: Team = {
-  id: 'user:s', name: 'S', orchestratorPersonaId: 'p-orch', source: 'user',
+  id: 'user:s', name: 'S', orchestratorPersonaId: 'p-orch', source: 'user', transport: 'CLI',
   slots: [{ personaId: 'p-orch', quantity: 1 }, { personaId: 'p-worker', quantity: 1 }]
 };
 const CHECKBOX = /^Start each unit in a fresh session$/i;
@@ -74,6 +74,14 @@ describe('REQ-1 the Team editor offers the fresh-session checkbox', () => {
     expect(saved.slots[1]).toMatchObject({ startOnDemand: true, freshContextPerUnit: true });
   });
 
+  it('an explicit Modern pin drops seat flags on save; a CLI pin keeps them', async () => {
+    const seat = { personaId: 'p-worker', quantity: 1, startOnDemand: true, freshContextPerUnit: true };
+    render(<SquadEditor team={{ ...base, transport: 'MODERN', slots: [base.slots[0]!, seat] }} mode="edit" onClose={vi.fn()} />);
+    const saved = await saveTeam();
+    expect(saved.slots[1]).not.toHaveProperty('startOnDemand');
+    expect(saved.slots[1]).not.toHaveProperty('freshContextPerUnit');
+  });
+
   it('existing-user path: an old team saves with no freshContextPerUnit key', async () => {
     render(<SquadEditor team={base} mode="edit" onClose={vi.fn()} />);
     const saved = await saveTeam();
@@ -90,7 +98,7 @@ describe('REQ-9 the checkbox is hidden where it cannot work', () => {
   it('does not save the flag when the squad is switched to Modern', async () => {
     const team = { ...base, slots: [base.slots[0]!, { personaId: 'p-worker', quantity: 1, freshContextPerUnit: true }] };
     render(<SquadEditor team={team} mode="edit" onClose={vi.fn()} />);
-    fireEvent.change(screen.getByLabelText('Squad transport'), { target: { value: 'MODERN' } });
+    fireEvent.change(screen.getByLabelText('Squad launch mode'), { target: { value: 'MODERN' } });
     expect((await saveTeam()).slots[1]).not.toHaveProperty('freshContextPerUnit');
   });
 });

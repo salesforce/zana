@@ -93,7 +93,13 @@ export function sanitizeTeam(raw: unknown): Team | null {
     });
   }
 
-  const transport: SquadTransport = r.transport === 'MODERN' ? 'MODERN' : 'CLI';
+  // Absent stays absent ("Use default"); CALLER is kept; anything else is CLI.
+  const transport: SquadTransport | 'CALLER' | undefined =
+    r.transport === undefined || r.transport === null
+      ? undefined
+      : r.transport === 'MODERN' || r.transport === 'CALLER'
+        ? r.transport
+        : 'CLI';
   return {
     id: r.id.trim(),
     name: r.name.trim(),
@@ -113,7 +119,7 @@ export function sanitizeTeam(raw: unknown): Team | null {
     worktreeOnComplete: r.worktreeOnComplete === 'leave' || r.worktreeOnComplete === 'merge' || r.worktreeOnComplete === 'delete' ? r.worktreeOnComplete : undefined,
     routingEnforced: typeof r.routingEnforced === 'boolean' ? r.routingEnforced : undefined,
     retainOrchestrator: typeof r.retainOrchestrator === 'boolean' ? r.retainOrchestrator : undefined,
-    transport,
+    ...(transport ? { transport } : {}),
     ...(r.leanWorkers === true ? { leanWorkers: true } : {}),
     defaultPlanning: r.defaultPlanning === 'infer' || r.defaultPlanning === 'provided' ? r.defaultPlanning : undefined,
     launchApproval: isLaunchApproval(r.launchApproval) ? r.launchApproval : undefined,

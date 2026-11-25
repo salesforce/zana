@@ -12,7 +12,7 @@ import {
 import { EXECUTION_FAILURE_CODES, normalizeRoles, isDurableCoordination, isOrchestratorSlotId, isSquadExecutionTargetSelector, enforcedSkillAllowlist, mcpAllowlistCovers, skillAllowlistCovers } from '@zana-ai/zcc-domain/product';
 import { workerNoticeLabel } from './visibility-notices.js';
 import type { SquadExecutionTargetSelector, SquadWorktreeOwnership } from '@zana-ai/zcc-domain/product';
-import type { ExecutionFailureCode, ExecutionSourceSnapshot, TeamLaunchAuthorizationContextV1 } from '@zana-ai/zcc-domain/product';
+import type { ExecutionFailureCode, ExecutionSourceSnapshot, TeamLaunchAuthorizationContextV1, ResolvedSquadTransport } from '@zana-ai/zcc-domain/product';
 import type { SquadBundleWorkflowMetadataV1, TeamLaunchAuthorizationInputSlot, TeamLaunchRequestInput } from '@zana-ai/zcc-domain/product';
 import { SQUAD_GOAL_MAX_CHARS, SQUAD_SUMMARY_MAX_CHARS, squadStoredFieldTooLong } from '@zana-ai/zcc-domain/squad-proposal';
 import { MAX_TEAM_INITIAL_TASK_BYTES } from '../launch/team-lifecycle-store.js';
@@ -494,6 +494,8 @@ export interface ExecutionRecord {
   routingPolicy?: ExecutionRoutingPolicyV1;
   authorizationContext?: TeamLaunchAuthorizationContextV1;
   authorizationContextDigest?: string;
+  /** Pinned at authorization. Recovery, resume and on-demand seats read only this. */
+  resolvedTransport?: ResolvedSquadTransport;
   launchIntent?: ExecutionLaunchIntentV1;
   effectiveOwnerPrincipalIds?: string[];
   recoveryGeneration?: number;
@@ -1025,6 +1027,7 @@ function validRecord(value: unknown): value is ExecutionRecord {
     && (record.routingDecisions === undefined || Array.isArray(record.routingDecisions) && record.routingDecisions.length <= MAX_ROUTING_DECISIONS_PER_EXECUTION && record.routingDecisions.every(validRoutingDecision))
     && (record.authorizationContext === undefined || validAuthorizationContext(record.authorizationContext))
     && (record.authorizationContextDigest === undefined || validString(record.authorizationContextDigest))
+    && (record.resolvedTransport === undefined || validResolvedTransport(record.resolvedTransport))
     && (record.launchIntent === undefined || validLaunchIntent(record.launchIntent))
     && (record.squadWorktree === undefined || validSquadWorktree(record.squadWorktree))
     && (record.reviewedSquadWorktreeBase === undefined || validReviewedSquadWorktreeBase(record.reviewedSquadWorktreeBase))
@@ -1695,6 +1698,14 @@ function validDigest(value: unknown): value is string {
 
 function validLaunchDisplay(value: unknown): value is ExecutionLaunchDisplayV1 {
   return !!value && typeof value === 'object' && validString((value as Partial<ExecutionLaunchDisplayV1>).label);
+}
+
+const RESOLVED_TRANSPORT_SOURCES = new Set(['squad', 'launch-picker', 'caller', 'global', 'launch-mode', 'fallback', 'fallback-squad-mode']);
+
+function validResolvedTransport(value: ResolvedSquadTransport): boolean {
+  return !!value && (value.transport === 'CLI' || value.transport === 'MODERN')
+    && RESOLVED_TRANSPORT_SOURCES.has(value.source)
+    && (value.fallbackReason === undefined || typeof value.fallbackReason === 'string' && value.fallbackReason.length <= 500);
 }
 
 function validAuthorizationContext(value: unknown): value is TeamLaunchAuthorizationContextV1 {
@@ -2742,7 +2753,8 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
     executionId: string,
     expectedStateVersion: number,
     authorizationContext: TeamLaunchAuthorizationContextV1,
-    authorizationContextDigest: string
+    authorizationContextDigest: string,
+    resolvedTransport?: ResolvedSquadTransport
   ): Promise<ExecutionRecord> {
     return storeQueue.run(async () => {
       const snapshot = read();
@@ -2752,6 +2764,7 @@ export function createExecutionStore(options: ExecutionStoreOptions) {
       if (record.authorizationContext || !validAuthorizationContext(authorizationContext)) throw new Error('invalid execution authorization context');
       record.authorizationContext = clone(authorizationContext);
       record.authorizationContextDigest = string(authorizationContextDigest, 'authorization context digest');
+      if (resolvedTransport && validResolvedTransport(resolvedTransport)) record.resolvedTransport = clone(resolvedTransport);
       record.stateVersion += 1;
       record.updatedAt = now();
       append(snapshot.state, record, record.state, 'info', 'Team authorization context recorded', record.updatedAt);

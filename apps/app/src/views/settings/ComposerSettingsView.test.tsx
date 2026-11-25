@@ -178,4 +178,18 @@ describe('ComposerSettingsView', () => {
     expect(switchButton(optedOut, 'Modern')).toContain('aria-checked="false"');
     expect(switchButton(optedOut, 'Squad')).toContain('aria-checked="false"');
   });
+
+  it.each([
+    [undefined, 'Modern'],
+    ['thread', 'Modern'],
+    ['agent', 'CLI Agent']
+  ] as const)('Team default launch mode (last %s) hints %s, not silently CLI Agent (UX-5)', (last, label) => {
+    render(<ComposerSettingsView config={{ ...config, ...(last ? { composerLastTransportMode: last } : {}) } as AppConfig} onUpdate={vi.fn()} />);
+    expect(screen.queryByTestId('launch-mode-team-hint')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Default launch mode' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Squad' }));
+    const hint = screen.getByTestId('launch-mode-team-hint').textContent ?? '';
+    expect(hint).toContain(`Follow default launch mode (${label})`);
+    expect(hint).toContain('A Squad has no launch mode of its own here');
+  });
 });
