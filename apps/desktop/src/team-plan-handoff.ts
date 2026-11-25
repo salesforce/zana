@@ -359,6 +359,26 @@ export interface PlanHandoffDeps {
   reportStalled?(ctx: CoordinatorHandoffContext, reason: string): void;
   /** Correlation trace sink; observes only, a throw here never changes the handoff. */
   trace?(event: PlanHandoffTrace): void;
+  /**
+   * When true, the first idle edge seen before the host observed the coordinator working is not
+   * allowed to spend a nudge (the CLI is idle at startup, before its prompt). One skip at most:
+   * if no working edge is ever reported, the next idle edge nudges as usual.
+   */
+  requireTurnStart?: boolean;
+  /** DIAGNOSTIC: one bounded line per idle edge and per decision that sends nothing; observes only. */
+  diagnose?(line: PlanHandoffDiagnostic): void;
+}
+
+/** Bounded diagnostic record for one idle edge or silent decision (no plan body). */
+export interface PlanHandoffDiagnostic {
+  executionId: string;
+  sessionId: string;
+  event: 'edge' | 'planless' | 'skip';
+  nudges?: number;
+  inFlight?: boolean;
+  turnStarted?: boolean;
+  planless?: boolean;
+  note?: string;
 }
 
 /** Bounded, body-free correlation record for one handoff decision. */
@@ -392,6 +412,12 @@ interface HandoffState {
   done: boolean;
   /** Serialize idle re-entries for one execution (idle can fire repeatedly). */
   inFlight: boolean;
+  /** An idle edge arrived while a handoff was running; run once more when it finishes. */
+  rerun?: boolean;
+  /** The host observed the coordinator working (its first turn started). */
+  turnStarted?: boolean;
+  /** The one pre-first-turn idle edge was spared a nudge. */
+  skippedEarly?: boolean;
 }
 
 /**
@@ -412,19 +438,50 @@ export class TeamPlanHandoff {
     this.state.delete(executionId);
   }
 
-  async onCoordinatorIdle(ctx: CoordinatorHandoffContext): Promise<void> {
-    const maxNudges = this.deps.maxNudges ?? 2;
-    let entry = this.state.get(ctx.executionId);
+  /** The host saw the coordinator working: its first turn has started, so an idle edge now means a finished turn. */
+  onCoordinatorWorking(executionId: string): void {
+    const entry = this.entryFor(executionId);
+    entry.turnStarted = true;
+  }
+
+  private entryFor(executionId: string): HandoffState {
+    let entry = this.state.get(executionId);
     if (!entry) {
       entry = { nudges: 0, done: false, inFlight: false };
-      this.state.set(ctx.executionId, entry);
+      this.state.set(executionId, entry);
     }
-    if (entry.done || entry.inFlight) return;
+    return entry;
+  }
+
+  async onCoordinatorIdle(ctx: CoordinatorHandoffContext): Promise<void> {
+    const entry = this.entryFor(ctx.executionId);
+    this.diag(ctx, { event: 'edge', nudges: entry.nudges, inFlight: entry.inFlight, turnStarted: !!entry.turnStarted, ...(entry.done ? { note: 'done' } : {}) });
+    if (entry.done) return;
+    if (entry.inFlight) {
+      // Never drop an edge: the running pass may have read the file before it was written.
+      entry.rerun = true;
+      this.diag(ctx, { event: 'skip', note: 'in-flight, rerun queued' });
+      return;
+    }
     entry.inFlight = true;
+    try {
+      do {
+        entry.rerun = false;
+        await this.handleIdleEdge(ctx, entry);
+      } while (entry.rerun && !entry.done);
+    } finally {
+      entry.inFlight = false;
+    }
+  }
+
+  private async handleIdleEdge(ctx: CoordinatorHandoffContext, entry: HandoffState): Promise<void> {
+    const maxNudges = this.deps.maxNudges ?? 2;
     try {
       // The coordinator (or, in a non-sandboxed harness, its own MCP register)
       // may have already produced a plan; never double-register.
-      if (!(await this.deps.isPlanless(ctx.projectId, ctx.executionId))) {
+      const planless = await this.deps.isPlanless(ctx.projectId, ctx.executionId);
+      this.diag(ctx, { event: 'planless', planless });
+      if (!planless) {
         entry.done = true;
         return;
       }
@@ -437,63 +494,78 @@ export class TeamPlanHandoff {
         ...(read.status === 'invalid' ? { reason: boundTraceReason(read.reason) } : {})
       }));
       if (read.status === 'ok') {
-        const verdict = await this.deps.review?.(ctx, read);
-        if (verdict === 'wait') return;
-        if (verdict === 'reject') {
-          entry.done = true;
-          return;
-        }
-        const accepted = typeof verdict === 'object' ? verdict : read;
-        // A plan the operator already corrected is not re-judged; an authored one gets one automatic round.
-        const judged = accepted === read ? await this.deps.judgeAuthored?.(ctx, accepted.units).catch((error) => {
-          this.deps.logError(`team plan handoff judge ${ctx.sessionId}`, error);
-          return undefined;
-        }) : undefined;
-        if (judged) {
-          if (!entry.judged) {
-            entry.judged = true;
-            this.emit(ctx, () => ({ stage: 'nudge', reason: boundTraceReason(judged.reason), nudges: entry.nudges }));
-            this.deps.nudge(ctx.sessionId, `${judged.message}\nWrite the corrected plan to \`${handoffPromptPath(ctx.projectRoot, authoredPlanRelPath(ctx.executionId))}\` and end your turn.`);
-            return;
-          }
-          await this.handleInvalid(entry, maxNudges, ctx, judged.reason, judged.reason, true);
-          return;
-        }
-        const registered = await this.deps.register(ctx, accepted.units);
-        this.emitRegister(ctx, accepted, registered, accepted === read ? 'authored' : 'corrected');
-        if (registered.ok) {
-          entry.done = true;
-          // Repairs never gate registration, but they must not be silent either.
-          if (accepted.normalizations?.length) {
-            this.deps.logInfo?.(
-              `team plan handoff ${ctx.executionId}: registered plan after normalizing`,
-              accepted.normalizations.join('; ')
-            );
-          }
-          await this.deps.cleanup(ctx.projectRoot, ctx.executionId).catch(() => {});
-          return;
-        }
-        // A plan that parses but cannot register is still an invalid plan: spend the
-        // same strike budget and, once spent, raise the Inbox correction with the
-        // host's real rejection reason instead of silently failing the run.
-        const rejection = registered.message ?? 'register failed';
-        await this.handleInvalid(entry, maxNudges, ctx, `host rejected plan: ${rejection}`, `the host rejected your plan (${rejection})`);
+        await this.handleOk(entry, maxNudges, ctx, read);
         return;
       }
       // After the nudge budget is spent only a valid plan is acted on; a missing or
       // still-invalid file just waits for the next idle edge or the watchdog.
       if (entry.exhausted) return;
+      // An idle edge before the coordinator's first turn is just the CLI waiting for its prompt:
+      // a missing file then is expected, so it must not spend a nudge (one spared edge at most).
+      if (read.status === 'missing' && this.deps.requireTurnStart && !entry.turnStarted && !entry.skippedEarly) {
+        entry.skippedEarly = true;
+        this.diag(ctx, { event: 'skip', note: 'early idle before first turn' });
+        return;
+      }
       const reason = read.status === 'invalid' ? read.reason : `no plan file found at \`${handoffPromptPath(ctx.projectRoot, authoredPlanRelPath(ctx.executionId))}\``;
-      await this.handleInvalid(entry, maxNudges, ctx, reason, reason);
+      await this.handleInvalid(entry, maxNudges, ctx, reason, reason, false, true);
     } catch (error) {
       this.deps.logError(`team plan handoff ${ctx.sessionId}`, error);
-    } finally {
-      entry.inFlight = false;
     }
   }
 
+  /** A readable authored plan: review, judge once, register; a rejection spends the strike budget. */
+  private async handleOk(entry: HandoffState, maxNudges: number, ctx: CoordinatorHandoffContext, read: Extract<AuthoredPlanRead, { status: 'ok' }>): Promise<void> {
+    const verdict = await this.deps.review?.(ctx, read);
+    if (verdict === 'wait') {
+      this.diag(ctx, { event: 'skip', note: 'review wait' });
+      return;
+    }
+    if (verdict === 'reject') {
+      this.diag(ctx, { event: 'skip', note: 'review reject' });
+      entry.done = true;
+      return;
+    }
+    const accepted = typeof verdict === 'object' ? verdict : read;
+    // A plan the operator already corrected is not re-judged; an authored one gets one automatic round.
+    const judged = accepted === read ? await this.deps.judgeAuthored?.(ctx, accepted.units).catch((error) => {
+      this.deps.logError(`team plan handoff judge ${ctx.sessionId}`, error);
+      return undefined;
+    }) : undefined;
+    if (judged) {
+      if (!entry.judged) {
+        entry.judged = true;
+        this.emit(ctx, () => ({ stage: 'nudge', reason: boundTraceReason(judged.reason), nudges: entry.nudges }));
+        this.deps.nudge(ctx.sessionId, `${judged.message}\nWrite the corrected plan to \`${handoffPromptPath(ctx.projectRoot, authoredPlanRelPath(ctx.executionId))}\` and end your turn.`);
+        return;
+      }
+      await this.handleInvalid(entry, maxNudges, ctx, judged.reason, judged.reason, true);
+      return;
+    }
+    const registered = await this.deps.register(ctx, accepted.units);
+    this.emitRegister(ctx, accepted, registered, accepted === read ? 'authored' : 'corrected');
+    if (registered.ok) {
+      entry.done = true;
+      // Repairs never gate registration, but they must not be silent either.
+      if (accepted.normalizations?.length) {
+        this.deps.logInfo?.(
+          `team plan handoff ${ctx.executionId}: registered plan after normalizing`,
+          accepted.normalizations.join('; ')
+        );
+      }
+      await this.deps.cleanup(ctx.projectRoot, ctx.executionId).catch(() => {});
+      return;
+    }
+    // A plan that parses but cannot register is still an invalid plan: spend the
+    // same strike budget and, once spent, raise the Inbox correction with the
+    // host's real rejection reason instead of silently failing the run.
+    const rejection = registered.message ?? 'register failed';
+    await this.handleInvalid(entry, maxNudges, ctx, `host rejected plan: ${rejection}`, `the host rejected your plan (${rejection})`);
+    return;
+  }
+
   /** Shared invalid-plan path: correction review first, then bounded nudges. */
-  private async handleInvalid(entry: HandoffState, maxNudges: number, ctx: CoordinatorHandoffContext, reason: string, nudgeReason: string, escalate = false): Promise<void> {
+  private async handleInvalid(entry: HandoffState, maxNudges: number, ctx: CoordinatorHandoffContext, reason: string, nudgeReason: string, escalate = false, recheck = false): Promise<void> {
     const verdict = await (escalate && this.deps.escalateInvalid ? this.deps.escalateInvalid : this.deps.reviewInvalid)?.(ctx, reason);
     if (verdict === 'wait') return;
     if (verdict === 'reject') {
@@ -508,13 +580,13 @@ export class TeamPlanHandoff {
         await this.deps.cleanup(ctx.projectRoot, ctx.executionId).catch(() => {});
         return;
       }
-      this.maybeNudge(entry, maxNudges, ctx, `the host rejected your corrected plan (${registered.message ?? 'register failed'})`);
+      await this.maybeNudge(entry, maxNudges, ctx, `the host rejected your corrected plan (${registered.message ?? 'register failed'})`);
       return;
     }
-    this.maybeNudge(entry, maxNudges, ctx, nudgeReason);
+    await this.maybeNudge(entry, maxNudges, ctx, nudgeReason, recheck);
   }
 
-  private maybeNudge(entry: HandoffState, maxNudges: number, ctx: CoordinatorHandoffContext, reason: string): void {
+  private async maybeNudge(entry: HandoffState, maxNudges: number, ctx: CoordinatorHandoffContext, reason: string, recheck = false): Promise<void> {
     if (entry.nudges >= maxNudges) {
       // Budget spent — stop prompting; the plan-readiness watchdog owns the
       // clean FAILED transition so the run does not hang or loop. The entry is
@@ -531,6 +603,16 @@ export class TeamPlanHandoff {
         }
       }
       return;
+    }
+    // A nudge is delivered later than it is decided (the CLI queues it until its turn ends), so its
+    // reason can be stale: look at the file once more and register what is there instead of nudging.
+    if (recheck) {
+      const fresh = await this.deps.readAuthoredPlan(ctx.projectRoot, ctx.executionId).catch(() => undefined);
+      if (fresh?.status === 'ok') {
+        this.diag(ctx, { event: 'skip', note: 'file appeared before nudge; registering' });
+        await this.handleOk(entry, maxNudges, ctx, fresh);
+        return;
+      }
     }
     entry.nudges += 1;
     this.emit(ctx, () => ({ stage: 'nudge', reason: boundTraceReason(reason), nudges: entry.nudges }));
@@ -557,6 +639,14 @@ export class TeamPlanHandoff {
       ...(accepted.bodyDigest ? { bodyDigest: accepted.bodyDigest } : {}),
       ...(registered.ok ? {} : { reason: boundTraceReason(registered.message ?? 'register failed') })
     }), fromRegister);
+  }
+
+  private diag(ctx: CoordinatorHandoffContext, line: Omit<PlanHandoffDiagnostic, 'executionId' | 'sessionId'>): void {
+    try {
+      this.deps.diagnose?.({ executionId: ctx.executionId, sessionId: ctx.sessionId, ...line });
+    } catch {
+      // observation only
+    }
   }
 
   /** Build lazily and swallow every failure: tracing must never alter the handoff. */
@@ -600,6 +690,22 @@ export function createStallNotice(
       dedupeKey: `execution-plan-stalled:${ctx.executionId}`
     }).catch((error) => logError('team plan handoff stall notice', error));
   };
+}
+
+/**
+ * DIAGNOSTIC: logs one bounded line per orchestrator status edge and tells the handoff when the
+ * coordinator starts working. Returns true for an orchestrator session so the caller can stop early.
+ */
+export function observeOrchestratorEdge(
+  deps: { log(context: string, message: string): void; working(executionId: string): void },
+  sessionId: string,
+  state: string,
+  seq: number | undefined,
+  cohort: { role?: string; executionId?: string } | undefined
+): void {
+  if (cohort?.role !== 'orchestrator' || !cohort.executionId) return;
+  deps.log('squad orchestrator edge', JSON.stringify({ executionId: cohort.executionId, sessionId, state, seq }));
+  if (state === 'working') deps.working(cohort.executionId);
 }
 
 /** Generation fence stamped onto a trace at emit time. */

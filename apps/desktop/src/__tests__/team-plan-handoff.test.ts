@@ -13,6 +13,7 @@ import {
   PLAN_TRACE_REASON_MAX,
   TeamPlanHandoff,
   createStallNotice,
+  observeOrchestratorEdge,
   authoredPlanRelPath,
   boundTraceReason,
   createPlanTraceSink,
@@ -234,6 +235,8 @@ describe('TeamPlanHandoff.onCoordinatorIdle', () => {
     readAuthoredPlan?: () => Promise<AuthoredPlanRead>;
     register?: () => Promise<{ ok: boolean; message?: string }>;
     maxNudges?: number;
+    requireTurnStart?: boolean;
+    diagnose?: (line: unknown) => void;
   } = {}) {
     const nudge = vi.fn();
     const register = vi.fn(overrides.register ?? (async () => ({ ok: true })));
@@ -245,7 +248,9 @@ describe('TeamPlanHandoff.onCoordinatorIdle', () => {
       nudge,
       cleanup,
       logError: () => {},
-      maxNudges: overrides.maxNudges
+      maxNudges: overrides.maxNudges,
+      requireTurnStart: overrides.requireTurnStart,
+      diagnose: overrides.diagnose
     });
     return { handoff, nudge, register, cleanup };
   }
@@ -279,6 +284,53 @@ describe('TeamPlanHandoff.onCoordinatorIdle', () => {
     const absolute = `/root/${authoredPlanRelPath('exec-1')}`;
     expect(nudge.mock.calls[0][1]).toContain(`no plan file found at \`${absolute}\``);
     expect(nudge.mock.calls[0][1]).toContain(`to \`${absolute}\` using your file-write tool`);
+  });
+
+  it('spares the idle edge that fires before the first turn, then nudges on the next', async () => {
+    const lines: Array<{ event: string; note?: string }> = [];
+    const { handoff, nudge } = deps({ requireTurnStart: true, readAuthoredPlan: async () => ({ status: 'missing' }), diagnose: (line) => lines.push(line as { event: string }) });
+    await handoff.onCoordinatorIdle(ctx);
+    expect(nudge).not.toHaveBeenCalled();
+    expect(lines.some((line) => line.event === 'skip' && line.note === 'early idle before first turn')).toBe(true);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(nudge).toHaveBeenCalledOnce();
+  });
+
+  it('nudges on the first idle edge once the coordinator was seen working', async () => {
+    const { handoff, nudge } = deps({ requireTurnStart: true, readAuthoredPlan: async () => ({ status: 'missing' }) });
+    handoff.onCoordinatorWorking(ctx.executionId);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(nudge).toHaveBeenCalledOnce();
+  });
+
+  it('registers a file that appeared while the nudge was being decided instead of nudging', async () => {
+    const reads: AuthoredPlanRead[] = [{ status: 'missing' }, { status: 'ok', units, realPath: '/root/.zana/execution-plan-exec-1.md' }];
+    const { handoff, nudge, register } = deps({ readAuthoredPlan: async () => reads.shift() ?? { status: 'missing' } });
+    await handoff.onCoordinatorIdle(ctx);
+    expect(nudge).not.toHaveBeenCalled();
+    expect(register).toHaveBeenCalledWith(ctx, units);
+  });
+
+  it('keeps an idle edge that arrives mid-pass and re-reads once the pass finishes', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    // The pass (read + pre-nudge re-read) sees no file; only the queued re-run finds it.
+    const reads: AuthoredPlanRead[] = [{ status: 'missing' }, { status: 'missing' }];
+    const { handoff, register } = deps({
+      isPlanless: async () => { await gate; return true; },
+      readAuthoredPlan: async () => reads.shift() ?? { status: 'ok', units, realPath: '/root/.zana/execution-plan-exec-1.md' }
+    });
+    const first = handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx);
+    release();
+    await first;
+    expect(register).toHaveBeenCalledOnce();
+  });
+
+  it('never lets a throwing diagnostic sink change the handoff', async () => {
+    const { handoff, register } = deps({ diagnose: () => { throw new Error('sink'); } });
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenCalledOnce();
   });
 
   it('nudges with the validation reason when the plan file is invalid', async () => {
@@ -1042,5 +1094,28 @@ describe('plan handoff correlation trace', () => {
     const throwingLog = vi.fn(() => { throw new Error('log down'); });
     expect(() => createPlanTraceSink({ generation: async () => undefined, log: throwingLog })(event)).not.toThrow();
     await vi.waitFor(() => expect(throwingLog).toHaveBeenCalledOnce());
+  });
+});
+
+describe('observeOrchestratorEdge', () => {
+  it('logs every orchestrator edge and reports working to the handoff', () => {
+    const log = vi.fn();
+    const working = vi.fn();
+    observeOrchestratorEdge({ log, working }, 's-1', 'working', 3, { role: 'orchestrator', executionId: 'e-1' });
+    observeOrchestratorEdge({ log, working }, 's-1', 'idle', undefined, { role: 'orchestrator', executionId: 'e-1' });
+    expect(log).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(log.mock.calls[0][1])).toEqual({ executionId: 'e-1', sessionId: 's-1', state: 'working', seq: 3 });
+    expect(working).toHaveBeenCalledOnce();
+    expect(working).toHaveBeenCalledWith('e-1');
+  });
+
+  it('ignores workers and sessions without an execution', () => {
+    const log = vi.fn();
+    const working = vi.fn();
+    observeOrchestratorEdge({ log, working }, 's', 'working', 1, { role: 'worker', executionId: 'e' });
+    observeOrchestratorEdge({ log, working }, 's', 'working', 1, { role: 'orchestrator' });
+    observeOrchestratorEdge({ log, working }, 's', 'working', 1, undefined);
+    expect(log).not.toHaveBeenCalled();
+    expect(working).not.toHaveBeenCalled();
   });
 });
