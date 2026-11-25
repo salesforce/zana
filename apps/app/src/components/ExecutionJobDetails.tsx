@@ -495,6 +495,9 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
         <div className="execution-run-title"><h3>{execution.jobTitle}</h3>{execution.teamName && <p>{execution.teamName}</p>}</div>
         <div className="execution-run-header-actions">
           <span className="execution-run-badge" data-state={execution.state} data-testid="execution-run-state">{runLabels[execution.state]}</span>
+          {!isTerminal && (
+            <button className="btn danger" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.stop(projectId, executionId, execution.stateVersion ?? 0))}>Stop Squad run</button>
+          )}
           <button className="btn execution-details-close" type="button" onClick={onClose}>Close details</button>
         </div>
       </header>
@@ -639,12 +642,9 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
               </div>
             </section>
           )}
-          {!isTerminal && (
+          {execution.state === 'BLOCKED' && !currentBlocker && !execution.resourceBlock && (
             <div className="execution-details-actions">
-              <button className="btn danger" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.stop(projectId, executionId, execution.stateVersion ?? 0))}>Stop run</button>
-              {execution.state === 'BLOCKED' && !currentBlocker && !execution.resourceBlock && (
-                <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.retry(projectId, executionId, execution.stateVersion ?? 0))}>Retry Squad run</button>
-              )}
+              <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.retry(projectId, executionId, execution.stateVersion ?? 0))}>Retry Squad run</button>
             </div>
           )}
         </div>

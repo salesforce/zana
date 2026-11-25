@@ -147,6 +147,7 @@ test('Squads shows Squad runs only, filters both views and opens the real blocke
       await expect(page.locator('.agents-board-content[data-execution-open]')).toBeFocused();
       const detailLayout = page.locator('.execution-run-layout');
       await expect.poll(() => detailLayout.evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').length)).toBe(1);
+      await expect(page.locator('.execution-run-header').getByRole('button', { name: 'Stop Squad run', exact: true })).toBeInViewport({ ratio: 1 });
       await page.keyboard.press('Escape');
       await expect(attention).toBeFocused();
       await app.electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 900));
@@ -154,6 +155,7 @@ test('Squads shows Squad runs only, filters both views and opens the real blocke
     await click(page, attention);
     const job = page.getByLabel('Squad details', { exact: true });
     const closeDetails = job.getByRole('button', { name: 'Close details', exact: true });
+    await expect(job.locator('.execution-run-header').getByRole('button', { name: 'Stop Squad run', exact: true })).toBeInViewport({ ratio: 1 });
     await expect(squads).toBeHidden();
     const blocker = job.getByRole('region', { name: question, exact: true });
     const work = job.getByRole('region', { name: 'Work steps', exact: true });

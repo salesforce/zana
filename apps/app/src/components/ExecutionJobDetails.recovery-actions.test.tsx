@@ -41,7 +41,7 @@ describe('Recover orchestrator', () => {
 
   it('is absent when the orchestrator is live', async () => {
     load(() => {});
-    await screen.findByRole('button', { name: 'Stop run', exact: true });
+    await screen.findByRole('button', { name: 'Stop Squad run', exact: true });
     expect(screen.queryByRole('button', { name: 'Recover orchestrator' })).toBeNull();
   });
 
