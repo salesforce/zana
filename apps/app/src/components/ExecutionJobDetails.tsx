@@ -1,5 +1,4 @@
 import { boundedText, LargeTextPreview } from './LargeTextPreview.js';
-import { formatAge } from '@/lib/squad-worker-visibility';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { ExecutionBoardSnapshot } from '@zana-ai/zcc-domain/product';
 import { useUi } from '../store';
@@ -7,6 +6,7 @@ import { usePersonas, useTeams } from '../stores/live.js';
 import { copyText } from '../lib/copy-text.js';
 import { startSerialPoll } from '../lib/serial-poll.js';
 import { mergeExecutionEvents } from './execution-event-tail.js';
+import { ExecutionBlockerCard, type ExecutionBlocker } from './ExecutionBlockerCard.js';
 
 interface Props {
   projectId: string;
@@ -28,6 +28,13 @@ function formatCost(usd?: number): string {
 const JOB_DETAILS_EVENT_TAIL = 25;
 
 type ExecutionProjection = ExecutionBoardSnapshot['execution'];
+
+interface SubmittedBlockerAnswer {
+  blocker: ExecutionBlocker;
+  text: string;
+  stateVersion: number;
+  recorded: boolean;
+}
 
 function durationLabel(ms: number): string {
   return ms % 60_000 === 0 ? `${ms / 60_000} min` : `${Math.round(ms / 1_000)} s`;
@@ -266,9 +273,9 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
   const snapshotRef = useRef<ExecutionBoardSnapshot | null>(null);
   const scopeRef = useRef({ key: '', live: false, inFlight: false });
   const [busy, setBusy] = useState(false);
-  const [replyDraft, setReplyDraft] = useState('');
+  const [submittedAnswer, setSubmittedAnswer] = useState<SubmittedBlockerAnswer>();
   const requestIdentityRef = useRef<{ blockerId: string; text: string; id: string } | undefined>(undefined);
-  const blockerFormRef = useRef<HTMLFormElement>(null);
+  const blockerRef = useRef<HTMLElement>(null);
   const scrolledBlockerRef = useRef<string | undefined>(undefined);
   // An open blocker is the one thing here a person must act on, so bring it into view once per blocker
   // instead of leaving it below the run summary in a short panel.
@@ -276,7 +283,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
   useEffect(() => {
     if (!openBlockerId || scrolledBlockerRef.current === openBlockerId) return;
     scrolledBlockerRef.current = openBlockerId;
-    blockerFormRef.current?.scrollIntoView?.({ block: 'start' });
+    blockerRef.current?.scrollIntoView?.({ block: 'start' });
   }, [openBlockerId]);
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, string>>({});
   const [artifactContent, setArtifactContent] = useState<Record<string, string>>({});
@@ -317,6 +324,10 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
     snapshotRef.current = null;
     setSnapshot(null); setLoaded(false); setUnavailable(false);
     setArtifactContent({});
+    setBusy(false);
+    setSubmittedAnswer(undefined);
+    requestIdentityRef.current = undefined;
+    scrolledBlockerRef.current = undefined;
     void refresh();
     return () => { scope.live = false; };
   }, [refresh, projectId, executionId]);
@@ -356,22 +367,64 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
     {execution.successorExecutionId && <p role="status">Recovered successor: {execution.successorExecutionId}</p>}
     {execution.recoveryAttention && execution.recovery?.status === 'available' && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.relaunchMonitor(projectId, executionId))}>Recover orchestrator</button>}
   </div>;
-  const deliveryPending = snapshot.execution.currentBlocker?.delivery?.state === 'PENDING' || snapshot.execution.currentBlocker?.delivery?.state === 'LEASED';
-  const replyBytes = new TextEncoder().encode(replyDraft).byteLength;
-  const replyTooLarge = replyBytes > 16 * 1024;
-  const mutate = async (action: () => Promise<{ ok: boolean; code?: string; message?: string }>, clearReply = false) => {
+  const currentBlocker = execution.currentBlocker;
+  const localAnswer = submittedAnswer && (!currentBlocker || submittedAnswer.blocker.id === currentBlocker.id)
+    ? submittedAnswer : undefined;
+  const resolvedBlocker = !currentBlocker && localAnswer
+    ? execution.blockers?.find((blocker) => blocker.id === localAnswer.blocker.id && blocker.resolved)
+    : undefined;
+  const awaitingSnapshot = !!localAnswer && !isTerminal && (execution.stateVersion ?? 0) < localAnswer.stateVersion;
+  const blocker = awaitingSnapshot || resolvedBlocker ? localAnswer?.blocker : currentBlocker;
+  const recorded = !!resolvedBlocker || (awaitingSnapshot && !!localAnswer?.recorded);
+  const deliveryState = resolvedBlocker?.deliveryState ?? blocker?.delivery?.state;
+  const deliveryDetails = resolvedBlocker && deliveryState
+    ? execution.deliveries?.find((delivery) => delivery.blockerId === blocker?.id && delivery.state === deliveryState)
+    : undefined;
+  const deliveryId = currentBlocker?.delivery?.id ?? deliveryDetails?.id;
+  // The backend projects delivery metadata only. Echo only the reply sent in
+  // this panel, and only when it corresponds to this delivery or a recorded decision.
+  const ownAnswer = awaitingSnapshot || (deliveryId !== undefined && deliveryId === localAnswer?.blocker.delivery?.id)
+    || (recorded && localAnswer?.recorded);
+  const answer = (ownAnswer ? localAnswer?.text : undefined) ?? blocker?.response;
+  const visibleBlocker = blocker && deliveryDetails
+    ? { ...blocker, delivery: { ...deliveryDetails, retryEligible: false } }
+    : blocker;
+
+  const mutate = async (action: () => Promise<{ ok: boolean; code?: string; message?: string }>) => {
+    const scope = scopeRef.current;
     setBusy(true);
     try {
       const result = await action();
+      if (!scope.live) return;
       if (!result.ok) useUi.getState().pushToast(`Squad control failed: ${result.message ?? result.code}`, 'error');
-      else if (clearReply) {
-        setReplyDraft('');
-        requestIdentityRef.current = undefined;
-      }
       await refresh();
     } catch {
-      useUi.getState().pushToast('Squad control failed: response status unknown', 'error');
-    } finally { setBusy(false); }
+      if (scope.live) useUi.getState().pushToast('Squad control failed: response status unknown', 'error');
+    } finally {
+      if (scope.live) setBusy(false);
+    }
+  };
+  const respond = (target: ExecutionBlocker, message: string) => {
+    if (requestIdentityRef.current?.blockerId !== target.id || requestIdentityRef.current.text !== message) {
+      requestIdentityRef.current = { blockerId: target.id, text: message, id: `${target.id}:${crypto.randomUUID()}` };
+    }
+    const { id } = requestIdentityRef.current;
+    const scope = scopeRef.current;
+    void mutate(async () => {
+      const result = await window.cc.executionBoard.respond(projectId, executionId, execution.stateVersion ?? 0, target.id, id, message);
+      if (result.ok && scope.live) {
+        const updated = result.value.currentBlocker;
+        const accepted = updated?.id === target.id ? updated : target;
+        setSubmittedAnswer({
+          blocker: accepted,
+          text: message,
+          stateVersion: result.value.stateVersion ?? (execution.stateVersion ?? 0) + 1,
+          recorded: !!result.value.blockers?.some((blocker) => blocker.id === target.id && blocker.resolved)
+        });
+        requestIdentityRef.current = undefined;
+      }
+      return result;
+    });
   };
   const copyJobDetails = () => {
     // buildJobDetailsText is SYNCHRONOUS — a null snapshot would throw before the
@@ -480,45 +533,23 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
           </>}
         </div>;
       })}
-      {snapshot.execution.currentBlocker && (
-        <form ref={blockerFormRef} className="execution-blocker" onSubmit={(event) => {
-          event.preventDefault();
-          if (isTerminal) return;
-          const blocker = snapshot.execution.currentBlocker!;
-          const message = replyDraft.trim();
-          if (!message) return;
-          if (requestIdentityRef.current?.blockerId !== blocker.id || requestIdentityRef.current.text !== message) {
-            requestIdentityRef.current = { blockerId: blocker.id, text: message, id: `${blocker.id}:${crypto.randomUUID()}` };
-          }
-          void mutate(() => window.cc.executionBoard.respond(projectId, executionId, execution.stateVersion ?? 0, blocker.id, requestIdentityRef.current!.id, message), true);
-        }}>
-          <div className="execution-blocker-heading"><h4>Current blocker</h4><span>{isTerminal ? 'Squad run closed' : 'Needs your response'}</span>{!isTerminal && snapshot.execution.currentBlocker.waitingSince !== undefined && <span className="execution-blocker-wait" data-testid="execution-blocker-wait">Waiting {formatAge(Date.now() - snapshot.execution.currentBlocker.waitingSince)}</span>}</div>
-          <p className="execution-blocker-question">{snapshot.execution.currentBlocker.question}</p>
-          {snapshot.execution.currentBlocker.options?.length ? <p className="execution-blocker-options">{snapshot.execution.currentBlocker.options.join(' · ')}</p> : null}
-          {isTerminal && <p className="execution-blocker-terminal" role="status">Squad run {execution.state.toLowerCase()}. This blocker is retained as history and can no longer receive a response.</p>}
-          {isTerminal && execution.timeoutReason === 'unresolved-blocker' && <p role="status" aria-live="polite">Timed out while waiting for this blocker. Recovery starts a fresh run; retained read-only work is not repeated.</p>}
-          {snapshot.execution.currentBlocker.notice && <p role="status" aria-live="polite">Inbox notice: {snapshot.execution.currentBlocker.notice.status.toLowerCase()} · attempts {snapshot.execution.currentBlocker.notice.attempts}{snapshot.execution.currentBlocker.notice.inboxItemId ? ` · item ${snapshot.execution.currentBlocker.notice.inboxItemId}` : ''}</p>}
-          {snapshot.execution.currentBlocker.delivery && <p className="execution-delivery-status"
-            role={snapshot.execution.currentBlocker.delivery.state === 'FAILED' ? 'alert' : 'status'}
-            aria-live="polite"
-            aria-atomic="true"
-          >
-            {snapshot.execution.currentBlocker.delivery.state === 'PENDING' && 'Pending delivery'}
-            {snapshot.execution.currentBlocker.delivery.state === 'LEASED' && 'Awaiting worker acknowledgement'}
-            {snapshot.execution.currentBlocker.delivery.state === 'FAILED' && 'Delivery failed'}
-            {snapshot.execution.currentBlocker.delivery.state === 'DELIVERED' && 'Delivered'}
-            {' · Attempt '}{snapshot.execution.currentBlocker.delivery.attempt}/{snapshot.execution.currentBlocker.delivery.maxAttempts}
-            {snapshot.execution.currentBlocker.delivery.error ? ` · ${snapshot.execution.currentBlocker.delivery.error}` : ''}
-            {!isTerminal && snapshot.execution.currentBlocker.delivery.retryEligible && <button className="btn" type="button" disabled={busy} onClick={() => {
-              const blocker = snapshot.execution.currentBlocker!;
-              void mutate(() => window.cc.executionBoard.retryDelivery(projectId, executionId, execution.stateVersion ?? 0, blocker.id, blocker.delivery!.id));
-            }}>Retry</button>}
-          </p>}
-          {!isTerminal && <><label className="execution-blocker-label" htmlFor="execution-blocker-response">Response</label>
-          <textarea id="execution-blocker-response" aria-label="Blocker response" aria-invalid={replyTooLarge || undefined} value={replyDraft} onChange={(event) => setReplyDraft(event.target.value)} placeholder="Give worker decision, missing detail, or approval…" rows={3} />
-          <div className="execution-blocker-actions"><span role="status" aria-live="polite" aria-atomic="true">{replyBytes}/16384 UTF-8 bytes{replyTooLarge ? ' · Response is too large' : deliveryPending ? ' · Answer queued; waiting for worker acknowledgement' : ''}</span>
-          <button className="btn primary" type="submit" disabled={busy || replyTooLarge || deliveryPending} title={deliveryPending ? 'Answer is already queued for this worker. Wait for acknowledgement or retry after delivery fails.' : undefined}>Respond</button></div></>}
-        </form>
+      {visibleBlocker && (
+        <ExecutionBlockerCard
+          key={visibleBlocker.id}
+          blocker={visibleBlocker}
+          deliveryState={deliveryState}
+          recorded={recorded}
+          closed={isTerminal}
+          timedOut={execution.timeoutReason === 'unresolved-blocker'}
+          answer={answer}
+          workTitle={execution.work?.assignments.find((assignment) => assignment.workUnitId === visibleBlocker.workUnitId)?.title}
+          busy={busy}
+          sectionRef={blockerRef}
+          onRespond={(message) => respond(visibleBlocker, message)}
+          onRetry={(deliveryId) => void mutate(() => window.cc.executionBoard.retryDelivery(
+            projectId, executionId, execution.stateVersion ?? 0, visibleBlocker.id, deliveryId
+          ))}
+        />
       )}
       <h4>Progress</h4>
       {snapshot.events.map((event) => (

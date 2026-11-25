@@ -141,13 +141,36 @@ test('Squads groups the run and solo agents, filters both views and opens the re
 
     await click(page, attention);
     const job = page.getByLabel('Squad details', { exact: true });
-    await expect(job.getByText(question, { exact: true })).toBeVisible();
-    const response = job.getByRole('textbox', { name: 'Blocker response' });
+    const blocker = job.getByRole('region', { name: question, exact: true });
+    await expect(blocker.getByRole('heading', { name: question })).toBeVisible();
+    const response = blocker.getByRole('textbox', { name: 'Your answer' });
+    await expect(response).toBeVisible();
+    await expect(blocker.getByText('About · About Atlas', { exact: true })).toBeVisible();
+    await expect(blocker.getByRole('radio')).toHaveCount(0);
     await response.scrollIntoViewIfNeeded();
-    await caption('Open the question to respond in Squad details.');
-    await response.fill('About Atlas');
-    await click(page, job.getByRole('button', { name: 'Respond', exact: true }));
+    if (!recording) await page.screenshot({ path: testInfo.outputPath('blocker-open.png') });
+    await caption('The question leads. Suggestions are plain text, and the free-text field is ready to use.');
+    const diagnostics = blocker.getByText('Delivery details', { exact: true });
+    await click(page, diagnostics);
+    await expect(blocker.getByText('Inbox notice', { exact: true })).toBeVisible();
+    await caption('Open Delivery details to see technical information when you need it.', 2700);
+    await click(page, diagnostics);
+    if (recording) {
+      await response.pressSequentially('About Atlas', { delay: 80 });
+      await page.waitForTimeout(500);
+    } else {
+      await response.fill('About Atlas');
+    }
+    await click(page, blocker.getByRole('button', { name: 'Send answer', exact: true }));
+    await expect(blocker.getByText('Answer queued', { exact: true })).toBeVisible();
+    await expect(blocker.locator('.execution-blocker-receipt')).toContainText('About Atlas');
+    await expect(response).toHaveCount(0);
+    if (!recording) await page.screenshot({ path: testInfo.outputPath('blocker-queued.png') });
+    await caption('The card shows your answer while it waits for the worker to acknowledge it.', 1600);
     await expect.poll(() => readCoordinatorLog(ctx), { timeout: 30_000 }).toContain('answer About Atlas');
+    await expect(blocker.getByText('Answer delivered', { exact: true })).toBeVisible();
+    await expect(blocker.locator('.execution-blocker-receipt')).toContainText('About Atlas');
+    await caption('Answer delivered confirms the worker received it.', 2800);
     await click(page, job.getByRole('button', { name: 'Close details' }));
     await click(page, squads.getByRole('button', { name: 'Overview', exact: true }));
     await expect(attention).toBeHidden({ timeout: 20_000 });

@@ -322,8 +322,7 @@ export async function answerJobBlockerThroughUi(args: {
 
   const details = window.getByLabel('Squad details');
   await expect(details).toBeVisible();
-  await expect(details.getByText('Current blocker', { exact: true })).toBeVisible();
-  await expect(details.getByText('Which label should result.txt use?', { exact: true })).toBeVisible();
+  await expect(details.getByRole('heading', { name: 'Which label should result.txt use?' })).toBeVisible();
   await expect(details.getByText('About · About Atlas', { exact: true })).toBeVisible();
 
   await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
