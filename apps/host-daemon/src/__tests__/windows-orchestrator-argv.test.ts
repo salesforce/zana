@@ -85,6 +85,8 @@ describe('Windows orchestrator command line', () => {
     fileSupport.mockReset();
     fileSupport.mockReturnValue(true);
     vi.stubEnv('OPENCODE_CONFIG', undefined);
+    // An autonomous launch needs isolated Claude auth; a stub key keeps this test host-independent.
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-test-not-real');
   });
   afterEach(() => {
     Object.defineProperty(process, 'platform', realPlatform);
