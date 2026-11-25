@@ -18,4 +18,11 @@ describe('derivePluginId', () => {
     expect(isPluginId('tasks')).toBe(true);
     expect(isPluginId(BUILTIN_NAV_SENTINEL)).toBe(false);
   });
+
+  it('stays linear on a long run of dashes', () => {
+    const started = performance.now();
+    expect(derivePluginId(`${'-'.repeat(200_000)}x`)).toBe('x');
+    expect(derivePluginId(`x${'-'.repeat(200_000)}y`)).toBe(`x${'-'.repeat(200_000)}y`);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
 });
