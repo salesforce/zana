@@ -130,7 +130,11 @@ test('plugin service returns survive worker transport and a blocking callback ca
     await page.waitForTimeout(200);
     const latency = await page.evaluate(async () => { const start = performance.now(); const response = await fetch('/api/v1/plugins'); if (!response.ok) throw Error('Product request failed'); await response.json(); return performance.now() - start; });
     expect(latency).toBeLessThan(500);
-    await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'plugin-worker-regression')?.status), { timeout: 10_000 }).toBe('degraded');
+    // The worker heartbeat watchdog allows 20 seconds before reporting a stall.
+    await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'plugin-worker-regression')?.status), {
+      timeout: 30_000,
+      intervals: [250]
+    }).toBe('degraded');
     const rejected = await page.evaluate(() => (globalThis as any).busyReply); expect(rejected.status).toBeGreaterThanOrEqual(400); expect(rejected.body.error).toContain('stopped responding');
   } finally { await app.electron.close(); }
 });

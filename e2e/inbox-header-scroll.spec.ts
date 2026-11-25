@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
 test.use({ initialConfig: { sponsorPromptDismissed: true } });
 
@@ -83,7 +84,7 @@ test('inbox message header stays visible and usable while its content scrolls', 
       await header.getByRole('button', { name: 'Remove keep flag' }).click();
       await expect.poll(() => pane.evaluate((el) => el.scrollTop)).toBeGreaterThan(300);
     }
-    await page.screenshot({ path: testInfo.outputPath(`inbox-scrolled-${width}-${theme}.png`) });
+    await captureElectronScreenshot(app.electron, page, testInfo.outputPath(`inbox-scrolled-${width}-${theme}.png`));
   }
 
   await header.getByRole('button', { name: 'Inbox', exact: true }).click();

@@ -3,6 +3,7 @@ import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { chromium, type Locator } from '@playwright/test';
 import { test, expect } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 import { startMobileGateway } from '../apps/server/src/mobile/gateway.js';
 
 test.use({ initialConfig: { sponsorPromptDismissed: true }, isolateBundledCatalog: true });
@@ -46,7 +47,7 @@ test('Inbox decodes image attachments through desktop IPC and mobile HTTP', asyn
   await expectDecoded(illustration, 1200, 800);
   await expect(desktop.getByText('relocated', { exact: true })).toBeVisible();
   expect((await illustration.boundingBox())!.width).toBeLessThanOrEqual((await desktop.locator('.inbox-doc-body').boundingBox())!.width);
-  await desktop.screenshot({ path: testInfo.outputPath('inbox-image-desktop.png') });
+  await captureElectronScreenshot(app.electron, desktop, testInfo.outputPath('inbox-image-desktop.png'));
   await desktop.getByRole('option', { name: 'broken.png', exact: true }).click();
   await expect(desktop.getByRole('status').filter({ hasText: 'Could not display this image' })).toBeVisible();
   await desktop.getByRole('option', { name: 'missing.png', exact: true }).click();
