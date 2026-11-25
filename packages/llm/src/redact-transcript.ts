@@ -21,13 +21,41 @@ const SECRET_PATTERNS: RegExp[] = [
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9._-]{10,}\.[A-Za-z0-9._-]{10,}\b/g,
   // Authorization: Bearer <token>.
   /\bBearer\s+[-._~+/=A-Za-z0-9]{12,}\b/gi,
-  // PEM private key blocks.
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
   // key=value / key: value secret assignments (api_key, token, password, secret, cookie).
   /\b(?:api[_-]?key|token|password|passwd|secret|cookie)\s*[:=]\s*(?:'[^']*'|"[^"]*"|[^\s'"`]+)/gi,
   // Secret-bearing query-string params (keeps the key, redacts the value).
   /([?&](?:api[_-]?key|token|password|secret)=)[^&#\s]+/gi
 ];
+
+const PEM_BEGIN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/g;
+const PEM_END = /-----END [A-Z ]*PRIVATE KEY-----/g;
+
+/**
+ * Replace PEM private key blocks. Same result as the lazy
+ * `BEGIN…[\s\S]*?…END` regex it replaces, but linear: the regex rescanned to
+ * the end of the input for every unterminated BEGIN. Here each END is found
+ * once, and the scan stops when no END remains because no later BEGIN can close.
+ */
+export function redactPemBlocks(text: string, replacement: string): string {
+  const begin = new RegExp(PEM_BEGIN);
+  const end = new RegExp(PEM_END);
+  let out = '';
+  let cursor = 0;
+  let cachedEnd: { index: number; length: number } | null = null;
+  for (let found = begin.exec(text); found; found = begin.exec(text)) {
+    const from = found.index + found[0].length;
+    if (cachedEnd === null || cachedEnd.index < from) {
+      end.lastIndex = from;
+      const match = end.exec(text);
+      if (match === null) break;
+      cachedEnd = { index: match.index, length: match[0].length };
+    }
+    out += text.slice(cursor, found.index) + replacement;
+    cursor = cachedEnd.index + cachedEnd.length;
+    begin.lastIndex = cursor;
+  }
+  return out + text.slice(cursor);
+}
 
 /**
  * Strip obvious secrets from agent transcript prose before it is interpolated
@@ -43,7 +71,7 @@ const SECRET_PATTERNS: RegExp[] = [
  * so the redacted URL still reads sensibly; every other match becomes `[redacted]`.
  */
 export function redactTranscript(transcript: string): string {
-  let redacted = transcript;
+  let redacted = redactPemBlocks(transcript, REDACTED);
   for (const pattern of SECRET_PATTERNS) {
     redacted = redacted.replace(pattern, (...args: unknown[]) => {
       // First capture group, when present, is the preserved `?key=`/`&key=` prefix.
