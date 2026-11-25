@@ -15,6 +15,8 @@ function mount(rpc: Record<string, (args?: any) => unknown>) {
   return harness;
 }
 
+function pending<T>() { let resolve!: (value: T) => void, reject!: (error: Error) => void; const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject }; }
+
 describe('AutoConvergeToggle', () => {
   it('loads the stored value, saves on change and shows the wording', async () => {
     const saved: unknown[] = [];
@@ -39,5 +41,36 @@ describe('AutoConvergeToggle', () => {
     const harness = mount({ autoConverge: async () => { throw new Error('load failed'); } });
     await waitFor(() => expect(harness.toasts.some((t) => /load failed/.test(t.message))).toBe(true));
     expect((screen.getByRole('switch') as HTMLInputElement).disabled).toBe(true);
+  });
+  it('ignores a load that finishes after unmount', async () => {
+    const load = pending<{ enabled: boolean }>();
+    const harness = mount({ autoConverge: () => load.promise });
+    await screen.findByRole('switch');
+    cleanup();
+    load.resolve({ enabled: true });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(harness.toasts).toEqual([]);
+  });
+  it('ignores a failed load that finishes after unmount', async () => {
+    const load = pending<{ enabled: boolean }>();
+    const harness = mount({ autoConverge: () => load.promise });
+    await screen.findByRole('switch');
+    cleanup();
+    load.reject(new Error('late failure'));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(harness.toasts).toEqual([]);
+  });
+  it('ignores a save that finishes or fails after unmount', async () => {
+    for (const outcome of ['resolve', 'reject'] as const) {
+      const save = pending<{ enabled: boolean }>();
+      const harness = mount({ autoConverge: async () => ({ enabled: false }), setAutoConverge: () => save.promise });
+      const toggle = await screen.findByRole('switch');
+      await waitFor(() => expect((toggle as HTMLInputElement).disabled).toBe(false));
+      fireEvent.click(toggle);
+      cleanup();
+      if (outcome === 'resolve') save.resolve({ enabled: true }); else save.reject(new Error('late save failure'));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(harness.toasts.filter((t) => /late save failure/.test(t.message))).toHaveLength(outcome === 'reject' ? 1 : 0);
+    }
   });
 });

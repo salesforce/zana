@@ -28,6 +28,8 @@ export function createAutoConvergeSetting(
     .then(async (stored) => {
       if (written) return;
       if (stored === undefined && legacy && await legacy()) {
+        // The legacy read is async: a choice made meanwhile is newer than the old global setting and must win.
+        if (written) return;
         await kv.set(AUTO_CONVERGE_KEY, true);
         if (!written) value = true;
         return;
@@ -41,8 +43,9 @@ export function createAutoConvergeSetting(
     get: async () => { await ready; return value; },
     set: async (enabled) => {
       if (typeof enabled !== 'boolean') throw new TypeError('enabled must be a boolean');
-      await kv.set(AUTO_CONVERGE_KEY, enabled);
+      // Flag intent before the write so an in-flight migration cannot overwrite this choice.
       written = true;
+      await kv.set(AUTO_CONVERGE_KEY, enabled);
       value = enabled;
       return value;
     }

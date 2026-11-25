@@ -62,6 +62,17 @@ describe('auto converge setting', () => {
       expect(await createAutoConvergeSetting(kvOf(false), vi.fn(), legacy).get()).toBe(false);
       expect(legacy).not.toHaveBeenCalled();
     });
+    it('does not overwrite a choice made while the legacy read is pending', async () => {
+      const kv = kvOf();
+      let release!: (value: boolean) => void;
+      const setting = createAutoConvergeSetting(kv, vi.fn(), () => new Promise<boolean>((resolve) => { release = resolve; }));
+      await vi.waitFor(() => expect(release).toBeDefined());
+      await setting.set(false);
+      release(true);
+      await setting.ready;
+      expect(kv.values.get(AUTO_CONVERGE_KEY)).toBe(false);
+      expect(setting.enabled()).toBe(false);
+    });
     it('fails closed and warns when the legacy read fails', async () => {
       const warn = vi.fn();
       const setting = createAutoConvergeSetting(kvOf(), warn, async () => { throw new Error('legacy gone'); });

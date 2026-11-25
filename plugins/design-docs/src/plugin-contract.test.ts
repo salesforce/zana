@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createFakePluginHost, makeThreadResponse } from '@zana-ai/zcc-plugin-sdk/testing';
 import plugin from '../server.js';
 import { createTestDatabase } from './server/test-db.js';
@@ -43,6 +43,23 @@ describe('design-docs plugin contract', () => {
     expect(await host.harness.callRpc('setAutoConverge', { enabled: true })).toEqual({ enabled: true });
     expect(await host.harness.callRpc('autoConverge', {})).toEqual({ enabled: true });
     await expect(host.harness.callRpc('setAutoConverge', { enabled: 'yes' })).rejects.toThrow(/boolean/);
+    await host.harness.dispose();
+  });
+  it('migrates a legacy global setting into plugin storage once', async () => {
+    const host = createFakePluginHost({ pluginId: 'design-docs', database: createTestDatabase() });
+    plugin(host.zcc);
+    host.harness.setSettings({ autoConverge: true });
+    expect(await host.harness.callRpc('autoConverge', {})).toEqual({ enabled: true });
+    expect(await host.zcc.storage.kv.get('settings.autoConverge')).toBe(true);
+    await host.harness.dispose();
+  });
+  it('warns and stays off when the stored setting cannot be read', async () => {
+    const host = createFakePluginHost({ pluginId: 'design-docs', database: createTestDatabase() });
+    const warn = vi.spyOn(host.zcc.log, 'warn');
+    vi.spyOn(host.zcc.storage.kv, 'get').mockRejectedValue(new Error('kv down'));
+    plugin(host.zcc);
+    expect(await host.harness.callRpc('autoConverge', {})).toEqual({ enabled: false });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('kv down'));
     await host.harness.dispose();
   });
   it('keeps standalone docs usable when production host omits peer SDK', async () => {
