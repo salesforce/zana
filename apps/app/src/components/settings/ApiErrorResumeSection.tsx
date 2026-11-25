@@ -137,6 +137,8 @@ function RuleRow({ rule, n, error, apply, onRemove }: {
           type="text"
           className="settings-input"
           aria-label={`When the error matches (rule ${n})`}
+          // A blank rule was just added by the user: put the cursor where they type next.
+          autoFocus={rule.match === ''}
           value={rule.match}
           onChange={(e) => apply(rule.id, { match: e.target.value }, false)}
           onBlur={() => apply(rule.id, {}, true)}
@@ -198,11 +200,15 @@ function RuleList({ rows, apply, addRule, removeRule }: ReturnType<typeof useRes
   );
   return (
     <div className="api-error-resume-rules" data-settings-target="agents.api-error-resume-rules">
+      <p className="settings-help">Only add errors that clear up by themselves. Sign-in, billing and “request too large” errors fail again if the agent just carries on.</p>
       <ul className="team-slot-list api-error-resume-list">
         {rows.map((rule, i) => (
           <RuleRow key={rule.id} rule={rule} n={i + 1} error={ruleError(rule, rows)} apply={apply} onRemove={() => removeRule(rule.id)} />
         ))}
       </ul>
+      {rows.length > 0 && (
+        <p className="settings-help">The “Send this message” text is typed into the agent as if you sent it. “continue” works for most agents.</p>
+      )}
       <div className="api-error-resume-actions">
         <button type="button" className="settings-btn" disabled={full} onClick={() => addRule()}>Add rule</button>
         {suggestions.map((s) => (
@@ -215,9 +221,7 @@ function RuleList({ rows, apply, addRule, removeRule }: ReturnType<typeof useRes
         ))}
       </div>
       {full && <p className="settings-help">You can have up to {D.maxRules} rules.</p>}
-      <p className="settings-help">The “Send this message” text is typed into the agent as if you sent it. “continue” works for most agents.</p>
       <p className="settings-help">Zana only sends the message if you haven't typed in that agent since the error.</p>
-      <p className="settings-help">Only add errors that clear up by themselves. Sign-in, billing and “request too large” errors fail again if the agent just carries on.</p>
     </div>
   );
 }
@@ -391,7 +395,7 @@ export function ApiErrorResumeSection({
         <>
           <RuleList {...rules} />
           <CapControls current={current} draft={draft} save={save} />
-          <ErrorCheck rows={rules.rows} />
+          {rules.rows.length > 0 && <ErrorCheck rows={rules.rows} />}
         </>
       )}
     </Section>

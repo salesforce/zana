@@ -75,8 +75,16 @@ withApp('UX-3 checkbox toggles and reveals the controls', async (c, info) => {
   await expect(toggle(c.win)).toBeChecked();
   await expect(c.win.getByRole('button', { name: 'Add rule' })).toBeVisible();
   await expect(c.win.getByLabel('Messages before stopping')).toBeVisible();
-  await expect(c.win.getByLabel('Error text to check')).toBeVisible();
+  // With no rule yet, only what makes sense without one is shown; Check needs a rule to test against.
+  await expect(c.win.getByText(/Only add errors that clear up by themselves/)).toBeVisible();
+  await expect(c.win.getByLabel('Error text to check')).toHaveCount(0);
+  await expect(c.win.getByText(/typed into the agent as if you sent it/)).toHaveCount(0);
   await shot(c, 'ux-3-enabled', info);
+  await c.win.getByRole('button', { name: 'Add rule' }).click();
+  await expect(c.win.getByLabel('When the error matches (rule 1)')).toBeFocused();
+  await expect(c.win.getByLabel('Error text to check')).toBeVisible();
+  await expect(c.win.getByText(/typed into the agent as if you sent it/)).toBeVisible();
+  await c.win.getByRole('button', { name: 'Remove rule 1' }).click();
   await toggle(c.win).click();
   await expect(c.win.getByRole('button', { name: 'Add rule' })).toHaveCount(0);
 });
