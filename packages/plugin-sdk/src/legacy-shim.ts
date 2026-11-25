@@ -28,14 +28,21 @@ export interface LegacyExtensionJson {
   }>;
 }
 
+/** Linear trailing-`/` strip; `/\/+$/` backtracks quadratically (CodeQL js/polynomial-redos). */
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;
+  return end === value.length ? value : value.slice(0, end);
+}
+
 function dirnameOf(relPath: string): string {
-  const normalized = relPath.replace(/\\/g, '/').replace(/\/+$/, '');
+  const normalized = trimTrailingSlashes(relPath.replace(/\\/g, '/'));
   const slash = normalized.lastIndexOf('/');
   return slash <= 0 ? '' : normalized.slice(0, slash);
 }
 
 function skillRootFromPath(relPath: string): string {
-  const normalized = relPath.replace(/\\/g, '/').replace(/\/+$/, '');
+  const normalized = trimTrailingSlashes(relPath.replace(/\\/g, '/'));
   if (/\/SKILL\.md$/i.test(normalized)) {
     const skillDir = dirnameOf(normalized);
     return dirnameOf(skillDir) || skillDir;

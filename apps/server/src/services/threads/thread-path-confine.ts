@@ -1,4 +1,5 @@
 import { posix, win32 } from 'node:path';
+import { trimTrailingAny } from '@zana-ai/zcc-domain/trim-edges';
 
 const MAX_REL_PATH = 1024;
 
@@ -18,8 +19,8 @@ export function confinePathToRoot(root: string, candidate: string): string | nul
   if (paths === posix && /^(?:[a-z]:[\\/]|\\\\)/iu.test(candidate)) return null;
   if (paths === win32 && /^[a-z]:(?![\\/])/iu.test(candidate)) return null;
   if (paths === win32 && paths.isAbsolute(candidate)) {
-    const rootDevice = win32.parse(root).root.replace(/[\\/]+$/u, '').toLowerCase();
-    const candidateDevice = win32.parse(candidate).root.replace(/[\\/]+$/u, '').toLowerCase();
+    const rootDevice = trimTrailingAny(win32.parse(root).root, '\\/').toLowerCase();
+    const candidateDevice = trimTrailingAny(win32.parse(candidate).root, '\\/').toLowerCase();
     if (!candidateDevice || candidateDevice !== rootDevice) return null;
   }
   const resolvedRoot = paths.resolve(root);
