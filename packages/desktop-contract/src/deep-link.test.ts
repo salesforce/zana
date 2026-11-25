@@ -146,3 +146,18 @@ describe('parseAnyDeepLink', () => {
     expect(parseAnyDeepLink('zana://peers/join?d=x', accept)).toEqual({ ok: false, reason: 'malformed' });
   });
 });
+
+describe('findDeepLinkInArgv quote trimming', () => {
+  it('strips leading and trailing double quotes only', () => {
+    expect(findDeepLinkInArgv(['""zana://plugin/a/b?d=1""'], ['zana'])).toBe('zana://plugin/a/b?d=1');
+    expect(findDeepLinkInArgv(['zana://plugin/a/b?d=1'], ['zana'])).toBe('zana://plugin/a/b?d=1');
+  });
+
+  it('is linear on a long run of quotes without a link', () => {
+    // The old /^"+|"+$/g restarted at every quote: quadratic on this shape.
+    const hostile = `x${'"'.repeat(100_000)}x`;
+    const start = performance.now();
+    expect(findDeepLinkInArgv([hostile], ['zana'])).toBeNull();
+    expect(performance.now() - start).toBeLessThan(2_000);
+  });
+});
