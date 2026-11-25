@@ -5950,12 +5950,12 @@ export function slotMcpAllowlistFact(
 /** Resolve Team slot route facts in main before durable execution is claimed. */
 async function resolveTeamModelSnapshots(
   projectId: string,
-  request: { teamId: string; slots: readonly { initialTask: string }[] }
+  request: { teamId: string; slots: readonly { initialTask: string }[]; launchRequestId?: string }
 ): Promise<ResolvedModelSnapshotV1[]> {
   const project = store.listProjects().find((candidate) => candidate.id === projectId);
   const rawTeam = teams.list().find((candidate) => candidate.id === request.teamId);
   if (!project || !rawTeam) throw new Error('team or project not found');
-  const pinnedModels = pinTransportForLaunch(rawTeam, project, undefined);
+  const pinnedModels = pinTransportForLaunch(rawTeam, project, request.launchRequestId);
   if (!pinnedModels.ok) throw new Error(pinnedModels.message);
   const team = pinnedModels.team;
   const hostProblem = teamHostProblem(project, localHostId());
@@ -7540,7 +7540,7 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
   teamHostProblem: (project) => teamHostProblem(project as Project, localHostId()),
   resolveTransport: (team, project, callerTransport) => {
     const r = resolveTeamTransport({ team, config: store.getConfig(), project, callerTransport, source: 'agent' });
-    return r.ok ? toPinned(r)! : { transport: 'CLI', source: 'fallback' };
+    return r.ok ? toPinned(r)! : { refusal: r.refusal };
   },
   expandTeamSlots,
   resolveSquadPlan: (planSource, texts) => resolveSquadPlan(planSource, texts),

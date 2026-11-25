@@ -167,7 +167,7 @@ export interface SquadProposalServiceDeps {
   personas: { get(id: string): Persona | undefined };
   teamHostProblem(project: ProjectRef): string | undefined;
   /** Effective transport for a Squad (resolver chain); the proposer, when known, is the caller. Absent: the Squad's own value. */
-  resolveTransport?(team: Team, project: ProjectRef, callerTransport?: 'CLI' | 'MODERN'): SquadProposalTransportPin;
+  resolveTransport?(team: Team, project: ProjectRef, callerTransport?: 'CLI' | 'MODERN'): SquadProposalTransportPin | { refusal: string };
   expandTeamSlots(team: Team): readonly unknown[];
   resolveSquadPlan(
     planSource: 'provided',
@@ -427,7 +427,10 @@ async function prepare(
     return fail('SOURCE_NOT_ALLOWED', `The goal names ${refusedGoalPath.path}, which can't be attached. ${sourcePolicyText(scope?.policy)} Remove the path from the goal, or name a file that can be.`);
   }
   const callerTransport = proposerKind === 'pty' ? 'CLI' : proposerKind ? 'MODERN' : undefined;
-  const resolvedTransport = deps.resolveTransport?.(team, project, callerTransport);
+  const resolution = deps.resolveTransport?.(team, project, callerTransport);
+  // An explicit Modern pin that cannot run here is refused, never quietly pinned as CLI.
+  if (resolution && 'refusal' in resolution) return fail('TRANSPORT_UNAVAILABLE', resolution.refusal);
+  const resolvedTransport = resolution;
   const transport = planAuthoringTransportOf(resolvedTransport ? resolvedTransport.transport : team.transport);
   const canInfer = canAuthorAndRegisterPlan(orchestrator, { transport });
   const planning: SquadPlanning = planningInput ?? team.defaultPlanning ?? (canInfer ? 'infer' : 'provided');

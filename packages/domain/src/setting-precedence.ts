@@ -93,7 +93,7 @@ export const SETTING_PRECEDENCE = [
     layers: ['squad', 'launch', 'caller', 'global', 'launch-mode'],
     layerLabels: { squad: 'Per Squad', launch: 'Launch dialog selection', global: 'All Squads' },
     mergeRule: 'first',
-    note: 'A Squad pinned to CLI Agent or Modern wins over everything. Use default and Follow caller inherit. A Default launch mode of Squad resolves through your last CLI Agent or Modern choice.'
+    note: 'A Squad pinned to CLI Agent or Modern wins over everything. Use default and Follow caller inherit. The calling session counts only where Follow caller is chosen (on the Squad, or as the All Squads setting); a specific All Squads value of CLI Agent or Modern ignores it. A Default launch mode of Squad resolves through your last CLI Agent or Modern choice.'
   },
   {
     key: 'squad.launchApproval',
@@ -160,7 +160,7 @@ export const SETTING_PRECEDENCE = [
     mergeRule: 'first',
     note: 'The built-in default is Infer plan from goal when the orchestrator can write a plan, otherwise Plan provided in goal. In the composer, the Squad default applies until you pick a mode.',
     evidence: [
-      { file: 'apps/desktop/src/squad-proposals/service.ts', line: 433, contains: "planningInput ?? team.defaultPlanning ?? (canInfer ? 'infer' : 'provided')" }
+      { file: 'apps/desktop/src/squad-proposals/service.ts', line: 436, contains: "planningInput ?? team.defaultPlanning ?? (canInfer ? 'infer' : 'provided')" }
     ]
   },
   {

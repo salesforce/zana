@@ -7,7 +7,8 @@ import {
   isTeamTransportPref,
   MODERN_INCOMPATIBLE_SEAT_REASON,
   modernBlockedBySeats,
-  resolveSquadTransport
+  resolveSquadTransport,
+  squadDefaultTransportLabel
 } from './squad-transport.js';
 
 const ui = { source: 'ui' as const };
@@ -142,5 +143,15 @@ describe('guards and labels', () => {
     expect(getSettingPrecedence('squad.transport').layers)
       .toEqual(['squad', 'launch', 'caller', 'global', 'launch-mode']);
     expect(precedenceHelp('squad.transport')).toContain('Per Squad, then Launch dialog selection, then Calling session, then All Squads, then Default launch mode');
+  });
+});
+
+describe('squadDefaultTransportLabel', () => {
+  it('names each All Squads value, reading missing as Follow caller', () => {
+    expect(squadDefaultTransportLabel(undefined)).toBe('Follow caller');
+    expect(squadDefaultTransportLabel('caller')).toBe('Follow caller');
+    expect(squadDefaultTransportLabel('follow')).toBe('Default launch mode');
+    expect(squadDefaultTransportLabel('MODERN')).toBe('Modern');
+    expect(squadDefaultTransportLabel('CLI')).toBe('CLI Agent');
   });
 });

@@ -3,15 +3,14 @@ import { Field } from './FormFields';
 import { PopoverPicklist } from '../ui/PopoverPicklist';
 import { PrecedenceStrip } from '../PrecedenceStrip';
 import { resolveSquadTransportView, useSquadTransportConfig } from '@/lib/squad-transport';
+import { squadDefaultTransportLabel } from '@zana-ai/zcc-domain/squad-transport';
 
 type Update = (patch: Partial<AppConfig>, opts?: { throwOnError?: boolean }) => void | Promise<unknown>;
 type GlobalValue = NonNullable<AppConfig['squadDefaultTransport']>;
 
 /** Shown beside the Defaults heading, e.g. "Launch mode: Follow caller". */
 export function squadDefaultsSummary(config: AppConfig): string {
-  const value = config.squadDefaultTransport ?? 'caller';
-  const text = value === 'caller' ? 'Follow caller' : value === 'follow' ? 'Default launch mode' : value === 'MODERN' ? 'Modern' : 'CLI Agent';
-  return `Launch mode: ${text}`;
+  return `Launch mode: ${squadDefaultTransportLabel(config.squadDefaultTransport)}`;
 }
 
 /**

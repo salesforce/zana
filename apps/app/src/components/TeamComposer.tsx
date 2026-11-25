@@ -56,9 +56,9 @@ type ComposerSource = ExecutionSourceCapabilityView & { path?: string; outsidePr
 type PreviewSnapshot = { resolved?: ExecutionResolvedLaunchV1; preview?: SquadLaunchPrefill['launchPreview'] };
 const previewSnapshot = (value: PreviewSnapshot | undefined) => JSON.stringify({ resolved: value?.resolved, location: value?.preview?.location, path: value?.preview?.path, branch: value?.preview?.branch, head: value?.preview?.head });
 
-/** One durable Team launch surface for inferred and user-provided plans. */
 const LAUNCH_PICK_KEY = 'squad.launchModePick';
 
+/** One durable Team launch surface for inferred and user-provided plans. */
 export function TeamComposer({
   project: pinnedProject,
   composerProjectId,
@@ -141,6 +141,8 @@ export function TeamComposer({
   const squadPinned = selectedTeam?.transport === 'CLI' || selectedTeam?.transport === 'MODERN';
   const launchPick: 'CLI' | 'MODERN' | undefined = !squadPinned && (launchPickRaw === 'CLI' || launchPickRaw === 'MODERN') ? launchPickRaw : undefined;
   const transportView = resolveSquadTransportView(selectedTeam, transportConfig, { remote: Boolean(project?.remote), ...(launchPick ? { pick: launchPick } : {}) });
+  /** What the Squad resolves to with no launch-dialog pick: the picker's own default row. */
+  const noPickView = launchPick ? resolveSquadTransportView(selectedTeam, transportConfig, { remote: Boolean(project?.remote) }) : transportView;
   const setLaunchPick = (value: string) => {
     setLaunchPickRaw(value);
     try { window.localStorage.setItem(LAUNCH_PICK_KEY, value); } catch { /* storage unavailable */ }
@@ -634,7 +636,7 @@ export function TeamComposer({
                     searchable={false}
                     disabled={reviewedBound || squadPinned}
                     options={[
-                      { value: 'default', label: squadPinned ? `Pinned: ${transportView.label}` : `Default: ${launchPick ? SQUAD_TRANSPORT_LABELS[resolveSquadTransportView(selectedTeam, transportConfig, { remote: Boolean(project?.remote) }).transport] : transportView.label}` },
+                      { value: 'default', label: `${squadPinned ? 'Pinned' : 'Default'}: ${noPickView.label}` },
                       { value: 'CLI', label: SQUAD_TRANSPORT_LABELS.CLI },
                       { value: 'MODERN', label: projectIsRemote ? `${SQUAD_TRANSPORT_LABELS.MODERN} (needs a local Project)` : SQUAD_TRANSPORT_LABELS.MODERN }
                     ]}

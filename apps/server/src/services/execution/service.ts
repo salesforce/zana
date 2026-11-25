@@ -386,7 +386,7 @@ export interface ExecutionServiceDeps {
   authorizePlanRegistration?: (record: ExecutionRecord, workUnits: readonly ExecutionWorkUnitInput[], submitter?: ExecutionCohortBinding) =>
     Promise<{ ok: true } | { ok: false; message: string }> | { ok: true } | { ok: false; message: string };
   /** Main-owned snapshot resolver. Agent/renderer model claims never authorize routing. */
-  resolveTeamModelSnapshots?: (projectId: string, request: Pick<ExecutionRequestV1, 'teamId' | 'slots'>) => Promise<ResolvedModelSnapshotV1[]> | ResolvedModelSnapshotV1[];
+  resolveTeamModelSnapshots?: (projectId: string, request: Pick<ExecutionRequestV1, 'teamId' | 'slots'> & Partial<Pick<ExecutionRequestV1, 'launchRequestId'>>) => Promise<ResolvedModelSnapshotV1[]> | ResolvedModelSnapshotV1[];
   /** Main-only checkout preparation after execution identity is durable but before any slot spawns. */
   prepareSquadWorktree?: (record: ExecutionRecord, request: ExecutionRequestV1) => Promise<ExecutionRecord>;
   /** Main-only reviewed generated-worktree base captured atomically with execution claim. */
@@ -2771,7 +2771,7 @@ export class ExecutionService {
     let timeout: NodeJS.Timeout | undefined;
     try {
       const resolvedModels = await Promise.race([
-        Promise.resolve(this.deps.resolveTeamModelSnapshots(record.projectId, { teamId: record.teamId, slots: record.request.slots })),
+        Promise.resolve(this.deps.resolveTeamModelSnapshots(record.projectId, { teamId: record.teamId, slots: record.request.slots, launchRequestId: record.teamLaunchRequestId })),
         new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('route facts timed out')), ROUTE_FACTS_TIMEOUT_MS); })
       ]);
       if (!hasUniqueModelSlots(resolvedModels)) throw new Error('duplicate resolved model slot');

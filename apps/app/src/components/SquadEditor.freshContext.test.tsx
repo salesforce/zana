@@ -74,6 +74,14 @@ describe('REQ-1 the Team editor offers the fresh-session checkbox', () => {
     expect(saved.slots[1]).toMatchObject({ startOnDemand: true, freshContextPerUnit: true });
   });
 
+  it('an explicit Modern pin drops seat flags on save; a CLI pin keeps them', async () => {
+    const seat = { personaId: 'p-worker', quantity: 1, startOnDemand: true, freshContextPerUnit: true };
+    render(<SquadEditor team={{ ...base, transport: 'MODERN', slots: [base.slots[0]!, seat] }} mode="edit" onClose={vi.fn()} />);
+    const saved = await saveTeam();
+    expect(saved.slots[1]).not.toHaveProperty('startOnDemand');
+    expect(saved.slots[1]).not.toHaveProperty('freshContextPerUnit');
+  });
+
   it('existing-user path: an old team saves with no freshContextPerUnit key', async () => {
     render(<SquadEditor team={base} mode="edit" onClose={vi.fn()} />);
     const saved = await saveTeam();

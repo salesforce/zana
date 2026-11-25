@@ -18,13 +18,12 @@ test('Composer launch mode is seeded and mirrored into AppConfig', async ({ app 
   await expect.poll(async () => (await readConfig(win)).composerDefaultLaunchMode).toBe('agent');
   await expect.poll(async () => (await readConfig(win)).composerLastTransportMode).toBe('agent');
 
-  // Team overwrites the default but never the last transport mode.
-  const team = group.getByRole('button', { name: /^Team/ });
-  if (await team.count()) {
-    await team.click();
-    await expect.poll(async () => (await readConfig(win)).composerDefaultLaunchMode).toBe('team');
-    expect((await readConfig(win)).composerLastTransportMode).toBe('agent');
-  }
+  // Squad overwrites the default but never the last transport mode. The button must exist: no silent skip.
+  const squad = group.getByRole('button', { name: 'Squad', exact: true });
+  await expect(squad).toBeVisible();
+  await squad.click();
+  await expect.poll(async () => (await readConfig(win)).composerDefaultLaunchMode).toBe('team');
+  expect((await readConfig(win)).composerLastTransportMode).toBe('agent');
 
   // Main rejects invalid enum values from the renderer.
   await win.evaluate(() => window.cc.config.set({ composerDefaultLaunchMode: 'bogus' as never, squadDefaultTransport: 'nope' as never }));

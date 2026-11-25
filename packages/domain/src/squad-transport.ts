@@ -138,3 +138,9 @@ export const SQUAD_TRANSPORT_LABELS: Readonly<Record<SquadTransport, string>> = 
   CLI: 'CLI Agent',
   MODERN: 'Modern'
 };
+
+/** One wording for the All Squads setting's value, shared by Settings and settings search. */
+export function squadDefaultTransportLabel(value: GlobalSquadTransport | undefined): string {
+  const v = value ?? 'caller';
+  return v === 'caller' ? 'Follow caller' : v === 'follow' ? 'Default launch mode' : v === 'MODERN' ? 'Modern' : 'CLI Agent';
+}

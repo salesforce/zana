@@ -2835,7 +2835,11 @@ export const useData = create<DataState>((set, get) => ({
       set({ projects, ...mirroredConfigFlags(config), configLoaded: true });
       // Seed the launch-mode mirror once so main/server see the stored choice.
       const seed = launchModeSeedPatch(config, readLaunchModePreference());
-      if (seed) product.config.set(seed).catch(() => {});
+      if (seed) {
+        product.config.set(seed).catch((error) => {
+          console.warn('launch-mode seed mirror failed; main resolves Squad transport without the stored Composer mode', seed, error);
+        });
+      }
       // Project rows are interactive now. Subscribe before slower session/plugin
       // hydration so SDK and IPC changes cannot be missed during startup.
       product.projects.onChanged((next) => {

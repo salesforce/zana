@@ -615,10 +615,10 @@ function TeamForm({
         quantity: Math.max(1, Math.min(TEAM_SLOT_MAX, s.quantity || 1)),
         ...(s.label.trim() ? { label: s.label.trim() } : {}),
         ...(s.roles !== undefined ? { roles: s.roles } : {}),
-        // On-demand seats need the engine of a plan-driven CLI squad; never store the flag otherwise.
-        ...(s.startOnDemand && effectiveTransport !== 'MODERN' && s.personaId !== orchestratorPersonaId ? { startOnDemand: true as const } : {}),
+        // On-demand seats need the engine of a plan-driven CLI squad; never store the flag on an explicit Modern pin. An inherited Modern falls back to CLI for these seats, so the flag is kept.
+        ...(s.startOnDemand && transport !== 'MODERN' && s.personaId !== orchestratorPersonaId ? { startOnDemand: true as const } : {}),
         // A fresh session per unit needs the same plan-driven CLI squad; never store the flag otherwise.
-        ...(s.freshContextPerUnit && effectiveTransport !== 'MODERN' && s.personaId !== orchestratorPersonaId ? { freshContextPerUnit: true as const } : {})
+        ...(s.freshContextPerUnit && transport !== 'MODERN' && s.personaId !== orchestratorPersonaId ? { freshContextPerUnit: true as const } : {})
       }));
     // Keep orchestrator only if it's still one of the slots.
     const orch =

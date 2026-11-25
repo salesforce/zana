@@ -250,6 +250,13 @@ describe('trusted launch preview', () => {
     expect(await svc.service.beginLaunch('prop-1', 'p1')).toMatchObject({ ok: true, value: { resolvedTransport: { transport: 'MODERN', source: 'caller' } } });
   });
 
+  it('refuses the proposal when the transport resolver refuses, instead of pinning CLI', async () => {
+    resolveTransportDep = () => ({ refusal: 'This Squad is set to Modern, which cannot run here: Modern Squads need a local Project' });
+    svc = build();
+    expect(await svc.service.propose(route, input)).toMatchObject({ ok: false, code: 'TRANSPORT_UNAVAILABLE', message: expect.stringContaining('local Project') });
+    expect(await svc.store.get('prop-1')).toBeUndefined();
+  });
+
   it('passes a CLI caller for a terminal proposer', async () => {
     const resolveTransport = vi.fn(() => ({ transport: 'CLI' as const, source: 'caller' }));
     resolveTransportDep = resolveTransport;

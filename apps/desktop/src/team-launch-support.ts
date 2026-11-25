@@ -43,7 +43,6 @@ export interface DesktopNativeRecoveryDeps {
   modernSlotExpectation?(record: ExecutionRecord, project: Project, profile: LaunchProfileId): ModernSlotExpectation | undefined;
 }
 
-/** Trusted desktop-only exact-native snapshots. Native ids never leave main/service. */
 /** The team as this run launched it: the pinned transport replaces any stored preference. */
 export function recordTeam<T extends { transport?: string }>(team: T, record: { resolvedTransport?: { transport: 'CLI' | 'MODERN' } }): T {
   const pinned = record.resolvedTransport?.transport;
@@ -51,6 +50,7 @@ export function recordTeam<T extends { transport?: string }>(team: T, record: { 
   return team.transport === 'MODERN' ? team : { ...team, transport: 'CLI' };
 }
 
+/** Trusted desktop-only exact-native snapshots. Native ids never leave main/service. */
 export function createDesktopNativeRecovery(deps: DesktopNativeRecoveryDeps) {
   function compatibleSnapshots(record: ExecutionRecord): NativeRecoverySnapshots {
     const project = deps.projects.listProjects().find((candidate) => candidate.id === record.projectId);
