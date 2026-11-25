@@ -1,5 +1,5 @@
-import { useLayoutEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, GitPullRequest, Hash, MessageSquare, X } from 'lucide-react';
+import { useLayoutEffect, useRef } from 'react';
+import { ChevronRight, GitPullRequest, Hash, MessageSquare, X } from 'lucide-react';
 import type { SquadFlowNode } from '@zana-ai/zcc-domain/product';
 import { nodeNotice } from './squadFlowLayout';
 import { formatAge } from '@/lib/squad-worker-visibility';
@@ -15,25 +15,12 @@ interface RosterProps {
   now: number;
   selectedId?: string;
   onSelect: (node: SquadFlowNode, trigger: HTMLButtonElement) => void;
-  solo?: boolean;
   questionPinned?: boolean;
 }
 
-export function SquadRoster({ nodes, now, selectedId, onSelect, solo, questionPinned }: RosterProps) {
-  const [showIdle, setShowIdle] = useState(true);
-  const ordered = [...nodes].sort((a, b) => {
-    if (solo) {
-      const priority = (node: SquadFlowNode) => {
-        const state = squadMemberStatus(node, now);
-        return state === 'blocked' ? 0 : state === 'working' ? 1 : 2;
-      };
-      return priority(a) - priority(b);
-    }
-    return Number(b.isOrchestrator) - Number(a.isOrchestrator);
-  });
-  const idle = solo ? ordered.filter((node) => squadMemberStatus(node, now) === 'idle') : [];
-  const active = solo ? ordered.filter((node) => squadMemberStatus(node, now) !== 'idle') : ordered;
-  const memberButton = (node: SquadFlowNode) => {
+export function SquadRoster({ nodes, now, selectedId, onSelect, questionPinned }: RosterProps) {
+  const ordered = [...nodes].sort((a, b) => Number(b.isOrchestrator) - Number(a.isOrchestrator));
+  return ordered.map((node) => {
     const Icon = node.isOrchestrator ? GitPullRequest : node.inspectionTarget.type === 'thread' ? MessageSquare : Hash;
     const age = memberAge(node, now);
     const memberStatus = squadMemberStatus(node, now);
@@ -57,21 +44,7 @@ export function SquadRoster({ nodes, now, selectedId, onSelect, solo, questionPi
         <ChevronRight className="squad-roster-chevron" size={14} aria-hidden="true" />
       </button>
     );
-  };
-  return (
-    <>
-      {active.map(memberButton)}
-      {idle.length > 0 && (
-        <>
-          <button type="button" className="squad-idle-toggle" aria-expanded={showIdle} onClick={() => setShowIdle(!showIdle)}>
-            {showIdle ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
-            Idle agents ({idle.length})
-          </button>
-          {showIdle && idle.map(memberButton)}
-        </>
-      )}
-    </>
-  );
+  });
 }
 
 export function SquadMemberDetails({ node, now, onClose, onOpen, onInspectExecution }: {

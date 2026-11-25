@@ -646,8 +646,7 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true, questio
 }
 
 interface SquadFlowViewProps {
-  /** Scope to one project (the project-scoped AgentsBoard passes this). Omitted
-   *  on the global board → one graph per project that has live agents. */
+  /** Scope to one project. The global board offers a project picker. */
   projectId?: string;
   onInspectExecution?: (projectId: string, executionId: string) => void;
 }
@@ -707,7 +706,7 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [projectId, projects]);
 
-  // One graph per project that has live agents (or just the scoped project). Raw
+  // One graph per project that has Squad members (or just the scoped project). Raw
   // slices only; derive behind a memo so a status tick doesn't rebuild the world
   // (render-storm guard).
   const graphs = useMemo<FlowGraph[]>(() => {
@@ -718,12 +717,15 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
     for (const pid of projectIds) {
       if (projectId && pid !== projectId) continue;
       if (!byProjectId.has(pid)) continue;
-      const list = terminals[pid];
+      const sessions = agentViewTerminals(terminals[pid], includeScheduled);
+      const projectAgents = agents.filter((agent) => agent.projectId === pid);
+      const participants = threadParticipantsByProject.get(pid);
+      if (!squadLaunchGroups(projectAgents, sessions, participants).some((group) => !group.isSolo)) continue;
       const graph = buildSquadFlow({
         projectId: pid,
-        sessions: agentViewTerminals(list, includeScheduled),
-        agents: agents.filter((a) => a.projectId === pid),
-        threadParticipants: threadParticipantsByProject.get(pid),
+        sessions,
+        agents: projectAgents,
+        threadParticipants: participants,
         messages: messages.filter((m) => m.projectId === pid),
         statusById,
         sinceById,
@@ -756,12 +758,7 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
     : reconcileSquadSelection(undefined, graphs) ?? projects[0]?.id);
   if (selected !== selectedId) setSelectedId(selected);
 
-  // Project launch groups share the same live data as the combined graph.
-  // A squad = one team launch (shared teamLaunchId); solo/unregistered agents
-  // form one "Solo agents" bucket. For each squad we build a launch-FILTERED
-  // graph so its orchestrator/edges/rollup are computed within the squad (not
-  // inherited from the merged graph). Same raw slices as `graphs`, re-derived
-  // behind a memo (render-storm guard). `selected` is the active project id.
+  // Build a graph per launch so each Squad has its own coordinator and edges.
   const squadDerived = useMemo(() => {
     const builtAt = Date.now();
     const pid = selected;
@@ -771,7 +768,7 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
     const projAgents = agents.filter((a) => a.projectId === pid);
     const threadParticipants = threadParticipantsByProject.get(pid) ?? [];
     const projMessages = messages.filter((m) => m.projectId === pid);
-    const groups = squadLaunchGroups(projAgents, sessions, threadParticipants);
+    const groups = squadLaunchGroups(projAgents, sessions, threadParticipants).filter((group) => !group.isSolo);
     const byLaunch = new Map<string, FlowGraph>();
     for (const grp of groups) {
       const g = buildSquadFlow({
@@ -798,24 +795,19 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
   const projectExecutions = executions.filter((execution) => execution.projectId === selected);
   const executionsById = new Map(projectExecutions.map((execution) => [execution.executionId, execution]));
   const runs: SquadRun[] = [];
-  let solo: FlowGraph | undefined;
   for (const group of squadDerived.groups) {
     const graph = squadDerived.byLaunch.get(group.launchId);
     if (!graph) continue;
-    if (group.isSolo) {
-      solo = graph;
-    } else {
-      const execution = executionsById.get(graph.executionId ?? group.launchId);
-      runs.push({
-        id: group.launchId,
-        graph,
-        execution,
-        title: execution?.jobTitle || graph.executionJobTitle || squadChipLabel(graph, runs.length + 1),
-        teamName: execution?.teamName ?? graph.teamName,
-        startedAt: execution?.createdAt ?? group.launchedAt
-      });
-      if (execution) executionsById.delete(execution.executionId);
-    }
+    const execution = executionsById.get(graph.executionId ?? group.launchId);
+    runs.push({
+      id: group.launchId,
+      graph,
+      execution,
+      title: execution?.jobTitle || graph.executionJobTitle || squadChipLabel(graph, runs.length + 1),
+      teamName: execution?.teamName ?? graph.teamName,
+      startedAt: execution?.createdAt ?? group.launchedAt
+    });
+    if (execution) executionsById.delete(execution.executionId);
   }
   for (const execution of executionsById.values()) {
     runs.push({ id: execution.executionId, execution, title: execution.jobTitle, teamName: execution.teamName, startedAt: execution.createdAt });
@@ -832,7 +824,6 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
       projectPicker={projectId ? undefined : { selected, projects, onSelect: setSelectedId }}
       mergedGraph={mergedGraph}
       runs={runs}
-      solo={solo}
       splitMap={flowAllOrganization === 'team-runs'}
       onInspectExecution={selected && onInspectExecution ? (executionId) => onInspectExecution(selected, executionId) : undefined}
       onOpenMember={(node) => {
@@ -864,14 +855,13 @@ interface SquadSurfaceProps {
     onSelect: (id: string) => void;
   };
   mergedGraph?: FlowGraph;
-  solo?: FlowGraph;
   runs: SquadRun[];
   splitMap: boolean;
   onInspectExecution?: (executionId: string) => void;
   onOpenMember: (node: SquadFlowNode) => void;
 }
 
-function SquadSurface({ compact, view, setView, projectName, projectPicker, mergedGraph, solo, runs, splitMap, onInspectExecution, onOpenMember }: SquadSurfaceProps) {
+function SquadSurface({ compact, view, setView, projectName, projectPicker, mergedGraph, runs, splitMap, onInspectExecution, onOpenMember }: SquadSurfaceProps) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<SquadStatusFilter>('all');
   const [selectedRun, setSelectedRun] = useState(ALL_SQUADS);
@@ -890,23 +880,17 @@ function SquadSurface({ compact, view, setView, projectName, projectPicker, merg
     const status = squadRunStatus(run.execution, question, nodes, now);
     return [{ ...run, nodes, question, status }];
   });
-  const matchingSolo = (solo?.nodes ?? []).filter((node) => matchesSquadMemberSearch(node, now, memberQuery));
-  const counts = squadStatusCounts(matchingSolo, now);
-  counts.all += matchingRuns.length;
-  for (const run of matchingRuns) counts[run.status] += 1;
+  const counts = squadStatusCounts(matchingRuns.map((run) => run.status));
   // Overview filters top-level rows. Keep a matching run's roster together.
   const visibleRuns = matchingRuns.filter((run) => filter === 'all' || run.status === filter);
   visibleRuns.sort((a, b) => Number(!!b.question) - Number(!!a.question));
-  const soloNodes = matchingSolo.filter((node) => filter === 'all' || squadMemberStatus(node, now) === filter);
-  const detail = [...soloNodes, ...visibleRuns.flatMap((run) => run.nodes)].find((node) => node.sessionId === selectedMember);
+  const detail = visibleRuns.flatMap((run) => run.nodes).find((node) => node.sessionId === selectedMember);
   const statusOptions = Object.keys(squadStatuses) as SquadStatusFilter[];
   const mapRuns = mapOnly ? visibleRuns
     .map((run) => ({ ...run, nodes: run.nodes.filter((node) => filter === 'all' || squadMemberStatus(node, now) === filter) }))
     .filter((run) => run.graph && run.nodes.length > 0) : [];
   const chosenRun = mapRuns.find((run) => run.id === selectedRun);
   const graphs = (chosenRun ? [chosenRun] : mapRuns).flatMap((run) => run.graph ? [sliceSquadGraph(run.graph, run.nodes)] : []);
-  const soloGraph = mapOnly && !chosenRun && solo ? sliceSquadGraph(solo, soloNodes) : undefined;
-  if (soloGraph?.edges.length) graphs.push(soloGraph);
 
   let mapGraphs = graphs;
   if (mergedGraph && !chosenRun && !splitMap && graphs.length > 1) {
@@ -936,9 +920,8 @@ function SquadSurface({ compact, view, setView, projectName, projectPicker, merg
       <ChevronRight size={16} aria-hidden="true" />
     </button>
   );
-  const hasContent = runs.length > 0 || (solo?.nodes.length ?? 0) > 0;
-  const hasMatches = visibleRuns.length > 0 || soloNodes.length > 0;
-  const showSolo = soloNodes.length > 0 && !(mapOnly && soloGraph?.edges.length);
+  const hasContent = runs.length > 0;
+  const hasMatches = visibleRuns.length > 0;
 
   return (
     <section className="squad-flow squad-overview" aria-label="Squads" onKeyDown={(event) => {
@@ -968,14 +951,14 @@ function SquadSurface({ compact, view, setView, projectName, projectPicker, merg
         </div>
         <label className="squad-search">
           <Search size={15} aria-hidden="true" />
-          <input type="search" aria-label="Search agents and runs" placeholder="Search agents and runs…" value={search} onChange={(event) => {
+          <input type="search" aria-label="Search Squad runs and members" placeholder="Search Squad runs and members…" value={search} onChange={(event) => {
             setSearch(event.target.value);
             clearMember();
           }} />
         </label>
       </div>
       {hasContent && (
-        <div className="squad-status-filters" role="group" aria-label="Filter Squad runs and solo agents">
+        <div className="squad-status-filters" role="group" aria-label="Filter Squad runs">
           {mainSquadFilters.map((status) => (
             <button type="button" key={status} className="squad-filter-tile" aria-pressed={filter === status} data-status={status} onClick={() => changeFilter(status)}>
               <strong>{counts[status]}</strong><span>{squadStatuses[status]}</span>
@@ -1026,18 +1009,9 @@ function SquadSurface({ compact, view, setView, projectName, projectPicker, merg
             <SquadMap compact={compact} graphs={mapGraphs} runs={mapRuns} selectedRun={chosenRun?.id ?? ALL_SQUADS}
               onSelect={setSelectedRun} onInspectExecution={onInspectExecution} />
           )}
-          {showSolo && (
-            <section aria-label={SOLO_GROUP_LABEL}>
-              <h2 className="squad-section-title">{SOLO_GROUP_LABEL} <small>{soloNodes.length}</small></h2>
-              <div className="squad-surface">
-                <SquadRoster nodes={soloNodes} now={now} selectedId={selectedMember} onSelect={chooseMember} key={filter} solo />
-              </div>
-            </section>
-          )}
-          {!mapOnly && hasMatches && !runs.length && <p className="squad-surface squad-empty">No Squad runs in this project.</p>}
           {!hasMatches && (
             <div className="squad-surface squad-empty" role="status">
-              <strong>{hasContent ? 'No matching agents or Squad runs' : 'No agents or Squad runs in this project'}</strong>
+              <strong>{hasContent ? 'No matching Squad runs' : 'No Squad runs in this project'}</strong>
               {hasContent && <button type="button" className="btn" onClick={() => { setSearch(''); changeFilter('all'); }}>Clear filters</button>}
             </div>
           )}

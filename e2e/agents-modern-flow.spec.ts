@@ -33,9 +33,9 @@ async function archiveThread(window: Page, threadId: string) {
   }, threadId);
 }
 
-test('Modern-only project renders in Squads Overview and opens its thread', async ({ app }) => {
+test('A standalone Modern thread stays in Agents List and out of both Squad views', async ({ app }) => {
   const { window } = app;
-  const { thread } = await createProjectWithModernThread(app);
+  const { project, thread } = await createProjectWithModernThread(app);
 
   try {
     await expect.poll(() => window.evaluate(async (id) => {
@@ -51,24 +51,17 @@ test('Modern-only project renders in Squads Overview and opens its thread', asyn
 
     const overview = window.getByRole('region', { name: 'Squads', exact: true });
     await expect(overview.getByRole('button', { name: 'Overview', exact: true })).toHaveAttribute('aria-pressed', 'true');
-    const row = overview.getByRole('button', { name: /Modern Flow E2E/ });
-    await expect(row).toBeVisible({ timeout: 15_000 });
-    await expect(overview.locator('.squad-roster-row')).toHaveCount(1);
-    const search = overview.getByRole('searchbox', { name: 'Search agents and runs' });
-    await search.fill('nothing matching');
-    await expect(overview.getByText('No matching agents or Squad runs')).toBeVisible();
-    await overview.getByRole('button', { name: 'Clear filters' }).click();
+    await overview.getByRole('combobox', { name: 'Project', exact: true }).selectOption(project.value.id);
+    await expect(overview.getByText('No Squad runs in this project', { exact: true })).toBeVisible();
+    await expect(overview.getByText('Modern Flow E2E', { exact: true })).toBeHidden();
     await overview.getByRole('button', { name: 'Map', exact: true }).click();
-    await expect(overview.getByText('No Squad members to map in this selection.')).toBeVisible();
-    await expect(row).toBeVisible();
-    await row.click();
-    const details = overview.getByRole('complementary', { name: 'Agent details' });
-    await expect(details.getByRole('heading', { name: 'Modern Flow E2E' })).toBeFocused();
-    await details.getByRole('button', { name: 'Open thread' }).click();
+    await expect(overview.getByText('No Squad runs in this project', { exact: true })).toBeVisible();
+    await expect(overview.getByText('Modern Flow E2E', { exact: true })).toBeHidden();
 
-    await expect(window.getByRole('heading', { name: 'Modern Flow E2E', exact: true })).toBeVisible();
-    await expect(window.getByTestId('thread-timeline')).toContainText('Response to: Complete this turn');
-    await expect(window).not.toHaveURL(new RegExp(`/sessions/${thread.id}$`));
+    await window.getByLabel('List view').click();
+    await window.locator('.agent-monitor-row.is-thread', { hasText: 'Modern Flow E2E' }).click();
+    await expect(window.getByTestId('agent-monitor-thread').getByTestId('thread-timeline'))
+      .toContainText('Response to: Complete this turn');
   } finally {
     await archiveThread(window, thread.id);
   }

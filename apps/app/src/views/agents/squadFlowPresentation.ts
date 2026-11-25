@@ -81,9 +81,9 @@ export function matchesSquadMemberSearch(node: SquadFlowNode, now: number, query
   return matchesSquadSearch(query, node.label, node.displayName, node.handle, memberRole(node), squadStatuses[status]);
 }
 
-export function squadStatusCounts(nodes: readonly SquadFlowNode[], now: number) {
-  const counts = { all: nodes.length, working: 0, blocked: 0, idle: 0, waiting: 0, claimed: 0, done: 0, exited: 0 };
-  for (const node of nodes) counts[squadMemberStatus(node, now)] += 1;
+export function squadStatusCounts(statuses: readonly SquadStatus[]) {
+  const counts = { all: statuses.length, working: 0, blocked: 0, idle: 0, waiting: 0, claimed: 0, done: 0, exited: 0 };
+  for (const status of statuses) counts[status] += 1;
   return counts;
 }
 
@@ -91,7 +91,7 @@ export function squadStatusCounts(nodes: readonly SquadFlowNode[], now: number) 
 export function sliceSquadGraph(graph: FlowGraph, nodes: SquadFlowNode[]): FlowGraph {
   if (nodes.length === graph.nodes.length) return graph;
   const ids = new Set(nodes.map((node) => node.sessionId));
-  const { all: total, working, blocked, idle, exited } = squadStatusCounts(nodes, graph.builtAt);
+  const { all: total, working, blocked, idle, exited } = squadStatusCounts(nodes.map((node) => squadMemberStatus(node, graph.builtAt)));
   return {
     ...graph,
     nodes,

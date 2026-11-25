@@ -158,8 +158,7 @@
 }
 
 .squad-filter-tile:hover,
-.squad-roster-row:hover,
-.squad-idle-toggle:hover {
+.squad-roster-row:hover {
   background: var(--bg-hover);
 }
 
@@ -265,13 +264,11 @@
 }
 
 .squad-run-header + .squad-roster-row,
-.squad-roster-row + .squad-roster-row,
-.squad-idle-toggle + .squad-roster-row {
+.squad-roster-row + .squad-roster-row {
   border-top: 1px solid var(--border);
 }
 
-.squad-roster-row:focus-visible,
-.squad-overview .squad-idle-toggle:focus-visible {
+.squad-roster-row:focus-visible {
   outline-offset: -2px;
 }
 
@@ -333,35 +330,6 @@
 .squad-filter-tile[data-status='done'] strong,
 .squad-status[data-status='done'] {
   color: var(--success);
-}
-
-.squad-idle-toggle {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  min-height: 34px;
-  padding: 5px 11px;
-  border: 0;
-  border-top: 1px solid var(--border);
-  background: var(--bg-elevated);
-  color: var(--text-muted);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.squad-idle-toggle:first-child {
-  border-top: none;
-  border-radius: 8px 8px 0 0;
-}
-
-.squad-idle-toggle:last-child {
-  border-radius: 0 0 8px 8px;
-}
-
-.squad-idle-toggle:first-child:last-child {
-  border-radius: 8px;
 }
 
 .squad-attention {
@@ -528,10 +496,6 @@
 .app-shell[data-mobile='true'] .squad-view-switch button,
 .app-shell[data-mobile='true'] .squad-search input,
 .app-shell[data-mobile='true'] .squad-select select,
-.app-shell[data-mobile='true'] .squad-idle-toggle {
-  min-height: 44px;
-}
-
 @container squad-overview (max-width: 620px) {
   .squad-content--inspecting {
     grid-template-columns: minmax(0, 1fr);

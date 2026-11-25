@@ -43,7 +43,7 @@ async function click(page: Page, target: Locator) {
   await target.click();
 }
 
-test('Squads groups the run and solo agents, filters both views and opens the real blocker', async ({ app }, testInfo) => {
+test('Squads shows Squad runs only, filters both views and opens the real blocker', async ({ app }, testInfo) => {
   const page = app.window;
   const ctx = createJobTeamContext(app, { tmpPrefix: 'atlas-website-' });
   try {
@@ -76,9 +76,8 @@ test('Squads groups the run and solo agents, filters both views and opens the re
     const runCard = squads.getByRole('region', { name: runTitle, exact: true });
     await expect(runCard.getByRole('button', { name: /Needs you Which label/ })).toBeVisible({ timeout: 45_000 });
     await expect(squads.getByRole('heading', { name: runTitle })).toBeVisible();
-    const solo = squads.getByRole('region', { name: 'Solo agents' });
-    const draft = solo.getByRole('button', { name: /Draft release checklist/ });
-    await expect(draft).toBeVisible();
+    await expect(squads.getByRole('button', { name: '1 All', exact: true })).toBeVisible();
+    await expect(squads.getByText('Draft release checklist', { exact: true })).toBeHidden();
     if (!recording) await page.screenshot({ path: testInfo.outputPath('squad-overview.png') });
 
     const demo = recording ? await createDemoVideo(page, []) : undefined;
@@ -102,31 +101,28 @@ test('Squads groups the run and solo agents, filters both views and opens the re
     await caption('Squads opens on Overview. The question appears inside the run that needs an answer.');
 
     await click(page, squads.getByRole('button', { name: '1 Needs you', exact: true }));
-    await expect(draft).toBeHidden();
-    await caption('Select Needs you to narrow the roster to agents waiting for you.');
-    await click(page, squads.getByRole('button', { name: /^\d+ All$/ }));
+    await expect(attention).toBeVisible();
+    await caption('Select Needs you to see Squad runs waiting for you.');
+    await click(page, squads.getByRole('button', { name: '1 All', exact: true }));
 
-    const search = squads.getByRole('searchbox', { name: 'Search agents and runs' });
+    const search = squads.getByRole('searchbox', { name: 'Search Squad runs and members' });
     await search.fill('release checklist');
-    await expect(draft).toBeVisible();
-    await expect(attention).toBeHidden();
-    await caption('Search works across agent names and Squad run titles in the selected project.');
-    await click(page, draft);
+    await expect(squads.getByText('No matching Squad runs', { exact: true })).toBeVisible();
+    await search.fill('Atlas Researcher');
+    const researcher = runCard.getByRole('button', { name: /Atlas Researcher/ }).first();
+    await expect(researcher).toBeVisible();
+    await caption('Search finds Squad runs and their members in the selected project.');
+    await click(page, researcher);
     const details = squads.getByRole('complementary', { name: 'Agent details' });
-    await expect(details.getByRole('heading', { name: 'Draft release checklist' })).toBeFocused();
-    await caption('Select an agent to see its status and open its thread or terminal.');
+    await expect(details.getByRole('heading', { name: 'Atlas Researcher' })).toBeFocused();
+    await caption('Select a Squad member to see their status and open their thread or terminal.');
     await click(page, details.getByRole('button', { name: 'Close agent details' }));
-    await expect(draft).toBeFocused();
+    await expect(researcher).toBeFocused();
     await search.clear();
 
-    const idle = solo.getByRole('button', { name: /^Idle agents/ });
-    await click(page, idle);
-    await expect(draft).toBeHidden();
-    await caption('Collapse idle agents to leave more room for current work.', 2700);
-    await click(page, idle);
-
     await project.selectOption(second.value.id);
-    await expect(squads.getByRole('button', { name: /Review announcement template/ })).toBeVisible();
+    await expect(squads.getByText('No Squad runs in this project', { exact: true })).toBeVisible();
+    await expect(squads.getByText('Review announcement template', { exact: true })).toBeHidden();
     await expect(attention).toBeHidden();
     await caption('Switch projects from the same view.', 2700);
     await project.selectOption(projectId);
@@ -137,6 +133,7 @@ test('Squads groups the run and solo agents, filters both views and opens the re
     await expect(map.locator('path.squad-flow-edge').first()).toBeVisible({ timeout: 15_000 });
     await expect(map.getByText('Work dependency', { exact: true })).toBeVisible();
     await expect(map.locator('.squad-flow-node-blocker')).toHaveCount(0);
+    await expect(map.getByText('Draft release checklist', { exact: true })).toBeHidden();
     if (!recording) await page.screenshot({ path: testInfo.outputPath('squad-map.png') });
     await caption('Map shows who is connected. Dashed lines show work dependencies.');
 
@@ -217,7 +214,6 @@ test('Squads groups the run and solo agents, filters both views and opens the re
     await expect(squads.getByRole('button', { name: '1 Completed', exact: true })).toBeVisible({ timeout: 20_000 });
     await click(page, squads.getByRole('button', { name: '1 Completed', exact: true }));
     await expect(runCard.getByText('Completed', { exact: true })).toBeVisible();
-    await expect(solo).toBeHidden();
     await caption('Completed keeps finished runs easy to find, even after the workers exit.', 3500);
     await demo?.finish();
     if (demo) await demo.flash();
