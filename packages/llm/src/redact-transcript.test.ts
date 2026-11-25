@@ -28,15 +28,20 @@ describe('redactPemBlocks', () => {
     expect(mismatches.slice(0, 5)).toEqual([]);
   });
 
-  it.each([
-    ['repeated unterminated BEGIN', BEGIN],
-    ['repeated BEGIN with a trailing END far away', `${BEGIN}\n`],
-  ])('is linear on 1MB of %s', (_name, unit) => {
-    const input = unit.repeat(Math.floor((1024 * 1024) / unit.length));
+  it('is linear on 1MB of repeated unterminated BEGIN markers', () => {
+    const input = BEGIN.repeat(Math.floor((1024 * 1024) / BEGIN.length));
     const started = performance.now();
     const out = redactTranscript(input);
     expect(performance.now() - started).toBeLessThan(LINEAR_TIME_BUDGET_MS);
     expect(out).toBe(input);
+  });
+
+  it('redacts 1MB of repeated BEGIN markers closed by a single END in one block', () => {
+    const input = `head ${BEGIN.repeat(Math.floor((1024 * 1024) / BEGIN.length))}${END} tail`;
+    const started = performance.now();
+    const out = redactPemBlocks(input, 'R');
+    expect(performance.now() - started).toBeLessThan(LINEAR_TIME_BUDGET_MS);
+    expect(out).toBe('head R tail');
   });
 
   it('is linear when one END closes thousands of BEGINs', () => {

@@ -33,25 +33,21 @@ const PEM_END = /-----END [A-Z ]*PRIVATE KEY-----/g;
 /**
  * Replace PEM private key blocks. Same result as the lazy
  * `BEGIN…[\s\S]*?…END` regex it replaces, but linear: the regex rescanned to
- * the end of the input for every unterminated BEGIN. Here each END is found
- * once, and the scan stops when no END remains because no later BEGIN can close.
+ * the end of the input for every unterminated BEGIN. Here the scan only moves
+ * forward past each replaced block, and stops at the first BEGIN with no END
+ * after it, since no later BEGIN can have one either.
  */
 export function redactPemBlocks(text: string, replacement: string): string {
   const begin = new RegExp(PEM_BEGIN);
   const end = new RegExp(PEM_END);
   let out = '';
   let cursor = 0;
-  let cachedEnd: { index: number; length: number } | null = null;
   for (let found = begin.exec(text); found; found = begin.exec(text)) {
-    const from = found.index + found[0].length;
-    if (cachedEnd === null || cachedEnd.index < from) {
-      end.lastIndex = from;
-      const match = end.exec(text);
-      if (match === null) break;
-      cachedEnd = { index: match.index, length: match[0].length };
-    }
+    end.lastIndex = found.index + found[0].length;
+    const closing = end.exec(text);
+    if (closing === null) break;
     out += text.slice(cursor, found.index) + replacement;
-    cursor = cachedEnd.index + cachedEnd.length;
+    cursor = closing.index + closing[0].length;
     begin.lastIndex = cursor;
   }
   return out + text.slice(cursor);
