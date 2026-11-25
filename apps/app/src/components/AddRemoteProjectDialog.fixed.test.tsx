@@ -23,9 +23,11 @@ describe('fixed SSH machine', () => {
     await waitFor(() => expect(setBusy).toHaveBeenLastCalledWith(true));
     expect((screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(true);
     resolve({ id: 'remote-page-project' });
-    await waitFor(() => expect(onSuccess).toHaveBeenCalledWith('remote-page-project'));
-    expect(setBusy).toHaveBeenLastCalledWith(false);
-    expect(onClose).toHaveBeenCalledOnce();
+    await waitFor(() => {
+      expect(onSuccess).toHaveBeenCalledWith('remote-page-project');
+      expect(setBusy).toHaveBeenLastCalledWith(false);
+      expect(onClose).toHaveBeenCalledOnce();
+    });
   });
   it('explains when SSH discovery is unavailable for an unbound machine', async () => {
     render(<AddRemoteProjectDialog onSubmit={vi.fn()} onSuccess={vi.fn()} onClose={vi.fn()} />);
