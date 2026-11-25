@@ -71,7 +71,7 @@ scheduled supervisor is bundled only on macOS/Linux.
 
 ## Release notes and version bumps
 
-A version bump touches `package.json` (and `package-lock.json`),
+A version bump touches `package.json` (the pnpm lockfile does not record the app version),
 `apps/mobile/app.json`, the website version pins (`website/.env.example`,
 `website/Dockerfile`, `website/heroku.yml`, `website/lib/site.ts`), and adds
 `docs/releases/<version>.md`.
