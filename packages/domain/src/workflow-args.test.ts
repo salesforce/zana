@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { LINEAR_TIME_BUDGET_MS, allStrings } from './__tests__/linear-time.js';
 import {
   buildInterviewPrompt,
   parseArgumentNames,
@@ -133,5 +134,63 @@ describe('buildInterviewPrompt', () => {
     const out = buildInterviewPrompt('only {{used}} here', declared);
     expect(out).toContain('`used`');
     expect(out).not.toContain('`ghost`');
+  });
+});
+
+describe('token scanning', () => {
+  /** The regex the scanner replaced, kept as the oracle. */
+  const TOKEN_RE = /\{\{\{([\s\S]*?)\}\}\}|\{\{([\s\S]*?)\}\}/g;
+
+  function referenceNames(template: string): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const m of template.matchAll(TOKEN_RE)) {
+      if (m[1] !== undefined) continue;
+      const trimmed = m[2]?.trim() ?? '';
+      if (/^[A-Za-z0-9_.-]+$/.test(trimmed) && !seen.has(trimmed)) {
+        seen.add(trimmed);
+        out.push(trimmed);
+      }
+    }
+    return out;
+  }
+
+  function referenceSubstitute(template: string, values: Record<string, string>): string {
+    return template.replace(TOKEN_RE, (whole, escaped?: string, slot?: string) => {
+      if (escaped !== undefined) return `{{${escaped}}}`;
+      const name = slot?.trim() ?? '';
+      if (!/^[A-Za-z0-9_.-]+$/.test(name)) return whole;
+      const provided = values[name];
+      return provided !== undefined && provided !== '' ? provided : '';
+    });
+  }
+
+  it('agrees with the regex implementation on every short template', () => {
+    const values = { a: 'A', b: '' };
+    const mismatches: string[] = [];
+    for (const template of allStrings('{}a ', 8)) {
+      const same =
+        parseArgumentNames(template).join('|') === referenceNames(template).join('|') &&
+        substituteArguments(template, values) === referenceSubstitute(template, values);
+      if (!same) mismatches.push(template);
+    }
+    expect(mismatches).toEqual([]);
+  });
+
+  it('handles braces and newlines inside a body like the regex did', () => {
+    expect(parseArgumentNames('{{{x}} {{y}}')).toEqual(['y']); // `{{{x}}` is a malformed slot, skipped
+    expect(substituteArguments('{{{x}} tail', {})).toBe('{{{x}} tail');
+    expect(substituteArguments('a {{{lit}}} b {{n}}', { n: '1' })).toBe('a {{lit}} b 1');
+    expect(substituteArguments('{{\nname\n}}', { name: 'v' })).toBe('v');
+  });
+
+  it('stays linear when there is no closing brace', () => {
+    // "{{{{{{…" with no closer: the old lazy body rescanned to the end from every "{{".
+    const started = performance.now();
+    for (const open of ['{'.repeat(100_000), '{{{{a'.repeat(25_000), '{{a '.repeat(25_000)]) {
+      expect(parseArgumentNames(open)).toEqual([]);
+      expect(substituteArguments(open, {})).toBe(open);
+    }
+    expect(performance.now() - started).toBeLessThan(LINEAR_TIME_BUDGET_MS);
   });
 });
