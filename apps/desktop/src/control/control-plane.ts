@@ -78,8 +78,9 @@ const PLUGIN_CLI_TIMEOUT_MS = 300_000;
 
 /** Approval timer length: the parser already bounds it; clamp again where the timer is armed. */
 export function boundedApprovalTimerMs(requested: number | undefined): number {
-  if (requested === undefined || !Number.isFinite(requested)) return PLUGIN_APPROVAL_TTL_MS;
-  return Math.min(Math.max(Math.trunc(requested), 1), PLUGIN_APPROVAL_TTL_MS);
+  if (requested === undefined || !(requested >= 1)) return requested === undefined || Number.isNaN(requested) ? PLUGIN_APPROVAL_TTL_MS : 1;
+  if (requested > PLUGIN_APPROVAL_TTL_MS) return PLUGIN_APPROVAL_TTL_MS;
+  return Math.trunc(requested);
 }
 /**
  * Ceiling on simultaneous in-flight connections (CLAUDE.md #5 — bound unbounded
