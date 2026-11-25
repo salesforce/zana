@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { LINEAR_TIME_BUDGET_MS, allStrings } from './__tests__/linear-time.js';
-import { trimChar, trimLeadingChar, trimTrailingChar } from './trim-edges.js';
+import { LINEAR_TIME_BUDGET_MS, allStrings } from './linear-time-testing.js';
+import { trimChar, trimLeadingChar, trimTrailingAny, trimTrailingChar } from './trim-edges.js';
 
 describe('trim-edges', () => {
   it('matches the regexes it replaces on every short string', () => {
@@ -25,6 +25,23 @@ describe('trim-edges', () => {
     expect(trimChar(`${run}x`, '-')).toBe('x');
     expect(trimTrailingChar(`x${run}y`, '-')).toBe(`x${run}y`);
     expect(trimTrailingChar(`${'/'.repeat(200_000)}x`, '/')).toBe(`${'/'.repeat(200_000)}x`);
+    expect(performance.now() - started).toBeLessThan(LINEAR_TIME_BUDGET_MS);
+  });
+});
+
+describe('trimTrailingAny', () => {
+  it('strips a trailing run of any listed character', () => {
+    expect(trimTrailingAny('C:\\\\/', '\\/')).toBe('C:');
+    expect(trimTrailingAny('abc', '\\/')).toBe('abc');
+    expect(trimTrailingAny('//', '\\/')).toBe('');
+    expect(trimTrailingAny('', '\\/')).toBe('');
+    expect(trimTrailingAny('a/b', '\\/')).toBe('a/b');
+  });
+
+  it('is linear on a long run of listed characters followed by another one', () => {
+    const input = `${'/\\'.repeat(100_000)}x`;
+    const started = performance.now();
+    expect(trimTrailingAny(input, '\\/')).toBe(input);
     expect(performance.now() - started).toBeLessThan(LINEAR_TIME_BUDGET_MS);
   });
 });

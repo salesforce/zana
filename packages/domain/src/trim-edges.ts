@@ -21,3 +21,10 @@ export function trimTrailingChar(value: string, char: string): string {
 export function trimChar(value: string, char: string): string {
   return trimTrailingChar(trimLeadingChar(value, char), char);
 }
+
+/** Strip any trailing run of the characters in `chars` (linear; no regex backtracking). */
+export function trimTrailingAny(value: string, chars: string): string {
+  let end = value.length;
+  while (end > 0 && chars.includes(value[end - 1]!)) end -= 1;
+  return end === value.length ? value : value.slice(0, end);
+}

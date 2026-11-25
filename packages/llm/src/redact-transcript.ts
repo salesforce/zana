@@ -1,3 +1,5 @@
+import { redactUserinfoUrls } from './redact-userinfo-url.js';
+
 const REDACTED = '[redacted]';
 
 /**
@@ -24,9 +26,7 @@ const SECRET_PATTERNS: RegExp[] = [
   // key=value / key: value secret assignments (api_key, token, password, secret, cookie).
   /\b(?:api[_-]?key|token|password|passwd|secret|cookie)\s*[:=]\s*(?:'[^']*'|"[^"]*"|[^\s'"`]+)/gi,
   // Secret-bearing query-string params (keeps the key, redacts the value).
-  /([?&](?:api[_-]?key|token|password|secret)=)[^&#\s]+/gi,
-  // URLs with embedded userinfo credentials (scheme://user:pass@host).
-  /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@[^\s/]+/gi
+  /([?&](?:api[_-]?key|token|password|secret)=)[^&#\s]+/gi
 ];
 
 /**
@@ -53,5 +53,6 @@ export function redactTranscript(transcript: string): string {
         : REDACTED;
     });
   }
-  return redacted;
+  // URLs with embedded userinfo credentials (scheme://user:pass@host).
+  return redactUserinfoUrls(redacted, REDACTED);
 }

@@ -5,6 +5,8 @@
  *
  * Matching is case-insensitive and literal; matches do not overlap.
  */
+import { scanInlineCode } from "./inline-code-scan.js";
+
 export const THREAD_SEARCH_QUERY_MAX = 200;
 
 function escapeRegExp(text: string): string {
@@ -37,7 +39,6 @@ export function countThreadSearchMatches(text: string, pattern: RegExp): number 
 }
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})/u;
-const INLINE_CODE = /(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)/gu;
 
 /** Visible text of a markdown run that holds no code: syntax goes, labels stay. */
 function markdownProseText(text: string): string {
@@ -76,9 +77,9 @@ export function threadSearchMarkdownText(markdown: string): string {
     if (prose.length === 0) return;
     const run = prose.join("\n");
     let last = 0;
-    for (const match of run.matchAll(INLINE_CODE)) {
-      out.push(markdownProseText(run.slice(last, match.index)), match[2]!);
-      last = match.index + match[0].length;
+    for (const span of scanInlineCode(run)) {
+      out.push(markdownProseText(run.slice(last, span.index)), span.content);
+      last = span.index + span.length;
     }
     out.push(markdownProseText(run.slice(last)), "\n");
     prose = [];

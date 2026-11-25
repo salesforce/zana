@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { LINEAR_TIME_BUDGET_MS, allStrings } from './__tests__/linear-time.js';
+import { LINEAR_TIME_BUDGET_MS, allStrings } from './linear-time-testing.js';
 import {
   buildInterviewPrompt,
   parseArgumentNames,

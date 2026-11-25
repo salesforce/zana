@@ -30,6 +30,13 @@ export interface ResolveHarnessCommandOptions {
   uid?: number;
 }
 
+/** Drop one leading and one trailing `"` (Windows PATH entries may be quoted). */
+function unquotePathEntry(entry: string): string {
+  const start = entry.startsWith('"') ? 1 : 0;
+  const end = entry.length > start && entry.endsWith('"') ? entry.length - 1 : entry.length;
+  return entry.slice(start, end);
+}
+
 /**
  * Resolve a basename harness command against PATH, then well-known native
  * install locations. Finder/Dock and the electron-vite sandbox often omit
@@ -47,7 +54,7 @@ export function resolveHarnessCommand(
   const original = command;
   if (isAbsolute(command) || command.includes('/') || command.includes('\\')) {
     if (isExecutableFile(command)) return command;
-    command = command.replace(/.*[/\\]/, '') || command;
+    command = command.slice(Math.max(command.lastIndexOf('/'), command.lastIndexOf('\\')) + 1) || command;
   }
   const names = process.platform === 'win32' && !/\.(exe|cmd|bat|com)$/i.test(command)
     ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean).map((ext) => command + ext.toLowerCase())
@@ -55,7 +62,7 @@ export function resolveHarnessCommand(
   for (const dir of (pathEnv ?? '').split(delimiter)) {
     if (!dir) continue;
     for (const name of names) {
-      const candidate = join(dir.replace(/^"|"$/g, ''), name);
+      const candidate = join(unquotePathEntry(dir), name);
       if (isExecutableFile(candidate)) return candidate;
     }
   }
