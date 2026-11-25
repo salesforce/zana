@@ -9,6 +9,7 @@ import { afterEach, beforeEach, vi } from 'vitest';
 import type { ZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { installTestPluginRuntime, type NavigateCall, type RpcCall } from '@zana-ai/zcc-plugin-sdk/testing/app';
 import { RenderReports } from '../server/render-reports.js';
+import { createAutoConvergeSetting } from '../server/auto-converge-setting.js';
 import { createRpcHandlers } from '../server/rpc.js';
 import { DesignDocStore } from '../server/store.js';
 import type { DesignDocPairing } from '../server/pairing.js';
@@ -133,7 +134,9 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     },
     projects: { list: async () => projects.map((project) => ({ ...project, path: `/work/${project.id}` })) }
   };
-  const handlers = createRpcHandlers({ store, changed: (docId) => emit({ docId }), sdk: sdk as never, peerSync: options.peerSync, pairing: options.pairing, pageUrl: options.pageUrl, reports });
+  const autoConvergeValues = new Map<string, unknown>();
+  const autoConvergeKv = { get: async <T,>(key: string) => autoConvergeValues.get(key) as T | undefined, set: async (key: string, value: unknown) => { autoConvergeValues.set(key, value); } };
+  const handlers = createRpcHandlers({ store, changed: (docId) => emit({ docId }), sdk: sdk as never, peerSync: options.peerSync, pairing: options.pairing, autoConverge: createAutoConvergeSetting(autoConvergeKv, () => undefined), pageUrl: options.pageUrl, reports });
   const failures = new Map<string, string>();
   const rpc = Object.fromEntries(
     Object.entries(handlers).map(([name, handler]) => [

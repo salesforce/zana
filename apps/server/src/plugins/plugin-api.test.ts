@@ -44,6 +44,18 @@ it('reports declaration metadata without touching saved values', async () => {
   } finally { await handle.dispose(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+it('lets an earlier settings handle read its stored value after the plugin redefines to nothing', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'plugin-settings-legacy-'));
+  writeFileSync(join(dir, 'settings.json'), JSON.stringify({ legacy: true }));
+  const handle = createPluginApi('sample', dir);
+  try {
+    const legacy = handle.api.settings.define({ legacy: { type: 'boolean', label: 'Legacy', default: false } });
+    handle.api.settings.define({});
+    expect(handle.hasSettings).toBe(false);
+    await expect(legacy.get()).resolves.toEqual({ legacy: true });
+  } finally { await handle.dispose(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 it('serializes concurrent field saves and recovers after a failed atomic write', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'plugin-settings-writes-'));
   const handle = createPluginApi('sample', dir);
