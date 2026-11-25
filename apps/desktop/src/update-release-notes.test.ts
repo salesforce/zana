@@ -268,6 +268,11 @@ describe('htmlToMarkdown on hostile unclosed input', () => {
     ['heading', '<h1>'],
     ['link', '<a>'],
     ['bold', '<b>'],
+    ['paragraph', '<p'],
+    ['paragraph with space', '<p '],
+    ['rule', '<hr '],
+    ['list item', '<li '],
+    ['whitespace before list item', '                <li'],
   ])('is linear on 256KB of unclosed <%s> openers', (_name, opener) => {
     // The lazy regexes rescanned to the end for every opener: seconds each.
     const input = opener.repeat(Math.floor((256 * 1024) / opener.length));

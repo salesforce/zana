@@ -142,6 +142,37 @@ function replaceElements(
   return out + input.slice(cursor);
 }
 
+/**
+ * Replace each `<name ...>` (or `</name ...>` when `allowClosing`) with
+ * `replacement`. Equivalent to `/(\s*)<\/?(names)\b[^>]*>/gi`, but linear: the
+ * next `>` is found once and reused, and a missing `>` ends the scan because no
+ * later tag can have one either. With `eatLeadingSpace` the whitespace directly
+ * before the tag goes with it.
+ */
+function replaceTagSpans(
+  input: string,
+  names: string,
+  allowClosing: boolean,
+  replacement: string,
+  eatLeadingSpace = false
+): string {
+  const opener = new RegExp(`<${allowClosing ? '\\/?' : ''}(?:${names})\\b`, 'gi');
+  let out = '';
+  let cursor = 0;
+  let gt = -2;
+  for (let found = opener.exec(input); found; found = opener.exec(input)) {
+    const from = found.index + found[0].length;
+    if (gt < from) gt = input.indexOf('>', from);
+    if (gt < 0) break;
+    let start = found.index;
+    if (eatLeadingSpace) while (start > cursor && /\s/.test(input[start - 1]!)) start -= 1;
+    out += input.slice(cursor, start) + replacement;
+    cursor = gt + 1;
+    opener.lastIndex = cursor;
+  }
+  return out + input.slice(cursor);
+}
+
 /** Remove every `<!-- ... -->` comment; an unterminated one stays as text. */
 function stripComments(input: string): string {
   let out = '';
@@ -199,11 +230,11 @@ export function htmlToMarkdown(html: string): string {
   s = replaceElements(s, 'strong|b', true, ({ inner }) => (inner.trim() ? `**${inner.trim()}**` : ''));
   s = replaceElements(s, 'em|i', true, ({ inner }) => (inner.trim() ? `*${inner.trim()}*` : ''));
   s = replaceElements(s, 'code', true, ({ inner }) => '`' + inner.replace(/`/g, '') + '`');
-  s = s.replace(/\s*<li\b[^>]*>/gi, '\n- ');
+  s = replaceTagSpans(s, 'li', false, '\n- ', true);
   s = s.replace(/<\/(ul|ol)\s*>/gi, '\n\n');
   s = s.replace(/<br\s*\/?>/gi, '  \n');
-  s = s.replace(/<hr\b[^>]*>/gi, '\n\n---\n\n');
-  s = s.replace(/<\/?(p|div|blockquote|section|table|tr)\b[^>]*>/gi, '\n\n');
+  s = replaceTagSpans(s, 'hr', false, '\n\n---\n\n');
+  s = replaceTagSpans(s, 'p|div|blockquote|section|table|tr', true, '\n\n');
   // Drop every remaining tag, then decode text entities.
   s = stripTags(s);
   s = decodeEntities(s);
