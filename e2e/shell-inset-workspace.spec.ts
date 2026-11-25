@@ -39,10 +39,14 @@ test('inset workspace is the standard desktop design and ignores retired opt-out
 
   // Light panels share the white content surface; dark panels keep their quieter tone.
   const panel = page.getByTestId('thread-secondary-panel');
+  const sheet = page.locator('.shell-main > .thread-detail-view, .shell-main > .split-workspace:has(.thread-detail-view)');
   await page.evaluate(() => window.cc.config.set({ theme: 'light' }));
   await expect(panel).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  // At the default zoom, Chromium can report fractional CSS widths for borders snapped to device pixels.
+  await expect(sheet).toHaveCSS('border', /^(?!0px)[\d.]+px solid rgb\(216, 222, 228\)$/);
   await page.evaluate(() => window.cc.config.set({ theme: 'dark' }));
   await expect(panel).toHaveCSS('background-color', 'rgb(26, 26, 26)');
+  await expect(sheet).toHaveCSS('border', /^(?!0px)[\d.]+px solid rgb\(46, 46, 46\)$/);
 
   // The sheet must not take over overflow: long panels keep their own scroller.
   await page.evaluate(() => { history.pushState({}, '', '/settings/experimental'); dispatchEvent(new PopStateEvent('popstate')); });
