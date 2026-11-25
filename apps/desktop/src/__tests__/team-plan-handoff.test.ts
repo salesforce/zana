@@ -1108,7 +1108,7 @@ describe('observeOrchestratorEdge', () => {
     expect(log).toHaveBeenCalledTimes(2);
     expect(JSON.parse(log.mock.calls[0][1])).toEqual({ executionId: 'e-1', sessionId: 's-1', state: 'working', seq: 3 });
     expect(handoff.onCoordinatorWorking).toHaveBeenCalledOnce();
-    expect(handoff.onCoordinatorWorking).toHaveBeenCalledWith('e-1');
+    expect(handoff.onCoordinatorWorking).toHaveBeenCalledWith('e-1', 's-1');
   });
 
   it('ignores workers and sessions without an execution', () => {
@@ -1131,5 +1131,87 @@ describe('plan handoff diagnostics logging', () => {
     warnLog('ctx', 'msg');
     expect(warn).toHaveBeenCalledWith('[main] ctx: msg');
     warn.mockRestore();
+  });
+});
+
+describe('TeamPlanHandoff bounded work after exhaustion and release at run end', () => {
+  const ctx: CoordinatorHandoffContext = {
+    sessionId: 's-9', projectId: 'p-1', projectRoot: '/root', executionId: 'exec-9', slotId: 'orchestrator:lead'
+  };
+  const units: ExecutionWorkUnitInput[] = [{ id: 'a', title: 'A', task: 'do a', dependencies: [] }];
+
+  function build(digest: { v: string }, registerResult = { ok: false, message: 'cycle' } as { ok: boolean; message?: string }) {
+    const register = vi.fn(async () => registerResult);
+    const nudge = vi.fn();
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/root/.zana/plan.md', bodyDigest: digest.v }),
+      register,
+      nudge,
+      cleanup: async () => {},
+      logError: () => {},
+      maxNudges: 1
+    });
+    return { handoff, register, nudge };
+  }
+
+  it('does not re-submit the same rejected plan on every idle edge once exhausted', async () => {
+    const digest = { v: 'd1' };
+    const { handoff, register } = build(digest);
+    await handoff.onCoordinatorIdle(ctx); // rejected, nudge 1
+    await handoff.onCoordinatorIdle(ctx); // rejected, budget spent -> exhausted
+    expect(register).toHaveBeenCalledTimes(2);
+    await handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenCalledTimes(2);
+    digest.v = 'd2'; // the orchestrator rewrote the file
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenCalledTimes(3);
+  });
+
+  it('releases the entry when the orchestrator session exits', async () => {
+    const digest = { v: 'd1' };
+    const { handoff, register } = build(digest, { ok: true });
+    await handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx); // done latch
+    expect(register).toHaveBeenCalledTimes(1);
+    handoff.forgetSession('other-session'); // unrelated session keeps the entry
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenCalledTimes(1);
+    handoff.forgetSession('s-9');
+    await handoff.onCoordinatorIdle(ctx); // fresh entry
+    expect(register).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the session id from the working edge so an exit before any idle edge releases it', async () => {
+    const { handoff, register } = build({ v: 'd1' }, { ok: true });
+    handoff.onCoordinatorWorking('exec-9', 's-9');
+    handoff.forgetSession('s-9');
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('stall notice against the real inbox store', () => {
+  it('folds repeated notices for one execution into one row and does not promise polling', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'stall-notice-'));
+    try {
+      const { createInboxStore } = await import('@zana-ai/zcc-server/services/inbox/inbox-store');
+      const store = createInboxStore({ filePath: join(dir, 'inbox.jsonl') });
+      const notice = createStallNotice((input) => store.append(input), () => {});
+      const ctx: CoordinatorHandoffContext = { sessionId: 's', projectId: 'p-1', projectRoot: '/r', executionId: 'exec-1', slotId: 'o' };
+      notice(ctx, 'first');
+      await new Promise((r) => setTimeout(r, 50));
+      notice(ctx, 'second');
+      await new Promise((r) => setTimeout(r, 50));
+      notice({ ...ctx, executionId: 'exec-2' }, 'other');
+      await new Promise((r) => setTimeout(r, 50));
+      const entries = (await readFile(join(dir, 'inbox.jsonl'), 'utf-8')).split(String.fromCharCode(10)).map((l) => l.trim()).filter(Boolean).map((l) => JSON.parse(l));
+      expect(entries).toHaveLength(2);
+      expect(entries.find((e) => e.dedupeKey === 'execution-plan-stalled:exec-1').comments).toContain('second');
+      expect(entries[0].comments).not.toContain('keeps checking');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

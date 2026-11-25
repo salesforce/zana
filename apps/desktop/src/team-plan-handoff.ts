@@ -418,6 +418,10 @@ interface HandoffState {
   turnStarted?: boolean;
   /** The one pre-first-turn idle edge was spared a nudge. */
   skippedEarly?: boolean;
+  /** The orchestrator session this entry belongs to, so its exit can release the entry. */
+  sessionId?: string;
+  /** Plan the host last rejected (path + content digest): once exhausted it is not re-submitted unchanged. */
+  lastRejected?: string;
 }
 
 /**
@@ -439,9 +443,17 @@ export class TeamPlanHandoff {
   }
 
   /** The host saw the coordinator working: its first turn has started, so an idle edge now means a finished turn. */
-  onCoordinatorWorking(executionId: string): void {
+  onCoordinatorWorking(executionId: string, sessionId?: string): void {
     const entry = this.entryFor(executionId);
     entry.turnStarted = true;
+    if (sessionId) entry.sessionId = sessionId;
+  }
+
+  /** Release every entry owned by an exited orchestrator session (the run is over for the handoff). */
+  forgetSession(sessionId: string): void {
+    for (const [executionId, entry] of this.state) {
+      if (entry.sessionId === sessionId) this.state.delete(executionId);
+    }
   }
 
   private entryFor(executionId: string): HandoffState {
@@ -455,6 +467,7 @@ export class TeamPlanHandoff {
 
   async onCoordinatorIdle(ctx: CoordinatorHandoffContext): Promise<void> {
     const entry = this.entryFor(ctx.executionId);
+    entry.sessionId = ctx.sessionId;
     this.diag(ctx, { event: 'edge', nudges: entry.nudges, inFlight: entry.inFlight, turnStarted: !!entry.turnStarted, ...(entry.done ? { note: 'done' } : {}) });
     if (entry.done) return;
     if (entry.inFlight) {
@@ -527,6 +540,13 @@ export class TeamPlanHandoff {
       return;
     }
     const accepted = typeof verdict === 'object' ? verdict : read;
+    // Once the nudge budget is spent, a plan the host already rejected is not submitted again
+    // on every idle edge; only a changed file (different path or content) is tried.
+    const planKey = `${accepted.realPath}:${accepted.bodyDigest ?? unitsTrace(accepted.units).unitsDigest ?? ''}`;
+    if (entry.exhausted && entry.lastRejected === planKey) {
+      this.diag(ctx, { event: 'skip', note: 'same rejected plan; not re-submitted' });
+      return;
+    }
     // A plan the operator already corrected is not re-judged; an authored one gets one automatic round.
     const judged = accepted === read ? await this.deps.judgeAuthored?.(ctx, accepted.units).catch((error) => {
       this.deps.logError(`team plan handoff judge ${ctx.sessionId}`, error);
@@ -559,6 +579,7 @@ export class TeamPlanHandoff {
     // A plan that parses but cannot register is still an invalid plan: spend the
     // same strike budget and, once spent, raise the Inbox correction with the
     // host's real rejection reason instead of silently failing the run.
+    entry.lastRejected = planKey;
     const rejection = registered.message ?? 'register failed';
     await this.handleInvalid(entry, maxNudges, ctx, `host rejected plan: ${rejection}`, `the host rejected your plan (${rejection})`);
     return;
@@ -685,7 +706,7 @@ export function createStallNotice(
     void append({
       projectId: ctx.projectId,
       subject: 'Squad plan not registered yet',
-      comments: `The orchestrator has not produced a plan the host could register (${reason}). The host keeps checking for the plan file until the startup grace ends.`,
+      comments: `The orchestrator has not produced a plan the host could register (${reason}). This notice reflects the moment it was raised: the host reads the plan file only when the orchestrator goes idle, and a plan registered later is not reflected here.`,
       executionId: ctx.executionId,
       dedupeKey: `execution-plan-stalled:${ctx.executionId}`
     }).catch((error) => logError('team plan handoff stall notice', error));
@@ -716,7 +737,7 @@ export function observeOrchestratorEdge(
 ): void {
   if (cohort?.role !== 'orchestrator' || !cohort.executionId) return;
   log('squad orchestrator edge', JSON.stringify({ executionId: cohort.executionId, sessionId, state, seq }));
-  if (state === 'working') handoff.onCoordinatorWorking(cohort.executionId);
+  if (state === 'working') handoff.onCoordinatorWorking(cohort.executionId, sessionId);
 }
 
 /** Generation fence stamped onto a trace at emit time. */

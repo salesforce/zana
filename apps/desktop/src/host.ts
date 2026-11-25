@@ -8718,6 +8718,7 @@ function wireBridgeListeners() {
     safeSend(IPC.terminals.onExit, sessionId, code);
     ptyLifecycle.exited(sessionId, code, signal);
     squadProposalNotifier.forget(sessionId);
+    teamPlanHandoff.forgetSession(sessionId);
     const ledgerEntryId = launchLedgerEntriesBySession.get(sessionId);
     launchLedgerEntriesBySession.delete(sessionId);
     const authorizationId = launchAuthorizationBySession.get(sessionId);
