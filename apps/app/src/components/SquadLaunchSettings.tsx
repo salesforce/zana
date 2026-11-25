@@ -4,6 +4,7 @@ import { launchOptionsSchema } from '@zana-ai/zcc-domain/launch-options';
 import type { Project, Worktree } from '@zana-ai/zcc-domain/product';
 import type { SquadLaunchPreview } from '@zana-ai/zcc-domain/squad-proposal';
 import { product } from '../lib/product-client.js';
+import { launchBranchLabel } from '../lib/launch-location-label.js';
 import { PrecedenceStrip } from './PrecedenceStrip.js';
 import { worktreeDefaultOrigin } from '../lib/workspace-choice.js';
 import './SquadLaunchSettings.css';
@@ -158,7 +159,7 @@ export function SquadLaunchSettings({ teamId, projectId, goal, coordinationMode,
   const targetValue = value.target?.kind === 'project-root' ? 'project-root' : selectedBranch ? `worktree:${selectedBranch}` : value.worktree === true ? 'new-worktree' : value.worktree === false ? 'selected-checkout' : '';
   const locationText = !preview ? undefined : preview.location.kind === 'new-worktree'
     ? `New worktree from ${preview.location.baseBranch} (${sourceLabel(preview.location.isolationSource)}); path assigned at launch`
-    : preview.location.kind === 'worktree' ? `${preview.branch} at ${preview.path} (user-owned)` : `Project root (${preview.branch ?? 'HEAD'}) at ${preview.path}`;
+    : preview.location.kind === 'worktree' ? `${launchBranchLabel(preview.branch)} at ${preview.path} (user-owned)` : `Project root (${launchBranchLabel(preview.branch)}) at ${preview.path}`;
 
   return <section className="squad-launch-settings" aria-label="Squad launch settings">
     <div className="squad-launch-preview" role="status" aria-live="polite">

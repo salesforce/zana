@@ -1,18 +1,29 @@
+import type { SquadLaunchLocation } from '@zana-ai/zcc-domain/launch-options';
+
 interface LaunchLocationPreview {
   branch?: string | null | undefined;
   path?: string | undefined;
-  location: { kind: string; baseBranch?: string | undefined; isolationSource?: string | undefined };
+  location: SquadLaunchLocation;
 }
 
 /**
- * The "Location:" text of a Squad launch preview. A Project checkout with no
- * branch name (detached HEAD, or no git data) reads as HEAD instead of the
+ * A checkout's branch for display. A Project checkout has no branch name when
+ * HEAD is detached, so a missing or blank branch reads as HEAD instead of the
  * string "undefined".
  */
+export function launchBranchLabel(branch: string | null | undefined): string {
+  return branch?.trim() || 'HEAD';
+}
+
+/** The "Location:" text of a Squad launch preview. */
 export function launchLocationLabel(preview: LaunchLocationPreview): string {
-  if (preview.location.kind === 'new-worktree') {
-    return `New worktree from ${preview.location.baseBranch} — isolation: ${preview.location.isolationSource}; path assigned at launch`;
+  const { location } = preview;
+  switch (location.kind) {
+    case 'new-worktree':
+      return `New worktree from ${location.baseBranch} — isolation: ${location.isolationSource}; path assigned at launch`;
+    case 'worktree':
+      return `${launchBranchLabel(preview.branch)} — ${preview.path} (user-owned)`;
+    case 'project-root':
+      return `${launchBranchLabel(preview.branch)} — ${preview.path} (Project)`;
   }
-  const owner = preview.location.kind === 'worktree' ? ' (user-owned)' : ' (Project)';
-  return `${preview.branch ?? 'HEAD'} — ${preview.path}${owner}`;
 }
