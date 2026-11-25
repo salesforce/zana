@@ -378,15 +378,28 @@ test('Basic lists conversations in one list, labelled by project, with search an
   await resize(app, 1440, 900);
   const release = await projectAndThreads(app, ['Weekly release plan', 'Prepare release notes'], 'A useful result', 'Zana release');
   const website = await projectAndThreads(app, ['Homepage introduction', ...Array.from({ length: 30 }, (_, i) => `Website follow-up ${i + 1}`)], 'A useful result', 'Website');
+  await page.evaluate(async ({ releaseId, websiteId }) => {
+    const [release, website] = await Promise.all([
+      window.cc.projects.update(releaseId, { color: '#39c5cf' }),
+      window.cc.projects.update(websiteId, { color: '#2f81f7' })
+    ]);
+    if (!release || !website) throw new Error('Could not set the project colors');
+  }, { releaseId: release.projectId, websiteId: website.projectId });
   await basic(page).click();
   const rows = sidebar(page).locator('.basic-ui-chat-row');
   const search = sidebar(page).getByRole('searchbox', { name: 'Search chats' });
   await expect(sidebar(page).getByRole('button', { name: 'Website', exact: true })).toHaveCount(0);
   await expect(rows).toHaveCount(30);
   const releaseRow = sidebar(page).getByTestId(`basic-chat-row-${release.ids[0]}`);
+  const releasePill = releaseRow.locator('.basic-ui-chat-project');
+  const websitePill = sidebar(page).getByTestId(`basic-chat-row-${website.ids[0]}`).locator('.basic-ui-chat-project');
   await search.fill('release');
   await expect(rows).toHaveCount(2);
-  await expect(releaseRow.locator('.basic-ui-chat-project')).toHaveText('Zana release');
+  await expect(releasePill).toHaveText('Zana release');
+  await expect(releasePill).toHaveCSS('--basic-chat-project-color', '#39c5cf');
+  await expect(releasePill).toHaveCSS('border-radius', '999px');
+  const releaseFill = await releasePill.evaluate(el => getComputedStyle(el).backgroundColor);
+  expect(releaseFill).not.toBe('rgba(0, 0, 0, 0)');
   await search.fill('');
   const roster = sidebar(page).getByRole('navigation', { name: 'Recent conversations' });
   await resize(app, 1440, 500);
@@ -403,7 +416,11 @@ test('Basic lists conversations in one list, labelled by project, with search an
   await page.getByTestId('thread-command-input').fill('Keep this draft while searching');
   await search.fill('INTRODUCTION');
   await expect(rows).toHaveCount(1);
-  await expect(rows.first().locator('.basic-ui-chat-project')).toHaveText('Website');
+  await expect(websitePill).toHaveText('Website');
+  await expect(websitePill).toHaveCSS('--basic-chat-project-color', '#2f81f7');
+  const websiteFill = await websitePill.evaluate(el => getComputedStyle(el).backgroundColor);
+  expect(websiteFill).not.toBe(releaseFill);
+  expect(websiteFill).not.toBe('rgba(0, 0, 0, 0)');
   await search.fill('no project matches');
   await expect(sidebar(page).getByRole('status')).toHaveText('No matching conversations.');
   await search.fill('  WEBSITE  ');
@@ -414,7 +431,9 @@ test('Basic lists conversations in one list, labelled by project, with search an
   await expect(page.getByTestId('thread-command-input')).toBeVisible();
   await captureTrialScreenshot(app, testInfo.outputPath('basic-conversations-light-wide.png'));
   await page.evaluate(() => window.cc.config.set({ theme: 'dark' }));
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await resize(app, 640, 800);
+  await expect(websitePill).not.toHaveCSS('background-color', websiteFill);
   await expect(page.getByTestId('thread-command-input')).toBeInViewport();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await captureTrialScreenshot(app, testInfo.outputPath('basic-conversations-dark-narrow.png'));

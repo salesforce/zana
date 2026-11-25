@@ -47,8 +47,18 @@
 .basic-ui-chat-row { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 8px; text-decoration: none; color: var(--text-primary); }
 .basic-ui-chat-row:hover, .basic-ui-chat-row.is-active { background: var(--sidebar-hover); }
 .basic-ui-chat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.basic-ui-chat-meta { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 10px; line-height: 14px; }
-.basic-ui-chat-project { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
+.basic-ui-chat-meta { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 10px; line-height: 14px; }
+.basic-ui-chat-project {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--basic-chat-project-color, var(--text-muted)) 28%, var(--sidebar-bg));
+  color: color-mix(in srgb, var(--basic-chat-project-color, var(--text-muted)) 20%, var(--text-primary));
+  font-weight: 600;
+}
 .basic-ui-chat-meta > .basic-ui-chat-project + .basic-ui-chat-status::before { content: '·'; margin-right: 6px; color: var(--text-muted); font-weight: 400; }
 .basic-ui-chat-status { flex-shrink: 0; font-size: 10px; color: var(--text-muted); }
 /* Mirrors the advanced rail (.agents-row-working / .agents-row-needs-you). */
