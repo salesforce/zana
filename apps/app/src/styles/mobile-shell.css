@@ -1,3 +1,10 @@
+.app-shell[data-mobile='true'] .project-mode-pane > .statusbar > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Mobile is a host layout, not a preference. Desktop geometry stays independent. */
 .app-shell[data-mobile='true'] {
   position: fixed;

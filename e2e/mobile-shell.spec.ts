@@ -293,7 +293,10 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
       expect((await prompt.boundingBox())!.height).toBeLessThanOrEqual(140);
       await phone.screenshot({ path: testInfo.outputPath(`mobile-single-row-header-${width}.png`) });
     }
+    await phone.setViewportSize({ width: 390, height: 844 });
     const scrollback = phone.getByTestId('thread-timeline');
+    // Follow mode intentionally tracks the latest reply within 64px of the bottom.
+    await expect.poll(() => scrollback.evaluate((element) => element.scrollHeight - element.clientHeight)).toBeGreaterThan(250);
     await scrollback.evaluate((element) => { element.scrollTop = 120; });
     await expect.poll(() => scrollback.evaluate((element) => element.scrollTop)).toBe(120);
     await agentMenu.click();
