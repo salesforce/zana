@@ -68,6 +68,8 @@ function useResumeRules(current: ApiErrorResumeConfig, save: Save, latestRules: 
   const [local, setLocal] = useState<Record<string, ApiErrorResumeRule>>({});
   // Ids of rows added here, in order, until the stored config has them.
   const [added, setAdded] = useState<string[]>([]);
+  // The row the user just added by hand: the only one that takes focus, so reopening Settings never steals it.
+  const [focusId, setFocusId] = useState<string | null>(null);
   const stored = new Set(current.rules.map((r) => r.id));
   const rows = [
     ...current.rules.map((r) => local[r.id] ?? r),
@@ -109,6 +111,7 @@ function useResumeRules(current: ApiErrorResumeConfig, save: Save, latestRules: 
     };
     setLocal((prev) => ({ ...prev, [rule.id]: rule }));
     setAdded((prev) => [...prev, rule.id]);
+    if (!partial.match) setFocusId(rule.id);
     if (partial.match) void commit(rule);
   };
   const removeRule = (id: string) => {
@@ -119,12 +122,13 @@ function useResumeRules(current: ApiErrorResumeConfig, save: Save, latestRules: 
       void save((base) => ({ rules: base.rules.filter((r) => r.id !== id) }));
     }
   };
-  return { rows, apply, addRule, removeRule };
+  return { rows, focusId, apply, addRule, removeRule };
 }
 
-function RuleRow({ rule, n, error, apply, onRemove }: {
+function RuleRow({ rule, n, error, focus, apply, onRemove }: {
   rule: ApiErrorResumeRule;
   n: number;
+  focus: boolean;
   error: string | null;
   apply: Apply;
   onRemove: () => void;
@@ -138,7 +142,7 @@ function RuleRow({ rule, n, error, apply, onRemove }: {
           className="settings-input"
           aria-label={`When the error matches (rule ${n})`}
           // A blank rule was just added by the user: put the cursor where they type next.
-          autoFocus={rule.match === ''}
+          autoFocus={focus}
           value={rule.match}
           onChange={(e) => apply(rule.id, { match: e.target.value }, false)}
           onBlur={() => apply(rule.id, {}, true)}
@@ -192,7 +196,7 @@ function RuleRow({ rule, n, error, apply, onRemove }: {
   );
 }
 
-function RuleList({ rows, apply, addRule, removeRule }: ReturnType<typeof useResumeRules>) {
+function RuleList({ rows, focusId, apply, addRule, removeRule }: ReturnType<typeof useResumeRules>) {
   // The normaliser keeps only the first `maxRules`, so stop adding at the limit.
   const full = rows.length >= D.maxRules;
   const suggestions = API_ERROR_RESUME_SUGGESTIONS.filter(
@@ -203,7 +207,7 @@ function RuleList({ rows, apply, addRule, removeRule }: ReturnType<typeof useRes
       <p className="settings-help">Only add errors that clear up by themselves. Sign-in, billing and “request too large” errors fail again if the agent just carries on.</p>
       <ul className="team-slot-list api-error-resume-list">
         {rows.map((rule, i) => (
-          <RuleRow key={rule.id} rule={rule} n={i + 1} error={ruleError(rule, rows)} apply={apply} onRemove={() => removeRule(rule.id)} />
+          <RuleRow key={rule.id} rule={rule} n={i + 1} error={ruleError(rule, rows)} focus={rule.id === focusId} apply={apply} onRemove={() => removeRule(rule.id)} />
         ))}
       </ul>
       {rows.length > 0 && (

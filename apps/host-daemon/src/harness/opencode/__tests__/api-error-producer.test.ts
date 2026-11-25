@@ -98,6 +98,35 @@ describe('opencode api-error producer', () => {
     expect(await p.check(base(), marker)).toBeNull();
   });
 
+  it('fails closed when a newer assistant row is oversized or malformed after a failure', async () => {
+    const big = JSON.stringify({ role: 'assistant', time: { completed: 1 }, text: 'z'.repeat(300_000) });
+    for (const newer of [big, '{not json']) {
+      const p = producer();
+      const marker = await p.markTurnStart(base());
+      write((db) => { insertMessage(db, `f${clock}`, clock += 10, msg.failed()); insertMessage(db, `n${clock}`, clock += 10, newer); });
+      expect(await p.check(base(), marker)).toBeNull();
+    }
+  });
+
+  it('skips a newer oversized user row and still reports the failure', async () => {
+    const p = producer();
+    const marker = await p.markTurnStart(base());
+    write((db) => {
+      insertMessage(db, `f${clock}`, clock += 10, msg.failed());
+      insertMessage(db, `u${clock}`, clock += 10, JSON.stringify({ role: 'user', text: 'z'.repeat(300_000) }));
+    });
+    expect(await p.check(base(), marker)).toMatchObject({ kind: 'api-error-stop' });
+  });
+
+  it('fails closed when more sessions than it can compare were created since spawn', async () => {
+    const ref = { id: 'pty-1', cwd, createdAt: 400 };
+    write((db) => {
+      const add = db.prepare('INSERT INTO session (id, directory, parent_id, time_created, time_updated) VALUES (?, ?, NULL, ?, ?)');
+      for (let i = 0; i < 60; i++) add.run(`ses_other${String(i).padStart(6, '0')}`, '/elsewhere', 501 + i, 501 + i);
+    });
+    expect(await turn(msg.failed(), ref)).toBeNull();
+  });
+
   it('works on the first turn, before a session id is known', async () => {
     const ref = { id: 'pty-1', cwd, createdAt: 400 };
     expect(await turn(msg.failed(), ref)).toMatchObject({ kind: 'api-error-stop' });

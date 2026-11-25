@@ -1,6 +1,5 @@
-import { constants } from 'node:fs';
-import { open, realpath } from 'node:fs/promises';
-import { sep } from 'node:path';
+import { open } from 'node:fs/promises';
+import { openConfined } from '../shared-io.js';
 
 /** Bytes read from the end of a rollout. Bounded so a huge file never costs more than this. */
 export const ROLLOUT_TAIL_BYTES = 256 * 1024;
@@ -14,25 +13,6 @@ export interface RolloutTail {
   readonly tailStartOffset: number;
   /** File size when read. */
   readonly size: number;
-}
-
-/**
- * Open a rollout the way an untrusted path deserves: no symlink follow, regular files only, and the real path
- * must sit under the resolver root. Returns null for anything else. Never throws.
- */
-export async function openConfined(path: string, root: string) {
-  let handle;
-  try {
-    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-    const stats = await handle.stat();
-    if (!stats.isFile()) { await handle.close(); return null; }
-    const [real, realRoot] = await Promise.all([realpath(path), realpath(root)]);
-    if (!real.startsWith(realRoot + sep)) { await handle.close(); return null; }
-    return { handle, size: stats.size };
-  } catch {
-    try { await handle?.close(); } catch { /* ignore */ }
-    return null;
-  }
 }
 
 /** The rollout's size now, or null when it cannot be opened safely. Used as the turn-start marker. */

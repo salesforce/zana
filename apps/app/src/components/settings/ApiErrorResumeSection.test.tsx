@@ -470,6 +470,11 @@ describe('ApiErrorResumeSection', () => {
       expect(document.activeElement).toBe(screen.getByLabelText('When the error matches (rule 1)'));
     });
 
+    it('does not steal focus for a saved rule whose match is empty', () => {
+      setup(on([rule({ match: '' })]));
+      expect(document.activeElement).not.toBe(screen.getByLabelText('When the error matches (rule 1)'));
+    });
+
     it('hides them again when the last rule is removed', () => {
       render(<Stateful initial={on([rule()])} onUpdate={vi.fn()} />);
       fireEvent.click(screen.getByRole('button', { name: 'Remove rule 1' }));

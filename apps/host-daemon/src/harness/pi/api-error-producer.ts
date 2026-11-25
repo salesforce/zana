@@ -1,11 +1,11 @@
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { opendir } from 'node:fs/promises';
+import { opendir, type FileHandle } from 'node:fs/promises';
 import type { ApiErrorProducer, ApiErrorSessionRef, HarnessInteractionEvent } from '@zcc/harness-sdk';
 import { isRetryableApiErrorKind } from '@zcc/harness-sdk';
 import { classifyApiError } from '../api-error-kind.js';
 import { sanitizeApiErrorText } from '../api-error-text.js';
-import { openConfined } from '../codex/rollout-reader.js';
+import { openConfined, record } from '../shared-io.js';
 
 /**
  * Pi retries a transient failure three times (2 s, 4 s, 8 s: about 14 s from the first failure to the final
@@ -28,10 +28,6 @@ interface Marker {
 
 export interface Row { offset: number; value: Record<string, unknown> }
 
-function record(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
-}
-
 /** Where Pi writes sessions for this process: an explicit override, else `~/.pi/agent/sessions`. */
 export function piSessionRoot(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string {
   const session = env.PI_CODING_AGENT_SESSION_DIR?.trim();
@@ -40,28 +36,47 @@ export function piSessionRoot(env: NodeJS.ProcessEnv = process.env, home: string
   return agent ? join(resolve(agent), 'sessions') : join(home, '.pi', 'agent', 'sessions');
 }
 
-/** Find `<ts>_<id>.jsonl` in the root or one level below it (per-cwd directories). Bounded; null when absent. */
-async function findSessionFile(root: string, id: string): Promise<string | null> {
-  const suffix = `_${id}.jsonl`;
-  let seen = 0;
-  const scan = async (dir: string, depth: number): Promise<string | null> => {
-    let handle;
-    try { handle = await opendir(dir); } catch { return null; }
-    const subdirs: string[] = [];
-    try {
-      for await (const entry of handle) {
-        if (++seen > MAX_DIR_ENTRIES) break;
-        if (entry.isFile() && entry.name.endsWith(suffix)) return join(dir, entry.name);
-        if (entry.isDirectory() && depth === 0) subdirs.push(join(dir, entry.name));
-      }
-    } catch { return null; }
-    for (const sub of subdirs) {
-      const found = await scan(sub, depth + 1);
-      if (found) return found;
+/** Pi's per-cwd directory name, as `pi/history.ts` derives it: `--<cwd with separators as dashes>--`. */
+function cwdDirName(cwd: string): string {
+  return `--${cwd.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`;
+}
+
+/** `<ts>_<id>.jsonl` directly inside `dir`, counting at most `budget` entries; `scanned` tells if the bound cut it short. */
+async function scanDir(dir: string, suffix: string, budget: number): Promise<{ path: string | null; subdirs: string[]; used: number; cut: boolean }> {
+  const out = { path: null as string | null, subdirs: [] as string[], used: 0, cut: false };
+  let handle;
+  try { handle = await opendir(dir); } catch { return out; }
+  try {
+    for await (const entry of handle) {
+      if (out.used >= budget) { out.cut = true; break; }
+      out.used++;
+      if (entry.isFile() && entry.name.endsWith(suffix)) { out.path = join(dir, entry.name); break; }
+      if (entry.isDirectory()) out.subdirs.push(join(dir, entry.name));
     }
-    return null;
-  };
-  return scan(root, 0);
+  } catch { /* unreadable directory: treat as absent */ }
+  return out;
+}
+
+/**
+ * Find the session file. The cwd-named directory is tried first (the normal place), then a bounded scan of the
+ * root and one level below it. `cut` is true when the bound stopped the scan, so "not found" is not proof.
+ */
+async function findSessionFile(root: string, id: string, cwd: string): Promise<{ path: string | null; cut: boolean }> {
+  const suffix = `_${id}.jsonl`;
+  const direct = await scanDir(join(root, cwdDirName(cwd)), suffix, MAX_DIR_ENTRIES);
+  if (direct.path) return { path: direct.path, cut: false };
+  const top = await scanDir(root, suffix, MAX_DIR_ENTRIES);
+  if (top.path) return { path: top.path, cut: false };
+  let used = top.used;
+  let cut = top.cut;
+  for (const sub of top.subdirs) {
+    if (used >= MAX_DIR_ENTRIES) { cut = true; break; }
+    const found = await scanDir(sub, suffix, MAX_DIR_ENTRIES - used);
+    if (found.path) return { path: found.path, cut: false };
+    used += found.used;
+    cut = cut || found.cut;
+  }
+  return { path: null, cut };
 }
 
 function parseRows(tail: Buffer, startOffset: number): Row[] {
@@ -118,58 +133,88 @@ export interface PiApiErrorProducerDeps {
   /** Session root; read per call so a changed environment is honoured. */
   root?: () => string;
   quietMs?: number;
+  log?: (message: string) => void;
+}
+
+interface Located { path: string; root: string; id: string }
+
+/** The turn's failure from an opened session file, or null. The header must name the session we minted. */
+async function readFailedTurn(found: Located, handle: FileHandle, size: number, offset: number | null): Promise<HarnessInteractionEvent | null> {
+  const head = Buffer.alloc(Math.min(size, 64 * 1024));
+  const { bytesRead } = await handle.read(head, 0, head.length, 0);
+  const nl = head.subarray(0, bytesRead).indexOf(0x0a);
+  const header = record(JSON.parse(head.subarray(0, nl === -1 ? bytesRead : nl).toString('utf8')));
+  if (header?.type !== 'session' || header.id !== found.id) return null;
+  // A file shorter than the marker was rewritten or rotated: the turn cannot be located.
+  if (offset !== null && offset > size) return null;
+  const length = Math.min(size, TAIL_BYTES);
+  const start = size - length;
+  const tail = Buffer.alloc(length);
+  const read = await handle.read(tail, 0, length, start);
+  return failedTurnFromSession(parseRows(tail.subarray(0, read.bytesRead), start), offset ?? 0);
 }
 
 export function createPiApiErrorProducer(deps: PiApiErrorProducerDeps = {}): ApiErrorProducer {
   const rootOf = deps.root ?? (() => piSessionRoot());
+  /** Resolved session files by Zana session id, so a recheck does not walk the session tree again. */
+  const located = new Map<string, Located>();
+  const logged = new Set<string>();
+  const logOnce = (sessionId: string, message: string) => {
+    if (logged.has(sessionId)) return;
+    logged.add(sessionId);
+    deps.log?.(`[pi-api-error] ${message}`);
+  };
 
-  const locate = async (session: ApiErrorSessionRef): Promise<{ path: string; root: string; id: string } | null> => {
+  const locate = async (session: ApiErrorSessionRef): Promise<Located | null> => {
     if (session.remote) return null;
     const id = session.nativeConversationId;
     if (typeof id !== 'string' || !SAFE_ID.test(id)) return null;
+    const cached = located.get(session.id);
+    if (cached && cached.id === id) return cached;
     const root = rootOf();
-    const path = await findSessionFile(root, id);
-    return path ? { path, root, id } : null;
+    const { path, cut } = await findSessionFile(root, id, session.cwd);
+    if (!path) {
+      if (cut) logOnce(session.id, `session file not found within the ${MAX_DIR_ENTRIES}-entry scan bound; resume is off for this tab`);
+      return null;
+    }
+    const found = { path, root, id };
+    located.set(session.id, found);
+    return found;
+  };
+
+  /** Open the session file; a cached path that no longer opens is dropped so the next call looks again. */
+  const openSession = async (session: ApiErrorSessionRef) => {
+    const found = await locate(session);
+    if (!found) return null;
+    const opened = await openConfined(found.path, found.root);
+    if (!opened) { located.delete(session.id); return null; }
+    return { found, ...opened };
   };
 
   return {
     quietMs: deps.quietMs ?? PI_QUIET_MS,
     async markTurnStart(session): Promise<Marker> {
-      const found = await locate(session);
-      if (!found) return { offset: null };
-      const opened = await openConfined(found.path, found.root);
+      const opened = await openSession(session);
       if (!opened) return { offset: null };
       try { return { offset: opened.size }; } finally { await opened.handle.close().catch(() => undefined); }
     },
     async check(session, marker): Promise<HarnessInteractionEvent | null> {
       const turn = marker as Marker | undefined;
       if (!turn) return null;
-      const found = await locate(session);
-      if (!found) return null;
-      const opened = await openConfined(found.path, found.root);
+      const opened = await openSession(session);
       if (!opened) return null;
-      const { handle, size } = opened;
       try {
-        // The header must name the session we minted, never just a filename match.
-        const head = Buffer.alloc(Math.min(size, 64 * 1024));
-        const { bytesRead } = await handle.read(head, 0, head.length, 0);
-        const nl = head.subarray(0, bytesRead).indexOf(0x0a);
-        const header = record(JSON.parse(head.subarray(0, nl === -1 ? bytesRead : nl).toString('utf8')));
-        if (header?.type !== 'session' || header.id !== found.id) return null;
-        const length = Math.min(size, TAIL_BYTES);
-        const start = size - length;
-        const tail = Buffer.alloc(length);
-        const read = await handle.read(tail, 0, length, start);
-        // A file shorter than the marker was rewritten or rotated: the turn cannot be located.
-        if (turn.offset !== null && turn.offset > size) return null;
-        const from = turn.offset ?? 0;
-        return failedTurnFromSession(parseRows(tail.subarray(0, read.bytesRead), start), from);
-      } catch {
+        return await readFailedTurn(opened.found, opened.handle, opened.size, turn.offset);
+      } catch (error) {
+        logOnce(session.id, `read failed: ${(error as Error).message}`);
         return null;
       } finally {
-        await handle.close().catch(() => undefined);
+        await opened.handle.close().catch(() => undefined);
       }
     },
-    release() { /* no per-session state */ }
+    release(sessionId) {
+      located.delete(sessionId);
+      logged.delete(sessionId);
+    }
   };
 }

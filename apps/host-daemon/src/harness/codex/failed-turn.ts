@@ -1,15 +1,12 @@
 import { isRetryableApiErrorKind, type HarnessInteractionEvent } from '@zcc/harness-sdk';
 import { classifyApiError } from '../api-error-kind.js';
 import { sanitizeApiErrorText } from '../api-error-text.js';
+import { record } from '../shared-io.js';
 
 /** Maximum (newest) lines examined in one tail, so a hostile or huge rollout cannot pin the event loop. */
 const MAX_LINES = 5000;
 /** A single rollout line larger than this is skipped rather than parsed. */
 const MAX_LINE_BYTES = 256 * 1024;
-
-function record(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
-}
 
 /**
  * Map `codex_error_info` (a name string, or `{ name: { http_status_code } }`) into the shared kinds.

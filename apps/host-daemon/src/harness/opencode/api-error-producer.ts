@@ -5,6 +5,7 @@ import type { ApiErrorProducer, ApiErrorSessionRef, HarnessInteractionEvent } fr
 import { isRetryableApiErrorKind } from '@zcc/harness-sdk';
 import { classifyApiError } from '../api-error-kind.js';
 import { sanitizeApiErrorText } from '../api-error-text.js';
+import { record } from '../shared-io.js';
 import { openCodeDbPath } from './transcript-reader.js';
 
 /**
@@ -20,15 +21,13 @@ const MAX_DATA_BYTES = 256 * 1024;
 /** Clock-skew slack when matching a session row to this tab's spawn time. */
 const CREATED_SLACK_MS = 5_000;
 const SESSION_ID = /^ses_[A-Za-z0-9]{8,64}$/;
+/** Sessions created since spawn that are examined. More than this and the match cannot be proven unique. */
+const MAX_CANDIDATE_SESSIONS = 50;
 const FAILURE_NAMES = new Set(['APIError', 'UnknownError', 'ProviderAuthError']);
 
 interface Marker {
   /** Newest message time in the session at turn start; null when no session row existed yet. */
   readonly since: number | null;
-}
-
-function record(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
 type Db = ReturnType<typeof createSqliteDatabase>;
@@ -60,41 +59,69 @@ export function failureFromMessage(data: unknown): HarnessInteractionEvent | nul
   return { kind: 'api-error-stop', error: kind, text, retryable: isRetryableApiErrorKind(kind) };
 }
 
+/** The database path, only if it really sits inside its own directory (no symlink out). */
+async function confinedDb(path: string): Promise<string | null> {
+  try {
+    const real = await realpath(path);
+    return real.startsWith(await realpath(dirname(path)) + sep) ? real : null;
+  } catch { return null; }
+}
+
+async function sameDir(a: string, b: string): Promise<boolean> {
+  try { return (await realpath(a)) === (await realpath(b)); } catch { return false; }
+}
+
+async function resolveSession(db: Db, session: ApiErrorSessionRef): Promise<string | null> {
+  const known = session.openCodeSessionId;
+  if (typeof known === 'string' && SESSION_ID.test(known)) {
+    const row = db.prepare('SELECT directory FROM session WHERE id = ?').get(known) as { directory: string } | undefined;
+    return row && await sameDir(row.directory, session.cwd) ? known : null;
+  }
+  // The first turn has no id yet: accept exactly one session created in this directory since spawn.
+  const created = typeof session.createdAt === 'number' ? session.createdAt - CREATED_SLACK_MS : 0;
+  const rows = db.prepare('SELECT id, directory FROM session WHERE parent_id IS NULL AND time_created >= ? ORDER BY time_created ASC LIMIT ?')
+    .all(created, MAX_CANDIDATE_SESSIONS + 1) as Array<{ id: string; directory: string }>;
+  // Truncated candidates cannot prove uniqueness: fail closed rather than pick one of several.
+  if (rows.length > MAX_CANDIDATE_SESSIONS) return null;
+  const matches: string[] = [];
+  for (const row of rows) if (await sameDir(row.directory, session.cwd)) matches.push(row.id);
+  return matches.length === 1 ? matches[0]! : null;
+}
+
+interface MessageRow { valid: number; role: string | null; data: string | null }
+
+/**
+ * The failure of the newest assistant message after `since`, or null. Newer rows that cannot be inspected
+ * (malformed JSON, or an assistant row over the size bound) fail closed: reporting an older failure past them
+ * would resume a turn that may since have recovered.
+ */
+function newestFailure(db: Db, id: string, since: number | null): HarnessInteractionEvent | null {
+  const rows = db.prepare(
+    `SELECT json_valid(data) AS valid,
+            CASE WHEN json_valid(data) THEN json_extract(data, '$.role') END AS role,
+            CASE WHEN length(data) <= ? THEN data END AS data
+     FROM message WHERE session_id = ? AND time_created > ?
+     ORDER BY time_created DESC, id DESC LIMIT 10`
+  ).all(MAX_DATA_BYTES, id, since ?? -1) as MessageRow[];
+  for (const row of rows) {
+    if (!row.valid) return null;
+    if (row.role !== 'assistant') continue;
+    if (row.data === null) return null;
+    let parsed: unknown;
+    try { parsed = JSON.parse(row.data); } catch { return null; }
+    // Only the newest assistant message counts: a later good reply means the turn recovered.
+    return failureFromMessage(parsed);
+  }
+  return null;
+}
+
 export function createOpenCodeApiErrorProducer(deps: OpenCodeApiErrorProducerDeps = {}): ApiErrorProducer {
   const dbPathOf = deps.dbPath ?? (() => openCodeDbPath());
   const loggedMismatch = new Set<string>();
 
-  /** The database path, only if it really sits inside its own directory (no symlink out). */
-  const confinedDb = async (): Promise<string | null> => {
-    try {
-      const path = dbPathOf();
-      const real = await realpath(path);
-      return real.startsWith(await realpath(dirname(path)) + sep) ? real : null;
-    } catch { return null; }
-  };
-
-  const sameDir = async (a: string, b: string): Promise<boolean> => {
-    try { return (await realpath(a)) === (await realpath(b)); } catch { return false; }
-  };
-
-  const resolveSession = async (db: Db, session: ApiErrorSessionRef): Promise<string | null> => {
-    const known = session.openCodeSessionId;
-    if (typeof known === 'string' && SESSION_ID.test(known)) {
-      const row = db.prepare('SELECT directory FROM session WHERE id = ?').get(known) as { directory: string } | undefined;
-      return row && await sameDir(row.directory, session.cwd) ? known : null;
-    }
-    // The first turn has no id yet: accept exactly one session created in this directory since spawn.
-    const created = typeof session.createdAt === 'number' ? session.createdAt - CREATED_SLACK_MS : 0;
-    const rows = db.prepare('SELECT id, directory FROM session WHERE parent_id IS NULL AND time_created >= ? ORDER BY time_created ASC LIMIT 20')
-      .all(created) as Array<{ id: string; directory: string }>;
-    const matches: string[] = [];
-    for (const row of rows) if (await sameDir(row.directory, session.cwd)) matches.push(row.id);
-    return matches.length === 1 ? matches[0]! : null;
-  };
-
   const withDb = async <T>(session: ApiErrorSessionRef, use: (db: Db) => Promise<T>): Promise<T | null> => {
     if (session.remote) return null;
-    const path = await confinedDb();
+    const path = await confinedDb(dbPathOf());
     if (!path) return null;
     let db: Db | undefined;
     try {
@@ -129,18 +156,7 @@ export function createOpenCodeApiErrorProducer(deps: OpenCodeApiErrorProducerDep
       return withDb(session, async (db) => {
         const id = await resolveSession(db, session);
         if (!id) return null;
-        const rows = db.prepare(
-          `SELECT data FROM message WHERE session_id = ? AND time_created > ? AND length(data) <= ?
-           ORDER BY time_created DESC, id DESC LIMIT 10`
-        ).all(id, turn.since ?? -1, MAX_DATA_BYTES) as Array<{ data: string }>;
-        for (const row of rows) {
-          let parsed: unknown;
-          try { parsed = JSON.parse(row.data); } catch { continue; }
-          if (record(parsed)?.role !== 'assistant') continue;
-          // Only the newest assistant message counts: a later good reply means the turn recovered.
-          return failureFromMessage(parsed);
-        }
-        return null;
+        return newestFailure(db, id, turn.since);
       });
     },
     release(sessionId) {

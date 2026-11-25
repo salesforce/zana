@@ -1,7 +1,7 @@
-import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPiApiErrorProducer, piSessionRoot } from '../api-error-producer.js';
 import { PI_FIXTURE_ID as ID, piRows as rows } from '../../__tests__/fixtures/pi-api-error.js';
 
@@ -23,6 +23,35 @@ async function run(append: string, ref = session(), p = producer()) {
   appendFileSync(file, append);
   return p.check(ref, marker);
 }
+
+describe('pi api-error producer lookup', () => {
+  it('finds the file in the cwd directory and in a one-level scan, and reuses the found path until release', async () => {
+    const p = producer();
+    expect(await run(rows.user('u1', 'h') + rows.error('a1', 'u1'), session(), p)).toMatchObject({ kind: 'api-error-stop' });
+    // Moved away: the cached path no longer opens, so the next call drops it and looks again.
+    const moved = join(root, '--elsewhere--');
+    mkdirSync(moved);
+    const target = join(moved, `2026-11-24T20-03-36-004Z_${ID}.jsonl`);
+    renameSync(file, target);
+    file = target;
+    expect(await p.markTurnStart(session())).toEqual({ offset: null });
+    expect(await run(rows.user('u2', 'a1') + rows.error('a2', 'u2'), session({ cwd: '/other' }), p)).toMatchObject({ kind: 'api-error-stop' });
+    p.release('pty-1');
+  });
+
+  it('logs once per session when the session file cannot be found within the scan bound or a read fails', async () => {
+    const log = vi.fn();
+    const p = createPiApiErrorProducer({ root: () => root, log });
+    writeFileSync(file, 'not a json header\n');
+    expect(await run(rows.user('u1', 'h'), session(), p)).toBeNull();
+    expect(await p.check(session(), { offset: 0 })).toBeNull();
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0]![0]).toContain('read failed');
+    p.release('pty-1');
+    await p.check(session(), { offset: 0 });
+    expect(log).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe('pi api-error producer', () => {
   it('reports a final 503 as retryable server_error', async () => {
