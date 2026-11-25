@@ -108,7 +108,8 @@ body,
 
 /* Error text must be copyable (a path or message to paste into a search or a
    report). The global `user-select: none` made these unselectable. Buttons inside
-   (Try again, Fix) keep the chrome rule from `button` below. */
+   (Try again, Fix) are chrome, not text: they get an explicit `none` below, because
+   the global `button` rule sets no user-select and would otherwise inherit `text`. */
 .thread-file-preview-error,
 .thread-command-error,
 .modal-error,
@@ -119,9 +120,64 @@ body,
 .team-requirement-failure,
 .api-error-resume-error,
 .sidebar-navigation-error,
-.thread-file-preview-reveal-error {
+.thread-file-preview-reveal-error,
+.add-machine-error,
+.machine-cli-row-error,
+.cc-row-error,
+.thread-timeline-load-error,
+.thread-pending-banner-error,
+.thread-diff-error,
+.thread-browser-error-detail,
+.session-move-error,
+.project-checkout-error,
+.plugin-setting-error,
+.panel-agent-tab-error,
+.host-repair-agent-error,
+.host-install-drawer-error,
+.git-project-error,
+.ext-actions-error,
+.cc-rail-error,
+.agent-monitor-row-error,
+.agent-modal-catchup-error,
+.thread-queued-failure,
+.toast {
   user-select: text;
   -webkit-user-select: text;
+}
+
+.thread-file-preview-error button,
+.thread-command-error button,
+.modal-error button,
+.launch-error button,
+.cc-error button,
+.peers-error button,
+.machine-reconnect-error button,
+.team-requirement-failure button,
+.api-error-resume-error button,
+.sidebar-navigation-error button,
+.thread-file-preview-reveal-error button,
+.add-machine-error button,
+.machine-cli-row-error button,
+.cc-row-error button,
+.thread-timeline-load-error button,
+.thread-pending-banner-error button,
+.thread-diff-error button,
+.thread-browser-error-detail button,
+.session-move-error button,
+.project-checkout-error button,
+.plugin-setting-error button,
+.panel-agent-tab-error button,
+.host-repair-agent-error button,
+.host-install-drawer-error button,
+.git-project-error button,
+.ext-actions-error button,
+.cc-rail-error button,
+.agent-monitor-row-error button,
+.agent-modal-catchup-error button,
+.thread-queued-failure button,
+.toast button {
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .thread-plan-panel,
