@@ -10,7 +10,7 @@ import {
   writeFileSync
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, posix, win32 } from 'node:path';
+import { join, posix, resolve, win32 } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   buildSeedSettings,
@@ -33,6 +33,9 @@ import {
   sanitizeMcpServers as bridgeSanitizeMcpServers,
   isReservedMcpName as bridgeIsReservedMcpName
 } from '../../../../../../plugins/provider-claude-code/src/bridge/automated-config-dir.js';
+
+/** A project key in the form Claude writes on this platform (forward slashes on Windows). */
+const nativeKey = (p: string) => resolve(p).replace(/\\/g, '/');
 
 describe('automated claude isolation', () => {
   // Isolation only applies when the isolated dir can authenticate.
@@ -203,18 +206,20 @@ describe('automated claude isolation', () => {
     it('carries over trust the user already accepted for the cwd', () => {
       writeFileSync(
         join(sourceDir, '.claude.json'),
-        JSON.stringify({ projects: { '/work/app': { hasTrustDialogAccepted: true, allowedTools: ['x'] } } })
+        JSON.stringify({ projects: { [nativeKey('/work/app')]: { hasTrustDialogAccepted: true, allowedTools: ['x'] } } })
       );
-      expect(seededProjects(plan('/work/app').configDir)).toEqual({ '/work/app': { hasTrustDialogAccepted: true } });
+      expect(seededProjects(plan('/work/app').configDir)).toEqual({
+        [nativeKey('/work/app')]: { hasTrustDialogAccepted: true }
+      });
     });
 
     it('carries over trust accepted for an ancestor of the cwd', () => {
       writeFileSync(
         join(sourceDir, '.claude.json'),
-        JSON.stringify({ projects: { '/work': { hasTrustDialogAccepted: true } } })
+        JSON.stringify({ projects: { [nativeKey('/work')]: { hasTrustDialogAccepted: true } } })
       );
       expect(seededProjects(plan('/work/app/sub').configDir)).toEqual({
-        '/work/app/sub': { hasTrustDialogAccepted: true }
+        [nativeKey('/work/app/sub')]: { hasTrustDialogAccepted: true }
       });
     });
 
@@ -237,26 +242,43 @@ describe('automated claude isolation', () => {
 
     describe('Windows key spelling', () => {
       const cwd = String.raw`C:\work\My App`;
-      const both = {
-        'C:/work/My App': { hasTrustDialogAccepted: true },
-        [cwd]: { hasTrustDialogAccepted: true }
-      };
+      const granted = { hasTrustDialogAccepted: true };
       const trust = (projects: Record<string, unknown>, dir = cwd) =>
         trustedProjects({ projects }, dir, win32);
 
       it.each([
-        ['a forward-slash key', { 'C:/work/My App': { hasTrustDialogAccepted: true } }],
-        ['a backslash key', { [cwd]: { hasTrustDialogAccepted: true } }],
-        ['a lower-case drive letter', { 'c:/work/My App': { hasTrustDialogAccepted: true } }],
-        ['a trailing separator', { 'C:/work/My App/': { hasTrustDialogAccepted: true } }],
-        ['a forward-slash ancestor', { 'C:/work': { hasTrustDialogAccepted: true } }],
-        ['the drive root', { 'C:/': { hasTrustDialogAccepted: true } }]
-      ])('carries over trust recorded as %s', (_label, projects) => {
-        expect(trust(projects)).toEqual(both);
+        ['a forward-slash key', { 'C:/work/My App': granted }],
+        ['a backslash key', { [cwd]: granted }],
+        ['a lower-case drive letter', { 'c:/work/My App': granted }],
+        ['a differently cased folder', { 'c:/users/bob/Repo': granted }],
+        ['a trailing separator', { 'C:/work/My App/': granted }],
+        ['a forward-slash ancestor', { 'C:/work': granted }],
+        ['the drive root', { 'C:/': granted }]
+      ])('carries over trust recorded as %s', (label, projects) => {
+        const dir = label === 'a differently cased folder' ? String.raw`C:\Users\Bob\repo` : cwd;
+        // The key is written in the cwd's own spelling: Claude matches its cwd by exact case.
+        expect(trust(projects, dir)).toEqual({ [dir.replace(/\\/g, '/')]: granted });
       });
 
-      it('finds trust for a forward-slash cwd', () => {
-        expect(trust({ 'C:/work': { hasTrustDialogAccepted: true } }, 'C:/work/My App/')).toEqual(both);
+      it('keeps the cwd own drive-letter case in the written key', () => {
+        expect(trust({ 'C:/work': granted }, String.raw`c:\work\app`)).toEqual({ 'c:/work/app': granted });
+      });
+
+      it('finds trust for a forward-slash cwd with a trailing separator', () => {
+        expect(trust({ 'C:/work': granted }, 'C:/work/My App/')).toEqual({ 'C:/work/My App': granted });
+      });
+
+      it.each([
+        ['a UNC share', { '//Server/Share': granted }, String.raw`\\server\share\proj`, '//server/share/proj'],
+        ['a UNC key written with backslashes', { [String.raw`\\server\share`]: granted }, String.raw`\\server\share\proj`, '//server/share/proj'],
+        ['a device-prefixed drive path', { 'C:/work': granted }, String.raw`\\?\C:\work\app`, 'C:/work/app'],
+        ['a device-prefixed UNC path', { '//server/share': granted }, String.raw`\\?\UNC\server\share\proj`, '//server/share/proj']
+      ])('handles %s', (_label, projects, dir, written) => {
+        expect(trust(projects, dir)).toEqual({ [written]: granted });
+      });
+
+      it('does not treat a different UNC share as trusted', () => {
+        expect(trust({ '//server/other': granted }, String.raw`\\server\share\proj`)).toBeNull();
       });
 
       it.each([
@@ -401,13 +423,13 @@ describe('automated claude isolation', () => {
     it('seeds MCP servers and trust together even without settings, never authenticating', () => {
       writeFileSync(
         join(sourceDir, '.claude.json'),
-        JSON.stringify({ mcpServers: { a: { command: 'c' } }, projects: { '/w': { hasTrustDialogAccepted: true } } })
+        JSON.stringify({ mcpServers: { a: { command: 'c' } }, projects: { [nativeKey('/w')]: { hasTrustDialogAccepted: true } } })
       );
       const p = planAutomatedClaudeLaunch({ ownerId: 'm', env: authEnv, dataDir, sourceConfigDir: sourceDir, cwd: '/w' });
       expect(JSON.parse(readFileSync(join(p.configDir, '.claude.json'), 'utf8'))).toEqual({
         hasCompletedOnboarding: true,
         mcpServers: { a: { command: 'c' } },
-        projects: { '/w': { hasTrustDialogAccepted: true } }
+        projects: { [nativeKey('/w')]: { hasTrustDialogAccepted: true } }
       });
       expect(JSON.parse(readFileSync(join(p.configDir, 'settings.json'), 'utf8'))).toEqual({});
       expect(statSync(join(p.configDir, '.claude.json')).mode & 0o777).toBe(0o600);

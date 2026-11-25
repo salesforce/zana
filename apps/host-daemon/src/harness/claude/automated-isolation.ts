@@ -294,9 +294,9 @@ export function trustedProjects(
   const projects = globalConfig?.projects;
   if (typeof projects !== 'object' || projects === null) return null;
   const windows = pathApi === win32;
-  // Claude on Windows keys projects with forward slashes (older builds used
-  // backslashes), so compare on one spelling; POSIX keys stay exact.
-  const keyOf = windows ? windowsProjectKey : (p: string) => p;
+  // Windows paths are case-insensitive and Claude has written project keys with
+  // either slash, so look up on one folded spelling. POSIX keys stay exact.
+  const keyOf = windows ? windowsLookupKey : (p: string) => p;
   const trusted = new Set<string>();
   for (const [key, entry] of Object.entries(projects as Record<string, { hasTrustDialogAccepted?: unknown } | null>)) {
     if (entry?.hasTrustDialogAccepted === true) trusted.add(keyOf(key));
@@ -304,20 +304,26 @@ export function trustedProjects(
   const start = pathApi.resolve(cwd);
   for (let dir = start; ; dir = pathApi.dirname(dir)) {
     if (trusted.has(keyOf(dir))) {
-      const entry = { hasTrustDialogAccepted: true };
-      if (!windows) return { [start]: entry };
-      // Same decision under both spellings, so either form Claude reads matches.
-      return { [keyOf(start)]: entry, [`${start[0]!.toUpperCase()}${start.slice(1)}`]: entry };
+      // Claude matches the key to its cwd by exact case (either slash works), so
+      // write the cwd's own spelling, not the real file's.
+      return { [windows ? windowsSlashForm(start) : start]: { hasTrustDialogAccepted: true } };
     }
     if (pathApi.dirname(dir) === dir) return null;
   }
 }
 
-/** Forward slashes, upper-case drive letter, no trailing separator (root kept). */
-function windowsProjectKey(path: string): string {
-  const slashed = path.replace(/\\/g, '/');
-  const trimmed = slashed.length > 3 ? slashed.replace(/\/+$/, '') : slashed;
-  return /^[a-z]:/.test(trimmed) ? `${trimmed[0]!.toUpperCase()}${trimmed.slice(1)}` : trimmed;
+const WINDOWS_UNC_DEVICE_PREFIX = /^\\\\[?.]\\UNC\\/i;
+const WINDOWS_DEVICE_PREFIX = /^\\\\[?.]\\/;
+
+/** Forward slashes, without a `\\?\` or `\\.\` device prefix (`\\?\UNC\a\b` becomes `//a/b`). */
+function windowsSlashForm(path: string): string {
+  return path.replace(WINDOWS_UNC_DEVICE_PREFIX, '\\\\').replace(WINDOWS_DEVICE_PREFIX, '').replace(/\\/g, '/');
+}
+
+/** Case-folded slash form with no trailing separator (a drive root keeps its own). */
+function windowsLookupKey(path: string): string {
+  const slashed = windowsSlashForm(path).toLowerCase();
+  return /^[a-z]:\/$/.test(slashed) ? slashed : slashed.replace(/(?<=.)\/+$/, '');
 }
 
 /**
