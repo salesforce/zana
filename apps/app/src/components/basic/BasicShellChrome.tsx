@@ -1,18 +1,19 @@
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowRight, Menu, PanelLeft, PanelLeftClose, PanelsTopLeft, Plus, Search, X } from 'lucide-react';
+import { ArrowRight, Check, Menu, PanelLeft, PanelLeftClose, PanelsTopLeft, Plus, Search, X } from 'lucide-react';
 import { ZanaIcon } from '../icons/ZanaIcon.js';
 import { SidebarResizer } from '../SidebarResizer.js';
 import { NewWindowButton } from '../sidebar/NewWindowButton.js';
 import { SidebarFooterSlot } from '../sidebar/SidebarFooterSlot.js';
 import { useMobileNavDismiss } from '../mobile-nav-context.js';
+import { MobileActionSheet } from '../MobilePageHeader.js';
 import { useData } from '../../store.js';
 import { useThreads } from '../../thread-store.js';
 import { useEnsureThreads } from '../../hooks/useEnsureThreads.js';
 import { useHosts, primaryHost } from '../../hooks/useHosts.js';
 import { getScopedProjectId } from '../../lib/windowScope.js';
 import { getNewThreadRoutePath, getRootRoutePath, getThreadRoutePath, threadIdFromPath } from '../../lib/route-paths.js';
-import { isBasicUiRouteSupported, setBasicUiMode, useBasicUi } from '../../lib/basic-ui.js';
+import { isBasicUiRouteSupported, setBasicUiMode, useBasicUi, type BasicUiMode } from '../../lib/basic-ui.js';
 import { threadRailStatus } from '../fleet-item.js';
 import { isUnreadThread } from '../../lib/unread-threads.js';
 import { basicConversationRows } from './basic-conversation-rows.js';
@@ -30,19 +31,50 @@ function newChatPath(scopedProjectId: string | null) {
   return scopedProjectId ? getNewThreadRoutePath(scopedProjectId) : getRootRoutePath();
 }
 
-export function BasicUiModeSwitch() {
+function useInterfaceView() {
   const basic = useBasicUi();
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  function enterBasic() {
-    if (basic) return;
-    if (!isBasicUiRouteSupported(pathname)) navigate(newChatPath(getScopedProjectId()));
-    setBasicUiMode('basic');
+  const view = basic ? 'basic' : 'advanced';
+  function changeView(next: BasicUiMode) {
+    if (next === view) return;
+    if (next === 'basic' && !isBasicUiRouteSupported(pathname)) navigate(newChatPath(getScopedProjectId()));
+    setBasicUiMode(next);
   }
+  return { view, changeView };
+}
+
+export function BasicUiModeSwitch() {
+  const { view, changeView } = useInterfaceView();
   return <div className="basic-ui-mode-switch" role="group" aria-label="Interface view">
-    <button type="button" data-testid="basic-ui-mode-basic" aria-label="Basic view" title="Basic view" aria-pressed={basic} onClick={enterBasic}><ZanaIcon size={19} /></button>
-    <button type="button" data-testid="basic-ui-mode-advanced" aria-label="Advanced view" title="Advanced view" aria-pressed={!basic} onClick={() => setBasicUiMode('advanced')}><PanelsTopLeft size={15} aria-hidden="true" /></button>
+    <button type="button" data-testid="basic-ui-mode-basic" aria-label="Basic view" title="Basic view" aria-pressed={view === 'basic'} onClick={() => changeView('basic')}><ZanaIcon size={19} /></button>
+    <button type="button" data-testid="basic-ui-mode-advanced" aria-label="Advanced view" title="Advanced view" aria-pressed={view === 'advanced'} onClick={() => changeView('advanced')}><PanelsTopLeft size={15} aria-hidden="true" /></button>
   </div>;
+}
+
+export function MobileInterfaceView({ onChange }: { onChange: () => void }) {
+  const { view, changeView } = useInterfaceView();
+  const [open, setOpen] = useState(false);
+  const choose = (next: BasicUiMode) => {
+    if (next === view) return;
+    changeView(next);
+    onChange();
+  };
+  return <>
+    <button type="button" className="mobile-nav-notifications mobile-interface-view" aria-haspopup="dialog" aria-expanded={open}
+      onClick={(event) => { event.currentTarget.focus(); setOpen(true); }}>
+      <PanelsTopLeft size={18} aria-hidden="true" /> Interface view
+      <span>{view === 'basic' ? 'Basic' : 'Advanced'}</span>
+    </button>
+    {open && <MobileActionSheet title="Interface view" onClose={() => setOpen(false)}>
+      <button type="button" aria-pressed={view === 'basic'} onClick={() => choose('basic')}>
+        <ZanaIcon size={18} /> Basic {view === 'basic' && <Check className="mobile-sheet-selection" size={18} aria-hidden="true" />}
+      </button>
+      <button type="button" aria-pressed={view === 'advanced'} onClick={() => choose('advanced')}>
+        <PanelsTopLeft size={18} aria-hidden="true" /> Advanced {view === 'advanced' && <Check className="mobile-sheet-selection" size={18} aria-hidden="true" />}
+      </button>
+    </MobileActionSheet>}
+  </>;
 }
 
 export function BasicShellHeading({ compact, collapsed, onToggleNavigation }: { compact: boolean; collapsed: boolean; onToggleNavigation(): void }) {

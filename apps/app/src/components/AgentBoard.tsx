@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Kanban, KanbanColumn } from '@zana-ai/zcc-ui/kanban';
 import { Bot, AlertCircle, Zap, Moon, CheckCircle2, HelpCircle, CheckCheck, PauseCircle, Network, Crown, Users, Clock, Calendar, GitBranch, ShieldCheck, ShieldAlert, Boxes, Unplug } from 'lucide-react';
@@ -793,6 +793,7 @@ interface AgentBoardLanesProps {
   onInspect: (c: FleetItem) => void;
   /** Show a per-card project chip (the global, cross-project board). */
   showProject?: boolean;
+  mobileSearch?: ReactNode;
   executions?: ExecutionBoardProjection[];
   hasMoreExecutions?: boolean;
   onLoadMoreExecutions?: () => void;
@@ -806,7 +807,7 @@ interface AgentBoardLanesProps {
  * "running for X" timers. Caller computes `cards` behind a memo so a status
  * tick doesn't rebuild the world (render-storm guard).
  */
-export function AgentBoardLanes({ cards, activeId, onInspect, showProject, executions, hasMoreExecutions, onLoadMoreExecutions, onDismissExecution, onCloseLaneAgents }: AgentBoardLanesProps) {
+export function AgentBoardLanes({ cards, activeId, onInspect, showProject, mobileSearch, executions, hasMoreExecutions, onLoadMoreExecutions, onDismissExecution, onCloseLaneAgents }: AgentBoardLanesProps) {
   const compact = useCompactLayout();
   const hosts = useHosts();
   const personas = usePersonas((s) => s.personas);
@@ -1146,6 +1147,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
             </span>
           )}
           {(!showProject || grouped) && !execution && <span className="agent-card-sub">{subtitle}</span>}
+          {compact && laneKey === 'blocked' && <span className="mobile-agent-attention">Needs you</span>}
           {/* Branch of the agent's cwd — surfaced so a glance tells you which
               branch/worktree each agent is on. Local git only (remote omits it),
               and only for a repo cwd; renders nothing otherwise. */}
@@ -1334,6 +1336,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
             </span>
           )}
           {(!showProject || grouped) && <span className="agent-card-sub">{runtime}</span>}
+          {compact && laneKey === 'blocked' && <span className="mobile-agent-attention">Needs you</span>}
         </span>
       </button>
     );
@@ -1408,21 +1411,25 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
     );
   };
 
-  const renderLane = (key: string) => {
-    const lane = lanes.find((candidate) => candidate.key === key);
-    if (!lane) return null;
-    if (lane.cards.length === 0) return <div className="agents-lane-empty" aria-hidden="true" />;
-    if (!showProject) return lane.cards.map((item) => renderItem(item, lane.key));
-    return groupFleetByProject(lane.cards, projectOrder, projects, hosts).map((group) => (
+  const renderCards = (items: FleetItem[], laneFor: (item: FleetItem) => LaneKey) => {
+    if (items.length === 0) return <div className="agents-lane-empty" aria-hidden="true" />;
+    if (!showProject) return items.map((item) => renderItem(item, laneFor(item)));
+    return groupFleetByProject(items, projectOrder, projects, hosts).map((group) => (
       <div key={group.key} className="agents-lane-group">
         <div className="agents-lane-group-head" title={group.projectName}>
           <span className="agents-lane-group-dot" style={group.projectColor ? { background: group.projectColor } : undefined} aria-hidden="true" />
           <span className="agents-lane-group-name">{group.projectName}</span>
           <span className="agents-lane-group-count">{group.cards.length}</span>
         </div>
-        {group.cards.map((item) => renderItem(item, lane.key, true))}
+        {group.cards.map((item) => renderItem(item, laneFor(item), true))}
       </div>
     ));
+  };
+  const renderMobileLane = (key?: LaneKey) => {
+    const lane = lanes.find((candidate) => candidate.key === key);
+    if (lane) return renderCards(lane.cards, () => lane.key);
+    const membership = new Map<FleetItem, LaneKey>(lanes.flatMap(({ key, cards }) => cards.map((item) => [item, key] as const)));
+    return renderCards([...membership.keys()], (item) => membership.get(item)!);
   };
 
   return (
@@ -1430,7 +1437,8 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
       {compact ? (
         <MobileAgentBoard
           lanes={lanes.map((lane) => ({ key: lane.key, label: lane.label, count: lane.cards.length, icon: <lane.icon size={16} /> }))}
-          renderLane={renderLane}
+          search={mobileSearch}
+          renderLane={renderMobileLane}
         />
       ) : <Kanban label="Agents board. Drag agents to Idle to stop, or Done to close after one minute. Drag empty space to pan; two-finger scroll also pans.">
         {lanes.map((lane) => {
@@ -1474,7 +1482,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
                 });
               }}
             >
-              {renderLane(lane.key)}
+              {renderCards(lane.cards, () => lane.key)}
             </KanbanColumn>
           );
         })}
