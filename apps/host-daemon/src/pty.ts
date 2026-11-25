@@ -26,7 +26,13 @@ import {
 import { allowlistIgnoredWarning, planUserMcpDisable } from './mcp-allowlist-disable.js';
 import { stripInheritedClaudeSession, ensureInteractiveTerminalEnv, augmentPath } from './env.js';
 import { resolveHarnessCommand } from './harness/harness-verify.js';
-import { assertWindowsCommandLineFits, windowsDirectLaunch } from './harness/windows-command.js';
+import {
+  assertWindowsCommandLineFits,
+  CREATE_PROCESS_COMMAND_LINE_LIMIT,
+  spillSystemPromptLayers,
+  windowsCommandLineLength,
+  windowsDirectLaunch
+} from './harness/windows-command.js';
 import { isTmuxAvailable, buildLocalTmuxCommand, wrapRemoteTmux, tmuxSessionName, killLocalTmuxSession } from './tmux.js';
 import {
   SESSION_CALLBACK_ENV_KEYS,
@@ -2379,7 +2385,15 @@ export class PtyManager extends EventEmitter {
       microVmCpus: opts.microVmCpus,
       microVmMemoryMib: opts.microVmMemoryMib
     };
-    const wrapped = execEnv.wrap({ command, args: fullArgs }, envCtx);
+    // Windows: when the Claude command line would pass CreateProcess's limit (a
+    // durable Squad orchestrator carries about 25 K before plugin instructions or
+    // RULES), the system-prompt layers go to one 0600 file read through
+    // `--append-system-prompt-file`. Other platforms and short launches keep argv as is.
+    const launchArgs = process.platform === 'win32' && caps.injectsClaudeMcpConfig
+      && windowsCommandLineLength(command, fullArgs) > CREATE_PROCESS_COMMAND_LINE_LIMIT
+      ? spillSystemPromptLayers(fullArgs, (text) => this.writeSessionInstructionsFile(sessionId, text))?.args ?? fullArgs
+      : fullArgs;
+    const wrapped = execEnv.wrap({ command, args: launchArgs }, envCtx);
     // On Windows a `.cmd` shim would route the launch through cmd.exe and its
     // 8191-character cap: a trivial forwarder (`@"…\claude.exe" %*`) earlier
     // on PATH than the exe, or an npm/pnpm/yarn shim (`codex.cmd`, which runs
