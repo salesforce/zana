@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LINEAR_TIME_BUDGET_MS, allStrings } from './__tests__/linear-time.js';
+import { LINEAR_TIME_BUDGET_MS, allStrings } from './linear-time-testing.js';
 import { MAX_INTERVAL_MS, MIN_INTERVAL_MS, parseEvery } from './parse-every.js';
 
 const UNIT_MS: Record<string, number> = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 };

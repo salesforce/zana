@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LINEAR_TIME_BUDGET_MS } from "../__tests__/linear-time.js";
+import { LINEAR_TIME_BUDGET_MS } from "../linear-time-testing.js";
 import { derivePluginId } from "./plugin-id.js";
 
 describe("bb-thread derivePluginId", () => {

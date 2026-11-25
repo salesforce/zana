@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LINEAR_TIME_BUDGET_MS, allStrings } from './__tests__/linear-time.js';
+import { LINEAR_TIME_BUDGET_MS, allStrings } from './linear-time-testing.js';
 import { trimChar, trimLeadingChar, trimTrailingAny, trimTrailingChar } from './trim-edges.js';
 
 describe('trim-edges', () => {
