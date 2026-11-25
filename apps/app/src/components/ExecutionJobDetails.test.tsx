@@ -480,7 +480,7 @@ describe('ExecutionJobDetails phase 5 projection', () => {
 
   it('keeps stop available and hides generic retry for resource blocks', async () => {
     render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
-    expect(await screen.findByRole('button', { name: 'Stop Squad run' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Stop run', exact: true })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Retry Squad run' })).toBeNull();
   });
 });
@@ -491,10 +491,10 @@ describe('ExecutionJobDetails copy diagnostics', () => {
     return screen.getByRole('button', { name: 'Copy diagnostics' });
   }
 
-  it('places the copy action inside Diagnostics, apart from Stop Squad run', async () => {
+  it('places the copy action inside Diagnostics, apart from Stop run', async () => {
     render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
     const copyButton = await findCopyButton();
-    const stopButton = await screen.findByRole('button', { name: 'Stop Squad run' });
+    const stopButton = await screen.findByRole('button', { name: 'Stop run', exact: true });
     expect(copyButton.className).not.toContain('danger');
     expect(copyButton.closest('details')?.querySelector('summary')?.textContent).toBe('Diagnostics');
     expect(copyButton.closest('details')?.contains(stopButton)).toBe(false);

@@ -49,7 +49,7 @@ describe('ExecutionJobDetails run limits', () => {
     expect((await screen.findByTestId('execution-limits')).textContent).toBe('Run limits: up to 32 sessions');
     view.unmount();
     mount();
-    await screen.findByText('Stop Squad run');
+    await screen.findByRole('button', { name: 'Stop run', exact: true });
     expect(screen.queryByTestId('execution-limits')).toBeNull();
   });
 });

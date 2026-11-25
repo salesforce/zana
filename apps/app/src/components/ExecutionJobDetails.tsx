@@ -641,7 +641,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
           )}
           {!isTerminal && (
             <div className="execution-details-actions">
-              <button className="btn danger" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.stop(projectId, executionId, execution.stateVersion ?? 0))}>Stop Squad run</button>
+              <button className="btn danger" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.stop(projectId, executionId, execution.stateVersion ?? 0))}>Stop run</button>
               {execution.state === 'BLOCKED' && !currentBlocker && !execution.resourceBlock && (
                 <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.retry(projectId, executionId, execution.stateVersion ?? 0))}>Retry Squad run</button>
               )}
