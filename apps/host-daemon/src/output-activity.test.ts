@@ -89,6 +89,14 @@ describe('OutputActivityMonitor', () => {
       expect(reports).toEqual([['s1', 'working']]);
     });
 
+    it('swallows a throwing callback on a turn start and on output after waiting', () => {
+      const { monitor, reports, clock } = makeMonitor({ onBusyEdge: () => { throw new Error('boom'); } });
+      expect(() => monitor.onTurnStart('s1')).not.toThrow();
+      clock.advance(DEFAULT_IDLE_AFTER_MS);
+      expect(() => monitor.observe('s1', 'late')).not.toThrow();
+      expect(reports.filter(([, state]) => state === 'working')).toHaveLength(2);
+    });
+
     it('ignores control-only chunks', () => {
       const edges: string[] = [];
       const { monitor } = makeMonitor({ onBusyEdge: (id) => edges.push(id) });

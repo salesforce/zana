@@ -10,22 +10,24 @@ import { describe, expect, it } from 'vitest';
 const source = readFileSync(join(__dirname, '..', 'host.ts'), 'utf8');
 const start = source.indexOf('const outputActivity = new OutputActivityMonitor');
 const block = source.slice(start, source.indexOf('/**', start));
+const dispatcher = readFileSync(join(__dirname, '..', 'api-error-dispatch.ts'), 'utf8');
+const trigger = dispatcher.slice(dispatcher.indexOf('export function armOnBusyEdge'));
 
 describe('API-error busy-edge arm trigger', () => {
   it('exists and arms through the shared dispatcher', () => {
     expect(start).toBeGreaterThan(-1);
     expect(block).toMatch(/onBusyEdge:/);
-    expect(block).toMatch(/armQuietCheck\(apiErrorDispatchCtx/);
+    expect(block).toMatch(/armOnBusyEdge\(apiErrorDispatchCtx/);
   });
 
   it('is gated on the adapter shape, not a harness id', () => {
-    expect(block).toMatch(/!status\?\.apiErrorProducer \|\| status\.interactionHook/);
+    expect(trigger).toMatch(/!status\?\.apiErrorProducer \|\| status\.interactionHook/);
     expect(block).not.toMatch(/['"`](claude|codex|opencode|pi|cursor|grok)['"`]/);
     expect(block).not.toMatch(/session\.profile\s*[!=]==/);
   });
 
   it('does not re-arm a session that is already armed, and skips exited sessions', () => {
-    expect(block).toMatch(/isApiErrorArmed\(sessionId\)/);
-    expect(block).toMatch(/session\.status === 'exited'/);
+    expect(trigger).toMatch(/isArmed\(sessionId\)/);
+    expect(trigger).toMatch(/session\.status === 'exited'/);
   });
 });

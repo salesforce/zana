@@ -162,3 +162,20 @@ export function forgetSession(ctx: DispatchCtx, sessionId: string, release?: Api
 export function armedCount(): number {
   return armed.size;
 }
+
+/**
+ * Busy-edge arm trigger for harnesses with a body-less producer and no turn-start hook
+ * (hook harnesses arm from their own callback). Skips exited sessions and ones already armed.
+ */
+export function armOnBusyEdge(
+  ctx: DispatchCtx,
+  sessionId: string,
+  session: { readonly status: string } | null | undefined,
+  status: { readonly apiErrorProducer?: ApiErrorProducer; readonly interactionHook?: unknown } | null | undefined,
+  ref: () => ApiErrorSessionRef
+): void {
+  if (!session || session.status === 'exited') return;
+  if (!status?.apiErrorProducer || status.interactionHook) return;
+  if (isArmed(sessionId)) return;
+  armQuietCheck(ctx, sessionId, status.apiErrorProducer, ref());
+}

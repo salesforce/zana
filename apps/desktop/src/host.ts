@@ -419,7 +419,7 @@ import { ContentScreen, type ContentScreenEvent, buildWarningText } from './wind
 import { HeartbeatService } from '@zana-ai/zcc-server/services/followups/heartbeat';
 import { apiErrorProducerLookup, createApiErrorDispatchCtx, createApiErrorResume } from './api-error-resume-wiring.js';
 import { createWorkerApiErrorRecovery, routeApiErrorStop, workerApiErrorRecoveryEnabled } from './worker-api-error-recovery-wiring.js';
-import { armQuietCheck, disarm, dispatchApiErrorStop, isArmed as isApiErrorArmed, forgetSession as forgetApiErrorDispatch, touch as touchApiErrorDispatch, type DispatchCtx } from './api-error-dispatch.js';
+import { armOnBusyEdge, armQuietCheck, disarm, dispatchApiErrorStop, forgetSession as forgetApiErrorDispatch, touch as touchApiErrorDispatch, type DispatchCtx } from './api-error-dispatch.js';
 import { createWrapUpClose } from './wrap-up-close-wiring.js';
 import { LocalExtensionWatcher } from '@zana-ai/zcc-server/services/extensions/local-extension-watcher';
 import { AutonomousRunSupervisor, AUTONOMOUS_DEFAULTS } from '@zana-ai/zcc-server/services/agents/autonomous-run-supervisor';
@@ -1445,11 +1445,8 @@ const outputActivity = new OutputActivityMonitor({
   // Hook harnesses (Claude, Codex) keep arming from their own UserPromptSubmit callback.
   onBusyEdge: (sessionId) => {
     const session = ptys.getSession(sessionId);
-    if (!session || session.status === 'exited') return;
-    const status = providerFor(session.profile as LaunchProfileId).adapter.status;
-    if (!status?.apiErrorProducer || status.interactionHook) return;
-    if (isApiErrorArmed(sessionId)) return;
-    armQuietCheck(apiErrorDispatchCtx, sessionId, status.apiErrorProducer, transcriptRefForSession(session));
+    const status = session ? providerFor(session.profile as LaunchProfileId).adapter.status : undefined;
+    armOnBusyEdge(apiErrorDispatchCtx, sessionId, session, status, () => transcriptRefForSession(session!));
   }
 });
 /**

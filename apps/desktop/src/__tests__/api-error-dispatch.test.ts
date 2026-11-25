@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  armQuietCheck, armedCount, disarm, isArmed, dispatchApiErrorStop, forgetSession, touch,
+  armOnBusyEdge, armQuietCheck, armedCount, disarm, isArmed, dispatchApiErrorStop, forgetSession, touch,
   type ApiErrorProducer, type ApiErrorStopEvent, type DispatchCtx
 } from '../api-error-dispatch.js';
 
@@ -234,5 +234,39 @@ describe('api-error-dispatch', () => {
     expect(calls).toEqual([]);
     forgetSession(ctx, 's10');
     forgetSession(ctx, 's11');
+  });
+});
+
+describe('armOnBusyEdge', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('arms a producer-only adapter and not twice for the same session', async () => {
+    const { ctx } = makeCtx();
+    const producer = makeProducer();
+    const ref = vi.fn(() => ({ id: 'busy-a', cwd: '/w' }));
+    armOnBusyEdge(ctx, 'busy-a', { status: 'running' }, { apiErrorProducer: producer }, ref);
+    await flush();
+    expect(producer.markTurnStart).toHaveBeenCalledTimes(1);
+    armOnBusyEdge(ctx, 'busy-a', { status: 'running' }, { apiErrorProducer: producer }, ref);
+    await flush();
+    expect(producer.markTurnStart).toHaveBeenCalledTimes(1);
+    expect(ref).toHaveBeenCalledTimes(1);
+    forgetSession(ctx, 'busy-a');
+  });
+
+  it.each([
+    ['no session', undefined, { apiErrorProducer: makeProducer() }],
+    ['exited session', { status: 'exited' }, { apiErrorProducer: makeProducer() }],
+    ['no adapter status', { status: 'running' }, undefined],
+    ['no producer', { status: 'running' }, {}],
+    ['a turn-start hook', { status: 'running' }, { apiErrorProducer: makeProducer(), interactionHook: {} }]
+  ])('does nothing for %s', async (_name, session, status) => {
+    const { ctx } = makeCtx();
+    const ref = vi.fn(() => ({ id: 'busy-b', cwd: '/w' }));
+    armOnBusyEdge(ctx, 'busy-b', session, status, ref);
+    await flush();
+    expect(ref).not.toHaveBeenCalled();
+    expect(isArmed('busy-b')).toBe(false);
   });
 });
