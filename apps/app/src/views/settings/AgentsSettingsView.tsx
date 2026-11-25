@@ -117,13 +117,13 @@ export function AgentsSettingsView({
           />
         </Field>
         <Field
-          label="Flow All view"
+          label="Squad map layout"
           searchId="agents.flow-all-view"
-          help="Combined canvas preserves the current merged graph. Separate Squad runs renders one bounded graph per run; run tabs remain available in both modes."
+          help="Choose how the Map displays all Squad runs. You can select a single run in either layout."
         >
           <PopoverPicklist
             value={config.flowAllOrganization ?? 'combined'}
-            ariaLabel="Flow All view"
+            ariaLabel="Squad map layout"
             searchable={false}
             onChange={(flowAllOrganization) => onUpdate({ flowAllOrganization: flowAllOrganization as AppConfig['flowAllOrganization'] })}
             options={[

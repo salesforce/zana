@@ -79,7 +79,8 @@ test('Flow view renders the streaming activity indicator for a live claimed work
     await expect(window.locator('.modal-backdrop')).toHaveCount(0, { timeout: 15_000 });
     await window.locator('[data-testid="nav-agents"]').click();
     await expect(window.locator('.agents-board')).toBeVisible({ timeout: 15_000 });
-    await window.getByRole('button', { name: 'Flow view' }).click();
+    await window.getByRole('button', { name: 'Squads view' }).click();
+    await window.getByRole('button', { name: 'Map', exact: true }).click();
 
     // Working tier: the working node carries the --working class (static border
     // accent — NO pulse; pulse is the kanban board's card language, not the graph's).

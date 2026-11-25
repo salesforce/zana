@@ -100,7 +100,8 @@ test('demo: watch a Squad run', async ({ app }) => {
     await demo.section({ number: 1, title: 'Find your run', subtitle: 'Agents board → Squad details', hint: 'Board and Flow' });
     await demo.say('board');
     await beat(1500);
-    await tap(page, page.getByRole('button', { name: 'Flow view' }));
+    await tap(page, page.getByRole('button', { name: 'Squads view' }));
+    await tap(page, page.getByRole('button', { name: 'Map', exact: true }));
     await expect(page.locator('svg.squad-flow-edges path.squad-flow-edge').first()).toBeVisible({ timeout: 30_000 });
     await demo.settle();
     await tap(page, page.getByRole('button', { name: 'Board view' }));

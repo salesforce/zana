@@ -406,7 +406,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
         await phone.getByRole('button', { name: 'Agents actions', exact: true }).click();
         const boardView = phone.getByRole('button', { name: 'Board view', exact: true });
         const listView = phone.getByRole('button', { name: 'List view', exact: true });
-        await expect(phone.getByRole('button', { name: 'Canvas view', exact: true })).toBeVisible();
+        await expect(phone.getByRole('button', { name: 'Squads view', exact: true })).toBeVisible();
         await boardView.click();
         const newAgent = phone.getByTestId('agents-board-new-thread');
         await expect(newAgent).toHaveAttribute('aria-label', 'New agent');

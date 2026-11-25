@@ -189,7 +189,8 @@ test(`launching a ${coordinationMode} Team with ${profile} through the real UI c
       return page.executions.find((execution) => execution.executionId === executionId)?.currentBlocker?.question ?? '';
     }, { projectId: projectId!, executionId }), { timeout: 15_000, intervals: [500] })
       .toBe('Which label should result.txt use?');
-    await window.getByRole('button', { name: 'Flow view' }).click();
+    await window.getByRole('button', { name: 'Squads view' }).click();
+    await window.getByRole('button', { name: 'Map', exact: true }).click();
     await expect(window.locator('svg.squad-flow-edges path.squad-flow-edge').first())
       .toBeVisible({ timeout: 15_000 });
     await window.getByRole('button', { name: 'Board view' }).click();

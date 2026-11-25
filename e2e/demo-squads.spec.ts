@@ -248,7 +248,8 @@ test('demo: define and launch a Squad', async ({ app }) => {
     await expect(card).toBeVisible({ timeout: 30_000 });
     await beat(600);
     await caption('Flow view shows who is working and how work hands off');
-    await tap(page, page.getByRole('button', { name: 'Flow view' }));
+    await tap(page, page.getByRole('button', { name: 'Squads view' }));
+    await tap(page, page.getByRole('button', { name: 'Map', exact: true }));
     await expect(page.locator('svg.squad-flow-edges path.squad-flow-edge').first()).toBeVisible({ timeout: 30_000 });
     await beat(2600);
     await tap(page, page.getByRole('button', { name: 'Board view' }));

@@ -418,7 +418,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
       {showToolbar && (
         <div className="agents-board-toolbar">
           {!compact && secondaryActions}
-          {isGlobal && (
+          {isGlobal && (boardView !== 'flow' || pluginView) && (
             <div className="agents-board-filter">
               <Search size={12} className="agents-board-filter-icon" aria-hidden="true" />
               <input

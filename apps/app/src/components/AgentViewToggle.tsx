@@ -14,10 +14,10 @@ import { useCompactLayout } from '../hooks/useCompactLayout.js';
 const OPTIONS: Array<{ view: AgentsBoardView; icon: typeof LayoutGrid; label: string }> = [
   { view: 'board', icon: LayoutGrid, label: 'Board' },
   { view: 'list', icon: List, label: 'List' },
-  { view: 'flow', icon: Workflow, label: 'Flow' }
+  { view: 'flow', icon: Workflow, label: 'Squads' }
 ];
 
-/** Canvas is opt-in on phones; switching mobile views leaves desktop alone. */
+/** Squads is opt-in on phones; switching mobile views leaves desktop alone. */
 export function useAgentsBoardView() {
   const preferred = useUi((s) => s.agentsBoardView);
   const compact = useCompactLayout();
@@ -47,11 +47,11 @@ export function AgentViewToggle() {
           className={`agents-view-toggle-btn ${view === v ? 'active' : ''}`}
           onClick={() => setView(v)}
           aria-pressed={view === v}
-          title={`${compact && v === 'flow' ? 'Canvas' : label} view`}
-          aria-label={`${compact && v === 'flow' ? 'Canvas' : label} view`}
+          title={`${label} view`}
+          aria-label={`${label} view`}
         >
           <Icon size={14} />
-          {compact && <span className="agents-view-toggle-label">{v === 'flow' ? 'Canvas' : label}</span>}
+          {compact && <span className="agents-view-toggle-label">{label}</span>}
         </button>
       ))}
     </div>

@@ -33,7 +33,7 @@ async function archiveThread(window: Page, threadId: string) {
   }, threadId);
 }
 
-test('Modern-only project renders in Agents Flow and opens thread inspector', async ({ app }) => {
+test('Modern-only project renders in Squads Overview and opens its thread', async ({ app }) => {
   const { window } = app;
   const { thread } = await createProjectWithModernThread(app);
 
@@ -47,16 +47,27 @@ test('Modern-only project renders in Agents Flow and opens thread inspector', as
     if (await dismissSponsor.isVisible().catch(() => false)) await dismissSponsor.click();
     await window.getByTestId('nav-agents').click();
     await expect(window.locator('.agents-board')).toBeVisible();
-    await window.getByRole('button', { name: 'Flow view' }).click();
+    await window.getByRole('button', { name: 'Squads view' }).click();
 
-    const node = window.locator('.squad-flow-node').filter({ hasText: 'Modern Flow E2E' });
-    await expect(node).toBeVisible({ timeout: 15_000 });
-    await expect(window.locator('.squad-flow-node')).toHaveCount(1);
-    await node.click();
+    const overview = window.getByRole('region', { name: 'Squads', exact: true });
+    await expect(overview.getByRole('button', { name: 'Overview', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    const row = overview.getByRole('button', { name: /Modern Flow E2E/ });
+    await expect(row).toBeVisible({ timeout: 15_000 });
+    await expect(overview.locator('.squad-roster-row')).toHaveCount(1);
+    const search = overview.getByRole('searchbox', { name: 'Search agents and runs' });
+    await search.fill('nothing matching');
+    await expect(overview.getByText('No matching agents or Squad runs')).toBeVisible();
+    await overview.getByRole('button', { name: 'Clear filters' }).click();
+    await overview.getByRole('button', { name: 'Map', exact: true }).click();
+    await expect(overview.getByText('No Squad members to map in this selection.')).toBeVisible();
+    await expect(row).toBeVisible();
+    await row.click();
+    const details = overview.getByRole('complementary', { name: 'Agent details' });
+    await expect(details.getByRole('heading', { name: 'Modern Flow E2E' })).toBeFocused();
+    await details.getByRole('button', { name: 'Open thread' }).click();
 
-    const inspector = window.getByTestId('thread-modal');
-    await expect(inspector).toBeVisible();
-    await expect(inspector).toContainText('Modern Flow E2E');
+    await expect(window.getByRole('heading', { name: 'Modern Flow E2E', exact: true })).toBeVisible();
+    await expect(window.getByTestId('thread-timeline')).toContainText('Response to: Complete this turn');
     await expect(window).not.toHaveURL(new RegExp(`/sessions/${thread.id}$`));
   } finally {
     await archiveThread(window, thread.id);
