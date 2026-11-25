@@ -450,21 +450,7 @@ body:has(.app-shell[data-mobile='true']) .thread-detail-overflow-menu > button {
   height: 44px;
 }
 .mobile-thread-controls-slot .icon-btn > svg { width: 18px; height: 18px; }
-.app-shell[data-mobile='true'] .mobile-thread-controls-slot :is(.thread-status-badge, .mobile-cli-status) {
-  order: -1;
-  flex: 0 0 20px;
-  width: 20px;
-  min-width: 0;
-  height: 28px;
-  padding: 0;
-  gap: 0;
-  justify-content: center;
-  background: transparent;
-  font-size: 0;
-  border: 0;
-  animation: none;
-}
-/* Search uses the title and toggle's space, with a touch-sized close action. */
+/* Search uses the title's space, with a touch-sized close action. */
 .mobile-thread-controls-slot .thread-detail-search-close { display: none; }
 /* Keep the toggle visible until its click has transferred focus to the input. */
 .mobile-thread-controls-slot .thread-detail-search:is(:has(input:focus, .thread-detail-search-close:focus), .has-query) .thread-detail-search-toggle { display: none; }
@@ -902,10 +888,11 @@ body:has(.app-shell[data-mobile='true'])
 .app-shell[data-mobile='true'] .agents-board-new .agents-board-btn-label { display: inline; }
 .app-shell[data-mobile='true'] .agents-board-new > svg { display: none; }
 .app-shell[data-mobile='true'] .agents-board .agents-board-filter {
-  flex: 1 0 100%;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
   max-width: none;
-  order: 1;
+  order: 0;
   min-height: 44px;
   border-radius: 12px;
 }
@@ -919,41 +906,37 @@ body:has(.app-shell[data-mobile='true'])
   min-height: 0;
   overflow: hidden;
 }
-.mobile-agent-lanes {
+.mobile-agent-board > .agents-board-toolbar { flex-wrap: nowrap; }
+.mobile-agent-filter,
+.mobile-agent-needs-you {
   display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 8px;
-  padding: 12px;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: thin;
-}
-.mobile-agent-lane {
-  display: flex;
+  align-self: flex-start;
   align-items: center;
   flex: 0 0 auto;
   gap: 7px;
   min-height: 44px;
-  padding: 8px 12px;
+  max-width: 48%;
+  padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--bg-panel);
   color: var(--text-muted);
   font: inherit;
   font-size: 13px;
+  font-weight: 600;
   white-space: nowrap;
+  cursor: pointer;
 }
-.mobile-agent-lane > span:first-child { display: flex; }
-.mobile-agent-lane[aria-selected='true'] {
+.mobile-agent-filter > svg { flex-shrink: 0; }
+.mobile-agent-filter > span { overflow: hidden; text-overflow: ellipsis; }
+.mobile-agent-needs-you { max-width: 100%; }
+.mobile-agent-needs-you > span:first-child { display: flex; color: var(--danger); }
+.mobile-agent-filter[data-filtered='true'] {
   color: var(--text-primary);
   border-color: var(--accent-blue);
   background: color-mix(in srgb, var(--accent-blue) 9%, var(--bg-panel));
-  font-weight: 600;
 }
-.mobile-agent-lane.lane-blocked > span:first-child { color: var(--danger); }
-.mobile-agent-lane.lane-working > span:first-child { color: var(--accent-gold); }
-.mobile-agent-lane.lane-done > span:first-child { color: var(--success); }
+.mobile-agent-attention { color: var(--danger); font-weight: 600; }
 .mobile-agent-lane-count {
   min-width: 20px;
   padding: 1px 5px;
@@ -963,9 +946,10 @@ body:has(.app-shell[data-mobile='true'])
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
-.mobile-agent-lane:focus-visible,
+.mobile-agent-filter:focus-visible,
+.mobile-agent-needs-you:focus-visible,
 .mobile-agent-panel:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
-.mobile-agent-panel:not([hidden]) {
+.mobile-agent-panel {
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -973,7 +957,7 @@ body:has(.app-shell[data-mobile='true'])
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  padding: 0 12px 16px;
+  padding: 12px 12px 16px;
 }
 .mobile-agent-panel > * { flex-shrink: 0; }
 .mobile-agent-panel .agents-lane-group { padding: 0; background: transparent; gap: 10px; }
@@ -992,6 +976,7 @@ body:has(.app-shell[data-mobile='true'])
   touch-action: pan-y;
 }
 .mobile-agent-panel .agent-card-head { align-items: flex-start; gap: 8px; }
+.mobile-agent-panel .agent-card :is(.agent-card-activity, .tab-agent-dot.agent-working) { display: none; }
 .mobile-agent-panel .agent-card-title {
   font-size: 15px;
   line-height: 1.4;

@@ -13,7 +13,7 @@
 .basic-ui .titlebar { justify-content: flex-start; padding-left: max(20px, var(--shell-leading-reserve, 20px)); }
 .app-shell.basic-ui[data-mobile='false'],
 .app-shell.basic-ui.sidebar-is-collapsed[data-mobile='false'] { --shell-leading-reserve: calc(var(--shell-trigger-left) + var(--shell-trigger-size) + 12px); }
-.basic-ui .titlebar > :not(.basic-ui-shell-heading):not(.basic-ui-mode-switch):not(.titlebar-bell):not(.titlebar-theme) { display: none !important; }
+.basic-ui .titlebar > :not(:is(.basic-ui-shell-heading, .basic-ui-mode-switch, .titlebar-bell, .titlebar-theme, .mobile-thread-title-slot, .mobile-thread-controls-slot)) { display: none !important; }
 .basic-ui .basic-ui-sidebar { padding: 12px 14px 15px; border-right: 0; }
 .basic-ui .basic-ui-sidebar[hidden] { display: none; }
 .basic-ui-new-chat { display: flex; align-items: center; gap: 9px; padding: 11px 12px; border: 1px solid var(--border-strong); border-radius: 9px; text-decoration: none; color: var(--text-primary); font-size: 12px; background: var(--bg-panel); }
@@ -73,18 +73,8 @@
   .basic-ui .basic-ui-shell-heading { margin-right: auto; }
   .basic-ui .basic-ui-sidebar { height: 100%; }
 }
-/* Basic has no mobile back/return control, so the menu mirrors the mode switch's 12px inset. */
 .app-shell.basic-ui[data-mobile='true'] .titlebar { padding-left: 12px; }
-.app-shell.basic-ui[data-mobile='true'] .basic-ui-mode-switch { right: 12px; }
-.app-shell:not(.basic-ui)[data-mobile='true'] .basic-ui-mode-switch { right: 112px; }
-.app-shell:not(.basic-ui)[data-mobile='true'] .titlebar:has(.mobile-thread-controls-slot > *) .basic-ui-mode-switch {
-  position: static;
-  flex: none;
-  transform: none;
-}
-.app-shell:not(.basic-ui)[data-mobile='true'] .titlebar:has(.mobile-thread-controls-slot .thread-detail-search:is(:focus-within, .has-query)) .basic-ui-mode-switch {
-  display: none;
-}
+.app-shell.basic-ui[data-mobile='true'] .titlebar:has(.mobile-thread-title-slot:not(:empty)) .basic-ui-shell-heading { margin-right: 0; flex-shrink: 0; }
 
 .titlebar-theme { -webkit-app-region: no-drag; position: absolute; right: calc(74px + var(--windows-caption-reserve, 0px)); top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--text-muted); cursor: pointer; }
 .titlebar-theme:hover { background: var(--bg-hover); color: var(--text-primary); }

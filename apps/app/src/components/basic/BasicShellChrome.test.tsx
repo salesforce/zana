@@ -6,7 +6,7 @@ import type { PluginNavPanelRegistration } from '@zana-ai/zcc-plugin-sdk';
 import { Link, MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ThreadListItem } from '../../thread-store.js';
-import { BasicConversationSidebar, BasicShellHeading, BasicUiModeSwitch, BasicUnsupportedDestination } from './BasicShellChrome.js';
+import { BasicConversationSidebar, BasicShellHeading, BasicUiModeSwitch, BasicUnsupportedDestination, MobileInterfaceView } from './BasicShellChrome.js';
 import { getBasicUiMode, setBasicUiMode } from '../../lib/basic-ui.js';
 import zanaGlyph from '../../assets/zana-glyph.svg';
 import { MobileNavDismiss } from '../mobile-nav-context.js';
@@ -41,6 +41,25 @@ function sidebar(path = '/') {
   return onNavigate;
 }
 afterEach(() => { cleanup(); useBasicConversationView.setState({ view: { ...DEFAULT_BASIC_CONVERSATION_VIEW } }); archive.history.mockReset(); archive.listeners.clear(); slots.panels = []; data.threads = []; data.loading = false; data.scoped = null; data.ensure.mockClear(); setBasicUiMode('advanced'); });
+
+it('shows the current interface view in mobile navigation and dismisses it after a change', () => {
+  const onChange = vi.fn();
+  render(<MemoryRouter initialEntries={['/agents']}><MobileInterfaceView onChange={onChange} /><RouteProbe /></MemoryRouter>);
+  const advanced = screen.getByRole('button', { name: 'Interface view Advanced' });
+  fireEvent.click(advanced);
+  let sheet = within(screen.getByRole('dialog', { name: 'Interface view' }));
+  expect(sheet.getByRole('button', { name: 'Advanced' }).getAttribute('aria-pressed')).toBe('true');
+  fireEvent.click(sheet.getByRole('button', { name: 'Advanced' }));
+  expect(onChange).not.toHaveBeenCalled();
+  expect(document.activeElement).toBe(advanced);
+  fireEvent.click(advanced);
+  sheet = within(screen.getByRole('dialog', { name: 'Interface view' }));
+  fireEvent.click(sheet.getByRole('button', { name: 'Basic' }));
+  expect(getBasicUiMode()).toBe('basic');
+  expect(screen.getByTestId('route').textContent).toBe('/');
+  expect(screen.getByRole('button', { name: 'Interface view Basic' })).toBeTruthy();
+  expect(onChange).toHaveBeenCalledOnce();
+});
 
 describe('Basic conversation navigation', () => {
   it('provides the shared desktop resize handle and omits it inside the mobile drawer', () => {

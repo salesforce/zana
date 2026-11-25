@@ -21,7 +21,7 @@ import { HelpVideoLibrary } from './components/help/HelpVideoLibrary.js';
 import { useHelpVideos } from './components/help/help-videos-store.js';
 import { InstanceMenu } from './components/InstanceMenu.js';
 import { Sidebar } from './components/Sidebar.js';
-import { BasicConversationSidebar, BasicShellHeading, BasicUiModeSwitch, BasicUnsupportedDestination } from './components/basic/BasicShellChrome.js';
+import { BasicConversationSidebar, BasicShellHeading, BasicUiModeSwitch, BasicUnsupportedDestination, MobileInterfaceView } from './components/basic/BasicShellChrome.js';
 import { isBasicUiRouteSupported, useBasicUi } from './lib/basic-ui.js';
 import { MobileAgentNavigation } from './components/MobileAgentNavigation.js';
 import {
@@ -860,8 +860,7 @@ function AppShell() {
             </span>
           )}
         </button>
-        {!mobileNavigation.isCompact && <TitlebarThemeToggle />}
-        <BasicUiModeSwitch />
+        {!mobileNavigation.isCompact && <><TitlebarThemeToggle /><BasicUiModeSwitch /></>}
         <div id={MOBILE_THREAD_CONTROLS_ID} className="mobile-thread-controls-slot" />
         <div id={MOBILE_THREAD_ACTIONS_ID} className="mobile-thread-actions-slot" />
       </div>
@@ -877,21 +876,24 @@ function AppShell() {
         enabled={mobileNavigation.isCompact}
         open={!sidebarCollapsed}
         onClose={() => mobileNavigation.setDrawerOpen(false)}
-        shortcuts={basicUi ? undefined : <>
-          <button type="button" className="mobile-nav-notifications" onClick={() => {
-            mobileNavigation.setDrawerOpen(false);
-            useUi.getState().toggleNotificationsDrawer();
-          }} aria-label={unreadInbox > 0 ? `Notifications — ${unreadInbox} unread` : 'Notifications'}>
-            <Bell size={18} aria-hidden="true" /> Notifications
-            {unreadInbox > 0 && <span className="nav-badge" aria-hidden="true">{unreadInbox > 99 ? '99+' : unreadInbox}</span>}
-          </button>
-          <HelpToggle />
-          <button type="button" className="mobile-nav-notifications" data-testid="mobile-help-videos" onClick={() => {
-            mobileNavigation.setDrawerOpen(false);
-            useHelpVideos.getState().open();
-          }}>
-            <PlayCircle size={18} aria-hidden="true" /> Videos
-          </button>
+        shortcuts={<>
+          <MobileInterfaceView onChange={() => mobileNavigation.setDrawerOpen(false)} />
+          {!basicUi && <>
+            <button type="button" className="mobile-nav-notifications" onClick={() => {
+              mobileNavigation.setDrawerOpen(false);
+              useUi.getState().toggleNotificationsDrawer();
+            }} aria-label={unreadInbox > 0 ? `Notifications — ${unreadInbox} unread` : 'Notifications'}>
+              <Bell size={18} aria-hidden="true" /> Notifications
+              {unreadInbox > 0 && <span className="nav-badge" aria-hidden="true">{unreadInbox > 99 ? '99+' : unreadInbox}</span>}
+            </button>
+            <HelpToggle />
+            <button type="button" className="mobile-nav-notifications" data-testid="mobile-help-videos" onClick={() => {
+              mobileNavigation.setDrawerOpen(false);
+              useHelpVideos.getState().open();
+            }}>
+              <PlayCircle size={18} aria-hidden="true" /> Videos
+            </button>
+          </>}
         </>}
         headerStart={!basicUi && nav === 'settings' ? <MobileSettingsBack onNavigate={() => mobileNavigation.setDrawerOpen(false)} /> : undefined}
       >

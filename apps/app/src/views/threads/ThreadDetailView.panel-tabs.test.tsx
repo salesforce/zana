@@ -41,6 +41,7 @@ vi.mock('../../components/thread/secondary-panel/ThreadExplorerTab.js',() => ({T
 vi.mock('../../components/thread/secondary-panel/ThreadInboxTab.js',() => ({ThreadInboxTab:(props:any) => <div data-testid="tab-ThreadInboxTab" data-props={JSON.stringify(props,(_k,v) => typeof v === 'function' ? undefined : v)}/>}));
 import { definePluginApp } from '@zana-ai/zcc-plugin-sdk/app';
 import { clearPluginSlots, interpretPluginApp } from '../../plugins/plugin-slots.js';
+import { readThreadRecentItems } from '../../components/thread/secondary-panel/threadRecentItems.js';
 import { ThreadDetail } from './ThreadDetailView.js';
 import { getBasicUiMode, setBasicUiMode } from '../../lib/basic-ui.js';
 afterEach(() => {cleanup();setBasicUiMode('advanced');vi.clearAllMocks();h.dockEnabled=false;h.basicCompact=false;h.bottomProps=null;h.browserProps=[];localStorage.clear();});
@@ -280,8 +281,9 @@ it('opens new-tab thread-storage matches as storage previews and records them as
   await waitFor(() => expect(h.newTabProps?.onOpenStorageFile).toBeTypeOf('function'));
   act(() => h.newTabProps.onOpenStorageFile('out/report.html', 'report.html'));
   expect(h.addTab).toHaveBeenLastCalledWith({ kind: 'storage-preview', title: 'report.html', path: 'out/report.html' });
-  expect(localStorage.length).toBeGreaterThan(0);
-  expect(Object.values({ ...localStorage }).join('')).toContain('out/report.html');
+  expect(readThreadRecentItems('a')).toEqual([
+    expect.objectContaining({ kind: 'file', source: 'thread-storage', path: 'out/report.html' })
+  ]);
 });
 
 it('quick-add shows registered project shortcuts for threads and reuses the tab in its dock', async () => {
