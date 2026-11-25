@@ -1331,7 +1331,7 @@ const api: CcApi = {
   },
   app: {
     /* v8 ignore next -- preload bridge; exercised through the built app in e2e/windows-titlebar-overlay-theme.spec.ts */
-    setModalOpen: async open => { await ipcRenderer.invoke(IPC.app.setModalOpen, open === true); },
+    setModalOpen: async (open, alpha) => { await ipcRenderer.invoke(IPC.app.setModalOpen, open === true, alpha); },
     previewAgentSound: async (kind) => {
       const result = await ipcRenderer.invoke(IPC.app.previewAgentSound, kind);
       if (!result || typeof result.volume !== 'number') throw new Error('Sound preview unavailable');

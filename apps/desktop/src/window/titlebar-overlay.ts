@@ -104,15 +104,25 @@ export function highContrastOverlayColors(
   return null;
 }
 
-/** The share of the page the modal backdrop darkens (rgba(0, 0, 0, 0.45), `.palette-backdrop` in global.css). */
-export const MODAL_BACKDROP_ALPHA = 0.45;
+/** The share of the page a modal backdrop darkens when the renderer doesn't say (`.palette-backdrop`, global.css). */
+export const DEFAULT_BACKDROP_ALPHA = 0.45;
+const MAX_BACKDROP_ALPHA = 0.9;
 
-function dimHex(hex: string): string {
-  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(hex);
+/** A renderer-supplied backdrop alpha, bounded; anything unusable falls back to the default. */
+export function clampBackdropAlpha(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return DEFAULT_BACKDROP_ALPHA;
+  return Math.min(value, MAX_BACKDROP_ALPHA);
+}
+
+const HEX_COLOR = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})?$/i;
+
+/** Darkens `#rrggbb` / `#rrggbbaa` towards black by `alpha`, keeping any alpha byte. Other formats are left alone. */
+function dimHex(hex: string, alpha: number): string {
+  const match = hex.match(HEX_COLOR);
   if (!match) return hex;
   const channel = (part: string | undefined) =>
-    Math.round(Number.parseInt(part ?? '0', 16) * (1 - MODAL_BACKDROP_ALPHA)).toString(16).padStart(2, '0');
-  return `#${channel(match[1])}${channel(match[2])}${channel(match[3])}`;
+    Math.round(Number.parseInt(part ?? '0', 16) * (1 - alpha)).toString(16).padStart(2, '0');
+  return `#${channel(match[1])}${channel(match[2])}${channel(match[3])}${match[4] ?? ''}`;
 }
 
 /**
@@ -120,8 +130,8 @@ function dimHex(hex: string): string {
  * native, outside the page, so the CSS backdrop can't darken them: paint the
  * backdrop's blend with black onto the overlay instead.
  */
-export function dimmedTitleBarOverlay(overlay: WindowsTitleBarOverlay): WindowsTitleBarOverlay {
-  return { ...overlay, color: dimHex(overlay.color), symbolColor: dimHex(overlay.symbolColor) };
+export function dimmedTitleBarOverlay(overlay: WindowsTitleBarOverlay, alpha = DEFAULT_BACKDROP_ALPHA): WindowsTitleBarOverlay {
+  return { ...overlay, color: dimHex(overlay.color, alpha), symbolColor: dimHex(overlay.symbolColor, alpha) };
 }
 
 export interface OverlayWindow {
@@ -135,14 +145,14 @@ export interface OverlayWindow {
  * failing window doesn't stop the rest.
  */
 export function applyWindowsTitleBarOverlay(
-  windows: Iterable<{ win: OverlayWindow; surface: TitleBarSurface; dimmed?: boolean }>,
-  overlay: (surface: TitleBarSurface, dimmed?: boolean) => WindowsTitleBarOverlay,
+  windows: Iterable<{ win: OverlayWindow; surface: TitleBarSurface; dim?: number }>,
+  overlay: (surface: TitleBarSurface, dim?: number) => WindowsTitleBarOverlay,
   logError: (context: string, err: unknown) => void
 ): void {
-  for (const { win, surface, dimmed } of windows) {
+  for (const { win, surface, dim } of windows) {
     if (win.isDestroyed()) continue;
     try {
-      win.setTitleBarOverlay(overlay(surface, dimmed));
+      win.setTitleBarOverlay(overlay(surface, dim));
     } catch (err) {
       logError(`titleBarOverlay window=${win.id}`, err);
     }
@@ -184,53 +194,60 @@ export function createWindowsTitleBarOverlays(deps: WindowsTitleBarOverlayDeps) 
   const surfaceOf = (kind: TitleBarWindowKind) => titleBarSurface(kind, deps.repairing());
   // A failed theme read must not stop a window from opening: fall back to the
   // default (dark) theme's colours.
-  const overlayFor = (surface: TitleBarSurface) => {
+  const resolve = (surface: TitleBarSurface): { overlay: WindowsTitleBarOverlay; highContrast: boolean } => {
     try {
       const { nativeTheme, systemPreferences } = deps.electron();
-      return windowsTitleBarOverlay(
-        surface,
-        deps.theme(),
-        nativeTheme.shouldUseHighContrastColors
-          ? highContrastOverlayColors((name) => systemPreferences.getColor(name), deps.logError)
-          : null
-      );
+      const highContrast = nativeTheme.shouldUseHighContrastColors
+        ? highContrastOverlayColors((name) => systemPreferences.getColor(name), deps.logError)
+        : null;
+      return { overlay: windowsTitleBarOverlay(surface, deps.theme(), highContrast), highContrast: highContrast !== null };
     } catch (err) {
       deps.logError('titleBarOverlay theme', err);
-      return windowsTitleBarOverlay(surface, 'dark');
+      return { overlay: windowsTitleBarOverlay(surface, 'dark'), highContrast: false };
     }
   };
-  const current = (kind: TitleBarWindowKind) => overlayFor(surfaceOf(kind));
-  // Windows whose page is showing a modal backdrop; their caption buttons dim.
-  const modalWindows = new Set<number>();
-  const applyTo = (entries: Array<{ win: OverlayWindow; surface: TitleBarSurface; dimmed: boolean }>) => {
+  const current = (kind: TitleBarWindowKind) => resolve(surfaceOf(kind)).overlay;
+  // Windows whose page is showing a modal backdrop, with the backdrop's alpha;
+  // their caption buttons dim. Entries are dropped when the window closes.
+  const modalWindows = new Map<number, number>();
+  const applyTo = (entries: Array<{ win: OverlayWindow; surface: TitleBarSurface; dim?: number }>) => {
     // One theme read per surface per refresh, shared by the windows on it.
-    const overlays = new Map<TitleBarSurface, WindowsTitleBarOverlay>();
-    const overlay = (surface: TitleBarSurface, dimmed = false) => {
-      let base = overlays.get(surface);
+    const resolved = new Map<TitleBarSurface, ReturnType<typeof resolve>>();
+    const overlay = (surface: TitleBarSurface, dim?: number) => {
+      let base = resolved.get(surface);
       if (!base) {
-        base = overlayFor(surface);
-        overlays.set(surface, base);
+        base = resolve(surface);
+        resolved.set(surface, base);
       }
-      return dimmed ? dimmedTitleBarOverlay(base) : base;
+      // A contrast theme forces the page's colours, so the buttons stay as they are.
+      return dim !== undefined && !base.highContrast ? dimmedTitleBarOverlay(base.overlay, dim) : base.overlay;
     };
     applyWindowsTitleBarOverlay(entries, overlay, deps.logError);
   };
   const refresh = () => {
     if (deps.platform !== 'win32') return;
-    applyTo(Array.from(deps.windows.values(), (entry) => ({
-      win: entry.win,
-      surface: surfaceOf(entry),
-      dimmed: modalWindows.has(entry.win.id)
-    })));
+    const live = new Set<number>();
+    const entries = Array.from(deps.windows.values(), (entry) => {
+      live.add(entry.win.id);
+      return { win: entry.win, surface: surfaceOf(entry), dim: modalWindows.get(entry.win.id) };
+    });
+    // A closed window can't report that its modal closed.
+    for (const id of modalWindows.keys()) if (!live.has(id)) modalWindows.delete(id);
+    applyTo(entries);
   };
   /** A window's page opened or closed a modal backdrop: dim or restore its caption buttons. */
-  const setModalOpen = (id: number, open: boolean) => {
+  const setModalOpen = (id: number, open: boolean, alpha?: unknown) => {
     if (deps.platform !== 'win32') return;
-    if (open) modalWindows.add(id);
-    else modalWindows.delete(id);
+    const dim = open ? clampBackdropAlpha(alpha) : undefined;
+    if (dim === undefined) modalWindows.delete(id);
+    else modalWindows.set(id, dim);
     for (const entry of deps.windows.values()) {
-      if (entry.win.id === id) applyTo([{ win: entry.win, surface: surfaceOf(entry), dimmed: open }]);
+      if (entry.win.id === id) applyTo([{ win: entry.win, surface: surfaceOf(entry), dim }]);
     }
+  };
+  /** The window was closed: forget its modal state. */
+  const forgetWindow = (id: number) => {
+    modalWindows.delete(id);
   };
   // Subscribes on every platform, like the tray's theme listener, so the boot
   // wiring is the same everywhere; `refresh` itself does nothing off Windows.
@@ -247,5 +264,5 @@ export function createWindowsTitleBarOverlays(deps: WindowsTitleBarOverlayDeps) 
       return () => {};
     }
   };
-  return { current, refresh, bind, setModalOpen };
+  return { current, refresh, bind, setModalOpen, forgetWindow };
 }

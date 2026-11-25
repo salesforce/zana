@@ -8719,6 +8719,7 @@ function createWindow(projectId?: string, repairOnly = false, options: {
     rendererReadiness.remove(win.id);
     pluginViewCloseGuard.forget(win.id);
     windows.delete(win.id);
+    titleBarOverlays.forgetWindow(win.id);
     boundsControllers.delete(win.id);
     if (view) pluginViews.broadcast();
     if (threadView) threadViews.broadcast();
@@ -9423,7 +9424,7 @@ function registerIpc() {
   registerAgentSoundIpc({ handle: safeHandleFromWindow, files: agentSoundFiles,
     volume: () => store.getConfig().agentSoundVolume, showOpenDialog: (win, options) => dialog.showOpenDialog(win, options) });
   /* v8 ignore next -- registered at built-Electron boot; titleBarOverlays.setModalOpen is unit-tested and the IPC round trip is covered by e2e/windows-titlebar-overlay-theme.spec.ts */
-  safeHandleFromWindow<[unknown], void>(IPC.app.setModalOpen, (win, open: unknown) => titleBarOverlays.setModalOpen(win.id, open === true), () => undefined);
+  safeHandleFromWindow<[unknown, unknown?], void>(IPC.app.setModalOpen, (win, open: unknown, alpha?: unknown) => titleBarOverlays.setModalOpen(win.id, open === true, alpha), () => undefined);
   safeHandleFromWindow(IPC.uiSend, sendQueuedMessageNow, err => { throw err; });
   // Plugin buttons with no thread (release actions) get a sheet main draws and signs.
   /* v8 ignore next -- registered at built-Electron boot; createPluginApprovalHandler is unit-tested */

@@ -137,18 +137,15 @@ test('Windows caption buttons dim under a modal backdrop and come back when it c
   try {
     await main.waitForSelector('.titlebar', { timeout: 30_000 });
     const painted = await paintedTitleBar(main, '.titlebar');
-    // A real modal backdrop in the page, as every dialog renders.
-    await main.evaluate(() => {
-      const backdrop = document.createElement('div');
-      backdrop.className = 'palette-backdrop';
-      backdrop.id = 'e2e-modal-backdrop';
-      document.body.appendChild(backdrop);
-    });
+    // A real dialog: Ctrl+/ opens the keyboard shortcuts help, which draws a palette backdrop.
+    await main.locator('body').click({ position: { x: 5, y: 5 } });
+    await main.keyboard.press('Control+/');
+    await expect(main.getByRole('dialog', { name: 'Keyboard Shortcuts' })).toBeVisible();
     await expect.poll(async () => (await lastOverlay()).at(-1)?.color).toBe(underBackdrop(painted.color));
-    await main.evaluate(() => document.getElementById('e2e-modal-backdrop')?.remove());
+    await main.keyboard.press('Escape');
+    await expect(main.getByRole('dialog', { name: 'Keyboard Shortcuts' })).toHaveCount(0);
     await expect.poll(async () => (await lastOverlay()).at(-1)).toEqual({ ...painted, height: 44 });
   } finally {
-    await main.evaluate(() => document.getElementById('e2e-modal-backdrop')?.remove());
     await electron.evaluate(() => {
       (globalThis as any).__modalOverlayCheck?.restore();
       delete (globalThis as any).__modalOverlayCheck;
