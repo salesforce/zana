@@ -117,7 +117,7 @@ import {
 } from './squad-session-lifecycle.js';
 import { createSquadWorktreeRuntime, trustedSquadWorktreeRoot, isWithinSquadWorktreeBase, SQUAD_WORKTREE_ACTION } from './squad-worktree-runtime.js';
 import { createTriggeredSquadLauncher, goalSquadTrigger, scheduledSquadTrigger } from './triggered-squad.js';
-import { MAX_HANDOFF_FILE_BYTES, TeamPlanHandoff, authoredPlanRelPath, correctedPlanRelPath, correctionProseRelPath, createPlanTraceSink, cleanupHandoffFiles, handoffPromptPath, readAuthoredPlan, writeSourceMirror } from './team-plan-handoff.js';
+import { MAX_HANDOFF_FILE_BYTES, TeamPlanHandoff, authoredPlanRelPath, correctedPlanRelPath, correctionProseRelPath, createPlanTraceSink, createStallNotice, observeOrchestratorEdge, planHandoffDiagnostics, warnLog, cleanupHandoffFiles, handoffPromptPath, readAuthoredPlan, writeSourceMirror } from './team-plan-handoff.js';
 import { PlanCorrectionService } from './plan-correction/service.js';
 import { planCorrectionSubmitter } from './plan-correction/wiring.js';
 import { onOrchestratorIdle } from './coordinator-idle.js';
@@ -8088,6 +8088,7 @@ teamPlanHandoff = new TeamPlanHandoff({
     return result.ok ? { ok: true } : { ok: false, message: result.message };
   },
   nudge: (sessionId, text) => ptys.reply(sessionId, text),
+  reportStalled: createStallNotice(inboxStore.append.bind(inboxStore), logMainError),
   cleanup: (projectRoot, executionId) => cleanupHandoffFiles(projectRoot, executionId),
   logError: (message, error) => logMainError(message, error),
   logInfo: logMainInfo,
@@ -8096,8 +8097,12 @@ teamPlanHandoff = new TeamPlanHandoff({
       const record = await executionStore.getInProject(projectId, executionId);
       return record ? { attempt: record.attempt, stateVersion: record.stateVersion } : undefined;
     },
-    log: logMainInfo
-  })
+    // DIAGNOSTIC: warn level so the read/register/nudge trace lands in desktop.log.
+    log: warnLog
+  }),
+  diagnose: planHandoffDiagnostics(warnLog),
+  requireTurnStart: true,
+  timedRecheck: { intervalMs: 15_000, windowMs: 270_000 }
 });
 const apiErrorDispatchCtx: DispatchCtx = createApiErrorDispatchCtx({
   ptys,
@@ -8799,6 +8804,7 @@ function wireBridgeListeners() {
     safeSend(IPC.terminals.onExit, sessionId, code);
     ptyLifecycle.exited(sessionId, code, signal);
     squadProposalNotifier.forget(sessionId);
+    teamPlanHandoff.forgetSession(sessionId);
     const ledgerEntryId = launchLedgerEntriesBySession.get(sessionId);
     launchLedgerEntriesBySession.delete(sessionId);
     const authorizationId = launchAuthorizationBySession.get(sessionId);
@@ -9049,6 +9055,8 @@ function wireBridgeListeners() {
       agentSounds.observe(`cli:${sessionId}`, displayAgentState(sessionId, state));
     } else agentSounds.remove(`cli:${sessionId}`);
     if (session) captureNativeRecoverySnapshot(session);
+    // DIAGNOSTIC: one warn line per orchestrator status edge, so a missing idle edge is visible in desktop.log.
+    observeOrchestratorEdge(teamPlanHandoff, warnLog, sessionId, state, seq, session?.cohort);
     if (state === 'idle' && session) {
       onOrchestratorIdle({
         drainCoordinatorWake: (projectId, executionId, id) => squadExecutionService.drainCoordinatorWake(projectId, executionId, id),
