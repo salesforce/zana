@@ -89,7 +89,8 @@ for (const theme of ['light', 'dark'] as const) {
       await expectBackgrounds(page, ['.library-md-editor'], panel);
       await expect(page.locator('.library-md-editor [contenteditable=true]')).toContainText('Library reading');
       await captureElectronScreenshot(app.electron, page, testInfo.outputPath(`library-edit-${theme}.png`));
-      await page.getByRole('button', { name: 'Preview', exact: true }).click();
+      await page.getByRole('group', { name: 'Markdown view' }).getByRole('button', { name: 'Read', exact: true }).click();
+      await expectBackgrounds(page, surfaces, panel);
       await page.evaluate(() => {
         history.pushState({}, '', '/plugins/docs/panel');
         dispatchEvent(new PopStateEvent('popstate'));
