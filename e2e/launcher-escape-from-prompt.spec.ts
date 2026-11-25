@@ -40,6 +40,7 @@ test('Esc closes the launch dialog from the focused prompt box on every tab', { 
       await expect(modal, `Esc after typing in the ${mode} prompt box should close the dialog`).toBeHidden();
     }
   } finally {
-    rmSync(projectDir, { recursive: true, force: true });
+    // Best-effort: the app may still hold the directory open on Windows.
+    try { rmSync(projectDir, { recursive: true, force: true }); } catch { /* temp dir; the OS reclaims it */ }
   }
 });
