@@ -64,6 +64,7 @@ import {
   writeLocalStorageItem
 } from './lib/safe-local-storage.js';
 import { product } from './lib/product-client.js';
+import { launchModeSeedPatch, readLaunchModePreference } from './lib/launch-mode-preference.js';
 import { subscribeProductEvent } from './lib/product-ws.js';
 import { prefetchThreadModelCatalog, reloadThreadModelCatalog, threadModelCatalogForHost, modelDiscoveryConfigKey, invalidateModelCatalogs } from './components/thread/pickers/thread-model-catalog.js';
 import { decodeRouteString } from './lib/decode-route.js';
@@ -951,6 +952,9 @@ function mirroredConfigFlags(config: AppConfig) {
     teamJobLaunchEnabled: config.teamJobLaunchEnabled !== false,
     composerShowCliAgent: config.composerShowCliAgent !== false,
     composerShowModern: config.composerShowModern !== false,
+    squadDefaultTransport: config.squadDefaultTransport ?? 'caller',
+    composerDefaultLaunchMode: config.composerDefaultLaunchMode ?? null,
+    composerLastTransportMode: config.composerLastTransportMode ?? null,
     composerShowAutonomousTeam: config.composerShowAutonomousTeam !== false,
     openerHiddenTargets: config.openerHiddenTargets ?? [],
     lastProjectId: config.lastProjectId ?? null,
@@ -1987,6 +1991,10 @@ interface DataState {
   setComposerShowCliAgent: (on: boolean) => void;
   /** Mirror of AppConfig.composerShowModern — Modern in the launch switcher. */
   composerShowModern: boolean;
+  /** Mirrors of AppConfig squad launch-mode settings, read by the transport display helpers. */
+  squadDefaultTransport: NonNullable<AppConfig['squadDefaultTransport']>;
+  composerDefaultLaunchMode: NonNullable<AppConfig['composerDefaultLaunchMode']> | null;
+  composerLastTransportMode: NonNullable<AppConfig['composerLastTransportMode']> | null;
   setComposerShowModern: (on: boolean) => void;
   /** Mirror of AppConfig.composerShowAutonomousTeam — Team in the switcher. */
   composerShowAutonomousTeam: boolean;
@@ -2464,6 +2472,9 @@ export const useData = create<DataState>((set, get) => ({
   teamJobLaunchEnabled: true,
   composerShowCliAgent: true,
   composerShowModern: true,
+  squadDefaultTransport: 'caller',
+  composerDefaultLaunchMode: null,
+  composerLastTransportMode: null,
   composerShowAutonomousTeam: true,
   worktreeIsolationDefault: false,
 
@@ -2822,6 +2833,9 @@ export const useData = create<DataState>((set, get) => ({
       // can't diverge — every gate is listed in exactly one place
       // (`mirroredConfigFlags`). Only `projects` is init-specific.
       set({ projects, ...mirroredConfigFlags(config), configLoaded: true });
+      // Seed the launch-mode mirror once so main/server see the stored choice.
+      const seed = launchModeSeedPatch(config, readLaunchModePreference());
+      if (seed) product.config.set(seed).catch(() => {});
       // Project rows are interactive now. Subscribe before slower session/plugin
       // hydration so SDK and IPC changes cannot be missed during startup.
       product.projects.onChanged((next) => {

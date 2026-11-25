@@ -1024,7 +1024,8 @@ export class ExecutionService {
         record.id,
         record.stateVersion,
         authorization.value.context,
-        launchDigest(authorization.value.context)
+        launchDigest(authorization.value.context),
+        authorization.value.resolvedTransport
       );
       record = await this.deps.store.prepareLaunchIntent(record.id, record.stateVersion, {
         version: 1,

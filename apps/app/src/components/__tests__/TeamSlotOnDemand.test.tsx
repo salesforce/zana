@@ -21,7 +21,7 @@ vi.mock('../../store.js', () => {
 import { SquadEditor } from '../SquadEditor.js';
 
 const base: Team = {
-  id: 'user:s', name: 'S', orchestratorPersonaId: 'p-orch', source: 'user',
+  id: 'user:s', name: 'S', orchestratorPersonaId: 'p-orch', source: 'user', transport: 'CLI',
   slots: [{ personaId: 'p-orch', quantity: 1 }, { personaId: 'p-worker', quantity: 1 }]
 };
 const CHECKBOX = /Start only when its first unit is ready/i;

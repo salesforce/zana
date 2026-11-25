@@ -44,12 +44,21 @@ export interface DesktopNativeRecoveryDeps {
 }
 
 /** Trusted desktop-only exact-native snapshots. Native ids never leave main/service. */
+/** The team as this run launched it: the pinned transport replaces any stored preference. */
+export function recordTeam<T extends { transport?: string }>(team: T, record: { resolvedTransport?: { transport: 'CLI' | 'MODERN' } }): T {
+  const pinned = record.resolvedTransport?.transport;
+  if (pinned) return { ...team, transport: pinned };
+  return team.transport === 'MODERN' ? team : { ...team, transport: 'CLI' };
+}
+
 export function createDesktopNativeRecovery(deps: DesktopNativeRecoveryDeps) {
   function compatibleSnapshots(record: ExecutionRecord): NativeRecoverySnapshots {
     const project = deps.projects.listProjects().find((candidate) => candidate.id === record.projectId);
-    const team = deps.teams.list().find((candidate) => candidate.id === record.teamId);
+    const rawTeam = deps.teams.list().find((candidate) => candidate.id === record.teamId);
     const snapshots = record.nativeRecoverySnapshots ?? [];
-    if (!project || !team || snapshots.length === 0) return [];
+    if (!project || !rawTeam || snapshots.length === 0) return [];
+    // The run's pinned transport wins; a legacy run derives from its stored team.
+    const team = recordTeam(rawTeam, record);
     const personaSnapshot = deps.personas.list();
     const personasById = new Map(personaSnapshot.map((persona) => [persona.id, persona]));
     const slots = deps.expandTeamSlots(team).flatMap((slot) => {
@@ -64,8 +73,9 @@ export function createDesktopNativeRecovery(deps: DesktopNativeRecoveryDeps) {
   }
   /** Total slots of the record's team, or undefined when the team is unknown. */
   function totalSlots(record: ExecutionRecord): number | undefined {
-    const team = deps.teams.list().find((candidate) => candidate.id === record.teamId);
-    if (!team) return undefined;
+    const rawTeam = deps.teams.list().find((candidate) => candidate.id === record.teamId);
+    if (!rawTeam) return undefined;
+    const team = recordTeam(rawTeam, record);
     const expanded = deps.expandTeamSlots(team);
     // A seat that starts on demand and never started has no snapshot to restore; it starts again when needed.
     // "Never started" is the lifecycle record's word (no session), not the team row's: a seat that did

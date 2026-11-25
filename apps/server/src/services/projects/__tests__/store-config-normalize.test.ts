@@ -1326,3 +1326,23 @@ describe('normalizeConfig — squadUnitCheckpointsEnabled', () => {
     expect(normalizeConfig({}).squadUnitCheckpointsEnabled).toBeUndefined();
   });
 });
+
+describe('normalizeConfig — squad transport defaults and launch-mode mirror', () => {
+  it.each(['follow', 'caller', 'CLI', 'MODERN'] as const)('keeps squadDefaultTransport %s', value => {
+    expect(normalizeConfig({ squadDefaultTransport: value })).toMatchObject({ squadDefaultTransport: value });
+  });
+  it.each(['CALLER', 'x', 1, null])('drops invalid squadDefaultTransport %s', value => {
+    expect(normalizeConfig({ squadDefaultTransport: value as never })).not.toHaveProperty('squadDefaultTransport');
+  });
+  it.each(['agent', 'thread', 'team'] as const)('keeps composerDefaultLaunchMode %s', value => {
+    expect(normalizeConfig({ composerDefaultLaunchMode: value })).toMatchObject({ composerDefaultLaunchMode: value });
+  });
+  it('drops an invalid launch mode', () => {
+    expect(normalizeConfig({ composerDefaultLaunchMode: 'bogus' as never })).not.toHaveProperty('composerDefaultLaunchMode');
+  });
+  it('keeps only agent and thread as the last transport mode', () => {
+    expect(normalizeConfig({ composerLastTransportMode: 'agent' })).toMatchObject({ composerLastTransportMode: 'agent' });
+    expect(normalizeConfig({ composerLastTransportMode: 'thread' })).toMatchObject({ composerLastTransportMode: 'thread' });
+    expect(normalizeConfig({ composerLastTransportMode: 'team' as never })).not.toHaveProperty('composerLastTransportMode');
+  });
+});

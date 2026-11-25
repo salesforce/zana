@@ -82,7 +82,7 @@ test('a plan with a Must fix is explained in plain language and cannot be launch
     await expect(review).toHaveJSProperty('open', true);
     const mustFix = review.getByTestId('plan-findings-blocking');
     await expect(mustFix.getByRole('heading', { name: 'Must fix' })).toBeVisible();
-    await expect(mustFix).toContainText('Step home asks for a role this Squad does not have.');
+    await expect(mustFix).toContainText('Step home: Write Home asks for a role this Squad does not have.');
     await expect(mustFix).not.toContainText('Ask the agent to revise the plan');
     const actions = review.getByTestId('plan-fix-actions');
     await expect(actions.getByRole('button', { name: 'Copy fix request' })).toBeVisible();

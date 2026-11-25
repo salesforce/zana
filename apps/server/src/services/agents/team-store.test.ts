@@ -66,8 +66,11 @@ describe('sanitizeTeam', () => {
       .toMatchObject({ routingEnforced: undefined });
   });
 
-  it('defaults legacy teams to CLI and preserves the whole-squad Modern transport', () => {
-    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [] })?.transport).toBe('CLI');
+  it('keeps absent transport absent and preserves CLI, Modern and Follow caller', () => {
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [] })).not.toHaveProperty('transport');
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], transport: null })).not.toHaveProperty('transport');
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], transport: 'CALLER' })?.transport).toBe('CALLER');
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], transport: 'CLI' })?.transport).toBe('CLI');
     expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], transport: 'MODERN' })?.transport).toBe('MODERN');
     expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], transport: 'mixed' })?.transport).toBe('CLI');
   });

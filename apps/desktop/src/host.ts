@@ -305,6 +305,7 @@ import { isRestfulAgentState, decayUnreliableAgentState, validateSquadExecutionT
 import type { TeamJobLaunchInput, TeamJobLaunchResponse } from '@zana-ai/zcc-domain/product';
 import { parseLaunchSection } from '@zana-ai/zcc-server/services/execution/portable-plan';
 import type { ConversationHistorySnapshot } from '@zana-ai/zcc-domain/product';
+import { TransportPins, pinTeamTransport, resolveTeamTransport, toPinned, type PinnedTransport } from './squad-transport-pin.js';
 import type { CancelTeamLaunchResult, LaunchTeamResult, TeamLaunchAuthorizationInputSlot, TeamLaunchAuthorizationResult, TeamLaunchRequestInput, TeamFailedWorkerSlot, TeamLaunchedWorker } from '@zana-ai/zcc-domain/product';
 import type { SubagentChild } from '@zana-ai/zcc-domain/product';
 import type { FeedEvent, FeedEventInput, FeedDigestResult } from '@zana-ai/zcc-domain/product';
@@ -5952,8 +5953,11 @@ async function resolveTeamModelSnapshots(
   request: { teamId: string; slots: readonly { initialTask: string }[] }
 ): Promise<ResolvedModelSnapshotV1[]> {
   const project = store.listProjects().find((candidate) => candidate.id === projectId);
-  const team = teams.list().find((candidate) => candidate.id === request.teamId);
-  if (!project || !team) throw new Error('team or project not found');
+  const rawTeam = teams.list().find((candidate) => candidate.id === request.teamId);
+  if (!project || !rawTeam) throw new Error('team or project not found');
+  const pinnedModels = pinTransportForLaunch(rawTeam, project, undefined);
+  if (!pinnedModels.ok) throw new Error(pinnedModels.message);
+  const team = pinnedModels.team;
   const hostProblem = teamHostProblem(project, localHostId());
   if (hostProblem) throw new Error(hostProblem);
   const slots = expandTeamSlots(team);
@@ -6013,6 +6017,51 @@ function modernSnapshotIdentityOk(
   }) !== undefined;
 }
 
+const transportPins = new TransportPins();
+
+/**
+ * Resolve the Squad transport once per launch request and reuse it for every
+ * later read (authorize, launch, model snapshots, digest recheck). The renderer
+ * is not trusted; the caller kind comes from the pin set by main.
+ */
+function pinTransportForLaunch<T extends { transport?: SquadTransport | 'CALLER' }>(
+  team: T,
+  project: { remote?: unknown },
+  launchRequestId: string | undefined
+): { ok: true; team: T & { transport: SquadTransport }; pin: PinnedTransport } | { ok: false; message: string } {
+  let pin = transportPins.get(launchRequestId);
+  if (!pin) {
+    const resolution = resolveTeamTransport({ team, config: store.getConfig(), project, source: 'agent' });
+    if (!resolution.ok) return { ok: false, message: resolution.refusal };
+    pin = toPinned(resolution)!;
+    if (launchRequestId) transportPins.set(launchRequestId, pin);
+  }
+  return { ok: true, team: pinTeamTransport(team, pin), pin };
+}
+
+/** Caller transport for a launch principal: a live PTY is CLI, a live conversation thread is Modern. */
+async function callerTransportOf(principalId: string, projectId: string): Promise<SquadTransport | undefined> {
+  const proposer = await lookupProposer(principalId, projectId);
+  if (!proposer) return undefined;
+  return proposer.kind === 'pty' ? 'CLI' : 'MODERN';
+}
+
+/** Resolves and pins the transport with the caller known, then authorizes. */
+async function authorizeTeamLaunchForCaller(
+  ...args: Parameters<typeof authorizeTeamLaunch>
+): Promise<Result<TeamLaunchAuthorizationResult>> {
+  const [callerPrincipalId, teamId, projectId, launchRequestId] = args;
+  const team = teams.list().find((candidate) => candidate.id === teamId);
+  const project = store.listProjects().find((candidate) => candidate.id === projectId);
+  if (team && project && launchRequestId.trim() && !transportPins.get(launchRequestId)) {
+    const callerTransport = await callerTransportOf(callerPrincipalId, projectId);
+    const resolution = resolveTeamTransport({ team, config: store.getConfig(), project, callerTransport, source: 'agent' });
+    if (!resolution.ok) return { ok: false, code: 'TRANSPORT_UNAVAILABLE', message: resolution.refusal };
+    transportPins.set(launchRequestId, toPinned(resolution)!);
+  }
+  return authorizeTeamLaunch(...args);
+}
+
 export function authorizeTeamLaunch(
   callerPrincipalId: string,
   teamId: string,
@@ -6031,12 +6080,15 @@ export function authorizeTeamLaunch(
     }
   }
   if (!callerPrincipalId.trim() || !launchRequestId.trim()) return { ok: false, code: 'DENIED', message: 'missing caller principal or launch request id' };
-  const team = teams.list().find((candidate) => candidate.id === teamId);
-  if (!team) return { ok: false, code: 'NOT_FOUND', message: `team not found: ${teamId}` };
+  const rawTeam = teams.list().find((candidate) => candidate.id === teamId);
+  if (!rawTeam) return { ok: false, code: 'NOT_FOUND', message: `team not found: ${teamId}` };
   const project = store.listProjects().find((candidate) => candidate.id === projectId);
   if (!project) return { ok: false, code: 'NOT_FOUND', message: 'project not found' };
   const hostProblem = teamHostProblem(project, localHostId());
   if (hostProblem) return { ok: false, code: 'HOST_UNSUPPORTED', message: hostProblem };
+  const pinned = pinTransportForLaunch(rawTeam, project, launchRequestId);
+  if (!pinned.ok) return { ok: false, code: 'TRANSPORT_UNAVAILABLE', message: pinned.message };
+  const team = pinned.team;
   const autonomous = coordinationMode === 'autonomous-team'
     || (coordinationMode === 'freeform' && store.getConfig().teamLaunchEnabled === true);
   const personaSnapshot = personas.list();
@@ -6147,6 +6199,7 @@ export function authorizeTeamLaunch(
       projectId: project.id,
       slots: authorized,
       admissionDigest,
+      resolvedTransport: pinned.pin,
       context: {
         version: 1,
         principalId: principalRef.id,
@@ -6329,9 +6382,9 @@ export async function launchTeam(
   projectId?: string,
   opts?: { goal?: string; callerPrincipalId?: string; onComplete?: 'leave' | 'merge' | 'delete' } | TeamLaunchRequestInput
 ): Promise<Result<LaunchTeamResult>> {
-  const team = teams.list().find((t) => t.id === teamId);
-  if (!team) return { ok: false, code: 'NOT_FOUND', message: `team not found: ${teamId}` };
-  const targetProjectId = projectId ?? team.defaultProjectId;
+  const rawTeam = teams.list().find((t) => t.id === teamId);
+  if (!rawTeam) return { ok: false, code: 'NOT_FOUND', message: `team not found: ${teamId}` };
+  const targetProjectId = projectId ?? rawTeam.defaultProjectId;
   if (!targetProjectId) {
     return { ok: false, code: 'INVALID', message: 'no projectId and team has no defaultProjectId' };
   }
@@ -6339,6 +6392,9 @@ export async function launchTeam(
   if (!project) return { ok: false, code: 'NOT_FOUND', message: 'project not found' };
   const hostProblem = teamHostProblem(project, localHostId());
   if (hostProblem) return { ok: false, code: 'HOST_UNSUPPORTED', message: hostProblem };
+  const pinnedLaunch = pinTransportForLaunch(rawTeam, project, opts && 'launchRequestId' in opts ? opts.launchRequestId : undefined);
+  if (!pinnedLaunch.ok) return { ok: false, code: 'TRANSPORT_UNAVAILABLE', message: pinnedLaunch.message };
+  const team = pinnedLaunch.team;
   const currentConfig = store.getConfig();
 
   const personaSnapshot = personas.list();
@@ -6787,7 +6843,7 @@ export async function launchTeam(
         if (!authorization) return { ok: false, code: 'DENIED', message: 'unknown authorization' };
         const currentProject = store.listProjects().find(candidate => candidate.id === targetProjectId);
         if (!currentProject || projectIdentityDigest(currentProject) !== authorization.binding.projectIdentityDigest
-          || launchDigest({ team: teams.list().find(candidate => candidate.id === team.id), personas: personas.list() }) !== authorization.binding.storeRevision) {
+          || launchDigest({ team: ((fresh) => fresh && pinTeamTransport(fresh, { transport: team.transport, source: 'squad' }))(teams.list().find(candidate => candidate.id === team.id)), personas: personas.list() }) !== authorization.binding.storeRevision) {
           throw new Error('Modern launch context changed after authorization');
         }
         if (launchDeadlineAt !== undefined && launchDeadlineAt <= Date.now()) throw new Error('team launch deadline elapsed before create');
@@ -7482,6 +7538,10 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
   teams: { get: (id) => teams.list().find((team) => team.id === id) },
   personas: { get: (id) => personas.list().find((persona) => persona.id === id) },
   teamHostProblem: (project) => teamHostProblem(project as Project, localHostId()),
+  resolveTransport: (team, project, callerTransport) => {
+    const r = resolveTeamTransport({ team, config: store.getConfig(), project, callerTransport, source: 'agent' });
+    return r.ok ? toPinned(r)! : { transport: 'CLI', source: 'fallback' };
+  },
   expandTeamSlots,
   resolveSquadPlan: (planSource, texts) => resolveSquadPlan(planSource, texts),
   canonicalPlanText: (workUnits, options) => renderCanonicalPlan(workUnits as PortablePlanWorkUnitInput[], options),
@@ -7605,11 +7665,12 @@ export async function handleSquadTerminalWithReport(
   }
 }
 
-export function canInferPlanForTeam(team: { orchestratorPersonaId?: string; transport?: SquadTransport }): boolean {
+export function canInferPlanForTeam(team: { orchestratorPersonaId?: string; transport?: SquadTransport | 'CALLER' }): boolean {
   const orchestrator = team.orchestratorPersonaId
     ? personas.list().find((persona) => persona.id === team.orchestratorPersonaId)
     : undefined;
-  return !!orchestrator && canAuthorAndRegisterPlan(orchestrator, { transport: planAuthoringTransportOf(team.transport) });
+  const resolved = resolveTeamTransport({ team: team as Team, config: store.getConfig(), project: undefined, source: 'agent' });
+  return !!orchestrator && canAuthorAndRegisterPlan(orchestrator, { transport: planAuthoringTransportOf(resolved.ok ? resolved.transport : 'CLI') });
 }
 
 /** `list_teams` MCP output: the summary plus whether the orchestrator can write a plan. */
@@ -7738,7 +7799,7 @@ const squadExecutionService = new SquadExecutionService({
   inbox: inboxStore,
   triggerDeliveryDrain: (sessionId) => executionDeliveryDrain.forceCheck(sessionId),
   logError: (message, error) => logMainError(message, error),
-  authorizeTeamLaunch,
+  authorizeTeamLaunch: authorizeTeamLaunchForCaller,
   launchTeam,
   getTeamLaunch: async (callerPrincipalId, launchRequestId) => {
     const result = await getTeamLaunch(callerPrincipalId, launchRequestId);
@@ -7936,6 +7997,11 @@ const squadExecutionService = new SquadExecutionService({
     const project = store.listProjects().find((candidate) => candidate.id === projectId);
     const team = teams.list().find((candidate) => candidate.id === request.teamId);
     const config = store.getConfig();
+    // Read-only: admission must not pin before the caller is known.
+    const admissionTransport = team && project
+      ? (transportPins.get(request.launchRequestId)?.transport
+        ?? (() => { const r = resolveTeamTransport({ team, config, project, source: 'agent' }); return r.ok ? r.transport : 'CLI'; })())
+      : undefined;
     const projectSettings = project ? await getAuthoritativeProjectSettings(projectId) : undefined;
     const personaSnapshot = personas.list();
     const personaIds = [...new Set([...(team?.slots.map((slot) => slot.personaId) ?? []), ...(team?.orchestratorPersonaId ? [team.orchestratorPersonaId] : [])])].sort();
@@ -8021,7 +8087,7 @@ const squadExecutionService = new SquadExecutionService({
       })()),
       ...slotSkillAllowlistFact(team, personaSnapshot, model.personaId, model.slotId),
       ...slotMcpAllowlistFact(team, personaSnapshot, model.personaId, model.slotId,
-        { provider: model.provider, remoteCli: team?.transport !== 'MODERN' && !!project?.remote })
+        { provider: model.provider, remoteCli: admissionTransport !== 'MODERN' && !!project?.remote })
     }));
     const workerRoutes = slotRoutes.filter((slot) => !isOrchestratorSlotId(slot.slotId));
     // Advisory mode passes an explicit false so ROUTE_ELIGIBILITY stays non-required;
@@ -8251,6 +8317,13 @@ export async function startTeamJobFromUi(
   }
   const targetCheck = validateSquadExecutionTarget(parsedOptions.data);
   if (!targetCheck.ok) return { ok: false, code: 'INVALID', message: targetCheck.message };
+  // The New Agent picker is a UI-window hint: validated here, ignored for a pinned Squad, and resolved once for the run.
+  const launchModePick = sourceContext && (input.launchModePick === 'CLI' || input.launchModePick === 'MODERN') ? input.launchModePick : undefined;
+  const uiResolution = sourceContext && input.proposalId === undefined
+    ? resolveTeamTransport({ team, config: store.getConfig(), project, source: 'ui', ...(launchModePick ? { pick: launchModePick } : {}) })
+    : undefined;
+  if (uiResolution && !uiResolution.ok) return { ok: false, code: 'TRANSPORT_UNAVAILABLE', message: uiResolution.refusal };
+  const uiTransportPin = uiResolution?.ok ? toPinned(uiResolution) : undefined;
   const proposed = input.proposalId !== undefined;
   // A proposed launch is bound to its stored proposal and must come from a trusted window.
   if (proposed && !sourceContext) {
@@ -8282,6 +8355,7 @@ export async function startTeamJobFromUi(
     completionInboxNotice: true,
     sourceCapabilityIds, goalSources: discoveredGoalSources, reviewedSourcePaths,
     launchOptions: proposal?.launchOptions ?? parsedOptions.data,
+    ...((proposal?.resolvedTransport ?? uiTransportPin) ? { transportPin: (proposal?.resolvedTransport ?? uiTransportPin)! } : {}),
     launchPreview: proposal?.launchPreview ?? composerPreview
   }, {
     sources,
@@ -8299,10 +8373,10 @@ export async function startTeamJobFromUi(
   })), sourceCapabilityIds, renewal.reissue, logMainError, renewal.discardRetired);
 }
 
-const proposalLaunchDeps: ProposalLaunchDeps<NonNullable<ExecutionRecord['proposal']> & { launchOptions?: LaunchOptions; launchPreview?: SquadLaunchPreview }> = {
+const proposalLaunchDeps: ProposalLaunchDeps<NonNullable<ExecutionRecord['proposal']> & { launchOptions?: LaunchOptions; launchPreview?: SquadLaunchPreview; resolvedTransport?: PinnedTransport }> = {
   beginLaunch: async (proposalId, projectId) => {
     const result = await squadProposalService.beginLaunch(proposalId, projectId);
-    return result.ok ? { ...result, value: { ...result.value, proposal: { ...result.value.proposal, launchOptions: result.value.launchOptions, launchPreview: result.value.launchPreview } } } : result;
+    return result.ok ? { ...result, value: { ...result.value, proposal: { ...result.value.proposal, launchOptions: result.value.launchOptions, launchPreview: result.value.launchPreview, resolvedTransport: result.value.resolvedTransport as PinnedTransport | undefined } } } : result;
   },
   markLaunched: (proposalId, executionId) => squadProposalService.markLaunched(proposalId, executionId),
   releaseLaunch: (proposalId) => squadProposalService.releaseLaunch(proposalId),
@@ -8315,6 +8389,7 @@ const squadLaunchDeps: SquadLaunchDeps = {
   realpath: (path) => realpath(path),
   sourceBases: () => squadSourceBases(),
   newLaunchRequestId: () => `ui:${randomUUID()}`,
+  pinLaunchTransport: (launchRequestId, pin) => transportPins.set(launchRequestId, pin as PinnedTransport),
   inboxStore,
   planCorrectionLaunchBinding,
   canInferPlanForTeam: (teamId) => { const team = teams.list().find((candidate) => candidate.id === teamId); return !!team && canInferPlanForTeam(team); },
@@ -10786,7 +10861,7 @@ async function bootstrapNormal() {
     // flag, read at boot (toggling takes effect on next launch), mirroring the
     // `closeIdlePeersEnabled` pattern. main authorizes the whole launch.
     launchTeam: store.getConfig().teamLaunchEnabled ? launchTeam : undefined,
-    authorizeTeamLaunch: store.getConfig().teamLaunchEnabled ? authorizeTeamLaunch : undefined,
+    authorizeTeamLaunch: store.getConfig().teamLaunchEnabled ? authorizeTeamLaunchForCaller : undefined,
     evaluateTeamAdmission: store.getConfig().teamLaunchEnabled ? async ({ projectId, teamId, slots, policy }) => {
       const result = await squadExecutionService.dryRun(projectId, {
         version: 1, teamId, launchRequestId: `admission:${randomUUID()}`, slots,

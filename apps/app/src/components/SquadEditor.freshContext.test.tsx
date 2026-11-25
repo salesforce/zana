@@ -22,7 +22,7 @@ import { SquadEditor } from './SquadEditor';
 
 /** #579: the Team editor's "fresh session per unit" checkbox. */
 const base: Team = {
-  id: 'user:s', name: 'S', orchestratorPersonaId: 'p-orch', source: 'user',
+  id: 'user:s', name: 'S', orchestratorPersonaId: 'p-orch', source: 'user', transport: 'CLI',
   slots: [{ personaId: 'p-orch', quantity: 1 }, { personaId: 'p-worker', quantity: 1 }]
 };
 const CHECKBOX = /^Start each unit in a fresh session$/i;
@@ -90,7 +90,7 @@ describe('REQ-9 the checkbox is hidden where it cannot work', () => {
   it('does not save the flag when the squad is switched to Modern', async () => {
     const team = { ...base, slots: [base.slots[0]!, { personaId: 'p-worker', quantity: 1, freshContextPerUnit: true }] };
     render(<SquadEditor team={team} mode="edit" onClose={vi.fn()} />);
-    fireEvent.change(screen.getByLabelText('Squad transport'), { target: { value: 'MODERN' } });
+    fireEvent.change(screen.getByLabelText('Squad launch mode'), { target: { value: 'MODERN' } });
     expect((await saveTeam()).slots[1]).not.toHaveProperty('freshContextPerUnit');
   });
 });

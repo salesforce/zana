@@ -17,6 +17,8 @@ import { getThreadModelCatalog, subscribeThreadModelCatalog } from './thread/pic
 import { unknownPersonaModels } from '../lib/persona-model-warning.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
 import { SquadTransportChip } from './SquadTransportChip.js';
+import { inheritOptionLabel } from '@zana-ai/zcc-domain/setting-precedence';
+import { resolveSquadTransportView, useSquadTransportConfig } from '../lib/squad-transport.js';
 import { isLaunchApproval, type LaunchApproval } from '@zana-ai/zcc-domain/squad-proposal';
 
 /**
@@ -312,7 +314,8 @@ interface TeamDraft {
   claimWallClockMin: string;
   claimStallMin: string;
   claimOutputCeilingMin: string;
-  transport: SquadTransport;
+  /** `DEFAULT` = Use default (saved as an absent transport). */
+  transport: SquadTransport | 'CALLER' | 'DEFAULT';
   defaultPlanning: '' | 'infer' | 'provided';
   launchApproval: '' | LaunchApproval;
   slots: SlotDraft[];
@@ -391,7 +394,7 @@ function draftForTeam(team: Team | null): TeamDraft {
     claimWallClockMin: team?.limits?.claimWallClockMs === undefined ? '' : String(wholeMinutes(team.limits.claimWallClockMs, LIMIT_MINUTES.wall)),
     claimStallMin: team?.limits?.claimStallMs === undefined ? '' : String(wholeMinutes(team.limits.claimStallMs, LIMIT_MINUTES.stall)),
     claimOutputCeilingMin: team?.limits?.claimOutputCeilingMs === undefined ? '' : String(wholeMinutes(team.limits.claimOutputCeilingMs, LIMIT_MINUTES.ceiling)),
-    transport: team?.transport ?? 'CLI',
+    transport: team?.transport ?? 'DEFAULT',
     defaultPlanning: team?.defaultPlanning ?? '',
     launchApproval: team?.launchApproval ?? '',
     slots
@@ -452,11 +455,15 @@ function TeamForm({
   const [claimWallClockMin, setClaimWallClockMin] = useState(initialDraft.current.claimWallClockMin);
   const [claimStallMin, setClaimStallMin] = useState(initialDraft.current.claimStallMin);
   const [claimOutputCeilingMin, setClaimOutputCeilingMin] = useState(initialDraft.current.claimOutputCeilingMin);
-  const [transport, setTransport] = useState<SquadTransport>(initialDraft.current.transport);
+  const [transport, setTransport] = useState<SquadTransport | 'CALLER' | 'DEFAULT'>(initialDraft.current.transport);
   const [defaultPlanning, setDefaultPlanning] = useState<'' | 'infer' | 'provided'>(initialDraft.current.defaultPlanning);
   const [launchApproval, setLaunchApproval] = useState<'' | LaunchApproval>(initialDraft.current.launchApproval);
   const [slots, setSlots] = useState<SlotDraft[]>(initialDraft.current.slots);
   const [saving, setSaving] = useState(false);
+  const transportConfig = useSquadTransportConfig();
+  const defaultView = resolveSquadTransportView({}, transportConfig);
+  // What this draft would run as with no calling agent; gates the Modern-incompatible slot options.
+  const effectiveTransport = resolveSquadTransportView(transport === 'DEFAULT' ? {} : { transport }, transportConfig).transport;
 
   const draft = {
     name, icon, description, initialPrompt, orchestratorPersonaId, defaultProjectId,
@@ -609,9 +616,9 @@ function TeamForm({
         ...(s.label.trim() ? { label: s.label.trim() } : {}),
         ...(s.roles !== undefined ? { roles: s.roles } : {}),
         // On-demand seats need the engine of a plan-driven CLI squad; never store the flag otherwise.
-        ...(s.startOnDemand && transport !== 'MODERN' && s.personaId !== orchestratorPersonaId ? { startOnDemand: true as const } : {}),
+        ...(s.startOnDemand && effectiveTransport !== 'MODERN' && s.personaId !== orchestratorPersonaId ? { startOnDemand: true as const } : {}),
         // A fresh session per unit needs the same plan-driven CLI squad; never store the flag otherwise.
-        ...(s.freshContextPerUnit && transport !== 'MODERN' && s.personaId !== orchestratorPersonaId ? { freshContextPerUnit: true as const } : {})
+        ...(s.freshContextPerUnit && effectiveTransport !== 'MODERN' && s.personaId !== orchestratorPersonaId ? { freshContextPerUnit: true as const } : {})
       }));
     // Keep orchestrator only if it's still one of the slots.
     const orch =
@@ -632,7 +639,7 @@ function TeamForm({
       retainOrchestrator,
       ...(leanWorkers ? { leanWorkers: true as const } : {}),
       ...limitsInput({ maxConcurrent, claimWallClockMin, claimStallMin, claimOutputCeilingMin }),
-      transport,
+      ...(transport === 'DEFAULT' ? {} : { transport }),
       ...(defaultPlanning ? { defaultPlanning } : {}),
       ...(launchApproval ? { launchApproval } : {}),
       ...(keepsId && team?.isDefault ? { isDefault: true } : {})
@@ -727,17 +734,25 @@ function TeamForm({
         </div>
 
         <div className="scheduler-form-field">
-          <label htmlFor="team-transport">Transport</label>
+          <label htmlFor="team-transport">Squad launch mode</label>
           <select
             id="team-transport"
             value={transport}
-            onChange={(event) => setTransport(event.target.value as SquadTransport)}
-            aria-label="Squad transport"
+            onChange={(event) => setTransport(event.target.value as SquadTransport | 'CALLER' | 'DEFAULT')}
+            aria-label="Squad launch mode"
           >
+            <option value="DEFAULT">{inheritOptionLabel(defaultView.label)}</option>
+            <option value="CALLER">Follow caller ({defaultView.label} otherwise)</option>
             <option value="CLI">CLI Agent</option>
             <option value="MODERN">Modern</option>
           </select>
-          <span className="settings-help">One transport applies to every worker and orchestrator.</span>
+          <span className="settings-help">
+            One launch mode applies to every worker and orchestrator. Use default follows the All Squads default in Settings &gt; Squads; Follow caller matches the session that launches it.
+          </span>
+          <details className="team-editor-how">
+            <summary>How the launch mode is decided</summary>
+            <PrecedenceStrip settingKey="squad.transport" />
+          </details>
         </div>
 
         <h4 className="team-editor-section">Roster</h4>
@@ -852,7 +867,7 @@ function TeamForm({
                     </span>
                     {(() => {
                       const isOrch = orchestratorPersonaId === slot.personaId;
-                      const plan = transport !== 'MODERN';
+                      const plan = effectiveTransport !== 'MODERN';
                       // The orchestrator keeps its two plan-only toggles visible but unavailable, so the row shape never shifts.
                       const toggle = (key: 'startOnDemand' | 'freshContextPerUnit', Icon: typeof Timer, name: string, why: string) => (
                         <button
@@ -900,13 +915,13 @@ function TeamForm({
           )}
           {slots.length > 0 && (
             <div className="settings-help team-slot-legend" data-testid="team-slot-legend">
-              {transport !== 'MODERN' && (
+              {effectiveTransport !== 'MODERN' && (
                 <>
                   <span><Timer size={12} aria-hidden /> Start only when its first unit is ready (a late review or QA seat uses no session while it waits)</span>
                   <span><RefreshCw size={12} aria-hidden /> {FRESH_SESSION_LEGEND}</span>
                 </>
               )}
-              <span><Crown size={12} aria-hidden /> Orchestrator, launched first with the opening prompt.{transport !== 'MODERN' ? ' The first two apply to plan-driven Squads only.' : ''}</span>
+              <span><Crown size={12} aria-hidden /> Orchestrator, launched first with the opening prompt.{effectiveTransport !== 'MODERN' ? ' The first two apply to plan-driven Squads only.' : ''}</span>
               {slots.some((s) => slotNeedsRolesHint({ roles: s.roles, label: s.label }, personaById.get(s.personaId))) && (
                 <span id="team-slot-roles-legend" role="note" className="team-slot-roles-legend"><TriangleAlert size={12} aria-hidden /> {SLOT_ROLES_HINT}</span>
               )}

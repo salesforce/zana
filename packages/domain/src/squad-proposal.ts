@@ -165,9 +165,17 @@ export interface SquadPlanSkipImpact {
 /** Most skip-impact rows sent to the card; the plan check itself has no such cap. */
 export const SQUAD_PLAN_SKIP_IMPACT_CAP = 60;
 
+/** Transport decided when the proposal was made; launch reuses it so a settings change in between cannot change the run. */
+export interface SquadProposalTransportPin {
+  transport: 'CLI' | 'MODERN';
+  source: string;
+  fallbackReason?: string;
+}
+
 export interface SquadProposalRecord {
   launchPreview?: SquadLaunchPreview;
   launchOptions?: LaunchOptions;
+  resolvedTransport?: SquadProposalTransportPin;
   /** Host-authored advisory snapshot; launch revalidates against current project state. */
   location?: SquadLaunchLocation;
   id: string;
@@ -216,6 +224,9 @@ export type SquadLaunchPreview = z.infer<typeof squadLaunchPreviewSchema>;
 export const squadProposalRecordSchema = z.object({
   launchPreview: squadLaunchPreviewSchema.optional(),
   launchOptions: launchOptionsSchema.optional(),
+  resolvedTransport: z.object({
+    transport: z.enum(['CLI', 'MODERN']), source: z.string().min(1).max(40), fallbackReason: z.string().max(500).optional()
+  }).optional(),
   location: squadLaunchLocationSchema.optional(),
   id: z.string().min(1),
   projectId: z.string().min(1),
@@ -605,7 +616,7 @@ export function personaCanWriteFiles(
 /** How a planless coordinator hands its authored plan to the host on a given transport. */
 export type PlanAuthoringTransport = 'cli' | 'modern';
 
-export function planAuthoringTransportOf(transport: SquadTransport | undefined): PlanAuthoringTransport {
+export function planAuthoringTransportOf(transport: SquadTransport | 'CALLER' | undefined): PlanAuthoringTransport {
   return transport === 'MODERN' ? 'modern' : 'cli';
 }
 

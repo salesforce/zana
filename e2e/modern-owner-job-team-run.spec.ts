@@ -91,7 +91,7 @@ test('Modern owner starts a durable Job Team through the host tool-call bridge a
     }));
     await window.evaluate(() => window.cc.teams.save({
       id: 'e2e-job-team', name: 'E2E Job Team', description: 'Modern owner durable team',
-      slots: [{ personaId: 'e2e-worker', quantity: 2 }], orchestratorPersonaId: 'e2e-orchestrator'
+      slots: [{ personaId: 'e2e-worker', quantity: 2 }], orchestratorPersonaId: 'e2e-orchestrator', transport: 'CLI'
     }));
 
     projectId = await window.evaluate(async (path) => {

@@ -1042,7 +1042,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, mobil
     const isOrchestrator = cohort?.role === 'orchestrator';
     // A live session is always a CLI agent; a Modern member card is Modern, and
     // a synthetic Job host borrows its squad's transport.
-    const transport = agentSessionTransport(t, teams, Boolean(c.isSyntheticExecutionHost), Boolean(c.modernThreadId));
+    const transport = agentSessionTransport(t, teams, Boolean(c.isSyntheticExecutionHost), Boolean(c.modernThreadId), execution?.resolvedTransport?.transport);
     const teamRunTooltip = execution
       ? [
           `Squad: ${execution.teamName ?? cohort?.teamName ?? 'Squad'}`,

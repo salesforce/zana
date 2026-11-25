@@ -125,7 +125,7 @@ Your own Squads are saved in `~/.zcc/teams`.
 ### Edit override and Duplicate to user
 
 Open a Squad to see its detail. It lists the slots, the opening prompt, and the
-Squad's transport. The bottom button depends on the source:
+Squad's launch mode. The bottom button depends on the source:
 
 | Source | Button | What it does |
 |---|---|---|
@@ -154,18 +154,29 @@ with.
 **Name** is required. **Icon** and **Description** (one line shown in the
 catalogue) are optional.
 
-### Transport
+### Squad launch mode
 
-- Choices: **CLI Agent** or **Modern**.
+- Choices: **Use default**, **Follow caller**, **CLI Agent** or **Modern**.
 - **CLI Agent** runs each agent as a command-line agent session. **Modern** uses the same session type as the **Modern** launch mode in New Chat and New agent.
-- Default: **CLI Agent**. If you are unsure, keep it.
-- Help text: "One transport applies to every worker and orchestrator."
+- **Follow caller** matches the session that launches the Squad. **Use default** follows the **All Squads launch mode** in **Settings > Squads > Defaults**: **Follow caller** (the default), **Follow Default launch mode**, **CLI Agent** or **Modern**.
+- Default: **Use default**. A Squad with no saved choice means **Use default**.
+- Help text: "One launch mode applies to every worker and orchestrator."
 
-The transport belongs to the Squad. You do not choose it at launch. Every Squad
-picker shows it as a small chip. Change it when you want the Squad's agents to
-run on the other kind of session. It also decides how an Orchestrator hands
-over an inferred plan. See
-[Infer plan from goal](#infer-plan-from-goal-a-second-step).
+Zana picks the mode once per launch, in this order. The first match wins:
+
+1. The Squad's own **CLI Agent** or **Modern** choice.
+2. The **Squad launch mode** picker in the New agent Squad composer.
+3. The session that launches the Squad, when an agent starts it through MCP.
+4. **Follow caller** on the Squad, or **Use default** resolved through the All Squads launch mode.
+5. Your **Default launch mode**.
+6. **CLI Agent**.
+
+The run keeps that mode. Resume and recovery do not pick again. Modern needs a
+local Project. If the mode was inherited and the Project is remote, the Squad
+runs as CLI Agent and a notice says so. If you pinned Modern, or picked it at
+launch, a remote Project refuses the launch. Every Squad picker shows the mode
+as a small chip. The mode also decides how an Orchestrator hands over an
+inferred plan. See [Infer plan from goal](#infer-plan-from-goal-a-second-step).
 
 ### Slots
 
@@ -373,7 +384,7 @@ and does not defer failure until completion.
 **Infer plan from goal** lets the Orchestrator write the plan from your goal.
 Try it after you have finished a run with **Plan provided in goal**. The
 Orchestrator needs to be able to hand its plan to Zana, and how it does that
-depends on the Squad's **Transport**.
+depends on the Squad's launch mode.
 
 - **CLI Agent.** The Orchestrator writes the plan as a file in a `.zana` folder.
   Zana reads that file when the Orchestrator goes idle, checks it with the same
@@ -440,7 +451,7 @@ It watches the folder, so new files appear on the Squads page with the
 
 - `id`, `name`, and a list of `slots` are required. Each slot needs a
   `personaId`. `quantity` is clamped to 1 to 16.
-- The other editor options are saved as `transport` (`CLI` or `MODERN`),
+- The other editor options are saved as `transport` (`CLI`, `MODERN` or `CALLER`; leave it out for **Use default**),
   `worktreeIsolation` and `routingEnforced` (`true` or `false`), `worktreeOnComplete` (`"leave"`, `"merge"` or `"delete"`), `retainOrchestrator`,
   `defaultPlanning` (`infer` or `provided`), `launchApproval` (`direct` or
   `review`), and `isDefault`.

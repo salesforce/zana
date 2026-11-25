@@ -329,6 +329,7 @@ export function executionBoardProjection(record: ExecutionRecord, orchestratorSe
     ...(record.request.launchDisplay ?? record.launchDisplay ? { launchDisplay: record.request.launchDisplay ?? record.launchDisplay } : {}),
     jobTitle: record.jobTitle,
     ...(record.coordinationMode ? { coordinationMode: record.coordinationMode } : {}),
+    ...(record.resolvedTransport ? { resolvedTransport: record.resolvedTransport } : {}),
     ...(record.origin ? { origin: record.origin } : {}),
     ...(record.proposal ? { startedFrom: {
       kind: record.proposal.proposerKind,

@@ -10,7 +10,7 @@ test.setTimeout(120_000);
 
 async function configureFailedDagTeam(window: Page, binary: string, projectDir: string): Promise<string> {
   await window.evaluate((bin) => window.cc.config.set({
-    teamJobLaunchEnabled: true, sponsorPromptDismissed: true, claudeBinary: bin, defaultHarness: 'claude'
+    squadDefaultTransport: 'CLI', teamJobLaunchEnabled: true, sponsorPromptDismissed: true, claudeBinary: bin, defaultHarness: 'claude'
   }), binary);
   await window.evaluate(() => window.cc.personas.save({
     id: 'e2e-failure-orchestrator', name: 'E2E Failure Orchestrator', description: 'Failed DAG coordinator',

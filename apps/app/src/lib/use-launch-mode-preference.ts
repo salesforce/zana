@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
+import { product } from './product-client.js';
 import {
+  launchModeMirrorPatch,
   readLaunchModePreference,
   subscribeLaunchModePreference,
   writeLaunchModePreference,
@@ -15,6 +17,7 @@ export function useLaunchModePreference(): [LaunchMode, (mode: LaunchMode) => vo
     value,
     (next) => {
       writeLaunchModePreference(next);
+      product.config.set(launchModeMirrorPatch(next)).catch(() => {});
       setValue(next);
     }
   ];

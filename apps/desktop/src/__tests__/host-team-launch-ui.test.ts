@@ -146,7 +146,7 @@ const persona = (id: string, extra: Record<string, unknown> = {}) => ({ id, name
 
 beforeEach(() => {
   h.projects = [{ id: 'p1', name: 'Proj', path: projectDir }];
-  h.config = { version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null, autoRenameTabs: false };
+  h.config = { squadDefaultTransport: 'CLI', version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null, autoRenameTabs: false };
   h.personas = [persona('orch'), persona('w1')];
   h.teams = [{ id: 'team1', name: 'Team One', orchestratorPersonaId: 'orch', slots: [{ personaId: 'w1', quantity: 2 }] }];
   h.creates.length = 0;

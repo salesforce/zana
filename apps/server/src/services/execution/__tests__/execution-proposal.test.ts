@@ -378,6 +378,16 @@ describe('onHumanBlocker', () => {
   }));
 });
 
+describe('board projection resolvedTransport', () => {
+  it('exposes the pinned launch mode and omits it for older runs', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(claimInput({}) as never)).record;
+    expect('resolvedTransport' in executionBoardProjection(record)).toBe(false);
+    const pinned = { ...record, resolvedTransport: { transport: 'MODERN' as const, source: 'global' as const } };
+    expect(executionBoardProjection(pinned as ExecutionRecord).resolvedTransport).toEqual({ transport: 'MODERN', source: 'global' });
+  }));
+});
+
 describe('board projection startedFrom', () => {
   it('maps the proposer when present and omits it otherwise', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });

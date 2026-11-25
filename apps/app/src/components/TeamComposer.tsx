@@ -36,6 +36,8 @@ import { useComposerPromptField } from './composer/use-composer-prompt-field.js'
 import { useComposerSession, useComposerSetting } from './composer/ComposerDraft.js';
 import { applyRenewedSources } from './team-composer-sources.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
+import { resolveSquadTransportView, SQUAD_TRANSPORT_SOURCE_TEXT, useSquadTransportConfig } from '../lib/squad-transport.js';
+import { SQUAD_TRANSPORT_LABELS } from '@zana-ai/zcc-domain/squad-transport';
 import { squadPicklistOption } from './SquadTransportChip.js';
 import { defaultAutonomousTeamId } from './autonomous-team-composer.js';
 import {
@@ -55,6 +57,8 @@ type PreviewSnapshot = { resolved?: ExecutionResolvedLaunchV1; preview?: SquadLa
 const previewSnapshot = (value: PreviewSnapshot | undefined) => JSON.stringify({ resolved: value?.resolved, location: value?.preview?.location, path: value?.preview?.path, branch: value?.preview?.branch, head: value?.preview?.head });
 
 /** One durable Team launch surface for inferred and user-provided plans. */
+const LAUNCH_PICK_KEY = 'squad.launchModePick';
+
 export function TeamComposer({
   project: pinnedProject,
   composerProjectId,
@@ -129,6 +133,18 @@ export function TeamComposer({
   const project = pinnedProject ?? launchProjects.find((candidate) => candidate.id === projectId);
   const sortedTeams = useMemo(() => sortCatalogueByName(teams), [teams]);
   const selectedTeam = teams.find((team) => team.id === teamId);
+  // New Agent launch picker: renderer-only remembered choice. Main re-resolves and authorizes at launch.
+  const transportConfig = useSquadTransportConfig();
+  const [launchPickRaw, setLaunchPickRaw] = useState<string>(() => {
+    try { return window.localStorage.getItem(LAUNCH_PICK_KEY) ?? 'default'; } catch { return 'default'; }
+  });
+  const squadPinned = selectedTeam?.transport === 'CLI' || selectedTeam?.transport === 'MODERN';
+  const launchPick: 'CLI' | 'MODERN' | undefined = !squadPinned && (launchPickRaw === 'CLI' || launchPickRaw === 'MODERN') ? launchPickRaw : undefined;
+  const transportView = resolveSquadTransportView(selectedTeam, transportConfig, { remote: Boolean(project?.remote), ...(launchPick ? { pick: launchPick } : {}) });
+  const setLaunchPick = (value: string) => {
+    setLaunchPickRaw(value);
+    try { window.localStorage.setItem(LAUNCH_PICK_KEY, value); } catch { /* storage unavailable */ }
+  };
   const target = squadTargetSelector(targetValue);
   const { target: _storedTarget, ...policyOptions } = launchOptions;
   const effectiveOptions = reviewedBound ? prefill?.launchOptions ?? prefill?.launchPreview?.launchOptions ?? {} : { ...policyOptions, ...(target ? { target } : {}) };
@@ -399,6 +415,7 @@ export function TeamComposer({
         coordinationMode,
         ...(prefill?.projectId === project.id ? { proposalId: prefill.proposalId } : {}),
         ...effectiveOptions,
+        ...(!reviewedBound && launchPick ? { launchModePick: launchPick } : {}),
         ...(!reviewedBound && launchPreview && 'previewToken' in launchPreview && typeof launchPreview.previewToken === 'string'
           ? { previewToken: launchPreview.previewToken } : {}),
         ...(title.trim() ? { title: title.trim() } : {}),
@@ -609,6 +626,21 @@ export function TeamComposer({
                     }}
                   />
                 </div>
+                <div className="thread-command-chip" data-testid="team-launch-mode-chip" title={`${SQUAD_TRANSPORT_SOURCE_TEXT[transportView.source]}${transportView.fallbackReason ? ` — ${transportView.fallbackReason}` : ''}`}>
+                  <PopoverPicklist
+                    id="team-launch-mode"
+                    value={squadPinned ? 'default' : launchPickRaw === 'CLI' || launchPickRaw === 'MODERN' ? launchPickRaw : 'default'}
+                    ariaLabel="Squad launch mode"
+                    searchable={false}
+                    disabled={reviewedBound || squadPinned}
+                    options={[
+                      { value: 'default', label: squadPinned ? `Pinned: ${transportView.label}` : `Default: ${launchPick ? SQUAD_TRANSPORT_LABELS[resolveSquadTransportView(selectedTeam, transportConfig, { remote: Boolean(project?.remote) }).transport] : transportView.label}` },
+                      { value: 'CLI', label: SQUAD_TRANSPORT_LABELS.CLI },
+                      { value: 'MODERN', label: projectIsRemote ? `${SQUAD_TRANSPORT_LABELS.MODERN} (needs a local Project)` : SQUAD_TRANSPORT_LABELS.MODERN }
+                    ]}
+                    onChange={(value) => { if (!reviewedBound && !squadPinned) setLaunchPick(value); }}
+                  />
+                </div>
                 {!projectIsRemote && targetOptions.length > 2 ? (
                   <div className="thread-command-chip">
                     <PopoverPicklist
@@ -689,6 +721,7 @@ export function TeamComposer({
       <div className="launch-job-details" role="group" aria-label="Squad details">
         {reviewedBound ? <p role="note">Reviewed launch policies and target are fixed. Prepare a new proposal to change them.</p> : null}
         <div aria-label="Effective launch settings" role="status">
+          {selectedTeam && (launchPick === 'MODERN' && projectIsRemote ? <p className="team-launch-mode-note" role="alert" data-testid="team-launch-mode-note">Modern Squads need a local Project</p> : transportView.fallbackReason ? <p className="team-launch-mode-note" data-testid="team-launch-mode-note">{transportView.fallbackReason}</p> : null)}
           {currentPreview?.preview ? <p>Location: {currentPreview.preview.location.kind === 'new-worktree'
             ? `New worktree from ${currentPreview.preview.location.baseBranch} — isolation: ${currentPreview.preview.location.isolationSource}; path assigned at launch`
             : `${currentPreview.preview.branch} — ${currentPreview.preview.path}${currentPreview.preview.location.kind === 'worktree' ? ' (user-owned)' : ' (Project)'}`}</p> : null}

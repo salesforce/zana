@@ -67,7 +67,7 @@ test(`launching a ${coordinationMode} Team with ${profile} through the real UI c
     // Job Team mode is gated on `teamJobLaunchEnabled` (default true) AND a
     // configured team. Set the flag explicitly and seed an orchestrator-led team.
     await window.evaluate(({ bin, profile }) => window.cc.config.set({
-      teamJobLaunchEnabled: true,
+      squadDefaultTransport: 'CLI', teamJobLaunchEnabled: true,
       sponsorPromptDismissed: true,
       claudeBinary: bin,
       codexBinary: bin,
@@ -280,7 +280,7 @@ async function provisionGoalLimitScenario(window: Page): Promise<GoalLimitScenar
   };
   try {
     await window.evaluate(({ bin }) => window.cc.config.set({
-      teamJobLaunchEnabled: true, sponsorPromptDismissed: true, claudeBinary: bin, codexBinary: bin,
+      squadDefaultTransport: 'CLI', teamJobLaunchEnabled: true, sponsorPromptDismissed: true, claudeBinary: bin, codexBinary: bin,
       trustZccToolsEnabled: false, tmuxScope: 'off', defaultHarness: 'claude'
     }), { bin: agent.path });
     for (const [id, name] of [['e2e-orchestrator', 'E2E Orchestrator'], ['e2e-worker', 'E2E Worker']] as const) {
@@ -438,7 +438,7 @@ test(`a structured Team seeds a provided portable plan pre-launch with ${profile
 
   try {
     await window.evaluate(({ bin, profile }) => window.cc.config.set({
-      teamJobLaunchEnabled: true,
+      squadDefaultTransport: 'CLI', teamJobLaunchEnabled: true,
       sponsorPromptDismissed: true,
       claudeBinary: bin,
       codexBinary: bin,

@@ -16,6 +16,8 @@
 
 export type PrecedenceLayerId =
   | 'launch'
+  | 'caller'
+  | 'launch-mode'
   | 'plan'
   | 'squad'
   | 'agent'
@@ -46,6 +48,8 @@ export interface SettingPrecedence {
   key: string;
   label: string;
   layers: readonly PrecedenceLayerId[];
+  /** Row-specific wording for a layer, where the shared label would lose meaning on this setting. */
+  layerLabels?: Readonly<Partial<Record<PrecedenceLayerId, string>>>;
   mergeRule: PrecedenceMergeRule;
   /** One sentence shown when no arrowed strip applies, or after the strip. */
   note?: string;
@@ -55,6 +59,8 @@ export interface SettingPrecedence {
 
 export const LAYER_LABELS: Readonly<Record<PrecedenceLayerId, string>> = {
   launch: 'This launch',
+  caller: 'Calling session',
+  'launch-mode': 'Default launch mode',
   plan: 'Plan',
   squad: 'Squad',
   agent: 'Agent',
@@ -80,6 +86,14 @@ export const SETTING_PRECEDENCE = [
     layers: ['launch', 'plan', 'squad', 'project', 'global'],
     mergeRule: 'first',
     note: 'Choosing Project checkout or an existing worktree sets this launch, skips the Squad on-complete setting, and the worktree stays yours: it cannot be merged or deleted.'
+  },
+  {
+    key: 'squad.transport',
+    label: 'Squad launch mode',
+    layers: ['squad', 'launch', 'caller', 'global', 'launch-mode'],
+    layerLabels: { squad: 'Per Squad', launch: 'Launch dialog selection', global: 'All Squads' },
+    mergeRule: 'first',
+    note: 'A Squad pinned to CLI Agent or Modern wins over everything. Use default and Follow caller inherit. A Default launch mode of Squad resolves through your last CLI Agent or Modern choice.'
   },
   {
     key: 'squad.launchApproval',
@@ -146,7 +160,7 @@ export const SETTING_PRECEDENCE = [
     mergeRule: 'first',
     note: 'The built-in default is Infer plan from goal when the orchestrator can write a plan, otherwise Plan provided in goal. In the composer, the Squad default applies until you pick a mode.',
     evidence: [
-      { file: 'apps/desktop/src/squad-proposals/service.ts', line: 427, contains: "planningInput ?? team.defaultPlanning ?? (canInfer ? 'infer' : 'provided')" }
+      { file: 'apps/desktop/src/squad-proposals/service.ts', line: 433, contains: "planningInput ?? team.defaultPlanning ?? (canInfer ? 'infer' : 'provided')" }
     ]
   },
   {
@@ -189,11 +203,30 @@ const MERGE_SENTENCE: Record<Exclude<PrecedenceMergeRule, 'first'>, string> = {
  * The first layer that sets a value wins." Others name the layers and the rule,
  * with no left-to-right order implied beyond the listed layers.
  */
+export function precedenceLayerLabel(row: SettingPrecedence, id: PrecedenceLayerId): string {
+  return row.layerLabels?.[id] ?? LAYER_LABELS[id];
+}
+
 export function precedenceHelp(key: SettingPrecedenceKey): string {
   const row = getSettingPrecedence(key);
-  const names = row.layers.map((id) => LAYER_LABELS[id]);
+  const names = row.layers.map((id) => precedenceLayerLabel(row, id));
   const head = row.mergeRule === 'first'
     ? `Checked first to last: ${names.join(', then ')}. The first layer that sets a value wins.`
     : `Layers: ${names.join(', ')}. ${MERGE_SENTENCE[row.mergeRule]}`;
   return row.note ? `${head} ${row.note}` : head;
+}
+
+const TRANSPORT_NAMES = { CLI: 'CLI Agent', MODERN: 'Modern' } as const;
+
+/**
+ * Label for an inherit option, e.g. `Use default (Modern)`. Without a resolved
+ * value it is the bare template. `template` may contain `{value}`.
+ */
+export function inheritOptionLabel(
+  resolved?: keyof typeof TRANSPORT_NAMES | string,
+  template = 'Use default'
+): string {
+  if (!resolved) return template.replace(' ({value})', '').replace('{value}', '').trim();
+  const name = resolved in TRANSPORT_NAMES ? TRANSPORT_NAMES[resolved as keyof typeof TRANSPORT_NAMES] : resolved;
+  return template.includes('{value}') ? template.replace('{value}', name) : `${template} (${name})`;
 }
