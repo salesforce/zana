@@ -140,17 +140,25 @@ test('Squads groups the run and solo agents, filters both views and opens the re
     await caption('Map shows who is connected. Dashed lines show work dependencies.');
 
     if (!recording) {
-      await app.electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1120, 640));
+      await app.electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(940, 640));
       await click(page, attention);
       await expect(page.locator('.agents-board-content[data-execution-open]')).toBeFocused();
+      const detailLayout = page.locator('.execution-run-layout');
+      await expect.poll(() => detailLayout.evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').length)).toBe(1);
       await page.keyboard.press('Escape');
       await expect(attention).toBeFocused();
+      await app.electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 900));
     }
     await click(page, attention);
     const job = page.getByLabel('Squad details', { exact: true });
     const closeDetails = job.getByRole('button', { name: 'Close details', exact: true });
     await expect(squads).toBeHidden();
     const blocker = job.getByRole('region', { name: question, exact: true });
+    const work = job.getByRole('region', { name: 'Work steps', exact: true });
+    const rail = job.getByRole('complementary', { name: 'Run activity and diagnostics' });
+    await expect(work.getByRole('progressbar')).toHaveAttribute('value', '2');
+    await expect(rail.getByRole('heading', { name: 'Recent activity' })).toBeVisible();
+    await expect.poll(() => job.locator('.execution-run-layout').evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').length)).toBe(2);
     await expect(blocker.getByRole('heading', { name: question })).toBeVisible();
     const response = blocker.getByRole('textbox', { name: 'Your answer' });
     await expect(response).toBeVisible();
@@ -158,14 +166,30 @@ test('Squads groups the run and solo agents, filters both views and opens the re
     await expect(blocker.getByRole('radio')).toHaveCount(0);
     await response.scrollIntoViewIfNeeded();
     if (!recording) await page.screenshot({ path: testInfo.outputPath('blocker-open.png') });
-    await caption('The question leads. Suggestions are plain text, and the free-text field is ready to use.');
-    const diagnostics = blocker.getByText('Delivery details', { exact: true });
+    await caption('Squad details keeps the question and work steps together, with activity beside them.');
+    const diagnostics = rail.getByText('Delivery details', { exact: true });
+    const formTop = (await response.boundingBox())!.y;
     await click(page, diagnostics);
-    await expect(blocker.getByText('Inbox item', { exact: true })).toBeInViewport({ ratio: 1 });
+    await expect(rail.getByText('Inbox item', { exact: true })).toBeInViewport({ ratio: 1 });
     await expect(closeDetails).toBeInViewport({ ratio: 1 });
+    expect((await response.boundingBox())!.y).toBeCloseTo(formTop, 0);
     if (!recording) await page.screenshot({ path: testInfo.outputPath('blocker-diagnostics.png') });
-    await caption('Open Delivery details to see technical information when you need it.', 2700);
+    await caption('Delivery details opens in the side column while the reply stays in place.');
     await click(page, diagnostics);
+    const allEvents = rail.getByText(/^(All|Recent) events \(\d+\)$/);
+    await click(page, allEvents);
+    const eventLog = rail.getByRole('list', { name: 'Event log' });
+    await expect(eventLog.getByText('Execution reserved', { exact: false })).toBeVisible();
+    const warnings = rail.getByRole('checkbox', { name: 'Warnings only' });
+    await click(page, warnings);
+    await expect(eventLog.getByText('Execution reserved', { exact: false })).toHaveCount(0);
+    await caption('Recent activity shows milestones. All events keeps the full log, with a warnings filter.');
+    await click(page, allEvents);
+    const runDiagnostics = rail.getByText('Run diagnostics', { exact: true });
+    await click(page, runDiagnostics);
+    await expect(rail.getByText('Run ID', { exact: true })).toBeVisible();
+    await caption('Run diagnostics keeps execution IDs, usage, and routing information together.', 2800);
+    await click(page, runDiagnostics);
     if (recording) {
       await response.pressSequentially('About Atlas', { delay: 80 });
       await page.waitForTimeout(500);

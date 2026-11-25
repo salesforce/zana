@@ -48,7 +48,7 @@ describe('REQ-1 the job details mark a fresh-session seat', () => {
     render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
     await screen.findByText(/Fresh unit/);
     expect(screen.getAllByText('Fresh session per unit')).toHaveLength(1);
-    expect(screen.getByText(/Fresh unit/).textContent).toContain('Fresh session per unit');
+    expect(screen.getByText(/Fresh unit/).closest('li')?.textContent).toContain('Fresh session per unit');
   });
 
   it('shows no label for a team without the setting', async () => {

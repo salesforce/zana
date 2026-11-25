@@ -6,7 +6,8 @@ import { usePersonas, useTeams } from '../stores/live.js';
 import { copyText } from '../lib/copy-text.js';
 import { startSerialPoll } from '../lib/serial-poll.js';
 import { mergeExecutionEvents } from './execution-event-tail.js';
-import { ExecutionBlockerCard, type ExecutionBlocker } from './ExecutionBlockerCard.js';
+import { ExecutionBlockerCard, ExecutionDeliveryDetails, type ExecutionBlocker } from './ExecutionBlockerCard.js';
+import { ExecutionRunActivity } from './ExecutionRunActivity.js';
 
 interface Props {
   projectId: string;
@@ -28,6 +29,17 @@ function formatCost(usd?: number): string {
 const JOB_DETAILS_EVENT_TAIL = 25;
 
 type ExecutionProjection = ExecutionBoardSnapshot['execution'];
+
+const runLabels: Record<ExecutionProjection['state'], string> = {
+  READY: 'Ready', STARTING: 'Starting', RUNNING: 'Running', COMPLETED: 'Completed',
+  BLOCKED: 'Blocked', STOPPED: 'Stopped', FAILED: 'Failed'
+};
+
+type Assignment = NonNullable<ExecutionProjection['work']>['assignments'][number];
+const stepLabels: Record<Assignment['state'], string> = {
+  PENDING: 'Pending', READY: 'Ready', CLAIMED: 'Assigned', BLOCKED: 'Blocked',
+  COMPLETED: 'Complete', FAILED: 'Failed', SKIPPED: 'Skipped'
+};
 
 interface SubmittedBlockerAnswer {
   blocker: ExecutionBlocker;
@@ -294,6 +306,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
   const personas = usePersonas((state) => state.personas);
   const recoveryReasonId = useId();
   const timeoutRecoveryReasonId = useId();
+  const workHeadingId = useId();
   const refresh = useCallback(async (after = 0) => {
     const scope = scopeRef.current;
     if (!scope.live || scope.key !== `${projectId}:${executionId}` || scope.inFlight) return;
@@ -466,146 +479,207 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
     if (action === 'instruct') setFollowUpInstruction('');
   };
 
+  const work = execution.work;
+  const assignmentOwners = new Map(execution.modernMembers?.map(({ slotId, personaId }) => [slotId, personaId]));
+  const personaNames = new Map(personas.map(({ id, name }) => [id, name]));
+  const ownerLabel = (slotId: string | undefined) => {
+    if (!slotId) return 'Unassigned';
+    // Classic seats carry the configured persona between their row and seat index.
+    const personaId = assignmentOwners.get(slotId) ?? /^\d+:(.+):\d+$/.exec(slotId)?.[1];
+    return (personaId && personaNames.get(personaId)) || slotId;
+  };
+
   return (
     <section className="execution-details" aria-label="Squad details">
-       <header><strong>Squad · {execution.jobTitle}</strong><button className="btn execution-details-close" type="button" onClick={onClose}>Close details</button></header>
-       <div className="execution-details-copy"><button className="btn" type="button" onClick={copyJobDetails}>Copy details</button></div>
-       {recoveryActions}
-      <dl className="execution-details-meta">
-        <dt>Run ID</dt><dd><code>{execution.executionId}</code></dd>
-        <dt>Kind</dt><dd>{execution.launchDisplay?.label ?? 'Squad execution'}</dd>
-        <dt>Status</dt><dd>{execution.state} · attempt {execution.attempt}</dd>
-        <dt>Goal</dt><dd>{execution.objective ?? execution.jobTitle}</dd>
-        <dt>Summary</dt><dd>{execution.summary ?? '—'}</dd>
-        <dt>Squad</dt><dd>{execution.teamName ?? execution.teamId ?? '—'}</dd>
-        {execution.startedFrom ? (
-          <><dt>Started from</dt><dd>{execution.startedFrom.title
-            ?? (execution.startedFrom.kind === 'thread' ? 'A Modern conversation' : 'A CLI Agent session')}</dd></>
-        ) : null}
-        <dt>Orchestrator</dt><dd>{execution.coordinator?.status ?? 'unknown'}{execution.coordinator?.sessionId ? ` · ${execution.coordinator.sessionId}` : ''}</dd>
-      </dl>
-       {execution.recoveryAttention && <p role="alert">Orchestrator lost. {execution.recovery?.status === 'available'
-        ? 'Recovery available. Rotation creates a replacement credential; no cached token is required.'
-         : 'Recovery deadline expired.'}</p>}
-       {execution.retainedWorktree && <section className="execution-worktree" aria-label="Retained Squad worktree">
-         <h4>Retained worktree</h4>
-         <p><code>{execution.retainedWorktree.path}</code> · {execution.retainedWorktree.branch}</p>
-         {execution.retainedWorktree.disposition === 'left' ? <p role="status">Worktree left by user. No further lifecycle action is pending.</p> : <>
-           <p>Leave preserves this checkout. Delete requires confirmation and refuses a worktree with uncommitted changes or unmerged commits. Force delete removes it anyway and permanently discards that work.</p>
-           {followUpRoster.length > 0 && <label className="execution-follow-up-persona">Follow-up persona{' '}
-             <select aria-label="Follow-up persona" value={followUpPersonaId} onChange={(event) => setFollowUpPersonaId(event.target.value)}>
-               <option value="">Squad coordinator (default)</option>
-               {followUpRoster.map((persona) => <option key={persona.id} value={persona.id}>{persona.name ?? persona.id}</option>)}
-             </select>
-           </label>}
-           <textarea aria-label="Follow-up agent instruction" value={followUpInstruction} onChange={(event) => setFollowUpInstruction(event.target.value)} placeholder="Describe the follow-up work…" rows={3} />
-           <div className="execution-details-actions">
-             <button className="btn" type="button" disabled={busy || !followUpInstruction.trim()} onClick={() => void worktreeAction('instruct')}>Instruct an agent</button>
-             <button className="btn" type="button" disabled={busy} onClick={() => void worktreeAction('leave')}>Leave worktree</button>
-             <button className="btn danger" type="button" disabled={busy} onClick={() => void worktreeAction('delete')}>Delete worktree</button>
-             <button className="btn danger" type="button" disabled={busy} onClick={() => void worktreeAction('force-delete')}>Force delete unmerged work</button>
-           </div>
-         </>}
-       </section>}
-      <h4>Sources</h4>
-      {execution.sources?.length ? execution.sources.map((source) => (
-        <div key={source.id}>{source.name} · {source.contentDigest}{source.extractionWarnings.map((warning) => <p key={warning}>{warning}</p>)}</div>
-      )) : <p>No execution sources.</p>}
-      <h4>Work units</h4>
-      <p>{execution.work?.completed ?? 0}/{execution.work?.total ?? 0} complete · Progress {execution.work?.total ? Math.round(execution.work.completed / execution.work.total * 100) : 0}%</p>
-      <p>{Object.entries(execution.work?.counts ?? {}).map(([state, count]) => `${state}: ${count}`).join(' · ')}</p>
-      <h4>Assignments</h4>
-      {execution.work?.assignments.map((assignment) => {
-        const assignedSlotId = assignmentDrafts[assignment.workUnitId] ?? assignment.slotId ?? execution.work?.rosterSlotIds[0] ?? '';
-        return <div key={assignment.workUnitId}>
-          {assignment.title} → {assignment.slotId ?? 'unassigned'} · {assignment.state}
-          {chosenRouteText(assignment as AssignmentRoute) && <p role="status" className="execution-details-route">{chosenRouteText(assignment as AssignmentRoute)}</p>}
-          {assignment.slotId !== undefined && freshSlots.has(assignment.slotId) && <span className="scheduler-pill">Fresh session per unit</span>}
-          {assignment.loopRound !== undefined && assignment.loopMax !== undefined && <p role="status" className="execution-details-recovery-reason">{reviewRoundText(assignment.loopRound, assignment.loopMax)}</p>}
-          {assignment.recovery && <p role="status" className="execution-details-recovery-reason">Recovering engineer after API error: {RECOVERY_TEXT[assignment.recovery.step] ?? assignment.recovery.step}</p>}
-          {!isTerminal && (assignment.state === 'FAILED' || assignment.state === 'BLOCKED') && <>
-            <select aria-label={`Assignment for ${assignment.title}`} value={assignedSlotId} onChange={(event) => setAssignmentDrafts((current) => ({ ...current, [assignment.workUnitId]: event.target.value }))}>
-              <option value="">Unassigned</option>{execution.work?.rosterSlotIds.map((slotId) => <option key={slotId} value={slotId}>{slotId}</option>)}
-            </select>
-            <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.retryWork(projectId, executionId, execution.stateVersion ?? 0, assignment.workUnitId, assignedSlotId || undefined))}>Retry work</button>
-          </>}
-          {assignment.state === 'CLAIMED' && <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.releaseWork(projectId, executionId, execution.stateVersion ?? 0, assignment.workUnitId))}>Release work</button>}
-          {assignment.state === 'READY' && <>
-            <select aria-label={`Assignment for ${assignment.title}`} value={assignedSlotId} onChange={(event) => setAssignmentDrafts((current) => ({ ...current, [assignment.workUnitId]: event.target.value }))}>
-              {execution.work?.rosterSlotIds.map((slotId) => <option key={slotId} value={slotId}>{slotId}</option>)}
-            </select>
-            <button className="btn" type="button" disabled={busy || !assignedSlotId} onClick={() => void mutate(() => window.cc.executionBoard.reassignWork(projectId, executionId, execution.stateVersion ?? 0, assignment.workUnitId, assignedSlotId))}>Reassign work</button>
-          </>}
-        </div>;
-      })}
-      {visibleBlocker && (
-        <ExecutionBlockerCard
-          key={visibleBlocker.id}
-          blocker={visibleBlocker}
-          deliveryState={deliveryState}
-          recorded={recorded}
-          closed={isTerminal}
-          timedOut={execution.timeoutReason === 'unresolved-blocker'}
-          answer={answer}
-          workTitle={execution.work?.assignments.find((assignment) => assignment.workUnitId === visibleBlocker.workUnitId)?.title}
-          busy={busy}
-          sectionRef={blockerRef}
-          onRespond={(message) => respond(visibleBlocker, message)}
-          onRetry={(deliveryId) => void mutate(() => window.cc.executionBoard.retryDelivery(
-            projectId, executionId, execution.stateVersion ?? 0, visibleBlocker.id, deliveryId
-          ))}
-        />
-      )}
-      <h4>Progress</h4>
-      {snapshot.events.map((event) => (
-        <details key={event.id}><summary>{event.severity}: {event.summary}</summary>
-          <p>{[event.producerRole, event.slotId, event.eventType].filter(Boolean).join(' · ')}</p>
-          {event.detail && <p>{event.detail}</p>}{event.progress && <p>{event.progress.completed}/{event.progress.total}</p>}
-          {event.references?.map((reference) => <p key={reference.uri}>{reference.label}: {reference.uri}</p>)}
-        </details>
-      ))}
-      <h4>Artifacts</h4>
-      {snapshot.artifacts.map((artifact) => <details key={artifact.id} onToggle={(event) => {
-        if (!event.currentTarget.open || artifactContent[artifact.id] !== undefined) return;
-        const scope = scopeRef.current;
-        void window.cc.executionBoard.readArtifact(projectId, executionId, artifact.id).then((result) => {
-          if (!scope.live) return;
-          if (result.ok) setArtifactContent((current) => ({ ...current, [artifact.id]: result.value.content }));
-          else {
-            console.error(`[ExecutionJobDetails] artifact read failed (execution ${executionId}, artifact ${artifact.id}): ${result.message}`);
-            useUi.getState().pushToast(`Artifact read failed: ${result.message}`, 'error');
-            // Mirror the failure into the same state the successful path uses, so the
-            // <pre> below shows the error instead of "Loading…" forever.
-            setArtifactContent((current) => ({ ...current, [artifact.id]: `Error: ${result.message ?? 'read failed'}` }));
-          }
-        }).catch((err) => {
-          if (!scope.live) return;
-          const message = err instanceof Error ? err.message : String(err);
-          console.error(`[ExecutionJobDetails] artifact read rejected (execution ${executionId}, artifact ${artifact.id})`, err);
-          useUi.getState().pushToast(`Artifact read failed: ${message}`, 'error');
-          setArtifactContent((current) => ({ ...current, [artifact.id]: `Error: ${message}` }));
-        });
-      }}><summary>{artifact.name} · {artifact.mediaType} · {artifact.contentDigest}</summary>{artifactContent[artifact.id] && boundedText(artifactContent[artifact.id]).length < artifactContent[artifact.id].length ? <LargeTextPreview text={artifactContent[artifact.id]} /> : <pre>{artifactContent[artifact.id] ?? 'Loading…'}</pre>}</details>)}
-      <h4>Usage</h4>
-      <p>Attribution: {execution.usage?.completeness ?? 'unavailable'} · Observations {execution.usage?.observationCount ?? 0} · Gaps {execution.usage?.gapCount ?? 0}</p>
-       {execution.usage?.byRole.map((usage) => <p key={usage.role}>{usage.role}: input {usage.inputTokens ?? 'unknown'} · output {usage.outputTokens ?? 'unknown'} · cache read {usage.cacheReadTokens ?? 'unknown'} · cache write {usage.cacheWriteTokens ?? 'unknown'} · provider-reported cost {usage.providerCostUsd === undefined ? 'unknown' : `$${usage.providerCostUsd.toFixed(4)}`}</p>)}
-      <h4>Assembled result</h4>
-      {execution.assembledResult ? <div>
-        <p>{execution.assembledResult.outcome} · <code>{execution.assembledResult.digest}</code></p>
-        <p>{execution.assembledResult.summary}</p>
-        {execution.assembledResult.units.map((unit) => <details key={unit.id}><summary>{unit.title} · {unit.state}</summary>
-          {unit.result && <p>{unit.result}</p>}
-        </details>)}
-      </div> : <p>Not assembled.</p>}
-      <h4>Route fit</h4>
-      {execution.routeFitProposal ? <p>{execution.routeFitProposal.fit} · {execution.routeFitProposal.reason} · inactive proposal ({execution.routeFitProposal.evaluatorVersion})</p> : <p>Not evaluated.</p>}
-      {execution.limits && <p data-testid="execution-limits">Run limits: {limitsSummary(execution.limits)}</p>}
-      {execution.failureReason && <><h4>Failure reason</h4><p>{execution.failureReason}</p></>}
-      <h4>Final summary</h4><p>{execution.finalSummary ?? 'Not completed.'}</p>
-       <div className="execution-details-actions">
-         {!terminal.has(execution.state) && <button className="btn danger" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.stop(projectId, executionId, execution.stateVersion ?? 0))}>Stop Squad run</button>}
-         {execution.state === 'BLOCKED' && !execution.currentBlocker && !execution.resourceBlock && <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.retry(projectId, executionId, execution.stateVersion ?? 0))}>Retry Squad run</button>}
-       </div>
+      <header className="execution-run-header">
+        <div className="execution-run-title"><h3>{execution.jobTitle}</h3>{execution.teamName && <p>{execution.teamName}</p>}</div>
+        <div className="execution-run-header-actions">
+          <span className="execution-run-badge" data-state={execution.state} data-testid="execution-run-state">{runLabels[execution.state]}</span>
+          <button className="btn" type="button" onClick={copyJobDetails}>Copy details</button>
+          <button className="btn execution-details-close" type="button" onClick={onClose}>Close details</button>
+        </div>
+      </header>
+      <div className="execution-run-layout">
+        <div className="execution-run-main">
+          {visibleBlocker && (
+            <ExecutionBlockerCard
+              key={visibleBlocker.id}
+              blocker={visibleBlocker}
+              deliveryState={deliveryState}
+              recorded={recorded}
+              closed={isTerminal}
+              timedOut={execution.timeoutReason === 'unresolved-blocker'}
+              answer={answer}
+              workTitle={execution.work?.assignments.find((assignment) => assignment.workUnitId === visibleBlocker.workUnitId)?.title}
+              busy={busy}
+              sectionRef={blockerRef}
+              onRespond={(message) => respond(visibleBlocker, message)}
+              onRetry={(deliveryId) => void mutate(() => window.cc.executionBoard.retryDelivery(
+                projectId, executionId, execution.stateVersion ?? 0, visibleBlocker.id, deliveryId
+              ))}
+            />
+          )}
+          {recoveryActions}
+          {execution.recoveryAttention && <p role="alert">Orchestrator lost. {execution.recovery?.status === 'available'
+           ? 'Recovery available. Rotation creates a replacement credential; no cached token is required.'
+            : 'Recovery deadline expired.'}</p>}
+          {execution.retainedWorktree && <section className="execution-worktree" aria-label="Retained Squad worktree">
+            <h4>Retained worktree</h4>
+            <p><code>{execution.retainedWorktree.path}</code> · {execution.retainedWorktree.branch}</p>
+            {execution.retainedWorktree.disposition === 'left' ? <p role="status">Worktree left by user. No further lifecycle action is pending.</p> : <>
+              <p>Leave preserves this checkout. Delete requires confirmation and refuses a worktree with uncommitted changes or unmerged commits. Force delete removes it anyway and permanently discards that work.</p>
+              {followUpRoster.length > 0 && <label className="execution-follow-up-persona">Follow-up persona{' '}
+                <select aria-label="Follow-up persona" value={followUpPersonaId} onChange={(event) => setFollowUpPersonaId(event.target.value)}>
+                  <option value="">Squad coordinator (default)</option>
+                  {followUpRoster.map((persona) => <option key={persona.id} value={persona.id}>{persona.name ?? persona.id}</option>)}
+                </select>
+              </label>}
+              <textarea aria-label="Follow-up agent instruction" value={followUpInstruction} onChange={(event) => setFollowUpInstruction(event.target.value)} placeholder="Describe the follow-up work…" rows={3} />
+              <div className="execution-details-actions">
+                <button className="btn" type="button" disabled={busy || !followUpInstruction.trim()} onClick={() => void worktreeAction('instruct')}>Instruct an agent</button>
+                <button className="btn" type="button" disabled={busy} onClick={() => void worktreeAction('leave')}>Leave worktree</button>
+                <button className="btn danger" type="button" disabled={busy} onClick={() => void worktreeAction('delete')}>Delete worktree</button>
+                <button className="btn danger" type="button" disabled={busy} onClick={() => void worktreeAction('force-delete')}>Force delete unmerged work</button>
+              </div>
+            </>}
+          </section>}
+          <section className="execution-run-card" aria-labelledby={workHeadingId}>
+            <div className="execution-run-card-heading">
+              <h4 id={workHeadingId}>Work steps</h4>
+              {!!work?.total && (
+                <div className="execution-run-progress">
+                  <span>{work.completed}/{work.total} complete</span>
+                  <progress aria-label="Work steps complete" max={work.total} value={work.completed} />
+                </div>
+              )}
+            </div>
+            {work?.assignments.length ? (
+              <ul className="execution-run-steps">{work.assignments.map((assignment) => {
+                const assignedSlotId = assignmentDrafts[assignment.workUnitId] ?? assignment.slotId ?? work.rosterSlotIds[0] ?? '';
+                const asking = currentBlocker?.workUnitId === assignment.workUnitId && currentBlocker.audience !== 'coordinator';
+                const needsReply = asking && assignment.state === 'BLOCKED' && !deliveryState;
+                const route = chosenRouteText(assignment);
+                const canManage = !isTerminal && assignment.state !== 'PENDING' && assignment.state !== 'COMPLETED' && assignment.state !== 'SKIPPED';
+                return (
+                  <li key={assignment.workUnitId} data-needs-reply={needsReply || undefined}>
+                    <div className="execution-run-step-line">
+                      <div><strong>{assignment.title}</strong><small>{ownerLabel(assignment.slotId)}</small></div>
+                      <span className="execution-run-badge" data-state={assignment.state}>{needsReply ? 'Needs you' : stepLabels[assignment.state]}</span>
+                    </div>
+                    {route && <p className="execution-details-route" role="status">{route}</p>}
+                    {assignment.slotId && freshSlots.has(assignment.slotId) && <span className="scheduler-pill">Fresh session per unit</span>}
+                    {assignment.loopRound !== undefined && assignment.loopMax !== undefined && <p className="execution-details-recovery-reason" role="status">{reviewRoundText(assignment.loopRound, assignment.loopMax)}</p>}
+                    {assignment.recovery && <p className="execution-details-recovery-reason" role="status">Recovering engineer after API error: {RECOVERY_TEXT[assignment.recovery.step] ?? assignment.recovery.step}</p>}
+                    {canManage && (
+                      <details className="execution-run-step-actions">
+                        <summary>Assignment actions</summary>
+                        <div className="execution-details-actions">
+                          {(assignment.state === 'FAILED' || assignment.state === 'BLOCKED') && <>
+                            <select aria-label={`Assignment for ${assignment.title}`} value={assignedSlotId} onChange={(event) => setAssignmentDrafts((current) => ({ ...current, [assignment.workUnitId]: event.target.value }))}>
+                              <option value="">Unassigned</option>{work.rosterSlotIds.map((slotId) => <option key={slotId} value={slotId}>{slotId}</option>)}
+                            </select>
+                            <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.retryWork(projectId, executionId, execution.stateVersion ?? 0, assignment.workUnitId, assignedSlotId || undefined))}>Retry work</button>
+                          </>}
+                          {assignment.state === 'CLAIMED' && <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.releaseWork(projectId, executionId, execution.stateVersion ?? 0, assignment.workUnitId))}>Release work</button>}
+                          {assignment.state === 'READY' && <>
+                            <select aria-label={`Assignment for ${assignment.title}`} value={assignedSlotId} onChange={(event) => setAssignmentDrafts((current) => ({ ...current, [assignment.workUnitId]: event.target.value }))}>
+                              {work.rosterSlotIds.map((slotId) => <option key={slotId} value={slotId}>{slotId}</option>)}
+                            </select>
+                            <button className="btn" type="button" disabled={busy || !assignedSlotId} onClick={() => void mutate(() => window.cc.executionBoard.reassignWork(projectId, executionId, execution.stateVersion ?? 0, assignment.workUnitId, assignedSlotId))}>Reassign work</button>
+                          </>}
+                        </div>
+                      </details>
+                    )}
+                  </li>
+                );
+              })}</ul>
+            ) : <p className="execution-run-empty">No work steps yet.</p>}
+          </section>
+          {snapshot.artifacts.length > 0 && (
+            <section className="execution-run-card" aria-label="Artifacts">
+              <div className="execution-run-card-heading"><h4>Artifacts</h4></div>
+              <div className="execution-run-card-body">
+                {snapshot.artifacts.map((artifact) => <details key={artifact.id} onToggle={(event) => {
+                  if (!event.currentTarget.open || artifactContent[artifact.id] !== undefined) return;
+                  const scope = scopeRef.current;
+                  void window.cc.executionBoard.readArtifact(projectId, executionId, artifact.id).then((result) => {
+                    if (!scope.live) return;
+                    if (result.ok) setArtifactContent((current) => ({ ...current, [artifact.id]: result.value.content }));
+                    else {
+                      console.error(`[ExecutionJobDetails] artifact read failed (execution ${executionId}, artifact ${artifact.id}): ${result.message}`);
+                      useUi.getState().pushToast(`Artifact read failed: ${result.message}`, 'error');
+                      // Mirror the failure into the same state the successful path uses, so the
+                      // <pre> below shows the error instead of "Loading…" forever.
+                      setArtifactContent((current) => ({ ...current, [artifact.id]: `Error: ${result.message ?? 'read failed'}` }));
+                    }
+                  }).catch((err) => {
+                    if (!scope.live) return;
+                    const message = err instanceof Error ? err.message : String(err);
+                    console.error(`[ExecutionJobDetails] artifact read rejected (execution ${executionId}, artifact ${artifact.id})`, err);
+                    useUi.getState().pushToast(`Artifact read failed: ${message}`, 'error');
+                    setArtifactContent((current) => ({ ...current, [artifact.id]: `Error: ${message}` }));
+                  });
+                }}><summary>{artifact.name} · {artifact.mediaType} · {artifact.contentDigest}</summary>{artifactContent[artifact.id] && boundedText(artifactContent[artifact.id]).length < artifactContent[artifact.id].length ? <LargeTextPreview text={artifactContent[artifact.id]} /> : <pre>{artifactContent[artifact.id] ?? 'Loading…'}</pre>}</details>)}
+              </div>
+            </section>
+          )}
+          {(execution.assembledResult || execution.finalSummary || execution.failureReason) && (
+            <section className="execution-run-card" aria-label="Run outcome">
+              <div className="execution-run-card-heading"><h4>Run outcome</h4></div>
+              <div className="execution-run-card-body">
+                {execution.assembledResult && <div>
+                  <h4>Assembled result</h4>
+                  <p>{execution.assembledResult.outcome} · <code>{execution.assembledResult.digest}</code></p>
+                  <p>{execution.assembledResult.summary}</p>
+                  {execution.assembledResult.units.map((unit) => <details key={unit.id}><summary>{unit.title} · {unit.state}</summary>
+                    {unit.result && <p>{unit.result}</p>}
+                  </details>)}
+                </div>}
+                {execution.failureReason && <><h4>Failure reason</h4><p>{execution.failureReason}</p></>}
+                {execution.finalSummary && <><h4>Final summary</h4><p>{execution.finalSummary}</p></>}
+              </div>
+            </section>
+          )}
+          {!isTerminal && (
+            <div className="execution-details-actions">
+              <button className="btn danger" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.stop(projectId, executionId, execution.stateVersion ?? 0))}>Stop Squad run</button>
+              {execution.state === 'BLOCKED' && !currentBlocker && !execution.resourceBlock && (
+                <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.retry(projectId, executionId, execution.stateVersion ?? 0))}>Retry Squad run</button>
+              )}
+            </div>
+          )}
+        </div>
+        <aside className="execution-run-rail" aria-label="Run activity and diagnostics">
+          {visibleBlocker && <ExecutionDeliveryDetails key={visibleBlocker.id} blocker={visibleBlocker} />}
+          <ExecutionRunActivity key={execution.executionId} events={snapshot.events} work={work} truncated={snapshot.truncated} />
+          <details className="execution-run-card execution-run-disclosure execution-run-diagnostics">
+            <summary>Run diagnostics</summary>
+            <dl className="execution-details-meta">
+              <dt>Run ID</dt><dd><code>{execution.executionId}</code></dd>
+              <dt>Kind</dt><dd>{execution.launchDisplay?.label ?? 'Squad execution'}</dd>
+              <dt>Status</dt><dd>{execution.state} · attempt {execution.attempt}</dd>
+              {execution.objective && execution.objective !== execution.jobTitle && <><dt>Goal</dt><dd>{execution.objective}</dd></>}
+              <dt>Summary</dt><dd>{execution.summary ?? '—'}</dd>
+              <dt>Squad</dt><dd>{execution.teamName ?? execution.teamId ?? '—'}</dd>
+              {execution.startedFrom ? (
+                <><dt>Started from</dt><dd>{execution.startedFrom.title
+                  ?? (execution.startedFrom.kind === 'thread' ? 'A Modern conversation' : 'A CLI Agent session')}</dd></>
+              ) : null}
+              <dt>Orchestrator</dt><dd>{execution.coordinator?.status ?? 'unknown'}{execution.coordinator?.sessionId ? ` · ${execution.coordinator.sessionId}` : ''}</dd>
+            </dl>
+            <h4>Sources</h4>
+            {execution.sources?.length ? execution.sources.map((source) => (
+              <div key={source.id}>{source.name} · {source.contentDigest}{source.extractionWarnings.map((warning) => <p key={warning}>{warning}</p>)}</div>
+            )) : <p>No execution sources.</p>}
+            <h4>Usage</h4>
+            <p>Attribution: {execution.usage?.completeness ?? 'unavailable'} · Observations {execution.usage?.observationCount ?? 0} · Gaps {execution.usage?.gapCount ?? 0}</p>
+             {execution.usage?.byRole.map((usage) => <p key={usage.role}>{usage.role}: input {usage.inputTokens ?? 'unknown'} · output {usage.outputTokens ?? 'unknown'} · cache read {usage.cacheReadTokens ?? 'unknown'} · cache write {usage.cacheWriteTokens ?? 'unknown'} · provider-reported cost {usage.providerCostUsd === undefined ? 'unknown' : `$${usage.providerCostUsd.toFixed(4)}`}</p>)}
+            <h4>Route fit</h4>
+            {execution.routeFitProposal ? <p>{execution.routeFitProposal.fit} · {execution.routeFitProposal.reason} · inactive proposal ({execution.routeFitProposal.evaluatorVersion})</p> : <p>Not evaluated.</p>}
+            {execution.limits && <p data-testid="execution-limits">Run limits: {limitsSummary(execution.limits)}</p>}
+          </details>
+        </aside>
+      </div>
     </section>
   );
 }

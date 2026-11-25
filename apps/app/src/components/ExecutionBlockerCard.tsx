@@ -38,7 +38,7 @@ export function ExecutionBlockerCard({
   const focusReceipt = useRef(false);
   const [draft, setDraft] = useState('');
   const [editingDeliveryId, setEditingDeliveryId] = useState<string>();
-  const { delivery, notice } = blocker;
+  const { delivery } = blocker;
   const coordinator = blocker.audience === 'coordinator';
   const phase = deliveryState === 'DELIVERED' ? 'delivered'
     : recorded ? 'recorded'
@@ -75,7 +75,7 @@ export function ExecutionBlockerCard({
   }, [editingFailed]);
 
   return (
-    <section ref={sectionRef} className="execution-blocker" aria-labelledby={questionId}>
+    <section ref={sectionRef} className="execution-blocker" data-phase={phase} aria-labelledby={questionId}>
       <header className="execution-blocker-heading">
         <div className="execution-blocker-top">
           <span ref={statusRef} tabIndex={-1} role={phase === 'failed' ? 'alert' : 'status'} className="execution-blocker-badge" data-phase={phase}>{statusLabel}</span>
@@ -130,24 +130,28 @@ export function ExecutionBlockerCard({
           )}
         </div>
       )}
-
-      {(notice || delivery) && (
-        <details className="execution-blocker-diagnostics">
-          <summary>Delivery details</summary>
-          <dl>
-            {notice && <>
-              <dt>Inbox notice</dt><dd>{notice.status.toLowerCase()}</dd>
-              <dt>Inbox attempts</dt><dd>{notice.attempts}</dd>
-              {notice.inboxItemId && <><dt>Inbox item</dt><dd>{notice.inboxItemId}</dd></>}
-            </>}
-            {delivery && <>
-              <dt>Delivery status</dt><dd>{deliveryLabels[delivery.state]}</dd>
-              <dt>Delivery attempts</dt><dd>{delivery.attempt} of {delivery.maxAttempts}</dd>
-              {delivery.error && <><dt>Last error</dt><dd>{delivery.error}</dd></>}
-            </>}
-          </dl>
-        </details>
-      )}
     </section>
+  );
+}
+
+export function ExecutionDeliveryDetails({ blocker }: { blocker: ExecutionBlocker }) {
+  const { notice, delivery } = blocker;
+  if (!notice && !delivery) return null;
+  return (
+    <details className="execution-run-card execution-run-disclosure execution-blocker-diagnostics">
+      <summary>Delivery details</summary>
+      <dl>
+        {notice && <>
+          <dt>Inbox notice</dt><dd>{notice.status === 'ACKNOWLEDGED' ? 'Acknowledged' : 'Pending'}</dd>
+          <dt>Inbox attempts</dt><dd>{notice.attempts}</dd>
+          {notice.inboxItemId && <><dt>Inbox item</dt><dd><code>{notice.inboxItemId}</code></dd></>}
+        </>}
+        {delivery && <>
+          <dt>Delivery status</dt><dd>{deliveryLabels[delivery.state]}</dd>
+          <dt>Delivery attempts</dt><dd>{delivery.attempt} of {delivery.maxAttempts}</dd>
+          {delivery.error && <><dt>Last error</dt><dd>{delivery.error}</dd></>}
+        </>}
+      </dl>
+    </details>
   );
 }

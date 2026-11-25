@@ -109,7 +109,7 @@ describe('Squad blocker answer card', () => {
     await within(card).findByText('Answer delivered');
     expect(retry).toHaveBeenCalledWith('project-1', 'execution-1', 4, 'blocker-1', 'delivery-1');
     expect(within(card).getByText('Use the launch label.')).toBeTruthy();
-    expect(within(card).getByText('2 of 8')).toBeTruthy();
+    expect(within(screen.getByRole('complementary', { name: 'Run activity and diagnostics' })).getByText('2 of 8')).toBeTruthy();
   });
 
   it('does not attribute an answer delivered from another surface to this panel', async () => {
@@ -144,7 +144,7 @@ describe('Squad blocker answer card', () => {
     expect(within(card).getByText('Answer queued')).toBeTruthy();
     expect(within(card).queryByText('Your answer')).toBeNull();
     expect(within(card).queryByRole('textbox')).toBeNull();
-    expect(within(card).getByText('Awaiting worker acknowledgement')).toBeTruthy();
+    expect(within(screen.getByRole('complementary', { name: 'Run activity and diagnostics' })).getByText('Awaiting worker acknowledgement')).toBeTruthy();
   });
 
   it('allows a fresh free-text answer after an exhausted retry', async () => {
@@ -153,7 +153,7 @@ describe('Squad blocker answer card', () => {
     const card = await screen.findByRole('region', { name: blockerQuestion });
     expect(within(card).getByRole('alert').textContent).toBe('Delivery failed');
     expect(within(card).queryByRole('button', { name: 'Retry delivery' })).toBeNull();
-    expect(within(card).getByText('Worker stopped')).toBeTruthy();
+    expect(within(screen.getByRole('complementary', { name: 'Run activity and diagnostics' })).getByText('Worker stopped')).toBeTruthy();
     fireEvent.click(within(card).getByRole('button', { name: 'Write a new answer' }));
     const input = within(card).getByRole('textbox', { name: 'Your answer' });
     expect(document.activeElement).toBe(input);
@@ -183,7 +183,7 @@ describe('Squad blocker answer card', () => {
     mountJob();
     const card = await screen.findByRole('region', { name: blockerQuestion });
     expect(within(card).queryByText('Suggested answers')).toBeNull();
-    expect(within(card).queryByText('Delivery details')).toBeNull();
+    expect(screen.queryByText('Delivery details')).toBeNull();
     const input = within(card).getByRole('textbox', { name: 'Your answer' }) as HTMLTextAreaElement;
     const send = within(card).getByRole('button', { name: 'Send answer' }) as HTMLButtonElement;
     fireEvent.change(input, { target: { value: 'About Atlas' } });

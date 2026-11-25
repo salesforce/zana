@@ -53,7 +53,8 @@ describe('API-error recovery in Squad details', () => {
 
   it('shows nothing without recovery', async () => {
     load();
-    await screen.findByText(/Unit → slot-1/);
+    const unit = await screen.findByText('Unit', { exact: true });
+    expect(unit.closest('li')?.textContent).toContain('slot-1');
     expect(screen.queryByRole('status')).toBeNull();
     expect(buildJobDetailsText('project-1', snapshot())).not.toContain('recovery:');
   });

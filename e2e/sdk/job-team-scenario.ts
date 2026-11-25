@@ -343,6 +343,6 @@ export async function answerJobBlockerThroughUi(args: {
   await window.getByTestId('nav-agents').or(window.getByTestId('project-nav-agents')).click();
   await window.locator('.agent-card').filter({ hasText: jobTitle }).first().click();
   const completed = window.getByLabel('Squad details');
-  await expect(completed.getByText(/COMPLETED · attempt/)).toBeVisible({ timeout: 15_000 });
+  await expect(completed.getByTestId('execution-run-state')).toHaveText('Completed', { timeout: 15_000 });
   await expect(completed.getByText('4/4 complete', { exact: false })).toBeVisible();
 }
