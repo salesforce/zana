@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  armQuietCheck, armedCount, disarm, dispatchApiErrorStop, forgetSession, touch,
+  armOnBusyEdge, armQuietCheck, armedCount, disarm, isArmed, dispatchApiErrorStop, forgetSession, touch,
   type ApiErrorProducer, type ApiErrorStopEvent, type DispatchCtx
 } from '../api-error-dispatch.js';
 
@@ -35,6 +35,29 @@ const flush = async () => { await vi.advanceTimersByTimeAsync(0); };
 describe('api-error-dispatch', () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
+
+  it('isArmed covers the marker window, the armed window, and clears on disarm', async () => {
+    const { ctx } = makeCtx();
+    const producer = makeProducer();
+    expect(isArmed('s9')).toBe(false);
+    armQuietCheck(ctx, 's9', producer, ref('s9'));
+    expect(isArmed('s9')).toBe(true); // marker still in flight
+    await flush();
+    expect(isArmed('s9')).toBe(true); // timer pending
+    disarm(ctx, 's9');
+    expect(isArmed('s9')).toBe(false);
+    forgetSession(ctx, 's9');
+  });
+
+  it('isArmed is false again after a failed markTurnStart', async () => {
+    const { ctx } = makeCtx();
+    const producer = makeProducer();
+    (producer.markTurnStart as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('x'));
+    armQuietCheck(ctx, 's8', producer, ref('s8'));
+    await flush();
+    expect(isArmed('s8')).toBe(false);
+    forgetSession(ctx, 's8');
+  });
 
   it('dispatch marks the turn failed before routing', () => {
     const { ctx, calls } = makeCtx();
@@ -211,5 +234,49 @@ describe('api-error-dispatch', () => {
     expect(calls).toEqual([]);
     forgetSession(ctx, 's10');
     forgetSession(ctx, 's11');
+  });
+});
+
+describe('armOnBusyEdge', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+  type Status = { apiErrorProducer?: ApiErrorProducer; interactionHook?: unknown } | undefined;
+  const live = { status: 'running' };
+
+  it('arms a producer-only adapter and not twice for the same session', async () => {
+    const { ctx } = makeCtx();
+    const producer = makeProducer();
+    const ref = vi.fn(() => ({ id: 'busy-a', cwd: '/w' }));
+    armOnBusyEdge(ctx, 'busy-a', live, () => ({ apiErrorProducer: producer }), ref);
+    await flush();
+    expect(producer.markTurnStart).toHaveBeenCalledTimes(1);
+    armOnBusyEdge(ctx, 'busy-a', live, () => ({ apiErrorProducer: producer }), ref);
+    await flush();
+    expect(producer.markTurnStart).toHaveBeenCalledTimes(1);
+    expect(ref).toHaveBeenCalledTimes(1);
+    forgetSession(ctx, 'busy-a');
+  });
+
+  it.each<[string, { status: string } | null | undefined, Status]>([
+    ['no session', undefined, { apiErrorProducer: makeProducer() }],
+    ['a null session', null, { apiErrorProducer: makeProducer() }],
+    ['an exited session', { status: 'exited' }, { apiErrorProducer: makeProducer() }],
+    ['no adapter status', live, undefined],
+    ['no producer', live, {}],
+    ['a turn-start hook', live, { apiErrorProducer: makeProducer(), interactionHook: {} }]
+  ])('does nothing for %s', async (_name, session, status) => {
+    const { ctx } = makeCtx();
+    const ref = vi.fn(() => ({ id: 'busy-b', cwd: '/w' }));
+    armOnBusyEdge(ctx, 'busy-b', session, () => status, ref);
+    await flush();
+    expect(ref).not.toHaveBeenCalled();
+    expect(isArmed('busy-b')).toBe(false);
+  });
+
+  it('does not look at the adapter for an exited session', () => {
+    const { ctx } = makeCtx();
+    const statusOf = vi.fn(() => undefined);
+    armOnBusyEdge(ctx, 'busy-c', { status: 'exited' }, statusOf, () => ({ id: 'busy-c', cwd: '/w' }));
+    expect(statusOf).not.toHaveBeenCalled();
   });
 });

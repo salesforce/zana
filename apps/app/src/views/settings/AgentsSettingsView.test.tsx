@@ -245,7 +245,7 @@ describe('Agents settings search entries', () => {
       overseerMode: 'on',
       overseerLlmTierEnabled: true,
       autoModeEnabled: true,
-      apiErrorResume: { enabled: true, rules: [], maxPerWindow: 3, windowMinutes: 15 }
+      apiErrorResume: { enabled: true, rules: [{ id: 'r1', match: 'overloaded', matchMode: 'contains', message: 'continue', delaySeconds: 30, enabled: true }], maxPerWindow: 3, windowMinutes: 15 }
     };
     const html = renderToStaticMarkup(
       <AgentsTab config={open} onConfigDraft={vi.fn()} onUpdate={vi.fn().mockResolvedValue(undefined)} />

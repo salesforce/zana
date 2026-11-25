@@ -115,7 +115,15 @@ describe('trusted harness adapter contract', () => {
       expect(codex.status?.apiErrorProducer).toBeDefined();
     });
 
-    it.each(['opencode', 'cursor', 'pi', 'grok', 'mastracode', 'afcode'])('declares none for %s', (id) => {
+    it.each([['opencode', 'screen-scan'], ['pi', 'sdk-events']])('declares a producer for %s (%s) without a hook', (id, signal) => {
+      const adapter = registeredAdapters().find((provider) => provider.adapter.descriptor.id === id)?.adapter;
+      expect(adapter, id).toBeDefined();
+      expect(adapter!.status?.apiErrorSignal).toBe(signal);
+      expect(adapter!.status?.apiErrorProducer).toBeDefined();
+      expect(adapter!.status?.interactionHook).toBeUndefined();
+    });
+
+    it.each(['cursor', 'grok', 'mastracode', 'afcode'])('declares none for %s', (id) => {
       const adapter = registeredAdapters().find((provider) => provider.adapter.descriptor.id === id)?.adapter;
       expect(adapter, id).toBeDefined();
       expect(adapter!.status?.apiErrorSignal).toBe('none');
