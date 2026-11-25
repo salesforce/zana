@@ -89,6 +89,14 @@ describe('OutputActivityMonitor', () => {
       expect(reports).toEqual([['s1', 'working']]);
     });
 
+    it('does not fire again when a turn starts while the session is already working', () => {
+      const edges: string[] = [];
+      const { monitor } = makeMonitor({ onBusyEdge: (id) => edges.push(id) });
+      monitor.observe('s1', 'streaming');
+      monitor.onTurnStart('s1');
+      expect(edges).toEqual(['s1']);
+    });
+
     it('swallows a throwing callback on a turn start and on output after waiting', () => {
       const { monitor, reports, clock } = makeMonitor({ onBusyEdge: () => { throw new Error('boom'); } });
       expect(() => monitor.onTurnStart('s1')).not.toThrow();

@@ -17,7 +17,7 @@ describe('API-error busy-edge arm trigger', () => {
   it('exists and arms through the shared dispatcher', () => {
     expect(start).toBeGreaterThan(-1);
     expect(block).toMatch(/onBusyEdge:/);
-    expect(block).toMatch(/armOnBusyEdge\(apiErrorDispatchCtx/);
+    expect(block).toMatch(/armOnBusyEdge\(\s*apiErrorDispatchCtx/);
   });
 
   it('is gated on the adapter shape, not a harness id', () => {

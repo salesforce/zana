@@ -167,15 +167,16 @@ export function armedCount(): number {
  * Busy-edge arm trigger for harnesses with a body-less producer and no turn-start hook
  * (hook harnesses arm from their own callback). Skips exited sessions and ones already armed.
  */
-export function armOnBusyEdge(
+export function armOnBusyEdge<S extends { readonly status: string }>(
   ctx: DispatchCtx,
   sessionId: string,
-  session: { readonly status: string } | null | undefined,
-  status: { readonly apiErrorProducer?: ApiErrorProducer; readonly interactionHook?: unknown } | null | undefined,
-  ref: () => ApiErrorSessionRef
+  session: S | null | undefined,
+  statusOf: (session: S) => { readonly apiErrorProducer?: ApiErrorProducer; readonly interactionHook?: unknown } | null | undefined,
+  ref: (session: S) => ApiErrorSessionRef
 ): void {
   if (!session || session.status === 'exited') return;
+  const status = statusOf(session);
   if (!status?.apiErrorProducer || status.interactionHook) return;
   if (isArmed(sessionId)) return;
-  armQuietCheck(ctx, sessionId, status.apiErrorProducer, ref());
+  armQuietCheck(ctx, sessionId, status.apiErrorProducer, ref(session));
 }

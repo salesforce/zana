@@ -240,33 +240,43 @@ describe('api-error-dispatch', () => {
 describe('armOnBusyEdge', () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
+  type Status = { apiErrorProducer?: ApiErrorProducer; interactionHook?: unknown } | undefined;
+  const live = { status: 'running' };
 
   it('arms a producer-only adapter and not twice for the same session', async () => {
     const { ctx } = makeCtx();
     const producer = makeProducer();
     const ref = vi.fn(() => ({ id: 'busy-a', cwd: '/w' }));
-    armOnBusyEdge(ctx, 'busy-a', { status: 'running' }, { apiErrorProducer: producer }, ref);
+    armOnBusyEdge(ctx, 'busy-a', live, () => ({ apiErrorProducer: producer }), ref);
     await flush();
     expect(producer.markTurnStart).toHaveBeenCalledTimes(1);
-    armOnBusyEdge(ctx, 'busy-a', { status: 'running' }, { apiErrorProducer: producer }, ref);
+    armOnBusyEdge(ctx, 'busy-a', live, () => ({ apiErrorProducer: producer }), ref);
     await flush();
     expect(producer.markTurnStart).toHaveBeenCalledTimes(1);
     expect(ref).toHaveBeenCalledTimes(1);
     forgetSession(ctx, 'busy-a');
   });
 
-  it.each([
+  it.each<[string, { status: string } | null | undefined, Status]>([
     ['no session', undefined, { apiErrorProducer: makeProducer() }],
-    ['exited session', { status: 'exited' }, { apiErrorProducer: makeProducer() }],
-    ['no adapter status', { status: 'running' }, undefined],
-    ['no producer', { status: 'running' }, {}],
-    ['a turn-start hook', { status: 'running' }, { apiErrorProducer: makeProducer(), interactionHook: {} }]
+    ['a null session', null, { apiErrorProducer: makeProducer() }],
+    ['an exited session', { status: 'exited' }, { apiErrorProducer: makeProducer() }],
+    ['no adapter status', live, undefined],
+    ['no producer', live, {}],
+    ['a turn-start hook', live, { apiErrorProducer: makeProducer(), interactionHook: {} }]
   ])('does nothing for %s', async (_name, session, status) => {
     const { ctx } = makeCtx();
     const ref = vi.fn(() => ({ id: 'busy-b', cwd: '/w' }));
-    armOnBusyEdge(ctx, 'busy-b', session, status, ref);
+    armOnBusyEdge(ctx, 'busy-b', session, () => status, ref);
     await flush();
     expect(ref).not.toHaveBeenCalled();
     expect(isArmed('busy-b')).toBe(false);
+  });
+
+  it('does not look at the adapter for an exited session', () => {
+    const { ctx } = makeCtx();
+    const statusOf = vi.fn(() => undefined);
+    armOnBusyEdge(ctx, 'busy-c', { status: 'exited' }, statusOf, () => ({ id: 'busy-c', cwd: '/w' }));
+    expect(statusOf).not.toHaveBeenCalled();
   });
 });

@@ -1444,9 +1444,11 @@ const outputActivity = new OutputActivityMonitor({
   // Harnesses with a body-less API-error producer and no turn-start hook are armed from the busy edge.
   // Hook harnesses (Claude, Codex) keep arming from their own UserPromptSubmit callback.
   onBusyEdge: (sessionId) => {
-    const session = ptys.getSession(sessionId);
-    const status = session ? providerFor(session.profile as LaunchProfileId).adapter.status : undefined;
-    armOnBusyEdge(apiErrorDispatchCtx, sessionId, session, status, () => transcriptRefForSession(session!));
+    armOnBusyEdge(
+      apiErrorDispatchCtx, sessionId, ptys.getSession(sessionId),
+      (session) => providerFor(session.profile as LaunchProfileId).adapter.status,
+      transcriptRefForSession
+    );
   }
 });
 /**
