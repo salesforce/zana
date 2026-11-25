@@ -12,6 +12,7 @@ import { apiJson } from '../../lib/fetch-with-app-surface.js';
 import { COMPOSER_COMMANDS_RELOAD_EVENT } from '../../lib/composer-commands-reload.js';
 import { isHostUnavailableError } from '../../lib/host-unavailable.js';
 import { product } from '../../lib/product-client.js';
+import { claimEscape } from '../../hooks/useDialogFocusTrap.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { PROJECT_DRAG_MIME, projectFromDrag } from '../../lib/project-drag.js';
 import {
@@ -338,6 +339,7 @@ export function useComposerPromptField({
           }
           if (action === 'dismiss') {
             event.preventDefault();
+            claimEscape(event);
             menu.dismiss();
             return true;
           }

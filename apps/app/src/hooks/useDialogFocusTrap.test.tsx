@@ -3,7 +3,7 @@ import { useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { useDialogFocusTrap } from './useDialogFocusTrap.js';
+import { claimEscape, useDialogFocusTrap } from './useDialogFocusTrap.js';
 
 afterEach(cleanup);
 function Fixture({ close, enabled = true, editorFocus = false, nested = false }: { close: () => void; enabled?: boolean; editorFocus?: boolean; nested?: boolean }) {
@@ -63,4 +63,35 @@ it('uses the latest close callback without resetting focus when a parent rerende
   fireEvent.keyDown(last, { key: 'Escape' });
   expect(nextClose).toHaveBeenCalledOnce();
   expect(oldClose).not.toHaveBeenCalled();
+});
+
+// ProseMirror calls preventDefault on every Escape keydown it receives, so the
+// event reaches the window already defaultPrevented.
+function editorEscape(editor: Element, claim: boolean) {
+  const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  editor.addEventListener('keydown', (e) => { e.preventDefault(); if (claim) claimEscape(e); }, { once: true });
+  editor.dispatchEvent(event);
+}
+function EditorFixture({ close }: { close: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useDialogFocusTrap(ref, close);
+  return <div ref={ref} role="dialog"><div className="tiptap ProseMirror" contentEditable data-testid="pm" /><div data-testid="plain" /></div>;
+}
+it('closes on Escape from a ProseMirror editor even though the editor prevented default', () => {
+  const close = vi.fn();
+  render(<EditorFixture close={close} />);
+  editorEscape(screen.getByTestId('pm'), false);
+  expect(close).toHaveBeenCalledOnce();
+});
+it('keeps the dialog open when the editor claimed Escape (typeahead dismiss)', () => {
+  const close = vi.fn();
+  render(<EditorFixture close={close} />);
+  editorEscape(screen.getByTestId('pm'), true);
+  expect(close).not.toHaveBeenCalled();
+});
+it('still ignores a default-prevented Escape from outside an editor', () => {
+  const close = vi.fn();
+  render(<EditorFixture close={close} />);
+  editorEscape(screen.getByTestId('plain'), false);
+  expect(close).not.toHaveBeenCalled();
 });
