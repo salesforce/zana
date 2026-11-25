@@ -20,10 +20,12 @@ vi.mock('@/store', () => ({
 }));
 vi.mock('@/hooks/useCompactLayout', () => ({ useCompactLayout: () => layout.compact }));
 vi.mock('@/components/listpane/InboxPane', () => ({
-  InboxPane: ({ onShowOverview }: { onShowOverview?: () => void }) => (
+  InboxPane: ({ onShowOverview, onChangeLayout }: { onShowOverview?: () => void; onChangeLayout: (wide: boolean) => void }) => (
     <div className="inbox-list-pane">
       <input aria-label="Filter inbox" />
       <button onClick={() => selection.getState().select('a')}>Report row</button>
+      <button onClick={() => onChangeLayout(true)}>Full-width</button>
+      <button onClick={() => onChangeLayout(false)}>Split view</button>
       {onShowOverview && <button onClick={onShowOverview}>Overview</button>}
     </div>
   )
@@ -40,7 +42,10 @@ vi.mock('@/components/InboxOverview', () => ({ InboxOverview: ({ entries }: { en
 
 import { InboxView } from './InboxView';
 
+const inboxLayoutKey = 'zcc.inbox.fullWidth';
+
 beforeEach(() => {
+  localStorage.removeItem(inboxLayoutKey);
   layout.compact = true;
   layout.scope = null;
   ui.setState({ nav: 'inbox', inboxTab: 'feed' });
@@ -49,6 +54,48 @@ beforeEach(() => {
   inbox.setState({ entries: [{ id: 'a', projectId: 'p' }, { id: 'b', projectId: 'other' }] });
 });
 afterEach(cleanup);
+
+it('defaults to full-width and remembers both explicit layout choices', () => {
+  layout.compact = false;
+  const initial = render(<InboxView />);
+  expect(initial.container.querySelector('.inbox-view')?.getAttribute('data-full-width')).toBe('true');
+  expect(localStorage.getItem(inboxLayoutKey)).toBeNull();
+  fireEvent.click(screen.getByText('Split view'));
+  initial.unmount();
+
+  const split = render(<InboxView />);
+  expect(split.container.querySelector('.inbox-view')?.getAttribute('data-full-width')).toBe('false');
+  fireEvent.click(screen.getByText('Full-width'));
+  expect(localStorage.getItem(inboxLayoutKey)).toBe('1');
+  split.unmount();
+
+  const fullWidth = render(<InboxView />);
+  expect(fullWidth.container.querySelector('.inbox-view')?.getAttribute('data-full-width')).toBe('true');
+});
+
+it('keeps the filter when switching to full-width and opens the existing detail with Back', () => {
+  layout.compact = false;
+  localStorage.setItem(inboxLayoutKey, '0');
+  selection.setState({ selectedEntryId: 'a' });
+  const { container } = render(<InboxView />);
+  const root = container.querySelector('.inbox-view')!;
+  expect(root.getAttribute('data-full-width')).toBe('false');
+  fireEvent.change(screen.getByLabelText('Filter inbox'), { target: { value: 'draft' } });
+  fireEvent.click(screen.getByText('Full-width'));
+  expect(root.getAttribute('data-full-width')).toBe('true');
+  expect(screen.queryByTestId('feed-detail')).toBeNull();
+  expect((screen.getByLabelText('Filter inbox') as HTMLInputElement).value).toBe('draft');
+  fireEvent.click(screen.getByText('Overview'));
+  expect(screen.getByTestId('overview')).toBeTruthy();
+  fireEvent.click(screen.getByText('Back to Feed'));
+  fireEvent.click(screen.getByText('Report row'));
+  expect(screen.getByTestId('feed-detail').getAttribute('data-visible')).toBe('true');
+  fireEvent.click(screen.getByText('Inbox'));
+  act(() => ui.setState({ inboxTab: 'saved' }));
+  expect(root.getAttribute('data-full-width')).toBe('false');
+  act(() => ui.setState({ inboxTab: 'feed' }));
+  expect(root.getAttribute('data-full-width')).toBe('true');
+});
 
 it('opens a report, focuses Back, and returns to the same filtered list and row', () => {
   const { container } = render(<InboxView />);
@@ -75,8 +122,8 @@ it('keeps overview reachable and returns to the list after choosing an overview 
   const { container } = render(<InboxView />);
   fireEvent.click(screen.getByText('Overview'));
   expect(container.querySelector('.inbox-view')?.getAttribute('data-detail-open')).toBe('true');
-  expect(document.activeElement).toBe(screen.getByText('Inbox'));
-  fireEvent.click(screen.getByText('Inbox'));
+  expect(document.activeElement).toBe(screen.getByText('Back to Feed'));
+  fireEvent.click(screen.getByText('Back to Feed'));
   expect(container.querySelector('.inbox-view')?.getAttribute('data-detail-open')).toBe('false');
   fireEvent.click(screen.getByText('Overview'));
   act(() => selection.getState().select('a'));
@@ -104,6 +151,7 @@ it('honors external selection and disables shortcuts when Inbox is inactive', ()
 });
 
 it('keeps desktop split panes and selection when changing viewport', () => {
+  localStorage.setItem(inboxLayoutKey, '0');
   layout.compact = false;
   selection.setState({ selectedEntryId: 'a' });
   const { rerender, container } = render(<InboxView />);
@@ -121,6 +169,7 @@ it('does not open stale or out-of-scope feed or saved selections', () => {
   const { container } = render(<InboxView />);
   expect(container.querySelector('.inbox-view')?.getAttribute('data-detail-open')).toBe('false');
   act(() => selection.getState().select(null));
+  fireEvent.click(screen.getByText('Overview'));
   expect(screen.getByTestId('overview').textContent).toBe('1 entries');
   act(() => {
     ui.setState({ inboxTab: 'saved' });
@@ -133,6 +182,7 @@ it('does not open stale or out-of-scope feed or saved selections', () => {
 });
 
 it('renders the overview on the first render when the selection is out of scope or missing', () => {
+  localStorage.setItem(inboxLayoutKey, '0');
   layout.compact = false; layout.scope = 'p';
   selection.setState({ selectedEntryId: 'b' });
   const first = render(<InboxView />);

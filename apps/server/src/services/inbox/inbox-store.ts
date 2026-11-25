@@ -98,6 +98,7 @@ export interface InboxInput {
    * from the AUTHENTICATED moduleId; every other caller omits it.
    */
   extensionSource?: { extensionId: string };
+  offerAgentFix?: true;
   /**
    * OPTIONAL click-navigation redirect for an extension-pushed entry — see
    * {@link InboxEntry.target}. Only ever set alongside {@link extensionSource}

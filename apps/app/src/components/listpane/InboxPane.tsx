@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, X, Check, Trash2, ChevronsDownUp, ChevronsUpDown, InboxIcon, Bookmark, FolderTree, Clock, MoreHorizontal, MailCheck, LayoutDashboard, RefreshCw } from 'lucide-react';
-import { useInbox, useInboxRead, useInboxKeep, useInboxCollapsed, useInboxScopeProjectId, clearInbox, reloadInbox, useSaved, useUi, INBOX_LIST_MIN } from '../../store.js';
+import { Search, X, Check, Trash2, ChevronsDownUp, ChevronsUpDown, InboxIcon, Bookmark, FolderTree, Clock, MoreHorizontal, MailCheck, LayoutDashboard, LayoutList, PanelsTopLeft, RefreshCw } from 'lucide-react';
+import { useData, useInbox, useInboxRead, useInboxKeep, useInboxCollapsed, useInboxScopeProjectId, clearInbox, reloadInbox, useSaved, useUi, INBOX_LIST_MIN } from '../../store.js';
 import { groupByBucketThenProject, subGroupKey } from '@zana-ai/zcc-domain/inbox-grouping';
 import { isReport } from '@zana-ai/zcc-domain/feed-categories';
 import { ListPaneResizer } from '../ListPaneResizer.js';
@@ -9,17 +9,21 @@ import { InboxSidebar } from '../InboxSidebar.js';
 import { useCompactLayout } from '../../hooks/useCompactLayout.js';
 import { MobilePageHeader } from '../MobilePageHeader.js';
 import { SavedSidebar } from '../SavedSidebar.js';
+import { InboxPendingThreads, useInboxPendingThreads } from '../InboxPendingThreads.js';
 
 function tabAriaLabel(name: string, count: number, countKind?: string): string {
   if (count <= 0) return name;
   return countKind ? `${name}, ${count} ${countKind}` : `${name}, ${count}`;
 }
 
-export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onShowOverview?: () => void; mobileHeaderEnabled?: boolean } = {}) {
+export function InboxPane({ onShowOverview, mobileHeaderEnabled = true, fullWidth = false, onChangeLayout, toolbarLayout }: {
+  onShowOverview?: () => void;
+  mobileHeaderEnabled?: boolean;
+  fullWidth?: boolean;
+  onChangeLayout?: (wide: boolean) => void;
+  toolbarLayout?: 'split' | 'wide';
+} = {}) {
   const compact = useCompactLayout();
-  const [searchOpen, setSearchOpen] = useState(false);
-  const searchRef = useRef<HTMLInputElement>(null);
-  useEffect(() => { if (compact && searchOpen) searchRef.current?.focus(); }, [compact, searchOpen]);
   const allEntries = useInbox((s) => s.entries);
   const readIds = useInboxRead((s) => s.readIds);
   const markAllRead = useInboxRead((s) => s.markAllRead);
@@ -31,9 +35,33 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
   const inboxGrouping = useUi((s) => s.inboxGrouping);
   const setInboxGrouping = useUi((s) => s.setInboxGrouping);
   const savedRecords = useSaved((s) => s.records);
-  const [query, setQuery] = useState('');
+  const [searchByTab, setSearchByTab] = useState({
+    feed: { open: false, query: '' },
+    saved: { open: false, query: '' }
+  });
+  const { open: searchOpen, query } = searchByTab[inboxTab];
+  const searchRef = useRef<HTMLInputElement>(null);
+  const focusSearch = useRef(false);
+  useEffect(() => {
+    if (compact && searchOpen && focusSearch.current) searchRef.current?.focus();
+    focusSearch.current = false;
+  }, [compact, searchOpen]);
+  function setQuery(query: string) {
+    setSearchByTab((previous) => ({
+      ...previous,
+      [inboxTab]: { ...previous[inboxTab], query }
+    }));
+  }
+  function toggleSearch() {
+    focusSearch.current = !searchOpen;
+    setSearchByTab((previous) => ({
+      ...previous,
+      [inboxTab]: { open: !searchOpen, query: '' }
+    }));
+  }
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [reportsOnly, setReportsOnly] = useState(false);
+  const [needsActionOnly, setNeedsActionOnly] = useState(false);
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [actionsMenuPos, setActionsMenuPos] = useState<CSSProperties>({});
@@ -60,6 +88,10 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
   const showingSaved = inboxTab === 'saved';
   // The live feed (not Saved) — toolbar group/collapse/mark-read/clear apply here.
   const showingFeed = !showingSaved;
+  const projects = useData((s) => s.projects);
+  const projectNames = useMemo(() => new Map(projects.map((project) => [project.id, project.name])), [projects]);
+  const pendingThreads = useInboxPendingThreads(!!onChangeLayout, scopeProjectId, query, projectNames);
+  const showPendingThreads = showingFeed && !unreadOnly && !reportsOnly && pendingThreads.length > 0;
   const unreadCount = entries.reduce((n, e) => (readIds[e.id] ? n : n + 1), 0);
   const reportCount = useMemo(() => entries.reduce((n, e) => (isReport(e) ? n + 1 : n), 0), [entries]);
   // Distinct (bucket,project) subgroups present in the inbox — collapse-all /
@@ -78,10 +110,11 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
   // How many would a Clear remove (everything not flagged Keep).
   const clearableCount = entries.reduce((n, e) => (keptIds[e.id] ? n : n + 1), 0);
   const keptCount = entries.length - clearableCount;
-  const showCollapseAll = showingFeed && inboxGrouping === 'project' && subgroupKeys.length > 1;
+  const showGroupActions = showingFeed && !fullWidth && !needsActionOnly;
+  const showCollapseAll = showGroupActions && inboxGrouping === 'project' && subgroupKeys.length > 1;
   const collapseTitle = anyCollapsed ? 'Expand all projects' : 'Collapse all projects';
-  const unreadChipLabel = unreadOnly ? 'Show all messages' : `Unread${unreadCount > 0 ? ` ${unreadCount}` : ''}`;
-  const reportsChipLabel = reportsOnly ? 'Show all messages' : `Reports${reportCount > 0 ? ` ${reportCount}` : ''}`;
+  const unreadChipLabel = `Unread${unreadCount > 0 ? ` ${unreadCount}` : ''}`;
+  const reportsChipLabel = `Reports${reportCount > 0 ? ` ${reportCount}` : ''}`;
   const markReadTitle = `Mark ${unreadCount} as read`;
   const clearTitle =
     clearableCount === 0
@@ -106,8 +139,34 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
     void reloadInbox({ notify: true }).finally(() => setRefreshing(false));
   };
 
+  const closeActionsMenu = () => {
+    setActionsMenuOpen(false);
+    actionsTriggerRef.current?.focus();
+  };
+
+  function onActionsMenuKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Escape' || event.key === 'Tab') {
+      if (event.key === 'Escape') event.preventDefault();
+      event.stopPropagation();
+      closeActionsMenu();
+      return;
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+    if (!buttons.length) return;
+    const index = buttons.indexOf(event.target as HTMLButtonElement);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+      : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+    buttons[next]?.focus();
+  }
+
   useEffect(() => {
     if (!actionsMenuOpen) return;
+    const panel = actionsPanelRef.current;
+    const first = panel?.querySelector<HTMLButtonElement>('button:not(:disabled)');
+    (first ?? panel)?.focus({ preventScroll: true });
     const onDown = (e: MouseEvent) => {
       const target = e.target as Node;
       if (actionsMenuRef.current?.contains(target) || actionsPanelRef.current?.contains(target)) {
@@ -115,15 +174,8 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
       }
       setActionsMenuOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setActionsMenuOpen(false);
-    };
     window.addEventListener('mousedown', onDown);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('mousedown', onDown);
-      window.removeEventListener('keydown', onKey);
-    };
+    return () => window.removeEventListener('mousedown', onDown);
   }, [actionsMenuOpen]);
 
   useEffect(() => {
@@ -137,15 +189,16 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
         Refresh inbox
       </button>
     )}
-    {showingFeed && (
+    {showGroupActions && (
       <div role={compact ? "radiogroup" : "group"} aria-label="Inbox grouping">
         <button
           type="button"
           role={compact ? "radio" : "menuitemradio"}
+          tabIndex={compact ? undefined : -1}
           aria-checked={inboxGrouping === 'project'}
           onClick={() => {
             setInboxGrouping('project');
-            setActionsMenuOpen(false);
+            closeActionsMenu();
           }}
         >
           <FolderTree size={13} aria-hidden />
@@ -155,10 +208,11 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
         <button
           type="button"
           role={compact ? "radio" : "menuitemradio"}
+          tabIndex={compact ? undefined : -1}
           aria-checked={inboxGrouping === 'time'}
           onClick={() => {
             setInboxGrouping('time');
-            setActionsMenuOpen(false);
+            closeActionsMenu();
           }}
         >
           <Clock size={13} aria-hidden />
@@ -172,9 +226,10 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
       <button
         type="button"
         role={compact ? undefined : "menuitem"}
+        tabIndex={compact ? undefined : -1}
         onClick={() => {
           setManyCollapsed(subgroupKeys, !anyCollapsed);
-          setActionsMenuOpen(false);
+          closeActionsMenu();
         }}
       >
         {anyCollapsed ? <ChevronsUpDown size={13} aria-hidden /> : <ChevronsDownUp size={13} aria-hidden />}
@@ -185,9 +240,10 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
       <button
         type="button"
         role={compact ? undefined : "menuitem"}
+        tabIndex={compact ? undefined : -1}
         onClick={() => {
           markAllRead(entries.map((e) => e.id));
-          setActionsMenuOpen(false);
+          closeActionsMenu();
         }}
       >
         <MailCheck size={13} aria-hidden />
@@ -198,11 +254,12 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
     <button
       type="button"
       role={compact ? undefined : "menuitem"}
+      tabIndex={compact ? undefined : -1}
       className="tab-context-danger"
       disabled={clearableCount === 0}
       title={clearTitle}
       onClick={() => {
-        setActionsMenuOpen(false);
+        closeActionsMenu();
         onClear();
       }}
     >
@@ -216,7 +273,7 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
       className={`inbox-filter-chip ${unreadOnly ? 'on' : ''}`}
       aria-pressed={unreadOnly}
       aria-label={unreadChipLabel}
-      title={unreadChipLabel}
+      title={unreadOnly ? 'Clear unread filter' : 'Filter to unread messages'}
       disabled={unreadCount === 0 && !unreadOnly}
       onClick={() => setUnreadOnly((v) => !v)}
     >
@@ -229,7 +286,7 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
       className={`inbox-filter-chip ${reportsOnly ? 'on' : ''}`}
       aria-pressed={reportsOnly}
       aria-label={reportsChipLabel}
-      title={reportsChipLabel}
+      title={reportsOnly ? 'Clear reports filter' : 'Filter to reports'}
       disabled={reportCount === 0 && !reportsOnly}
       onClick={() => setReportsOnly((v) => !v)}
     >
@@ -237,10 +294,10 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
     </button>
   );
 
-  return (
-    <section className="list-pane inbox-list-pane">
+  const toolbar = (
+    <div className="inbox-pane-toolbar">
       <MobilePageHeader title="Inbox" enabled={mobileHeaderEnabled}
-        primary={<button type="button" className="icon-btn" aria-label={searchOpen ? 'Close inbox search' : 'Search inbox'} aria-expanded={searchOpen} onClick={() => { setSearchOpen((open) => !open); if (searchOpen) setQuery(''); }}>{searchOpen ? <X size={20} /> : <Search size={20} />}</button>}>
+        primary={<button type="button" className="icon-btn" aria-label={searchOpen ? 'Close inbox search' : 'Search inbox'} aria-expanded={searchOpen} onClick={toggleSearch}>{searchOpen ? <X size={20} /> : <Search size={20} />}</button>}>
         {showingFeed && <>
           {onShowOverview && <button type="button" onClick={onShowOverview}><LayoutDashboard size={18} /> Inbox overview</button>}
           {reportsFilter}
@@ -248,6 +305,12 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
         </>}
         {showingSaved && <button type="button" onClick={() => setInboxTab('feed')}><InboxIcon size={18} /> Open feed</button>}
       </MobilePageHeader>
+      {(toolbarLayout === 'wide' || fullWidth) && !compact && (
+        <header className="inbox-feed-heading">
+          <h1>Inbox</h1>
+          <p>{scopeProjectId ? projectNames.get(scopeProjectId) : 'Updates and requests across your projects'}</p>
+        </header>
+      )}
       {/* Tab strip: live feed vs durable saved reports. Feed actions live in
           the ⋯ menu; Unread / Reports are filter chips under the search. */}
       <div className="inbox-tabs-row">
@@ -279,7 +342,18 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
             {savedCount > 0 && <span className="inbox-tab-count">{savedCount}</span>}
           </button>
         </div>
-        {compact && !showingSaved && unreadFilter}
+        {showingFeed && onChangeLayout && (
+          <div className="inbox-layout-controls" role="group" aria-label="Inbox layout">
+            <button type="button" aria-label="Full-width" title="Full-width" aria-pressed={fullWidth} onClick={() => onChangeLayout(true)}>
+              <LayoutList size={14} aria-hidden />
+              <span>Full-width</span>
+            </button>
+            <button type="button" aria-label="Split view" title="Split view" aria-pressed={!fullWidth} onClick={() => onChangeLayout(false)}>
+              <PanelsTopLeft size={14} aria-hidden />
+              <span>Split view</span>
+            </button>
+          </div>
+        )}
         {!compact && !showingSaved && onShowOverview && (
           <button type="button" className="inbox-mobile-overview" aria-label="Inbox overview" title="Inbox overview" onClick={onShowOverview}>
             <LayoutDashboard size={16} aria-hidden />
@@ -293,7 +367,7 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
               aria-label="Refresh inbox"
               title="Refresh inbox"
               aria-busy={refreshing}
-              disabled={refreshing}
+              aria-disabled={refreshing}
               onClick={onRefresh}
             >
               <RefreshCw size={14} className={refreshing ? 'spin' : undefined} aria-hidden />
@@ -327,9 +401,11 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
                       ref={actionsPanelRef}
                       className="tab-context-menu"
                       role="menu"
+                      tabIndex={-1}
                       aria-label="Inbox actions"
                       style={actionsMenuPos}
                       onMouseDown={(e) => e.stopPropagation()}
+                      onKeyDown={onActionsMenuKeyDown}
                     >
                       {feedActions}
                     </div>,
@@ -355,7 +431,10 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
               type="button"
               className="inbox-filter-clear"
               aria-label="Clear filter"
-              onClick={() => setQuery('')}
+              onClick={() => {
+                setQuery('');
+                searchRef.current?.focus();
+              }}
             >
               <X size={12} />
             </button>
@@ -363,28 +442,50 @@ export function InboxPane({ onShowOverview, mobileHeaderEnabled = true }: { onSh
         </div>}
         {!showingSaved && (
           <>
-            {!compact && unreadFilter}
+            {unreadFilter}
             {!compact && reportsFilter}
+            {onChangeLayout && (
+              <button
+                type="button"
+                className="inbox-filter-chip inbox-filter-chip--attention"
+                aria-pressed={needsActionOnly}
+                onClick={() => setNeedsActionOnly((value) => !value)}
+              >
+                Needs action
+              </button>
+            )}
           </>
         )}
       </div>
-      <div className="list-body">
-        {showingSaved ? (
-          <SavedSidebar query={query} scopeProjectId={scopeProjectId} />
-        ) : (
-          // The AI summary card sits on the detail landing (see InboxOverview)
-          // so the list column stays a scannable feed. Reports is a filter chip,
-          // not a tab — same sidebar, `reportsOnly` on.
-          <InboxSidebar
-            query={query}
-            unreadOnly={unreadOnly}
-            reportsOnly={reportsOnly}
-            scopeProjectId={scopeProjectId}
-            grouping={inboxGrouping}
-          />
-        )}
-      </div>
-      <ListPaneResizer minWidth={INBOX_LIST_MIN} resetWidth={INBOX_LIST_MIN} />
-    </section>
+    </div>
+  );
+
+  return (
+    <>
+      {toolbarLayout && toolbar}
+      <section className="list-pane inbox-list-pane">
+        {!toolbarLayout && toolbar}
+        <div className="list-body">
+          {showingSaved ? (
+            <SavedSidebar query={query} scopeProjectId={scopeProjectId} />
+          ) : (
+            <>
+              {showPendingThreads && <InboxPendingThreads threads={pendingThreads} projectNames={projectNames} scope={scopeProjectId} />}
+              <InboxSidebar
+                query={query}
+                unreadOnly={unreadOnly}
+                reportsOnly={reportsOnly}
+                needsActionOnly={needsActionOnly}
+                fullWidth={fullWidth}
+                hideEmpty={showPendingThreads}
+                scopeProjectId={scopeProjectId}
+                grouping={inboxGrouping}
+              />
+            </>
+          )}
+        </div>
+        {!fullWidth && <ListPaneResizer minWidth={INBOX_LIST_MIN} resetWidth={INBOX_LIST_MIN} />}
+      </section>
+    </>
   );
 }

@@ -662,6 +662,8 @@ export interface PluginSdkProviders {
 export interface PluginSdkInboxPushArgs {
   projectId: string;
   comments: string;
+  /** Offer an editable agent draft seeded with the Inbox message. */
+  offerAgentFix?: true;
 }
 
 export interface PluginSdkInbox {

@@ -82,7 +82,7 @@ test('mobile project selection scrolls and fits the keyboard; inbox videos play 
     }
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${serverUrl}/inbox`);
-    await page.locator('.inbox-row').filter({ hasText: 'Video report' }).click();
+    await page.getByRole('button', { name: /Video report/ }).click();
     await expect(page.locator('video')).toHaveCount(0);
     await page.getByRole('button', { name: 'demo #1.mp4', exact: true }).tap();
     const video = page.getByLabel('Video preview: demo #1.mp4');
@@ -105,7 +105,7 @@ test('mobile project selection scrolls and fits the keyboard; inbox videos play 
     await expect(page.getByRole('status').filter({ hasText: 'Could not play this video' })).toBeVisible();
     // The same inbox component plays recordings in the built desktop window.
     await app.window.getByRole('link', { name: /^Inbox(?: \d+ unread)?$/ }).click();
-    await app.window.locator('.inbox-row').filter({ hasText: 'Video report' }).click();
+    await app.window.getByRole('button', { name: /Video report/ }).click();
     const desktopVideo = app.window.getByLabel('Video preview: demo #1.mp4');
     await expect.poll(() => desktopVideo.evaluate((node: HTMLVideoElement) => node.videoWidth)).toBe(160);
     await page.goto(`${serverUrl}/threads/new`);

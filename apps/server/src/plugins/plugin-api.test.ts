@@ -718,6 +718,8 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
         id: 'inb-1'
       });
       expect(pushInbox).toHaveBeenCalledWith({ pluginId: 'demo', projectId: 'p1', comments: 'hello' });
+      await handle.api.sdk.inbox.push({ projectId: 'p1', comments: 'Checks failed', offerAgentFix: true });
+      expect(pushInbox).toHaveBeenLastCalledWith({ pluginId: 'demo', projectId: 'p1', comments: 'Checks failed', offerAgentFix: true });
       await expect(handle.api.sdk.projects.list()).resolves.toEqual([
         { id: 'p1', name: 'Alpha', path: '/tmp/a' }
       ]);

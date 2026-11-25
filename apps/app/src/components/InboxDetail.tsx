@@ -44,7 +44,7 @@ import { MarkdownContent } from './MarkdownContent.js';
 import { InboxDocContent, readInboxDocPreview } from './InboxDocContent.js';
 import { renderReportHtml, type ReportDoc } from '../lib/renderReportHtml.js';
 import { setPendingSquadDetailsTarget } from '../lib/squad-details-target.js';
-import { inboxPrimaryTitle, inboxShortTitle, inboxContextLine } from '../lib/inboxPresentation.js';
+import { buildInboxAgentPrompt, inboxPrimaryTitle, inboxShortTitle, inboxContextLine } from '../lib/inboxPresentation.js';
 import { classifyEntry } from '@zana-ai/zcc-domain/feed-categories';
 import { resolveAnswerSurface } from '../lib/answerSurface.js';
 import { isNoRouteBlockerEntry, respondToInboxBlocker, stopAndFixPlanFromInbox } from '../lib/inboxBlockerRespond.js';
@@ -1001,7 +1001,7 @@ function Detail({ entry, onDelete, onBack }: { entry: InboxEntry; onDelete: () =
           project={aliveProject}
           {...(squadPrefill
             ? { initialMode: 'team' as const, squadPrefill }
-            : { initialPrompt: buildSpawnPrompt(entry) })}
+            : { initialPrompt: buildInboxAgentPrompt(entry) })}
           onLaunched={(session, projectId) => inspectAgentSession(session.id, projectId, navigate)}
           onClose={squadPrefill ? closeSquadLauncher : () => setLauncherOpen(false)}
         />
@@ -1872,30 +1872,6 @@ function buildSeedPrompt(entry: InboxEntry): string {
     // Bound the pasted comments so a huge report can't blow the opening prompt.
     const clipped = comments.length > 4000 ? `${comments.slice(0, 4000)}\n…(truncated)` : comments;
     parts.push('', 'What the previous agent reported:', clipped);
-  }
-  return parts.join('\n');
-}
-
-/**
- * Prompt for a NEW agent spawned against an inbox message (the header's
- * "spawn an agent" button). Unlike {@link buildSeedPrompt} (which frames a
- * reopen of a closed session), this frames a fresh agent picking up whatever
- * the message describes — the doc paths (relative to the project root) and the
- * comments — as its opening context. The user can edit it before launching.
- */
-function buildSpawnPrompt(entry: InboxEntry): string {
-  const parts: string[] = [
-    'Act on the following inbox message from this project.'
-  ];
-  const docs = entry.docs ?? [];
-  if (docs.length > 0) {
-    parts.push('', 'Related documents (paths relative to the project root):');
-    for (const d of docs) parts.push(`- ${d.path}`);
-  }
-  const comments = (entry.comments ?? '').trim();
-  if (comments) {
-    const clipped = comments.length > 4000 ? `${comments.slice(0, 4000)}\n…(truncated)` : comments;
-    parts.push('', 'Message:', clipped);
   }
   return parts.join('\n');
 }

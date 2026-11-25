@@ -198,6 +198,7 @@ async function launchFromInboxCard(window: Page, title: string): Promise<void> {
     await expect(launcherModal).toBeHidden();
   }
   await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
+  await window.getByRole('button', { name: 'Split view', exact: true }).click();
   const row = window.locator('.inbox-row').filter({ hasText: `Squad launch ready: ${title}` }).first();
   await expect(row).toBeVisible({ timeout: 30_000 });
   await row.click();

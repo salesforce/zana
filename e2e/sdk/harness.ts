@@ -806,7 +806,10 @@ async function planCorrectionOrchestrator() {
     })();
   });
   process.stdin.resume();
-  setIdle(); // rest so the host sees an idle edge and reviews the rejected plan
+  // Finish an initial turn so the host can distinguish this idle edge from startup idle.
+  setWorking();
+  await sleep(600);
+  setIdle();
   await new Promise(function () {});
 }
 

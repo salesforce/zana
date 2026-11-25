@@ -150,6 +150,7 @@ test('demo: start a Squad from a conversation', async ({ app }) => {
     // --- 02 The Inbox card ---
     await demo.section({ number: 2, title: 'The Inbox card', subtitle: 'Inbox → Squad launch ready', hint: 'Nothing starts yet' });
     await tap(page, page.getByTestId('nav-inbox'));
+    await page.getByRole('button', { name: 'Split view', exact: true }).click();
     const proposal = page.locator('.inbox-row').filter({ hasText: `Squad launch ready: ${TITLE}` }).first();
     await expect(proposal).toBeVisible({ timeout: 30_000 });
     await tap(page, proposal);

@@ -52,7 +52,7 @@ test('a waiting human blocker raises one reminder, one Inbox row, and shows its 
 
     // Inbox: exactly one reminder row.
     await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
-    const rows = window.locator('.inbox-row').filter({ hasText: /still needs your answer/ });
+    const rows = window.getByRole('button', { name: /still needs your answer/ });
     await expect(rows.first()).toBeVisible({ timeout: 30_000 });
     await expect(rows).toHaveCount(1);
   } catch (error) { throw jobTeamFailure(ctx, error); }

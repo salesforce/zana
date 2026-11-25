@@ -263,6 +263,7 @@ test('demo: define and launch a Squad', async ({ app }) => {
       return '';
     }), { timeout: 60_000, intervals: [500] }).toContain('label');
     await tap(page, page.getByTestId('nav-inbox'));
+    await page.getByRole('button', { name: 'Split view', exact: true }).click();
     const pinned = page.locator('.inbox-questions-pinned');
     await expect(pinned.getByText('Needs your answer', { exact: true })).toBeVisible({ timeout: 15_000 });
     await tap(page, pinned.getByText(/Atlas/).first());
