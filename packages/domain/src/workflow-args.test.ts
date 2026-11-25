@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { LINEAR_TIME_BUDGET_MS, allStrings } from './__tests__/linear-time.js';
 import {
   buildInterviewPrompt,
   parseArgumentNames,
@@ -140,17 +141,6 @@ describe('token scanning', () => {
   /** The regex the scanner replaced, kept as the oracle. */
   const TOKEN_RE = /\{\{\{([\s\S]*?)\}\}\}|\{\{([\s\S]*?)\}\}/g;
 
-  function* strings(alphabet: string, maxLength: number): Generator<string> {
-    let layer = [''];
-    yield '';
-    for (let length = 1; length <= maxLength; length += 1) {
-      const next: string[] = [];
-      for (const prefix of layer) for (const ch of alphabet) next.push(prefix + ch);
-      yield* next;
-      layer = next;
-    }
-  }
-
   function referenceNames(template: string): string[] {
     const seen = new Set<string>();
     const out: string[] = [];
@@ -178,7 +168,7 @@ describe('token scanning', () => {
   it('agrees with the regex implementation on every short template', () => {
     const values = { a: 'A', b: '' };
     const mismatches: string[] = [];
-    for (const template of strings('{}a ', 8)) {
+    for (const template of allStrings('{}a ', 8)) {
       const same =
         parseArgumentNames(template).join('|') === referenceNames(template).join('|') &&
         substituteArguments(template, values) === referenceSubstitute(template, values);
@@ -201,6 +191,6 @@ describe('token scanning', () => {
       expect(parseArgumentNames(open)).toEqual([]);
       expect(substituteArguments(open, {})).toBe(open);
     }
-    expect(performance.now() - started).toBeLessThan(500);
+    expect(performance.now() - started).toBeLessThan(LINEAR_TIME_BUDGET_MS);
   });
 });

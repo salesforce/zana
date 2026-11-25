@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { LINEAR_TIME_BUDGET_MS, allStrings } from './__tests__/linear-time.js';
 import { MAX_INTERVAL_MS, MIN_INTERVAL_MS, parseEvery } from './parse-every.js';
 
 const UNIT_MS: Record<string, number> = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 };
@@ -23,17 +24,6 @@ function referenceParseEvery(every: string): number | null {
   return Math.max(MIN_INTERVAL_MS, rounded);
 }
 
-function* strings(alphabet: string[], maxLength: number): Generator<string> {
-  let layer = [''];
-  yield '';
-  for (let length = 1; length <= maxLength; length += 1) {
-    const next: string[] = [];
-    for (const prefix of layer) for (const token of alphabet) next.push(prefix + token);
-    yield* next;
-    layer = next;
-  }
-}
-
 describe('parseEvery', () => {
   it.each([
     ['5m', 300_000],
@@ -56,7 +46,7 @@ describe('parseEvery', () => {
 
   it('agrees with the regex implementation on every short string', () => {
     const mismatches: string[] = [];
-    for (const input of strings(['0', '5', '.', 'ms', 's', 'm', 'h', 'd', ' ', 'x'], 5)) {
+    for (const input of allStrings(['0', '5', '.', 'ms', 's', 'm', 'h', 'd', ' ', 'x'], 5)) {
       if (parseEvery(input) !== referenceParseEvery(input)) mismatches.push(input);
     }
     expect(mismatches).toEqual([]);
@@ -69,6 +59,6 @@ describe('parseEvery', () => {
     expect(parseEvery(`${'0'.repeat(200_000)}x`)).toBeNull();
     expect(parseEvery('1.'.repeat(100_000))).toBeNull();
     expect(parseEvery('1m'.repeat(50_000))).toBe(MAX_INTERVAL_MS);
-    expect(performance.now() - started).toBeLessThan(500);
+    expect(performance.now() - started).toBeLessThan(LINEAR_TIME_BUDGET_MS);
   });
 });

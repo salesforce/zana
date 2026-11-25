@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { LINEAR_TIME_BUDGET_MS } from './__tests__/linear-time.js';
 import { BUILTIN_NAV_SENTINEL, derivePluginId, isPluginId } from './plugin-id.js';
 
 describe('derivePluginId', () => {
@@ -23,6 +24,6 @@ describe('derivePluginId', () => {
     const started = performance.now();
     expect(derivePluginId(`${'-'.repeat(200_000)}x`)).toBe('x');
     expect(derivePluginId(`x${'-'.repeat(200_000)}y`)).toBe(`x${'-'.repeat(200_000)}y`);
-    expect(performance.now() - started).toBeLessThan(500);
+    expect(performance.now() - started).toBeLessThan(LINEAR_TIME_BUDGET_MS);
   });
 });

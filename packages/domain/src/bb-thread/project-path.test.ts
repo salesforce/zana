@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { LINEAR_TIME_BUDGET_MS } from "../__tests__/linear-time.js";
 import { normalizeProjectPathInput } from "./project-path.js";
 
 describe("normalizeProjectPathInput", () => {
@@ -17,6 +18,6 @@ describe("normalizeProjectPathInput", () => {
     const input = `/a${"/".repeat(200_000)}b`;
     expect(normalizeProjectPathInput(input)).toBe(input);
     expect(normalizeProjectPathInput(`/a${"/".repeat(200_000)}`)).toBe("/a");
-    expect(performance.now() - started).toBeLessThan(500);
+    expect(performance.now() - started).toBeLessThan(LINEAR_TIME_BUDGET_MS);
   });
 });
