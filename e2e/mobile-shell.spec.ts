@@ -599,6 +599,12 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
     await interfaceSheet.getByRole('button', { name: 'Basic', exact: true }).click();
     await expect(phone.locator('.app-shell')).toHaveAttribute('data-ui-mode', 'basic');
     await expect(drawer).toHaveCount(0);
+    await phone.goto(`${serverUrl}/agents`);
+    await expect(phone.getByRole('heading', { name: 'Continue in Advanced' })).toBeVisible();
+    const advancedActions = phone.locator('.titlebar .mobile-page-actions');
+    await expect(advancedActions).toHaveCount(1);
+    await expect(advancedActions).toBeHidden();
+    await expect(phone.getByRole('button', { name: 'Open conversations' })).toBeVisible();
     await phone.goto(`${serverUrl}/threads/${threadId}`);
     await expect(shellTitle).toBeVisible();
     await phone.getByRole('button', { name: 'Conversation actions', exact: true }).click();
