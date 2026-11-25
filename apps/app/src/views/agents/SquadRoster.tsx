@@ -5,11 +5,6 @@ import { nodeNotice } from './squadFlowLayout';
 import { formatAge } from '@/lib/squad-worker-visibility';
 import { memberRole, squadMemberStatus, squadStatuses } from './squadFlowPresentation';
 
-function MemberStatus({ node, now }: { node: SquadFlowNode; now: number }) {
-  const status = squadMemberStatus(node, now);
-  return <span className="squad-status" data-status={status}>{squadStatuses[status]}</span>;
-}
-
 function memberAge(node: SquadFlowNode, now: number): string | undefined {
   const since = node.claim?.claimedAt ?? node.stateSince;
   return since && !node.exited ? `${formatAge(Math.max(0, now - since))} ago` : undefined;
@@ -21,9 +16,10 @@ interface RosterProps {
   selectedId?: string;
   onSelect: (node: SquadFlowNode, trigger: HTMLButtonElement) => void;
   solo?: boolean;
+  questionPinned?: boolean;
 }
 
-export function SquadRoster({ nodes, now, selectedId, onSelect, solo }: RosterProps) {
+export function SquadRoster({ nodes, now, selectedId, onSelect, solo, questionPinned }: RosterProps) {
   const [showIdle, setShowIdle] = useState(true);
   const ordered = [...nodes].sort((a, b) => {
     if (solo) {
@@ -40,11 +36,14 @@ export function SquadRoster({ nodes, now, selectedId, onSelect, solo }: RosterPr
   const memberButton = (node: SquadFlowNode) => {
     const Icon = node.isOrchestrator ? GitPullRequest : node.inspectionTarget.type === 'thread' ? MessageSquare : Hash;
     const age = memberAge(node, now);
+    const memberStatus = squadMemberStatus(node, now);
+    const status = memberStatus === 'blocked' && questionPinned && node.isOrchestrator && node.job?.needsAttention
+      ? 'waiting' : memberStatus;
     return (
       <button
         aria-pressed={selectedId === node.sessionId}
         className="squad-roster-row"
-        data-status={squadMemberStatus(node, now)}
+        data-status={status}
         key={node.sessionId}
         type="button"
         onClick={(event) => onSelect(node, event.currentTarget)}
@@ -54,7 +53,7 @@ export function SquadRoster({ nodes, now, selectedId, onSelect, solo }: RosterPr
           <strong>{node.label}</strong>
           <small>{memberRole(node)}{age ? ` · ${age}` : ''}</small>
         </span>
-        <MemberStatus node={node} now={now} />
+        <span className="squad-status" data-status={status}>{squadStatuses[status]}</span>
         <ChevronRight className="squad-roster-chevron" size={14} aria-hidden="true" />
       </button>
     );
@@ -88,6 +87,7 @@ export function SquadMemberDetails({ node, now, onClose, onOpen, onInspectExecut
   }, [node.sessionId]);
   const age = memberAge(node, now);
   const notice = nodeNotice(node);
+  const status = squadMemberStatus(node, now);
   return (
     <aside className="squad-member-details squad-surface" aria-label="Agent details">
       <div className="squad-detail-title">
@@ -95,7 +95,7 @@ export function SquadMemberDetails({ node, now, onClose, onOpen, onInspectExecut
         <button type="button" className="icon-btn" aria-label="Close agent details" onClick={onClose}><X size={16} /></button>
       </div>
       <div className="squad-detail-state">
-        <MemberStatus node={node} now={now} />
+        <span className="squad-status" data-status={status}>{squadStatuses[status]}</span>
         {age && <small>{age}</small>}
       </div>
       {node.liveSubagents > 0 && <p>{node.liveSubagents} active {node.liveSubagents === 1 ? 'sub-agent' : 'sub-agents'}</p>}

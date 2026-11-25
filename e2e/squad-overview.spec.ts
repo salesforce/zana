@@ -73,7 +73,8 @@ test('Squads groups the run and solo agents, filters both views and opens the re
     const project = squads.getByRole('combobox', { name: 'Project', exact: true });
     await project.selectOption(projectId);
     const attention = squads.getByRole('button', { name: /Needs you Which label/ });
-    await expect(attention).toBeVisible({ timeout: 45_000 });
+    const runCard = squads.getByRole('region', { name: runTitle, exact: true });
+    await expect(runCard.getByRole('button', { name: /Needs you Which label/ })).toBeVisible({ timeout: 45_000 });
     await expect(squads.getByRole('heading', { name: runTitle })).toBeVisible();
     const solo = squads.getByRole('region', { name: 'Solo agents' });
     const draft = solo.getByRole('button', { name: /Draft release checklist/ });
@@ -98,12 +99,12 @@ test('Squads groups the run and solo agents, filters both views and opens the re
       await demo.caption(text);
       await page.waitForTimeout(ms);
     };
-    await caption('Squads opens on Overview. The question that needs an answer is above the run and solo agents.');
+    await caption('Squads opens on Overview. The question appears inside the run that needs an answer.');
 
-    await click(page, squads.getByRole('button', { name: /^\d+ Needs you$/ }));
+    await click(page, squads.getByRole('button', { name: '1 Needs you', exact: true }));
     await expect(draft).toBeHidden();
     await caption('Select Needs you to narrow the roster to agents waiting for you.');
-    await click(page, squads.getByRole('button', { name: /^\d+ All agents$/ }));
+    await click(page, squads.getByRole('button', { name: /^\d+ All$/ }));
 
     const search = squads.getByRole('searchbox', { name: 'Search agents and runs' });
     await search.fill('release checklist');
@@ -185,10 +186,12 @@ test('Squads groups the run and solo agents, filters both views and opens the re
     await expect(eventLog.getByText('Execution reserved', { exact: false })).toHaveCount(0);
     await caption('Recent activity shows milestones. All events keeps the full log, with a warnings filter.');
     await click(page, allEvents);
-    const runDiagnostics = rail.getByText('Run diagnostics', { exact: true });
+    const runDiagnostics = rail.getByText('Diagnostics', { exact: true });
+    await expect(rail.getByRole('button', { name: 'Copy diagnostics' })).toBeHidden();
     await click(page, runDiagnostics);
     await expect(rail.getByText('Run ID', { exact: true })).toBeVisible();
-    await caption('Run diagnostics keeps execution IDs, usage, and routing information together.', 2800);
+    await expect(rail.getByRole('button', { name: 'Copy diagnostics', exact: true })).toBeVisible();
+    await caption('Diagnostics keeps execution IDs, usage, routing, and the copy action together.', 2800);
     await click(page, runDiagnostics);
     if (recording) {
       await response.pressSequentially('About Atlas', { delay: 80 });
@@ -211,6 +214,11 @@ test('Squads groups the run and solo agents, filters both views and opens the re
     await click(page, squads.getByRole('button', { name: 'Overview', exact: true }));
     await expect(attention).toBeHidden({ timeout: 20_000 });
     await caption('The run receives the response. Overview clears the question once it is answered.', 4000);
+    await expect(squads.getByRole('button', { name: '1 Completed', exact: true })).toBeVisible({ timeout: 20_000 });
+    await click(page, squads.getByRole('button', { name: '1 Completed', exact: true }));
+    await expect(runCard.getByText('Completed', { exact: true })).toBeVisible();
+    await expect(solo).toBeHidden();
+    await caption('Completed keeps finished runs easy to find, even after the workers exit.', 3500);
     await demo?.finish();
     if (demo) await demo.flash();
   } catch (error) {

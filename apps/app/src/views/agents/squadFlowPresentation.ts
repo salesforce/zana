@@ -41,19 +41,20 @@ export function nodeActivity(node: SquadFlowNode, now: number): { working: boole
 }
 
 export const squadStatuses = {
-  all: 'All agents',
+  all: 'All',
   working: 'Working',
   blocked: 'Needs you',
   idle: 'Idle',
   waiting: 'Waiting',
   claimed: 'Assigned',
-  done: 'Done',
+  done: 'Completed',
   exited: 'Exited'
 } as const;
 export type SquadStatusFilter = keyof typeof squadStatuses;
 type SquadStatus = Exclude<SquadStatusFilter, 'all'>;
 
-export const mainSquadFilters = ['all', 'working', 'blocked', 'idle'] as const;
+export const mainSquadFilters = ['all', 'working', 'blocked', 'idle', 'done'] as const;
+const runStatusPriority = ['blocked', 'working', 'claimed', 'waiting', 'idle', 'done', 'exited'] as const;
 
 export function squadMemberStatus(node: SquadFlowNode, now: number): SquadStatus {
   if (node.exited) return 'exited';
@@ -75,10 +76,9 @@ export function matchesSquadSearch(query: string, ...values: Array<string | unde
   return !query || values.some((value) => value?.toLowerCase().includes(query));
 }
 
-export function matchesSquadMember(node: SquadFlowNode, now: number, filter: SquadStatusFilter, query: string): boolean {
+export function matchesSquadMemberSearch(node: SquadFlowNode, now: number, query: string): boolean {
   const status = squadMemberStatus(node, now);
-  return (filter === 'all' || status === filter)
-    && matchesSquadSearch(query, node.label, node.displayName, node.handle, memberRole(node), squadStatuses[status]);
+  return matchesSquadSearch(query, node.label, node.displayName, node.handle, memberRole(node), squadStatuses[status]);
 }
 
 export function squadStatusCounts(nodes: readonly SquadFlowNode[], now: number) {
@@ -104,7 +104,7 @@ export const runStates: Record<ExecutionBoardProjection['state'], string> = {
   READY: 'Ready',
   STARTING: 'Starting',
   RUNNING: 'Running',
-  COMPLETED: 'Complete',
+  COMPLETED: 'Completed',
   BLOCKED: 'Blocked',
   STOPPED: 'Stopped',
   FAILED: 'Failed'
@@ -112,6 +112,13 @@ export const runStates: Record<ExecutionBoardProjection['state'], string> = {
 
 export function isClosedSquadRun(execution: ExecutionBoardProjection) {
   return execution.state === 'COMPLETED' || execution.state === 'STOPPED' || execution.state === 'FAILED';
+}
+
+export function squadRunStatus(execution: ExecutionBoardProjection | undefined, question: string | undefined, nodes: readonly SquadFlowNode[], now: number): SquadStatus {
+  if (execution && isClosedSquadRun(execution)) return execution.state === 'COMPLETED' ? 'done' : 'exited';
+  if (question) return 'blocked';
+  const statuses = new Set(nodes.map((node) => squadMemberStatus(node, now)));
+  return runStatusPriority.find((status) => statuses.has(status)) ?? 'waiting';
 }
 
 export function squadQuestion(execution: ExecutionBoardProjection | undefined): string | undefined {

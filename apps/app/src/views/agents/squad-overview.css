@@ -1,14 +1,10 @@
 .squad-flow.squad-overview {
-  --squad-action: #e5ab74;
+  --squad-action: var(--danger);
   --squad-working: var(--settings-link, var(--accent-blue));
   container: squad-overview / inline-size;
   min-width: 0;
   padding: 12px clamp(12px, 2.7vw, 40px) 24px;
   gap: 14px;
-}
-
-[data-theme='light'] .squad-flow.squad-overview {
-  --squad-action: #8a4513;
 }
 
 .squad-overview > * {
@@ -130,7 +126,7 @@
 
 .squad-status-filters {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -329,8 +325,14 @@
 }
 
 .squad-status[data-status='working'],
-.squad-status[data-status='blocked'] {
+.squad-status[data-status='blocked'],
+.squad-status[data-status='done'] {
   background: color-mix(in srgb, currentColor 11%, var(--bg-panel));
+}
+
+.squad-filter-tile[data-status='done'] strong,
+.squad-status[data-status='done'] {
+  color: var(--success);
 }
 
 .squad-idle-toggle {
@@ -395,6 +397,11 @@
 .squad-attention small {
   display: block;
   margin-top: 3px;
+}
+
+.squad-run > .squad-attention {
+  width: calc(100% - 24px);
+  margin: 0 12px 8px;
 }
 
 .squad-empty {

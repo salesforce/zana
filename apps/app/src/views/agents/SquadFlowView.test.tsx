@@ -733,7 +733,7 @@ describe('Squads Overview and Map', () => {
     mockRuns([
       exampleRun({ currentBlocker: exampleBlocker() }),
       coordinatorRun,
-      exampleRun({ executionId: 'completed', jobTitle: 'Archived job', state: 'COMPLETED', currentBlocker: exampleBlocker() })
+      exampleRun({ executionId: 'completed', jobTitle: 'Completed job', state: 'COMPLETED', currentBlocker: exampleBlocker() })
     ]);
     stores.data.terminals = { p1: [
       squadTerminal('lead', 'Release lead', 'release-notes', 'orchestrator'),
@@ -744,7 +744,8 @@ describe('Squads Overview and Map', () => {
     render(<SquadFlowView projectId="p1" onInspectExecution={inspect} />);
     const banner = await screen.findByRole('button', { name: /Needs you Which release branch/ });
     expect(screen.getAllByText('Which release branch should I use?')).toHaveLength(1);
-    expect(screen.queryByText('Archived job')).toBeNull();
+    expect(await screen.findByRole('heading', { name: 'Completed job' })).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: 'Prepare release notes' })).getByText('Which release branch should I use?')).toBeTruthy();
     expect(screen.queryByText('Which worker should get this?')).toBeNull();
     fireEvent.click(banner);
     expect(inspect).toHaveBeenLastCalledWith('p1', 'release-notes');
@@ -759,6 +760,45 @@ describe('Squads Overview and Map', () => {
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'release notes' } });
     expect(screen.getByRole('button', { name: /Release writer/ })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Internal lead/ })).toBeNull();
+  });
+
+  it('counts each matching run once, keeps solo counts distinct, and finds completed runs without live agents', async () => {
+    stores.data.projects = [{ id: 'p1', name: 'Release project' }];
+    stores.data.terminals = { p1: [
+      squadTerminal('lead', 'Release lead', 'release-notes', 'orchestrator'),
+      squadTerminal('writer', 'Release writer', 'release-notes', 'worker')
+    ] };
+    stores.threads = [modernThread({ id: 'solo', title: 'Draft checklist' })];
+    mockRuns([
+      exampleRun({ currentBlocker: exampleBlocker() }),
+      exampleRun({ executionId: 'atlas', jobTitle: 'Build Atlas', currentBlocker: exampleBlocker({ question: 'Which label?' }) }),
+      exampleRun({ executionId: 'docs', jobTitle: 'Audit docs', state: 'COMPLETED' })
+    ]);
+    const inspect = vi.fn();
+    render(<SquadFlowView projectId="p1" onInspectExecution={inspect} />);
+
+    expect(await screen.findByRole('button', { name: '4 All' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '1 Idle' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '2 Needs you' }));
+    const runList = screen.getByRole('region', { name: 'Squad runs' });
+    expect(within(runList).getAllByRole('heading', { level: 3 })).toHaveLength(2);
+    const coordinator = within(runList).getByRole('button', { name: /Release lead/ });
+    expect(within(coordinator).getByText('Waiting', { exact: true })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Solo agents' })).toBeNull();
+    fireEvent.click(within(runList).getByRole('button', { name: /Needs you Which label/ }));
+    expect(inspect).toHaveBeenLastCalledWith('p1', 'atlas');
+
+    const search = screen.getByRole('searchbox');
+    fireEvent.change(search, { target: { value: 'Release writer' } });
+    expect(screen.getByRole('button', { name: '1 Needs you' })).toBeTruthy();
+    expect(within(runList).getAllByRole('heading', { level: 3 })).toHaveLength(1);
+    fireEvent.change(search, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Map' }));
+    fireEvent.click(screen.getByRole('button', { name: '1 Completed' }));
+    expect(screen.getByRole('button', { name: 'Overview' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.queryByText('Build Atlas')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open Squad details for Audit docs' }));
+    expect(inspect).toHaveBeenLastCalledWith('p1', 'docs');
   });
 
   it('switches the map between runs and removes edges when filtering away an endpoint', () => {

@@ -62,7 +62,8 @@ describe('API-error recovery in Squad details', () => {
   it('includes the recovery line in the copied details', async () => {
     const recovery = { step: 'nudged', errorKind: 'overloaded', since: 1_000 };
     load(recovery);
-    fireEvent.click(await screen.findByRole('button', { name: 'Copy details' }));
+    fireEvent.click(await screen.findByText('Diagnostics', { selector: 'summary' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy diagnostics' }));
     const expected = buildJobDetailsText('project-1', snapshot(recovery));
     expect(expected).toContain('recovery: nudged (overloaded) since 1970-01-01T00:00:01.000Z');
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(expected));

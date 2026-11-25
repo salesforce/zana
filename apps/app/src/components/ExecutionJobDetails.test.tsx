@@ -485,19 +485,24 @@ describe('ExecutionJobDetails phase 5 projection', () => {
   });
 });
 
-describe('ExecutionJobDetails copy job details', () => {
-  it('renders a non-destructive Copy details button near the header, above Stop Squad run', async () => {
+describe('ExecutionJobDetails copy diagnostics', () => {
+  async function findCopyButton() {
+    fireEvent.click(await screen.findByText('Diagnostics', { selector: 'summary' }));
+    return screen.getByRole('button', { name: 'Copy diagnostics' });
+  }
+
+  it('places the copy action inside Diagnostics, apart from Stop Squad run', async () => {
     render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
-    const copyButton = await screen.findByRole('button', { name: 'Copy details' });
+    const copyButton = await findCopyButton();
     const stopButton = await screen.findByRole('button', { name: 'Stop Squad run' });
     expect(copyButton.className).not.toContain('danger');
-    // Copy sits under Close details at the top; Stop lives in the bottom action row — Copy precedes Stop in the DOM.
-    expect(copyButton.compareDocumentPosition(stopButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(copyButton.closest('details')?.querySelector('summary')?.textContent).toBe('Diagnostics');
+    expect(copyButton.closest('details')?.contains(stopButton)).toBe(false);
   });
 
   it('copies the expected job details text and shows a transient toast (no modal)', async () => {
     render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
-    const copyButton = await screen.findByRole('button', { name: 'Copy details' });
+    const copyButton = await findCopyButton();
     fireEvent.click(copyButton);
 
     const expectedText = buildJobDetailsText('project-1', baseSnapshot);
@@ -510,9 +515,8 @@ describe('ExecutionJobDetails copy job details', () => {
     expect(expectedText).toContain('blocker-1');
 
     await waitFor(() => expect(clipboardWriteText).toHaveBeenCalledWith(expectedText));
-    await waitFor(() => expect(useUi.getState().toasts.some((toast) => toast.message === 'Job details copied')).toBe(true));
-    // The old confirmation Modal is gone.
-    expect(screen.queryByRole('dialog', { name: 'Job details copied' })).toBeNull();
+    await waitFor(() => expect(useUi.getState().toasts.some((toast) => toast.message === 'Diagnostics copied')).toBe(true));
+    expect(screen.queryByRole('dialog', { name: 'Diagnostics copied' })).toBeNull();
   });
 
   it('dumps full diagnostic parity — per-unit heartbeat and per-role usage', () => {
@@ -552,9 +556,9 @@ describe('ExecutionJobDetails copy job details', () => {
       value: { writeText: vi.fn(async () => { throw new Error('clipboard denied'); }) }
     });
     render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
-    const copyButton = await screen.findByRole('button', { name: 'Copy details' });
+    const copyButton = await findCopyButton();
     fireEvent.click(copyButton);
-    await waitFor(() => expect(useUi.getState().toasts.some((toast) => toast.message === 'Failed to copy job details')).toBe(true));
+    await waitFor(() => expect(useUi.getState().toasts.some((toast) => toast.message === 'Failed to copy diagnostics')).toBe(true));
   });
 
   it('renders the unavailable state with NO Copy button when the snapshot never loads (null guard)', async () => {
@@ -564,8 +568,7 @@ describe('ExecutionJobDetails copy job details', () => {
     }, clipboard: { writeText: clipboardWriteText } } });
     render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
     expect(await screen.findByText('Squad details unavailable.')).toBeTruthy();
-    // The Copy details button (and its copyJobDetails handler) only mount once snapshot is non-null.
-    expect(screen.queryByRole('button', { name: 'Copy details' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copy diagnostics' })).toBeNull();
   });
 
   it('dumps delivery strands and coordinator wakes as metadata only — never payload text or wake message', () => {

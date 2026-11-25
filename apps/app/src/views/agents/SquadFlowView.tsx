@@ -29,8 +29,8 @@ import { shortRunId, teamRunLabel } from '@/lib/executionIdentity';
 import { childRowCounts, edgeRoute, layout, NODE_W, nodeNotice, simplify } from './squadFlowLayout';
 import { SquadMemberDetails, SquadRoster } from './SquadRoster';
 import {
-  isClosedSquadRun, mainSquadFilters, matchesSquadMember, matchesSquadSearch,
-  nodeActivity, runStates, sliceSquadGraph, squadQuestion, squadStatusCounts,
+  mainSquadFilters, matchesSquadMemberSearch, matchesSquadSearch,
+  nodeActivity, runStates, sliceSquadGraph, squadMemberStatus, squadQuestion, squadRunStatus, squadStatusCounts,
   squadStatuses, type SquadStatusFilter
 } from './squadFlowPresentation';
 
@@ -818,7 +818,6 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
     }
   }
   for (const execution of executionsById.values()) {
-    if (isClosedSquadRun(execution)) continue;
     runs.push({ id: execution.executionId, execution, title: execution.jobTitle, teamName: execution.teamName, startedAt: execution.createdAt });
   }
   runs.sort((a, b) => b.startedAt - a.startedAt);
@@ -881,21 +880,32 @@ function SquadSurface({ compact, view, setView, projectName, projectPicker, merg
   const now = mergedGraph?.builtAt ?? Date.now();
   const query = search.trim().toLowerCase();
   const memberQuery = matchesSquadSearch(query, projectName) ? '' : query;
-  const visibleRuns = runs.flatMap((run) => {
+  const mapOnly = view === 'map';
+  const matchingRuns = runs.flatMap((run) => {
     const question = squadQuestion(run.execution);
-    const runMatches = matchesSquadSearch(memberQuery, run.title, run.teamName, question, run.execution?.executionId);
-    const nodes = (run.graph?.nodes ?? []).filter((node) => matchesSquadMember(node, now, filter, runMatches ? '' : memberQuery));
-    const showsRun = nodes.length > 0 || (runMatches && (filter === 'all' || (filter === 'blocked' && question)));
-    return showsRun ? [{ ...run, nodes, question }] : [];
+    const state = run.execution?.state;
+    const runMatches = matchesSquadSearch(memberQuery, run.title, run.teamName, question, run.execution?.executionId, state && runStates[state]);
+    const nodes = (run.graph?.nodes ?? []).filter((node) => runMatches || matchesSquadMemberSearch(node, now, memberQuery));
+    if (!runMatches && nodes.length === 0) return [];
+    const status = squadRunStatus(run.execution, question, nodes, now);
+    return [{ ...run, nodes, question, status }];
   });
-  const soloNodes = (solo?.nodes ?? []).filter((node) => matchesSquadMember(node, now, filter, memberQuery));
+  const matchingSolo = (solo?.nodes ?? []).filter((node) => matchesSquadMemberSearch(node, now, memberQuery));
+  const counts = squadStatusCounts(matchingSolo, now);
+  counts.all += matchingRuns.length;
+  for (const run of matchingRuns) counts[run.status] += 1;
+  // Overview filters top-level rows. Keep a matching run's roster together.
+  const visibleRuns = matchingRuns.filter((run) => filter === 'all' || run.status === filter);
+  visibleRuns.sort((a, b) => Number(!!b.question) - Number(!!a.question));
+  const soloNodes = matchingSolo.filter((node) => filter === 'all' || squadMemberStatus(node, now) === filter);
   const detail = [...soloNodes, ...visibleRuns.flatMap((run) => run.nodes)].find((node) => node.sessionId === selectedMember);
-  const counts = squadStatusCounts(mergedGraph?.nodes ?? [], now);
   const statusOptions = Object.keys(squadStatuses) as SquadStatusFilter[];
-  const chosenRun = visibleRuns.find((run) => run.id === selectedRun);
-  const mappedRuns = chosenRun ? [chosenRun] : visibleRuns;
-  const graphs = view === 'overview' ? [] : mappedRuns.flatMap((run) => run.graph && run.nodes.length ? [sliceSquadGraph(run.graph, run.nodes)] : []);
-  const soloGraph = view === 'map' && !chosenRun && solo ? sliceSquadGraph(solo, soloNodes) : undefined;
+  const mapRuns = mapOnly ? visibleRuns
+    .map((run) => ({ ...run, nodes: run.nodes.filter((node) => filter === 'all' || squadMemberStatus(node, now) === filter) }))
+    .filter((run) => run.graph && run.nodes.length > 0) : [];
+  const chosenRun = mapRuns.find((run) => run.id === selectedRun);
+  const graphs = (chosenRun ? [chosenRun] : mapRuns).flatMap((run) => run.graph ? [sliceSquadGraph(run.graph, run.nodes)] : []);
+  const soloGraph = mapOnly && !chosenRun && solo ? sliceSquadGraph(solo, soloNodes) : undefined;
   if (soloGraph?.edges.length) graphs.push(soloGraph);
 
   let mapGraphs = graphs;
@@ -915,11 +925,19 @@ function SquadSurface({ compact, view, setView, projectName, projectPicker, merg
   };
   const changeFilter = (next: SquadStatusFilter) => {
     setFilter(next);
+    if (next === 'done') setView('overview');
     clearMember();
   };
-  const hasContent = runs.length > 0 || counts.all > 0;
+  const questionButton = (run: SquadRun & { question?: string }, includeRunTitle: boolean) => run.question && (
+    <button type="button" className="squad-attention" key={run.id} disabled={!onInspectExecution || !run.execution} onClick={() => {
+      if (run.execution) onInspectExecution?.(run.execution.executionId);
+    }}>
+      <strong>Needs you</strong><span>{run.question}{includeRunTitle && <small>{run.title}</small>}</span>
+      <ChevronRight size={16} aria-hidden="true" />
+    </button>
+  );
+  const hasContent = runs.length > 0 || (solo?.nodes.length ?? 0) > 0;
   const hasMatches = visibleRuns.length > 0 || soloNodes.length > 0;
-  const mapOnly = view === 'map';
   const showSolo = soloNodes.length > 0 && !(mapOnly && soloGraph?.edges.length);
 
   return (
@@ -942,7 +960,11 @@ function SquadSurface({ compact, view, setView, projectName, projectPicker, merg
       <div className="squad-overview-tools">
         <div className="squad-view-switch" role="group" aria-label="Squad display">
           <button type="button" aria-pressed={!mapOnly} onClick={() => setView('overview')}><LayoutList size={15} aria-hidden="true" />Overview</button>
-          <button type="button" aria-pressed={mapOnly} onClick={() => { clearMember(); setView('map'); }}><Workflow size={15} aria-hidden="true" />Map</button>
+          <button type="button" aria-pressed={mapOnly} onClick={() => {
+            if (filter === 'done') changeFilter('all');
+            clearMember();
+            setView('map');
+          }}><Workflow size={15} aria-hidden="true" />Map</button>
         </div>
         <label className="squad-search">
           <Search size={15} aria-hidden="true" />
@@ -953,7 +975,7 @@ function SquadSurface({ compact, view, setView, projectName, projectPicker, merg
         </label>
       </div>
       {hasContent && (
-        <div className="squad-status-filters" role="group" aria-label="Filter by agent status">
+        <div className="squad-status-filters" role="group" aria-label="Filter Squad runs and solo agents">
           {mainSquadFilters.map((status) => (
             <button type="button" key={status} className="squad-filter-tile" aria-pressed={filter === status} data-status={status} onClick={() => changeFilter(status)}>
               <strong>{counts[status]}</strong><span>{squadStatuses[status]}</span>
@@ -971,19 +993,12 @@ function SquadSurface({ compact, view, setView, projectName, projectPicker, merg
       )}
       <div className={detail ? 'squad-content squad-content--inspecting' : 'squad-content'}>
         <div className="squad-content-main">
-          {visibleRuns.map((run) => run.question && (
-            <button type="button" className="squad-attention" key={run.id} disabled={!onInspectExecution || !run.execution} onClick={() => {
-              if (run.execution) onInspectExecution?.(run.execution.executionId);
-            }}>
-              <strong>Needs you</strong><span>{run.question}<small>{run.title}</small></span>
-              <ChevronRight size={16} aria-hidden="true" />
-            </button>
-          ))}
+          {mapOnly && visibleRuns.map((run) => questionButton(run, true))}
           {!mapOnly && visibleRuns.length > 0 && (
             <section aria-label="Squad runs">
-              <h2 className="squad-section-title">Squad runs</h2>
+              <h2 className="squad-section-title">Squad runs <small>{visibleRuns.length}</small></h2>
               {visibleRuns.map((run) => (
-                <section className="squad-surface squad-run" key={run.id}>
+                <section className="squad-surface squad-run" aria-label={run.title} key={run.id}>
                   <div className="squad-run-header">
                     <span className="squad-roster-icon"><Workflow size={15} aria-hidden="true" /></span>
                     <div className="squad-roster-body">
@@ -992,20 +1007,23 @@ function SquadSurface({ compact, view, setView, projectName, projectPicker, merg
                         run.execution && `Run ${shortRunId(run.execution.executionId)}`,
                         run.graph && `${run.graph.nodes.length} ${run.graph.nodes.length === 1 ? 'agent' : 'agents'}`].filter(Boolean).join(' · ')}</small>
                     </div>
-                    {run.execution && <span className="squad-status">{runStates[run.execution.state]}</span>}
+                    {run.execution && !run.question && (
+                      <span className="squad-status" data-status={run.execution.state === 'COMPLETED' ? 'done' : undefined}>{runStates[run.execution.state]}</span>
+                    )}
                     {run.execution && onInspectExecution && (
                       <button className="btn squad-run-open" type="button" aria-label={`Open Squad details for ${run.title}`} onClick={() => onInspectExecution(run.execution!.executionId)}>
                         Details <ChevronRight size={14} aria-hidden="true" />
                       </button>
                     )}
                   </div>
-                  <SquadRoster nodes={run.nodes} now={now} selectedId={selectedMember} onSelect={chooseMember} />
+                  {questionButton(run, false)}
+                  <SquadRoster nodes={run.nodes} now={now} selectedId={selectedMember} onSelect={chooseMember} questionPinned={!!run.question} />
                 </section>
               ))}
             </section>
           )}
           {mapOnly && hasMatches && (
-            <SquadMap compact={compact} graphs={mapGraphs} runs={visibleRuns.filter((run) => run.graph && run.nodes.length)} selectedRun={chosenRun?.id ?? ALL_SQUADS}
+            <SquadMap compact={compact} graphs={mapGraphs} runs={mapRuns} selectedRun={chosenRun?.id ?? ALL_SQUADS}
               onSelect={setSelectedRun} onInspectExecution={onInspectExecution} />
           )}
           {showSolo && (

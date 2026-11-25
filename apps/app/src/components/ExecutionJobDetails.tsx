@@ -450,12 +450,12 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
     // !snapshot above, so this is belt-and-suspenders against a future refactor that
     // hoists this handler out of the narrowed scope.
     if (!snapshot) {
-      useUi.getState().pushToast('No job details to copy', 'error');
+      useUi.getState().pushToast('No diagnostics to copy', 'error');
       return;
     }
     void copyText(buildJobDetailsText(projectId, snapshot))
-      .then(() => useUi.getState().pushToast('Job details copied', 'info'))
-      .catch(() => useUi.getState().pushToast('Failed to copy job details', 'error'));
+      .then(() => useUi.getState().pushToast('Diagnostics copied', 'info'))
+      .catch(() => useUi.getState().pushToast('Failed to copy diagnostics', 'error'));
   };
   // Offer only this Squad's own personas; the renderer list is advisory, main enforces the roster.
   const followUpTeam = teams.find((team) => team.id === execution.teamId);
@@ -495,7 +495,6 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
         <div className="execution-run-title"><h3>{execution.jobTitle}</h3>{execution.teamName && <p>{execution.teamName}</p>}</div>
         <div className="execution-run-header-actions">
           <span className="execution-run-badge" data-state={execution.state} data-testid="execution-run-state">{runLabels[execution.state]}</span>
-          <button className="btn" type="button" onClick={copyJobDetails}>Copy details</button>
           <button className="btn execution-details-close" type="button" onClick={onClose}>Close details</button>
         </div>
       </header>
@@ -653,7 +652,8 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
           {visibleBlocker && <ExecutionDeliveryDetails key={visibleBlocker.id} blocker={visibleBlocker} />}
           <ExecutionRunActivity key={execution.executionId} events={snapshot.events} work={work} truncated={snapshot.truncated} />
           <details className="execution-run-card execution-run-disclosure execution-run-diagnostics">
-            <summary>Run diagnostics</summary>
+            <summary>Diagnostics</summary>
+            <button className="btn execution-run-copy" type="button" onClick={copyJobDetails}>Copy diagnostics</button>
             <dl className="execution-details-meta">
               <dt>Run ID</dt><dd><code>{execution.executionId}</code></dd>
               <dt>Kind</dt><dd>{execution.launchDisplay?.label ?? 'Squad execution'}</dd>
