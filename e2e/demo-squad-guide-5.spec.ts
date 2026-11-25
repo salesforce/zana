@@ -179,6 +179,7 @@ test('demo: start a Squad from a conversation', async ({ app }) => {
     await tap(page, page.locator('.agent-card').filter({ hasText: TITLE }).first());
     const details = page.getByLabel('Squad details');
     await expect(details.getByText('Loading Squad details…')).toHaveCount(0, { timeout: 15_000 });
+    await tap(page, details.getByText('Diagnostics', { exact: true }));
     await expect(details.getByText('Started from', { exact: true })).toBeVisible();
     await demo.say('report');
     await page.evaluate((to) => { history.pushState({}, '', to); dispatchEvent(new PopStateEvent('popstate')); }, threadPath);

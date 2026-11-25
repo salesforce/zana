@@ -193,6 +193,7 @@ async function expectLaunchedCardAndOrigin(window: Page, electron: Electron, out
   await window.locator('.agent-card').filter({ hasText: TITLE }).first().click();
   const details = window.getByLabel('Squad details');
   await expect(details.getByText('Loading Squad details…')).toHaveCount(0, { timeout: 15_000 });
+  await details.getByText('Diagnostics', { exact: true }).click();
   await expect(details.getByText('Started from', { exact: true })).toBeVisible();
   await expect(details.locator('dt:text-is("Started from") + dd')).toContainText(proposerTitle);
   await captureElectronScreenshot(electron, window, outputPath('03-squad-details-started-from.png'));
