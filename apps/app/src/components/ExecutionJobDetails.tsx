@@ -411,7 +411,12 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
     const { id } = requestIdentityRef.current;
     const scope = scopeRef.current;
     void mutate(async () => {
-      const result = await window.cc.executionBoard.respond(projectId, executionId, execution.stateVersion ?? 0, target.id, id, message);
+      let result = await window.cc.executionBoard.respond(projectId, executionId, execution.stateVersion ?? 0, target.id, id, message);
+      if (!result.ok && result.code === 'CONFLICT' && result.message === 'stale execution state' && scope.live) {
+        // Background updates can advance the run while the same blocker is open.
+        // Main revalidates the blocker ID and deduplicates using the original request ID.
+        result = await window.cc.executionBoard.respond(projectId, executionId, -1, target.id, id, message, true);
+      }
       if (result.ok && scope.live) {
         const updated = result.value.currentBlocker;
         const accepted = updated?.id === target.id ? updated : target;

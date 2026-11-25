@@ -160,6 +160,23 @@ describe('Squad blocker answer card', () => {
     expect(within(card).getByRole('button', { name: 'Send answer' })).toBeTruthy();
   });
 
+  it('retries a confirmed stale run revision once for the same blocker and request', async () => {
+    vi.mocked(window.cc.executionBoard.snapshot).mockResolvedValue(questionSnapshot());
+    const queued = questionSnapshot({ delivery: delivery('PENDING') });
+    queued.execution.stateVersion = 4;
+    const respond = vi.mocked(window.cc.executionBoard.respond)
+      .mockResolvedValueOnce({ ok: false, code: 'CONFLICT', message: 'stale execution state' })
+      .mockResolvedValueOnce({ ok: true, value: queued.execution });
+    mountJob();
+    const card = await screen.findByRole('region', { name: blockerQuestion });
+    fireEvent.change(within(card).getByRole('textbox'), { target: { value: 'About Atlas' } });
+    fireEvent.click(within(card).getByRole('button', { name: 'Send answer' }));
+    await within(card).findByText('Answer queued');
+    expect(respond).toHaveBeenCalledTimes(2);
+    const requestId = respond.mock.calls[0][4];
+    expect(respond).toHaveBeenNthCalledWith(2, 'project-1', 'execution-1', -1, 'blocker-1', requestId, 'About Atlas', true);
+  });
+
   it('keeps the draft and request identity when delivery acceptance is uncertain', async () => {
     vi.mocked(window.cc.executionBoard.snapshot).mockResolvedValue(questionSnapshot({ options: undefined, notice: undefined }));
     const respond = vi.mocked(window.cc.executionBoard.respond).mockRejectedValue(new Error('connection closed'));
