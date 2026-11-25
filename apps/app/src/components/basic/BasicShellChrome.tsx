@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, Check, Menu, PanelLeft, PanelLeftClose, PanelsTopLeft, Plus, Search, X } from 'lucide-react';
 import { ZanaIcon } from '../icons/ZanaIcon.js';
@@ -169,7 +169,7 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
         <BasicConversationMenu />
       </div>
       {archived.error && <p className="basic-ui-sidebar-empty" role="alert">Archived conversations could not be loaded.</p>}
-      {visible.map(({ thread, projectName }) => {
+      {visible.map(({ thread, projectName, projectColor }) => {
         const status = threadRailStatus(thread);
         const title = thread.title || 'New conversation';
         // A live status already signals new activity; "Unread" covers finished, unseen replies.
@@ -180,7 +180,8 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
           aria-label={label} data-testid={`basic-chat-row-${thread.id}`}>
           <span className="basic-ui-chat-name" title={title}>{title}</span>
           {(showProject || status !== 'Idle' || thread.archivedAt || unread) && <span className="basic-ui-chat-meta">
-            {showProject && <span className="basic-ui-chat-project" title={projectName}>{projectName}</span>}
+            {showProject && <span className="basic-ui-chat-project" title={projectName}
+              style={{ '--basic-chat-project-color': projectColor } as CSSProperties}>{projectName}</span>}
             {thread.archivedAt ? <span className="basic-ui-chat-status">Archived</span> : null}
             {unread && <span className="basic-ui-chat-status status-unread" data-testid={`basic-chat-unread-${thread.id}`}>Unread</span>}
             {status !== 'Idle' && <span className={`basic-ui-chat-status status-${status === 'Working' ? 'working' : 'attention'}`}>{status === 'Needs you' ? 'Needs review' : status}</span>}

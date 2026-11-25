@@ -7,9 +7,10 @@ import { DEFAULT_BASIC_CONVERSATION_VIEW, windowCutoff, type BasicConversationVi
 export interface BasicConversationRow {
   thread: ThreadListItem;
   projectName: string;
+  projectColor?: string;
 }
 
-type ConversationProject = Pick<Project, 'id' | 'name' | 'remote' | 'hostId' | 'quickAgent'>;
+type ConversationProject = Pick<Project, 'id' | 'name' | 'color' | 'remote' | 'hostId' | 'quickAgent'>;
 
 const lastActivity = (thread: ThreadListItem) => thread.updatedAt ?? thread.createdAt;
 const titleOf = (thread: ThreadListItem) => thread.title || 'New conversation';
@@ -50,7 +51,7 @@ export function basicConversationRows(
     const name = project ? composerProjectLabel(project) : 'Project unavailable';
     if (needle && !name.toLocaleLowerCase().includes(needle)
       && !titleOf(thread).toLocaleLowerCase().includes(needle)) continue;
-    rows.push({ thread, projectName: name });
+    rows.push({ thread, projectName: name, projectColor: project?.color });
   }
   return rows;
 }

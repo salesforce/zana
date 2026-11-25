@@ -17,7 +17,7 @@ const slots = vi.hoisted(() => ({ panels: [] as PluginNavPanelRegistration[] }))
 vi.mock('../../plugins/plugin-slots.js', () => ({ listNavPanels: () => slots.panels, subscribePluginSlots: () => () => {} }));
 const data = vi.hoisted(() => ({ threads: [] as ThreadListItem[], loading: false, scoped: null as string | null, ensure: vi.fn() }));
 vi.mock('../../store.js', () => ({
-  useData: (selector: (state: unknown) => unknown) => selector({ projects: [{ id: 'p1', name: 'Personal' }, { id: 'p2', name: 'Website' }] }),
+  useData: (selector: (state: unknown) => unknown) => selector({ projects: [{ id: 'p1', name: 'Personal' }, { id: 'p2', name: 'Website', color: '#2f81f7' }] }),
   SIDEBAR_MIN: 256, SIDEBAR_MAX: 480
 }));
 const archive = vi.hoisted(() => ({ listeners: new Set<() => void>(), history: vi.fn() }));
@@ -179,13 +179,18 @@ describe('Basic conversation navigation', () => {
   });
 
   it('shows no project headers, names the project under each title, and searches project names', () => {
-    data.threads = [thread('one', { updatedAt: 3 }), thread('two', { projectId: 'p2', title: 'Design a homepage', updatedAt: 2, status: 'running' }), thread('three', { projectId: 'p2', updatedAt: 1 })];
+    data.threads = [thread('one', { updatedAt: 3 }), thread('two', { projectId: 'p2', title: 'Design a homepage', updatedAt: 2, status: 'active' }), thread('three', { projectId: 'p2', updatedAt: 1 })];
     sidebar();
     expect(screen.queryByRole('region')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Website' })).toBeNull();
     const rows = screen.getAllByRole('link').filter(link => link.dataset.testid?.startsWith('basic-chat-row-'));
     expect(rows.map(link => link.getAttribute('aria-label'))).toEqual(['Chat one, Personal', 'Design a homepage, Website', 'Chat three, Website']);
-    expect(within(rows[1]!).getByText('Website').className).toBe('basic-ui-chat-project');
+    const personal = within(rows[0]!).getByText('Personal');
+    const website = within(rows[1]!).getByText('Website');
+    expect(personal.style.getPropertyValue('--basic-chat-project-color')).toBe('');
+    expect(website.className).toBe('basic-ui-chat-project');
+    expect(website.style.getPropertyValue('--basic-chat-project-color')).toBe('#2f81f7');
+    expect(within(rows[1]!).getByText('Working')).toBeTruthy();
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: '  WEBSITE  ' } });
     expect(screen.getAllByRole('link').filter(link => link.dataset.testid?.startsWith('basic-chat-row-'))).toHaveLength(2);
   });
