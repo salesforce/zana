@@ -472,7 +472,11 @@ body:has(.app-shell[data-mobile='true']) .thread-detail-overflow-menu > button {
   margin: 0;
   font-size: 16px;
 }
-.app-shell[data-mobile='true'] .thread-detail-view.is-secondary-open .thread-detail-main,
+/* Keep the timeline laid out underneath full-screen tools to preserve scrollback. */
+.app-shell[data-mobile='true'] .thread-detail-view.is-secondary-open .thread-detail-main {
+  display: flex;
+  visibility: hidden;
+}
 .app-shell[data-mobile='true'] .split-workspace-host:has(> .thread-secondary-panel) > .split-workspace-main {
   display: none;
 }

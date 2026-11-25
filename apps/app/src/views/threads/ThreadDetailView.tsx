@@ -998,6 +998,7 @@ function ThreadDetailBody({
   }, [planExitPending, threadId]);
 
   const canOpenTools = !panel.state.isOpen && showSecondaryPanel;
+  const hideBasicChat = basic && showSecondaryPanel && panel.state.isOpen && (basicCompact || panel.state.isMaximized);
   const overflow = (
     <ThreadDetailOverflow
       threadId={threadId}
@@ -1026,8 +1027,8 @@ function ThreadDetailBody({
       <div className="thread-detail-split">
       <div className={dockEnabled ? "thread-tool-main" : "thread-tool-main--legacy"}>
       <div ref={mainRef} className="thread-detail-main"
-        hidden={basic && showSecondaryPanel && panel.state.isOpen && (basicCompact || panel.state.isMaximized)}
-        inert={basic && showSecondaryPanel && panel.state.isOpen && (basicCompact || panel.state.isMaximized) || undefined}>
+        hidden={!compact && hideBasicChat}
+        inert={hideBasicChat || (compact && panelOpen) || undefined}>
         <header className="thread-detail-header thread-detail-header--balanced" data-title-in-shell={Boolean(mobileTitleTarget) || undefined} data-controls-in-shell={Boolean(mobileControlsTarget) || undefined}>
           <ThreadDetailHeading
             title={title}
