@@ -10,7 +10,7 @@ import {
   writeFileSync
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, posix, win32 } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   buildSeedSettings,
@@ -21,7 +21,8 @@ import {
   sanitizeMcpServers,
   filterMcpServersByAllowlist,
   isReservedMcpName,
-  sweepStaleAutomatedConfigDirs
+  sweepStaleAutomatedConfigDirs,
+  trustedProjects
 } from '../automated-isolation.js';
 import { mcpAllowlistCovers } from '@zana-ai/zcc-domain/product';
 import {
@@ -232,6 +233,46 @@ describe('automated claude isolation', () => {
       writeFileSync(join(sourceDir, '.claude.json'), '{not json');
       rmSync(join(dataDir, 'claude-automated-config'), { recursive: true, force: true });
       expect(seededProjects(plan('/work/app').configDir)).toBeUndefined();
+    });
+
+    describe('Windows key spelling', () => {
+      const cwd = String.raw`C:\work\My App`;
+      const both = {
+        'C:/work/My App': { hasTrustDialogAccepted: true },
+        [cwd]: { hasTrustDialogAccepted: true }
+      };
+      const trust = (projects: Record<string, unknown>, dir = cwd) =>
+        trustedProjects({ projects }, dir, win32);
+
+      it.each([
+        ['a forward-slash key', { 'C:/work/My App': { hasTrustDialogAccepted: true } }],
+        ['a backslash key', { [cwd]: { hasTrustDialogAccepted: true } }],
+        ['a lower-case drive letter', { 'c:/work/My App': { hasTrustDialogAccepted: true } }],
+        ['a trailing separator', { 'C:/work/My App/': { hasTrustDialogAccepted: true } }],
+        ['a forward-slash ancestor', { 'C:/work': { hasTrustDialogAccepted: true } }],
+        ['the drive root', { 'C:/': { hasTrustDialogAccepted: true } }]
+      ])('carries over trust recorded as %s', (_label, projects) => {
+        expect(trust(projects)).toEqual(both);
+      });
+
+      it('finds trust for a forward-slash cwd', () => {
+        expect(trust({ 'C:/work': { hasTrustDialogAccepted: true } }, 'C:/work/My App/')).toEqual(both);
+      });
+
+      it.each([
+        ['an untrusted entry', { 'C:/work/My App': { hasTrustDialogAccepted: false } }],
+        ['a sibling', { 'C:/work/Other': { hasTrustDialogAccepted: true } }],
+        ['another drive', { 'D:/work/My App': { hasTrustDialogAccepted: true } }],
+        ['a null entry', { 'C:/work/My App': null }]
+      ])('never grants trust for %s', (_label, projects) => {
+        expect(trust(projects)).toBeNull();
+      });
+
+      it('keeps POSIX keys exact', () => {
+        const projects = { '/work/app': { hasTrustDialogAccepted: true } };
+        expect(trustedProjects({ projects }, '/work/app', posix)).toEqual({ '/work/app': { hasTrustDialogAccepted: true } });
+        expect(trustedProjects({ projects }, '/work/App', posix)).toBeNull();
+      });
     });
 
     it('seeds no trust when no cwd is given', () => {

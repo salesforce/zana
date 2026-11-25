@@ -4,7 +4,7 @@ import {
   statSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { join, posix, resolve, win32, type PlatformPath } from 'node:path';
 import {
   experimental_createConfinedConfigLeaf as createConfinedConfigLeaf,
   experimental_linkProjects as linkProjects,
@@ -285,15 +285,39 @@ function readJsonObject(file: string, maxBytes?: number): Record<string, unknown
  * decision the user already made (the cwd or an ancestor accepted in their real
  * `.claude.json`); never grant trust that was not there.
  */
-function trustedProjects(globalConfig: Record<string, unknown> | null, cwd: string | undefined): Record<string, unknown> | null {
+export function trustedProjects(
+  globalConfig: Record<string, unknown> | null,
+  cwd: string | undefined,
+  pathApi: PlatformPath = process.platform === 'win32' ? win32 : posix
+): Record<string, unknown> | null {
   if (!cwd) return null;
   const projects = globalConfig?.projects;
   if (typeof projects !== 'object' || projects === null) return null;
-  const record = projects as Record<string, { hasTrustDialogAccepted?: unknown } | undefined>;
-  for (let dir = resolve(cwd); ; dir = dirname(dir)) {
-    if (record[dir]?.hasTrustDialogAccepted === true) return { [resolve(cwd)]: { hasTrustDialogAccepted: true } };
-    if (dirname(dir) === dir) return null;
+  const windows = pathApi === win32;
+  // Claude on Windows keys projects with forward slashes (older builds used
+  // backslashes), so compare on one spelling; POSIX keys stay exact.
+  const keyOf = windows ? windowsProjectKey : (p: string) => p;
+  const trusted = new Set<string>();
+  for (const [key, entry] of Object.entries(projects as Record<string, { hasTrustDialogAccepted?: unknown } | null>)) {
+    if (entry?.hasTrustDialogAccepted === true) trusted.add(keyOf(key));
   }
+  const start = pathApi.resolve(cwd);
+  for (let dir = start; ; dir = pathApi.dirname(dir)) {
+    if (trusted.has(keyOf(dir))) {
+      const entry = { hasTrustDialogAccepted: true };
+      if (!windows) return { [start]: entry };
+      // Same decision under both spellings, so either form Claude reads matches.
+      return { [keyOf(start)]: entry, [`${start[0]!.toUpperCase()}${start.slice(1)}`]: entry };
+    }
+    if (pathApi.dirname(dir) === dir) return null;
+  }
+}
+
+/** Forward slashes, upper-case drive letter, no trailing separator (root kept). */
+function windowsProjectKey(path: string): string {
+  const slashed = path.replace(/\\/g, '/');
+  const trimmed = slashed.length > 3 ? slashed.replace(/\/+$/, '') : slashed;
+  return /^[a-z]:/.test(trimmed) ? `${trimmed[0]!.toUpperCase()}${trimmed.slice(1)}` : trimmed;
 }
 
 /**
