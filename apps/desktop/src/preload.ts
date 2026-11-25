@@ -1330,6 +1330,7 @@ const api: CcApi = {
       ipcRenderer.invoke(IPC.modules.replyHostDialog, requestId, answer)
   },
   app: {
+    /* v8 ignore next -- preload bridge; exercised through the built app in e2e/windows-titlebar-overlay-theme.spec.ts */
     setModalOpen: async open => { await ipcRenderer.invoke(IPC.app.setModalOpen, open === true); },
     previewAgentSound: async (kind) => {
       const result = await ipcRenderer.invoke(IPC.app.previewAgentSound, kind);
