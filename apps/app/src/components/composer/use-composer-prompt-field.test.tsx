@@ -231,6 +231,21 @@ describe('useComposerPromptField', () => {
     expect(claim.claimEscape).toHaveBeenCalledWith(open);
   });
 
+  it('drives the open typeahead menu from the keyboard and leaves other keys to the editor', () => {
+    suggestionState.menuOpen = true;
+    renderHook(() => useComposerPromptField({
+      placeholder: 'Prompt', testId: 'prompt', projectId: 'p1', projects: [], slashCatalog: { kind: 'cli' }, onSubmit: () => {}
+    }));
+    const { handleKeyDown } = editorState.options!.editorProps as unknown as { handleKeyDown: (view: unknown, event: KeyboardEvent) => boolean };
+    const press = (init: KeyboardEventInit) => { const e = new KeyboardEvent('keydown', { cancelable: true, ...init }); return [handleKeyDown({}, e), e.defaultPrevented] as const; };
+    expect(press({ key: 'ArrowDown' })).toEqual([true, true]);
+    expect(press({ key: 'ArrowUp' })).toEqual([true, true]);
+    expect(press({ key: 'x' })).toEqual([false, false]);
+    expect(press({ key: 'Enter', ctrlKey: true })).toEqual([true, true]);
+    // Nothing to apply: Enter falls through to the normal submit.
+    expect(press({ key: 'Enter' })).toEqual([true, true]);
+  });
+
   it('rerenders consumers with updated serialized editor text', () => {
     render(<Probe />);
     expect(screen.getByTestId('text').textContent).toBe('before');
