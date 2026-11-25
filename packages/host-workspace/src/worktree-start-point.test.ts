@@ -87,6 +87,19 @@ describe('worktree start point', { timeout: 60_000 }, () => {
     expect(progress).toContainEqual(expect.objectContaining({ key: 'fetch', text: 'Fetched origin/feature' }));
   });
 
+  it('fetches from a remote whose name starts with a dash without treating it as an option', async () => {
+    const { work, other } = await initClonePair();
+    await runGit(work, ['remote', 'add', '--', '-x', other]);
+    await runGit(other, ['checkout', '--quiet', '-b', 'feature']);
+    const feature = await commitFile(other, 'feature.txt');
+    const progress: ProvisioningTranscriptEntry[] = [];
+
+    await resolveWorktreeStartPoint(work, '-x/feature', (entry) => progress.push(entry));
+
+    expect(await revParse(work, 'refs/remotes/-x/feature')).toBe(feature);
+    expect(progress).toContainEqual(expect.objectContaining({ key: 'fetch', text: 'Fetched -x/feature' }));
+  });
+
   it('does not fetch a local branch whose name only looks like a remote ref', async () => {
     const { work } = await initClonePair();
     await runGit(work, ['branch', 'origin/local-only']);

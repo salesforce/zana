@@ -93,7 +93,7 @@ async function fetchRemoteBranch(
   emit(onProgress, { type: 'step', key: 'fetch', text: `Fetching ${ref}`, status: 'started' });
   const commonDir = await getGitCommonDir(sourcePath);
   const result = await withGitRefMutationLock(commonDir, () =>
-    runGit(sourcePath, ['fetch', '--quiet', remote, `+refs/heads/${branch}:refs/remotes/${ref}`], {
+    runGit(sourcePath, ['fetch', '--quiet', '--', remote, `+refs/heads/${branch}:refs/remotes/${ref}`], {
       allowFail: true,
       timeoutMs: BASE_FETCH_TIMEOUT_MS,
       extraEnv: { GIT_TERMINAL_PROMPT: '0' }
