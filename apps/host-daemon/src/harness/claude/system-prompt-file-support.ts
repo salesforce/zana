@@ -18,6 +18,7 @@ export function helpMentionsAppendSystemPromptFile(help: string): boolean {
 export function claudeSupportsAppendSystemPromptFile(
   bin: string,
   exec: (command: string, args: readonly string[]) => string = (command, args) =>
+    // nosemgrep: javascript-child-process-shell-command-injection -- execFile runs no shell; `command` is the host-resolved claude binary and `args` is the constant ['--help'].
     execFileSync(command, [...args], {
       encoding: 'utf8',
       timeout: PROBE_TIMEOUT_MS,
