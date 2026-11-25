@@ -17,6 +17,7 @@ overrides:
   qs@6: 6.16.1
   undici@6: 6.29.1
   undici@7: 7.30.1
+  basic-ftp@5: 6.2.4
 
 patchedDependencies:
   '@react-native-cookies/cookies@6.2.1': da4435a0bcb7116870ab28b0d53e6f2d286220a2eca88e919cdbc705a59f4a95
@@ -6247,8 +6248,8 @@ packages:
     engines: {node: '>=6.0.0'}
     hasBin: true
 
-  basic-ftp@5.3.1:
-    resolution: {integrity: sha512-bopVNp6ugyA150DDuZfPFdt1KZ5a94ZDiwX4hMgZDzF+GttD80lEy8kj98kbyhLXnPvhtIo93mdnLIjpCAeeOw==}
+  basic-ftp@6.2.4:
+    resolution: {integrity: sha512-6ACKOQxSlv5xka4i03ujfncNr9qp5yZNK3u0+yUFTAU4HfG5AeztCC9+R1I9dm8oq+1vt4RZ7cIRTBrdHqL2mw==}
     engines: {node: '>=10.0.0'}
 
   better-sqlite3@12.11.1:
@@ -15672,7 +15673,7 @@ snapshots:
 
   baseline-browser-mapping@2.11.25: {}
 
-  basic-ftp@5.3.1: {}
+  basic-ftp@6.2.4: {}
 
   better-sqlite3@12.11.1:
     dependencies:
@@ -17284,7 +17285,7 @@ snapshots:
 
   get-uri@6.0.5(supports-color@8.1.1):
     dependencies:
-      basic-ftp: 5.3.1
+      basic-ftp: 6.2.4
       data-uri-to-buffer: 6.0.2
       debug: 4.4.3(supports-color@8.1.1)
     transitivePeerDependencies:
