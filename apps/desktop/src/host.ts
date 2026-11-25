@@ -9422,6 +9422,7 @@ function registerIpc() {
   });
   registerAgentSoundIpc({ handle: safeHandleFromWindow, files: agentSoundFiles,
     volume: () => store.getConfig().agentSoundVolume, showOpenDialog: (win, options) => dialog.showOpenDialog(win, options) });
+  safeHandleFromWindow<[unknown], void>(IPC.app.setModalOpen, (win, open: unknown) => titleBarOverlays.setModalOpen(win.id, open === true), () => undefined);
   safeHandleFromWindow(IPC.uiSend, sendQueuedMessageNow, err => { throw err; });
   // Plugin buttons with no thread (release actions) get a sheet main draws and signs.
   /* v8 ignore next -- registered at built-Electron boot; createPluginApprovalHandler is unit-tested */

@@ -13,6 +13,7 @@ import './styles/shell-inset.css';
 import './styles/macos-floating-chrome.css';
 import './styles/macos-floating-agents.css';
 import './styles/macos-floating-panes.css';
+import { useModalTitleBarDim } from './hooks/useModalTitleBarDim.js';
 import { useEffect, useRef, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Bell, PlayCircle, Star } from 'lucide-react';
@@ -265,6 +266,7 @@ function AppShell() {
   const glassModeEnabled = useData((s) => s.glassModeEnabled);
   useRouteSync();
   useEffect(installAgentBoardMoves, []);
+  useModalTitleBarDim();
   const init = useData((s) => s.init);
   const route = useRouteState();
   const location = useLocation();

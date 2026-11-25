@@ -1352,6 +1352,8 @@ export interface CcApi {
     }>;
   };
   app: {
+    /** Tell main a modal backdrop is showing, so the Windows caption buttons dim under it. */
+    setModalOpen?(open: boolean): Promise<void>;
     previewAgentSound?(kind: import('@zana-ai/zcc-domain/product').AgentSoundKind): Promise<void>;
     getAgentSoundFiles?(): Promise<import('@zana-ai/zcc-domain/product').AgentSoundFilesSelection>;
     chooseAgentSoundFile?(kind: import('@zana-ai/zcc-domain/product').AgentSoundKind): Promise<{ name: string } | null>;

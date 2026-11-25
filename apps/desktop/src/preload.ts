@@ -1330,6 +1330,7 @@ const api: CcApi = {
       ipcRenderer.invoke(IPC.modules.replyHostDialog, requestId, answer)
   },
   app: {
+    setModalOpen: async open => { await ipcRenderer.invoke(IPC.app.setModalOpen, open === true); },
     previewAgentSound: async (kind) => {
       const result = await ipcRenderer.invoke(IPC.app.previewAgentSound, kind);
       if (!result || typeof result.volume !== 'number') throw new Error('Sound preview unavailable');

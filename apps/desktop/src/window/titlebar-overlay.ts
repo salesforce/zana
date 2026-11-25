@@ -104,6 +104,26 @@ export function highContrastOverlayColors(
   return null;
 }
 
+/** The share of the page the modal backdrop darkens (rgba(0, 0, 0, 0.45), `.palette-backdrop` in global.css). */
+export const MODAL_BACKDROP_ALPHA = 0.45;
+
+function dimHex(hex: string): string {
+  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(hex);
+  if (!match) return hex;
+  const channel = (part: string | undefined) =>
+    Math.round(Number.parseInt(part ?? '0', 16) * (1 - MODAL_BACKDROP_ALPHA)).toString(16).padStart(2, '0');
+  return `#${channel(match[1])}${channel(match[2])}${channel(match[3])}`;
+}
+
+/**
+ * The overlay as it looks under a modal backdrop. The caption buttons are
+ * native, outside the page, so the CSS backdrop can't darken them: paint the
+ * backdrop's blend with black onto the overlay instead.
+ */
+export function dimmedTitleBarOverlay(overlay: WindowsTitleBarOverlay): WindowsTitleBarOverlay {
+  return { ...overlay, color: dimHex(overlay.color), symbolColor: dimHex(overlay.symbolColor) };
+}
+
 export interface OverlayWindow {
   id: number;
   isDestroyed(): boolean;
@@ -115,14 +135,14 @@ export interface OverlayWindow {
  * failing window doesn't stop the rest.
  */
 export function applyWindowsTitleBarOverlay(
-  windows: Iterable<{ win: OverlayWindow; surface: TitleBarSurface }>,
-  overlay: (surface: TitleBarSurface) => WindowsTitleBarOverlay,
+  windows: Iterable<{ win: OverlayWindow; surface: TitleBarSurface; dimmed?: boolean }>,
+  overlay: (surface: TitleBarSurface, dimmed?: boolean) => WindowsTitleBarOverlay,
   logError: (context: string, err: unknown) => void
 ): void {
-  for (const { win, surface } of windows) {
+  for (const { win, surface, dimmed } of windows) {
     if (win.isDestroyed()) continue;
     try {
-      win.setTitleBarOverlay(overlay(surface));
+      win.setTitleBarOverlay(overlay(surface, dimmed));
     } catch (err) {
       logError(`titleBarOverlay window=${win.id}`, err);
     }
@@ -180,19 +200,37 @@ export function createWindowsTitleBarOverlays(deps: WindowsTitleBarOverlayDeps) 
     }
   };
   const current = (kind: TitleBarWindowKind) => overlayFor(surfaceOf(kind));
-  const refresh = () => {
-    if (deps.platform !== 'win32') return;
-    const windows = Array.from(deps.windows.values(), (entry) => ({ win: entry.win, surface: surfaceOf(entry) }));
+  // Windows whose page is showing a modal backdrop; their caption buttons dim.
+  const modalWindows = new Set<number>();
+  const applyTo = (entries: Array<{ win: OverlayWindow; surface: TitleBarSurface; dimmed: boolean }>) => {
     // One theme read per surface per refresh, shared by the windows on it.
     const overlays = new Map<TitleBarSurface, WindowsTitleBarOverlay>();
-    const overlay = (surface: TitleBarSurface) => {
-      const cached = overlays.get(surface);
-      if (cached) return cached;
-      const fresh = overlayFor(surface);
-      overlays.set(surface, fresh);
-      return fresh;
+    const overlay = (surface: TitleBarSurface, dimmed = false) => {
+      let base = overlays.get(surface);
+      if (!base) {
+        base = overlayFor(surface);
+        overlays.set(surface, base);
+      }
+      return dimmed ? dimmedTitleBarOverlay(base) : base;
     };
-    applyWindowsTitleBarOverlay(windows, overlay, deps.logError);
+    applyWindowsTitleBarOverlay(entries, overlay, deps.logError);
+  };
+  const refresh = () => {
+    if (deps.platform !== 'win32') return;
+    applyTo(Array.from(deps.windows.values(), (entry) => ({
+      win: entry.win,
+      surface: surfaceOf(entry),
+      dimmed: modalWindows.has(entry.win.id)
+    })));
+  };
+  /** A window's page opened or closed a modal backdrop: dim or restore its caption buttons. */
+  const setModalOpen = (id: number, open: boolean) => {
+    if (deps.platform !== 'win32') return;
+    if (open) modalWindows.add(id);
+    else modalWindows.delete(id);
+    for (const entry of deps.windows.values()) {
+      if (entry.win.id === id) applyTo([{ win: entry.win, surface: surfaceOf(entry), dimmed: open }]);
+    }
   };
   // Subscribes on every platform, like the tray's theme listener, so the boot
   // wiring is the same everywhere; `refresh` itself does nothing off Windows.
@@ -209,5 +247,5 @@ export function createWindowsTitleBarOverlays(deps: WindowsTitleBarOverlayDeps) 
       return () => {};
     }
   };
-  return { current, refresh, bind };
+  return { current, refresh, bind, setModalOpen };
 }

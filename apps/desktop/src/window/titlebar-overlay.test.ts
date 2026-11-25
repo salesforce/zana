@@ -6,6 +6,8 @@ import {
   WINDOWS_TITLEBAR_HEIGHT,
   WINDOWS_TITLEBAR_OVERLAY_COLORS,
   applyWindowsTitleBarOverlay,
+  dimmedTitleBarOverlay,
+  MODAL_BACKDROP_ALPHA,
   createWindowsTitleBarOverlays,
   highContrastOverlayColors,
   titleBarSurface,
@@ -303,5 +305,49 @@ describe('createWindowsTitleBarOverlays', () => {
     platform = 'win32';
     overlays.refresh();
     expect(main.applied).toEqual([windowsTitleBarOverlay('inset-chrome', 'light')]);
+  });
+
+  it('dims only the window whose page shows a modal, and restores it on close', () => {
+    const { overlays, main, project } = setup('win32');
+    const base = windowsTitleBarOverlay('inset-chrome', 'dark');
+    overlays.setModalOpen(1, true);
+    expect(main.applied).toEqual([dimmedTitleBarOverlay(base)]);
+    expect(project.applied).toEqual([]);
+    overlays.setModalOpen(1, false);
+    expect(main.applied.at(-1)).toEqual(base);
+  });
+
+  it('keeps a modal window dimmed through a theme refresh', () => {
+    const { overlays, state, main, project } = setup('win32');
+    overlays.setModalOpen(1, true);
+    state.theme = 'light';
+    overlays.refresh();
+    expect(main.applied.at(-1)).toEqual(dimmedTitleBarOverlay(windowsTitleBarOverlay('inset-chrome', 'light')));
+    expect(project.applied.at(-1)).toEqual(windowsTitleBarOverlay('inset-chrome', 'light'));
+  });
+
+  it('ignores a modal report off Windows and for an unknown window', () => {
+    const off = setup('linux');
+    off.overlays.setModalOpen(1, true);
+    expect(off.main.applied).toEqual([]);
+    const win = setup('win32');
+    win.overlays.setModalOpen(99, true);
+    expect([win.main, win.project, win.thread, win.plugin].flatMap((w) => w.applied)).toEqual([]);
+  });
+});
+
+describe('dimmedTitleBarOverlay', () => {
+  it('blends both colours toward black by the backdrop alpha and keeps the height', () => {
+    const dimmed = dimmedTitleBarOverlay({ color: '#ffffff', symbolColor: '#000000', height: 44 });
+    const channel = Math.round(255 * (1 - MODAL_BACKDROP_ALPHA)).toString(16);
+    expect(dimmed).toEqual({ color: `#${channel}${channel}${channel}`, symbolColor: '#000000', height: 44 });
+  });
+
+  it('leaves a colour it cannot parse unchanged', () => {
+    expect(dimmedTitleBarOverlay({ color: 'red', symbolColor: 'white', height: 44 }).color).toBe('red');
+  });
+
+  it('matches the backdrop alpha in global.css', () => {
+    expect(css).toMatch(new RegExp(String.raw`\n\.palette-backdrop \{[^}]*rgba\(0, 0, 0, ${MODAL_BACKDROP_ALPHA}\)`));
   });
 });
