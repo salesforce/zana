@@ -4,7 +4,7 @@ import {
   statSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, posix, resolve, win32, type PlatformPath } from 'node:path';
+import { join, posix, resolve, win32 } from 'node:path';
 import {
   experimental_createConfinedConfigLeaf as createConfinedConfigLeaf,
   experimental_linkProjects as linkProjects,
@@ -288,7 +288,7 @@ function readJsonObject(file: string, maxBytes?: number): Record<string, unknown
 export function trustedProjects(
   globalConfig: Record<string, unknown> | null,
   cwd: string | undefined,
-  pathApi: PlatformPath = process.platform === 'win32' ? win32 : posix
+  pathApi: typeof posix = process.platform === 'win32' ? win32 : posix
 ): Record<string, unknown> | null {
   if (!cwd) return null;
   const projects = globalConfig?.projects;
