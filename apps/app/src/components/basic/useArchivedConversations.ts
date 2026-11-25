@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { ThreadHistoryRow } from '@zana-ai/zcc-domain/product';
 import { product } from '../../lib/product-client.js';
 import { onThreadArchived, type ThreadListItem } from '../../thread-store.js';
@@ -25,10 +25,11 @@ export function useArchivedConversations(enabled: boolean, scopedProjectId: stri
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const [revision, setRevision] = useState(0);
+  const reload = useCallback(() => setRevision(value => value + 1), []);
   useEffect(() => {
     if (!enabled) return;
-    return onThreadArchived(() => setRevision(value => value + 1));
-  }, [enabled]);
+    return onThreadArchived(reload);
+  }, [enabled, reload]);
   useEffect(() => {
     if (!enabled || !primaryHostId) { setRows([]); setLoading(false); setError(false); return; }
     let cancelled = false;
@@ -52,5 +53,5 @@ export function useArchivedConversations(enabled: boolean, scopedProjectId: stri
     })();
     return () => { cancelled = true; };
   }, [enabled, scopedProjectId, primaryHostId, revision]);
-  return { rows, loading, error };
+  return { rows, loading, error, reload };
 }

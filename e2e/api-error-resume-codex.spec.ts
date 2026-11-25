@@ -177,14 +177,14 @@ test('lookalike model text, a forged rollout path and a non-matching failure typ
   }
 });
 
-test('descriptors report Codex as resume-capable and the unsupported harnesses as not', async ({ home }) => {
+test('descriptors report Codex, OpenCode and Pi as resume-capable and Cursor as not', async ({ home }) => {
   const stub = await launchCodexStub(home);
   try {
     const descriptors = await stub.win.evaluate(() => window.cc.harness.descriptors());
-    expect(descriptors.find((d) => d.id === 'codex')?.apiErrorResume, 'codex reports resume support').toBe('supported');
-    for (const descriptor of descriptors.filter((d) => ['opencode', 'cursor', 'pi'].includes(d.id))) {
-      expect(descriptor.apiErrorResume, `${descriptor.id} stays unsupported`).toBe('unsupported');
+    for (const id of ['codex', 'opencode', 'pi']) {
+      expect(descriptors.find((d) => d.id === id)?.apiErrorResume, `${id} reports resume support`).toBe('supported');
     }
+    expect(descriptors.find((d) => d.id === 'cursor')?.apiErrorResume, 'cursor stays unsupported').toBe('unsupported');
   } finally {
     await stub.cleanup();
   }

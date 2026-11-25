@@ -99,6 +99,7 @@ async function readExecution(window: Page, projectId: string, executionId: strin
 /** Open the "Plan correction required" Inbox card whose body contains `text`. */
 async function openCorrectionCard(window: Page, text: string): Promise<void> {
   await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
+  await window.getByRole('button', { name: 'Split view', exact: true }).click();
   await expect.poll(async () => {
     const rows = window.locator('.inbox-row').filter({ hasText: 'Plan correction required' });
     const count = await rows.count();

@@ -1,81 +1,73 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
+import { Check, ListFilter } from 'lucide-react';
+import type { LaneKey } from './AgentBoard.js';
+import { MobileActionSheet } from './MobilePageHeader.js';
 
 export interface MobileAgentLane {
-  key: string;
+  key: LaneKey;
   label: string;
   count: number;
   icon: ReactNode;
 }
 
-/** One readable column at a time, with every status reachable from the tab strip. */
-export function MobileAgentBoard({ lanes, renderLane }: {
+/** All agent statuses share one roster. The status sheet narrows the same list. */
+export function MobileAgentBoard({ lanes, search, renderLane }: {
   lanes: readonly MobileAgentLane[];
-  renderLane(key: string): ReactNode;
+  search?: ReactNode;
+  renderLane(key?: LaneKey): ReactNode;
 }) {
-  const first = lanes.find((lane) => lane.count > 0) ?? lanes[0];
-  const [selected, setSelected] = useState<string>();
-  const active = lanes.find((lane) => lane.key === selected) ?? first;
-  const id = useId();
-  const tabs = useRef<HTMLDivElement>(null);
+  const [selection, setSelection] = useState<LaneKey>();
+  const [filterOpen, setFilterOpen] = useState(false);
+  const list = useRef<HTMLElement>(null);
+  const filterButton = useRef<HTMLButtonElement>(null);
+  const active = lanes.find((lane) => lane.key === selection);
+  const needsYou = lanes.find((lane) => lane.key === 'blocked');
+  const hasAgents = active ? active.count > 0 : lanes.some((lane) => lane.count > 0);
 
-  useEffect(() => {
-    tabs.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
-  }, [active?.key]);
-
-  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
-    let next: number;
-    if (event.key === 'ArrowRight') next = (index + 1) % lanes.length;
-    else if (event.key === 'ArrowLeft') next = (index - 1 + lanes.length) % lanes.length;
-    else if (event.key === 'Home') next = 0;
-    else if (event.key === 'End') next = lanes.length - 1;
-    else return;
-    event.preventDefault();
-    setSelected(lanes[next].key);
-    tabs.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+  const select = (key?: LaneKey) => {
+    setSelection(key);
+    if (list.current) list.current.scrollTop = 0;
   };
 
   return (
     <div className="mobile-agent-board" data-testid="mobile-agent-board">
-      <div ref={tabs} className="mobile-agent-lanes" role="tablist" aria-label="Agent status">
-        {lanes.map((lane, index) => (
-          <button
-            key={lane.key}
-            type="button"
-            role="tab"
-            id={`${id}-tab-${lane.key}`}
-            className={`mobile-agent-lane lane-${lane.key}`}
-            aria-selected={active?.key === lane.key}
-            aria-controls={`${id}-panel-${lane.key}`}
-            tabIndex={active?.key === lane.key ? 0 : -1}
-            onClick={() => setSelected(lane.key)}
-            onKeyDown={(event) => onKeyDown(event, index)}
-          >
-            <span aria-hidden="true">{lane.icon}</span>
-            <span>{lane.label}</span>
-            <span className="mobile-agent-lane-count">{lane.count}</span>
+      <div className="agents-board-toolbar">
+        {search}
+        <button ref={filterButton} type="button" className="mobile-agent-filter" aria-haspopup="dialog" aria-expanded={filterOpen}
+          aria-label={active ? `Filter by status, ${active.label} selected` : 'Filter by status'}
+          data-filtered={Boolean(active)}
+          onClick={(event) => { event.currentTarget.focus(); setFilterOpen(true); }}>
+          <ListFilter size={16} aria-hidden="true" /><span>{active?.label ?? 'Filter'}</span>
+        </button>
+      </div>
+      {filterOpen && <MobileActionSheet title="Filter by status" onClose={() => setFilterOpen(false)}>
+        <button type="button" aria-pressed={!active} onClick={() => select()}>
+          <ListFilter size={16} aria-hidden="true" /> All agents
+          {!active && <Check className="mobile-sheet-selection" size={18} aria-hidden="true" />}
+        </button>
+        {lanes.map((lane) => (
+          <button key={lane.key} type="button" aria-pressed={lane.key === active?.key} onClick={() => select(lane.key)}>
+            <span aria-hidden="true">{lane.icon}</span>{lane.label}
+            <span className="mobile-sheet-selection mobile-agent-lane-count">{lane.count}</span>
           </button>
         ))}
-      </div>
-      {lanes.map((lane) => (
-        <section
-          key={lane.key}
-          id={`${id}-panel-${lane.key}`}
-          className={`mobile-agent-panel lane-${lane.key}`}
-          role="tabpanel"
-          aria-labelledby={`${id}-tab-${lane.key}`}
-          hidden={active?.key !== lane.key}
-          tabIndex={0}
-        >
-          {active?.key === lane.key && (
-            lane.count > 0 ? renderLane(lane.key) : (
-              <div className="mobile-agent-empty">
-                <span aria-hidden="true">{lane.icon}</span>
-                <p>No agents in this column</p>
-              </div>
-            )
-          )}
-        </section>
-      ))}
+      </MobileActionSheet>}
+      <section ref={list} className="mobile-agent-panel" aria-label={active?.label ?? 'All agents'} tabIndex={0}>
+        {!active && needsYou && needsYou.count > 0 && (
+          <button type="button" className="mobile-agent-needs-you" onClick={() => {
+            select(needsYou.key);
+            filterButton.current?.focus();
+          }}>
+            <span aria-hidden="true">{needsYou.icon}</span> {needsYou.label}
+            <span className="mobile-agent-lane-count">{needsYou.count}</span>
+          </button>
+        )}
+        {hasAgents ? renderLane(active?.key) : (
+          <div className="mobile-agent-empty">
+            <p>{active?.key === 'blocked' ? 'No agents need you.' : 'No agents match your filters.'}</p>
+          </div>
+        )}
+      </section>
     </div>
   );
 }

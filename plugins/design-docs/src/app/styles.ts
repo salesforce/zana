@@ -192,9 +192,16 @@ export const DESIGN_DOCS_STYLES = `
 .dd-peers-guide ol { margin: 6px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; line-height: 1.5; }
 .dd-peers-heading { margin: 0; font-size: 12.5px; font-weight: 650; }
 .dd-peers-block { display: flex; flex-direction: column; gap: 4px; }
+.dd-peers-behavior { gap: 6px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-elevated); }
+.dd-peers-behavior > h4 { margin: 0 0 4px; color: var(--text-muted); font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.dd-peers-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.dd-peers-toggle > input { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--accent-blue, #2563eb); }
+.dd-peers-behavior > .dd-peers-hint { padding-left: 24px; line-height: 1.5; }
+.dd-peers-core-link { align-self: flex-start; font-size: 12px; color: var(--text-muted); text-decoration: none; }
+.dd-peers-core-link:hover { color: var(--text-primary); text-decoration: underline; }
 .dd-peers-connect { align-self: flex-start; }
-.dd-diag { gap: 10px; }
-.dd-diag > h4 { margin: 0 0 2px; }
+.dd-diag { gap: 10px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-elevated); }
+.dd-diag > h4 { margin: 0 0 2px; color: var(--text-muted); font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .dd-diag p { margin: 0; line-height: 1.5; }
 .dd-peers-diag { display: flex; flex-direction: column; gap: 4px; padding-top: 10px; border-top: 1px solid var(--border); }
 .dd-peers-diag .dd-peers-list { margin-top: 2px; line-height: 1.5; }

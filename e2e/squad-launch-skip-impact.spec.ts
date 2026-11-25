@@ -144,7 +144,7 @@ test.describe('Squad launch skip impact', () => {
       expect(proposed.success, proposed.text).toBe(true);
 
       await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
-      const row = window.locator('.inbox-row').filter({ hasText: `Squad launch ready: ${TITLE}` }).first();
+      const row = window.locator('.inbox-list-pane').getByRole('button').filter({ hasText: `Squad launch ready: ${TITLE}` }).first();
       await expect(row).toBeVisible({ timeout: 30_000 });
       await row.click();
       await window.getByRole('button', { name: 'Review Squad launch' }).click();

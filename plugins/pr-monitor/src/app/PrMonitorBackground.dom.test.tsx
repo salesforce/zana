@@ -110,12 +110,13 @@ describe('PrMonitorBackground — delivery loop', () => {
   it('AC-NOTIF-3.2: send-to-inbox on + project → posts an inbox entry', async () => {
     const { host, pushInbox } = makeHost({
       settings: { notifyInApp: false, sendToInbox: true },
-      deltas: [delta({ projectId: 'p1' })],
+      deltas: [delta({ projectId: 'p1' }), { ...delta({ projectId: 'p1' }), oldStatus: 'green', newStatus: 'failed' }],
     });
     render(<PrMonitorBackground host={host} />);
     await runFirstTick();
-    expect(pushInbox).toHaveBeenCalledTimes(1);
-    expect(pushInbox.mock.calls[0][0]).toMatchObject({ projectId: 'p1' });
+    expect(pushInbox).toHaveBeenCalledTimes(2);
+    expect(pushInbox).toHaveBeenNthCalledWith(1, { projectId: 'p1', comments: expect.any(String) });
+    expect(pushInbox).toHaveBeenNthCalledWith(2, { projectId: 'p1', comments: expect.any(String), offerAgentFix: true });
   });
 
   it('AC-NOTIF-3.6 / AC-LIST-18.1: a muted PR is silenced on both surfaces', async () => {

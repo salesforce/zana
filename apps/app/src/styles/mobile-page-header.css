@@ -53,3 +53,5 @@
 .app-shell[data-mobile='true'] .ext-installed-toolbar { padding-top: 8px; }
 .mobile-nav-notifications { display: flex; align-items: center; gap: 10px; min-height: 44px; width: calc(100% - 24px); margin: 4px 12px; padding: 10px 12px; border: 0; border-radius: 10px; background: transparent; color: var(--text-primary); font: inherit; text-align: left; }
 .mobile-nav-notifications .nav-badge { margin-left: auto; }
+.mobile-nav-notifications.mobile-interface-view > span { margin-left: auto; color: var(--text-muted); }
+.mobile-sheet-selection { margin-left: auto; }

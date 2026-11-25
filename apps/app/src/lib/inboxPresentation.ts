@@ -53,6 +53,20 @@ export function inboxSecondaryLine(entry: InboxEntry): string {
   return preview === inboxPrimaryTitle(entry) ? '' : preview;
 }
 
+/** Editable session context for a new agent opened from an Inbox entry. */
+export function buildInboxAgentPrompt(entry: InboxEntry, opening = 'Act on the following inbox message from this project.'): string {
+  const parts = [opening];
+  if (entry.docs?.length) {
+    parts.push('', 'Related documents (paths relative to the project root):');
+    for (const doc of entry.docs) parts.push(`- ${doc.path}`);
+  }
+  const comments = entry.comments?.trim();
+  if (comments) {
+    parts.push('', 'Message:', comments.length > 4000 ? `${comments.slice(0, 4000)}\n…(truncated)` : comments);
+  }
+  return parts.join('\n');
+}
+
 /**
  * Compact title form for chips/buttons where long titles are noisy.
  */
@@ -92,6 +106,10 @@ export function isUnansweredQuestion(
   answeredIds: Record<string, true>
 ): boolean {
   return inboxQuestions(entry).length > 0 && !answeredIds[entry.id];
+}
+
+export function inboxOffersAgentFix(entry: InboxEntry): boolean {
+  return entry.offerAgentFix === true && !!entry.extensionSource && !entry.hostActionRequired;
 }
 
 /**

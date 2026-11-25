@@ -163,7 +163,11 @@ it('uses the compact drawer controls and closes it when Basic starts a chat', ()
   fixtures.compact = true;
   const view = render(<MemoryRouter><App /></MemoryRouter>);
   try {
-    fireEvent.click(screen.getByRole('button', { name: 'Basic view' }));
+    expect(screen.queryByRole('button', { name: 'Basic view' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Interface view Advanced' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Basic', exact: true }));
+    expect(fixtures.drawer).toHaveBeenCalledWith(false);
+    fixtures.drawer.mockClear();
     fireEvent.click(screen.getByRole('button', { name: 'Open conversations' }));
     expect(fixtures.drawer).toHaveBeenCalledWith(false);
     fixtures.drawer.mockClear();

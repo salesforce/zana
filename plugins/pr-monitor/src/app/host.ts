@@ -21,7 +21,7 @@ export interface PluginPanelHost {
   toast(message: string, kind?: 'info' | 'error'): void;
   listProjects(): ProjectInfo[];
   openExternal(url: string): void;
-  pushInbox(input: { comments: string; projectId?: string }): Promise<{ id: string }>;
+  pushInbox(input: { comments: string; projectId?: string; offerAgentFix?: true }): Promise<{ id: string }>;
 }
 
 /** Alias kept so ported renderer tests that mocked ModuleHost keep compiling. */

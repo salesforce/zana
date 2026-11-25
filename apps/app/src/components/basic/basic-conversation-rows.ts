@@ -7,9 +7,10 @@ import { DEFAULT_BASIC_CONVERSATION_VIEW, windowCutoff, type BasicConversationVi
 export interface BasicConversationRow {
   thread: ThreadListItem;
   projectName: string;
+  projectColor?: string;
 }
 
-type ConversationProject = Pick<Project, 'id' | 'name' | 'remote' | 'hostId' | 'quickAgent'>;
+type ConversationProject = Pick<Project, 'id' | 'name' | 'color' | 'remote' | 'hostId' | 'quickAgent'>;
 
 const lastActivity = (thread: ThreadListItem) => thread.updatedAt ?? thread.createdAt;
 const titleOf = (thread: ThreadListItem) => thread.title || 'New conversation';
@@ -37,7 +38,10 @@ export function basicConversationRows(
   const cutoff = windowCutoff(view.window, now);
   const projectById = new Map(projects.map(project => [project.id, project]));
   const rows: BasicConversationRow[] = [];
-  const ordered = [...threads].sort(compareThreads(view.sort));
+  const compare = compareThreads(view.sort);
+  const rank = (thread: ThreadListItem) => !thread.archivedAt && thread.pinnedAt != null
+    ? thread.pinOrder ?? Number.MAX_SAFE_INTEGER - 1 : Number.MAX_SAFE_INTEGER;
+  const ordered = [...threads].sort((a, b) => rank(a) - rank(b) || compare(a, b));
   for (const thread of ordered) {
     const archived = Boolean(thread.archivedAt);
     if ((view.status === 'active' && archived) || (view.status === 'archived' && !archived)) continue;
@@ -50,7 +54,7 @@ export function basicConversationRows(
     const name = project ? composerProjectLabel(project) : 'Project unavailable';
     if (needle && !name.toLocaleLowerCase().includes(needle)
       && !titleOf(thread).toLocaleLowerCase().includes(needle)) continue;
-    rows.push({ thread, projectName: name });
+    rows.push({ thread, projectName: name, projectColor: project?.color });
   }
   return rows;
 }

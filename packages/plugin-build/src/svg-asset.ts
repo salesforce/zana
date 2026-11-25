@@ -39,12 +39,22 @@ function isForbiddenAnimatedAttribute(value: string): boolean {
   );
 }
 
-function isJavascriptUrl(value: string): boolean {
-  return value
+const SAFE_DATA_IMAGE = /^data:image\/(?:png|jpe?g|gif|webp|avif)[;,]/u;
+
+/**
+ * The scheme of a URL that can run script or carry active content, or null.
+ * `data:` is refused unless it is a raster image; `data:image/svg+xml` and
+ * `data:text/html` can carry script.
+ */
+function dangerousUrlScheme(value: string): string | null {
+  const normalized = value
     .replace(/[\t\n\r]/gu, "")
     .replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/gu, "")
-    .toLowerCase()
-    .startsWith("javascript:");
+    .toLowerCase();
+  if (normalized.startsWith("javascript:")) return "javascript";
+  if (normalized.startsWith("vbscript:")) return "vbscript";
+  if (normalized.startsWith("data:") && !SAFE_DATA_IMAGE.test(normalized)) return "data";
+  return null;
 }
 
 function scriptVectorProblem(tag: SaxesTagNS): string | null {
@@ -56,8 +66,11 @@ function scriptVectorProblem(tag: SaxesTagNS): string | null {
     if (name.startsWith("on")) {
       return `must not contain a <${tag.name} ${attribute.name}> event handler attribute`;
     }
-    if (name === "href" && isJavascriptUrl(attribute.value)) {
-      return `must not contain a javascript: URL in <${tag.name} ${attribute.name}>`;
+    if (name === "href") {
+      const scheme = dangerousUrlScheme(attribute.value);
+      if (scheme) {
+        return `must not contain a ${scheme}: URL in <${tag.name} ${attribute.name}>`;
+      }
     }
   }
   return null;

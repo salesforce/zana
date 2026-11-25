@@ -57,6 +57,8 @@ const MAX_RECHECKS = 12;
 
 const generations = new Map<string, number>();
 const armed = new Map<string, Armed>();
+/** Sessions whose `markTurnStart` is still in flight. */
+const pending = new Set<string>();
 
 function nextGeneration(sessionId: string): number {
   const generation = (generations.get(sessionId) ?? 0) + 1;
@@ -111,19 +113,27 @@ async function runCheck(ctx: DispatchCtx, sessionId: string, entry: Armed): Prom
 export function armQuietCheck(ctx: DispatchCtx, sessionId: string, producer: ApiErrorProducer, session: ApiErrorSessionRef): void {
   clear(ctx, sessionId);
   const generation = nextGeneration(sessionId);
+  pending.add(sessionId);
   void (async () => {
     let marker: unknown;
     try {
       marker = await producer.markTurnStart(session);
     } catch (error) {
       ctx.log(`[api-error-dispatch] markTurnStart failed session=${sessionId.slice(0, 8)}`, error);
+      if (generations.get(sessionId) === generation) pending.delete(sessionId);
       return;
     }
+    if (generations.get(sessionId) === generation) pending.delete(sessionId);
     if (generations.get(sessionId) !== generation || !ctx.isLive(sessionId)) return;
     const entry: Armed = { generation, producer, session, marker, timer: undefined, rechecks: 0 };
     armed.set(sessionId, entry);
     schedule(ctx, sessionId, entry);
   })();
+}
+
+/** True while a check is pending for the session (including the marker being taken). */
+export function isArmed(sessionId: string): boolean {
+  return armed.has(sessionId) || pending.has(sessionId);
 }
 
 /** Output or a hook callback arrived: restart the quiet period of an armed check. */
@@ -137,6 +147,7 @@ export function touch(ctx: DispatchCtx, sessionId: string): void {
 /** Stop, Interrupt, new turn or exit: drop the timer and release producer state when `release` is set. */
 export function disarm(ctx: DispatchCtx, sessionId: string, release?: ApiErrorProducer): void {
   nextGeneration(sessionId);
+  pending.delete(sessionId);
   clear(ctx, sessionId);
   release?.release(sessionId);
 }
@@ -150,4 +161,22 @@ export function forgetSession(ctx: DispatchCtx, sessionId: string, release?: Api
 /** Test seam. */
 export function armedCount(): number {
   return armed.size;
+}
+
+/**
+ * Busy-edge arm trigger for harnesses with a body-less producer and no turn-start hook
+ * (hook harnesses arm from their own callback). Skips exited sessions and ones already armed.
+ */
+export function armOnBusyEdge<S extends { readonly status: string }>(
+  ctx: DispatchCtx,
+  sessionId: string,
+  session: S | null | undefined,
+  statusOf: (session: S) => { readonly apiErrorProducer?: ApiErrorProducer; readonly interactionHook?: unknown } | null | undefined,
+  ref: (session: S) => ApiErrorSessionRef
+): void {
+  if (!session || session.status === 'exited') return;
+  const status = statusOf(session);
+  if (!status?.apiErrorProducer || status.interactionHook) return;
+  if (isArmed(sessionId)) return;
+  armQuietCheck(ctx, sessionId, status.apiErrorProducer, ref(session));
 }

@@ -306,7 +306,8 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
     return withModernSquadMembers(items, memberExecutions, personas);
   }, [cards, threads, projects, scopedProject, scheduledTasks, includeScheduled, executions, personas, threadToggles, shownPluginThreads]);
 
-  const q = isGlobal ? filter.trim().toLowerCase() : '';
+  const showSearch = (isGlobal && (boardView !== 'flow' || !!pluginView)) || (compact && boardView === 'board');
+  const q = showSearch ? filter.trim().toLowerCase() : '';
   const visibleFleet = q
     ? fleet.filter(
         (item) =>
@@ -329,6 +330,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   // Keep the toolbar (and this toggle) mounted after the user hides Scheduled
   // so they can turn the column back on even if that was the only fleet.
   const showToolbar = fleet.length > 0 || executions.length > 0 || !includeScheduled || pluginViews.length > 0;
+  const showMobileBoard = compact && boardView === 'board' && !pluginView && (fleet.length > 0 || executions.length > 0);
 
   const inspect = (item: FleetItem) => {
     if (item.kind === 'thread') {
@@ -430,37 +432,32 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
       <span className="agents-board-btn-label">New agent</span>
     </button>
   );
+  const searchAgents = showSearch && (
+    <div className="agents-board-filter">
+      <Search size={12} className="agents-board-filter-icon" aria-hidden="true" />
+      <input
+        type="text"
+        placeholder={isGlobal ? 'Filter by project or task…' : 'Filter by task…'}
+        value={filter}
+        onChange={(e) => setFilter(e.target.value)}
+        aria-label="Filter agents"
+      />
+      {filter && (
+        <button type="button" className="agents-board-filter-clear" aria-label="Clear filter" onClick={() => setFilter('')}>
+          <X size={12} />
+        </button>
+      )}
+    </div>
+  );
 
   return (
     <div className={isGlobal ? 'agents-board agents-board--global panel-body--full' : 'agents-board'}>
       <MobilePageHeader title="Agents" primary={<button type="button" className="icon-btn" aria-label="New agent" data-testid="agents-board-new-thread" onClick={() => useUi.getState().setLauncherOpen(true)}><Plus size={20} /></button>}>{secondaryActions}</MobilePageHeader>
-      {showToolbar && !selectedExecution && (
+      {showToolbar && !showMobileBoard && !selectedExecution && (
         <div className="agents-board-toolbar">
           {!compact && secondaryActions}
-          {isGlobal && (boardView !== 'flow' || pluginView) && (
-            <div className="agents-board-filter">
-              <Search size={12} className="agents-board-filter-icon" aria-hidden="true" />
-              <input
-                type="text"
-                placeholder="Filter by project or task…"
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                aria-label="Filter agents"
-              />
-              {filter && (
-                <button
-                  type="button"
-                  className="agents-board-filter-clear"
-                  aria-label="Clear filter"
-                  onClick={() => setFilter('')}
-                >
-                  <X size={12} />
-                </button>
-              )}
-            </div>
-          )}
+          {searchAgents}
           {!compact && newAgent}
-
         </div>
       )}
 
@@ -545,7 +542,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
             </button>
           )}
         </PaneEmptyState>
-      ) : isGlobal && visibleFleet.length === 0 && visibleExecutions.length === 0 ? (
+      ) : !compact && isGlobal && visibleFleet.length === 0 && visibleExecutions.length === 0 ? (
         <div className="agents-board-empty">
           <Bot size={28} aria-hidden="true" />
           <h4>No matches</h4>
@@ -562,6 +559,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
           activeId={activeId}
           onInspect={inspect}
           showProject={isGlobal}
+          mobileSearch={showMobileBoard ? searchAgents : undefined}
           executions={executions}
           hasMoreExecutions={hasMoreExecutions}
           onLoadMoreExecutions={loadMoreExecutions}

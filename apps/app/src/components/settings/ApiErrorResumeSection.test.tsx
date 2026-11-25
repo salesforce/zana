@@ -439,9 +439,48 @@ describe('ApiErrorResumeSection', () => {
 
   it('Check says it is desktop-only when the API is missing', async () => {
     delete (window as any).cc;
-    setup(on());
+    setup(on([rule()]));
     fireEvent.click(screen.getByText('Check'));
     await waitFor(() => expect(screen.getByText('Check is only available in the desktop app.')).toBeTruthy());
+  });
+
+  describe('with no rules yet', () => {
+    it('shows the guidance, the typing note and the cap, but nothing that needs a rule', () => {
+      setup(on());
+      expect(screen.getByText(/Only add errors that clear up by themselves/)).toBeTruthy();
+      expect(screen.getByText(/only sends the message if you haven't typed/)).toBeTruthy();
+      expect(screen.getByLabelText('Messages before stopping')).toBeTruthy();
+      expect(screen.queryByText(/typed into the agent as if you sent it/)).toBeNull();
+      expect(screen.queryByLabelText('Error text to check')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Check' })).toBeNull();
+    });
+
+    it('puts the which-errors guidance before the Add rule button', () => {
+      setup(on());
+      const guidance = screen.getByText(/Only add errors that clear up by themselves/);
+      const add = screen.getByRole('button', { name: 'Add rule' });
+      expect(guidance.compareDocumentPosition(add) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('reveals the message note and Check once a rule exists, and focuses a new blank rule', () => {
+      setup(on());
+      fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+      expect(screen.getByText(/typed into the agent as if you sent it/)).toBeTruthy();
+      expect(screen.getByLabelText('Error text to check')).toBeTruthy();
+      expect(document.activeElement).toBe(screen.getByLabelText('When the error matches (rule 1)'));
+    });
+
+    it('does not steal focus for a saved rule whose match is empty', () => {
+      setup(on([rule({ match: '' })]));
+      expect(document.activeElement).not.toBe(screen.getByLabelText('When the error matches (rule 1)'));
+    });
+
+    it('hides them again when the last rule is removed', () => {
+      render(<Stateful initial={on([rule()])} onUpdate={vi.fn()} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Remove rule 1' }));
+      expect(screen.queryByLabelText('Error text to check')).toBeNull();
+      expect(screen.queryByText(/typed into the agent as if you sent it/)).toBeNull();
+    });
   });
 });
 

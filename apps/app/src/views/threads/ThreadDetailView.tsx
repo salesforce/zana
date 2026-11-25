@@ -35,6 +35,7 @@ import {
   QueuedMessagesCard
 } from '../../components/thread/timeline/ComposerStackCards.js';
 import { ThreadDetailOverflow } from '../../components/thread/ThreadDetailOverflow.js';
+import { MobileMoreMenu } from '../../components/MobilePageHeader.js';
 import { DetachedThread, useThreadDetached } from '../../components/thread/DetachedThread.js';
 import { ThreadDetailSearch } from '../../components/thread/ThreadDetailSearch.js';
 import { createCoalescedRunner } from '../../lib/coalesced-runner.js';
@@ -996,6 +997,8 @@ function ThreadDetailBody({
     });
   }, [planExitPending, threadId]);
 
+  const canOpenTools = !panel.state.isOpen && showSecondaryPanel;
+  const hideBasicChat = basic && showSecondaryPanel && panel.state.isOpen && (basicCompact || panel.state.isMaximized);
   const overflow = (
     <ThreadDetailOverflow
       threadId={threadId}
@@ -1006,6 +1009,7 @@ function ThreadDetailBody({
       onRenamed={setTitle}
       onUnread={() => setLastReadSeq(0)}
       onSearch={mobileControlsTarget ? () => setMobileSearchOpen(true) : undefined}
+      onOpenTools={compact && canOpenTools ? panel.open : undefined}
       extraActions={mobileControlsTarget ? <div className="mobile-menu-labeled"><PluginThreadHeaderActions threadId={threadId} projectId={projectId} /></div> : undefined}
     />
   );
@@ -1023,8 +1027,8 @@ function ThreadDetailBody({
       <div className="thread-detail-split">
       <div className={dockEnabled ? "thread-tool-main" : "thread-tool-main--legacy"}>
       <div ref={mainRef} className="thread-detail-main"
-        hidden={basic && showSecondaryPanel && panel.state.isOpen && (basicCompact || panel.state.isMaximized)}
-        inert={basic && showSecondaryPanel && panel.state.isOpen && (basicCompact || panel.state.isMaximized) || undefined}>
+        hidden={!compact && hideBasicChat}
+        inert={hideBasicChat || (compact && panelOpen) || undefined}>
         <header className="thread-detail-header thread-detail-header--balanced" data-title-in-shell={Boolean(mobileTitleTarget) || undefined} data-controls-in-shell={Boolean(mobileControlsTarget) || undefined}>
           <ThreadDetailHeading
             title={title}
@@ -1043,7 +1047,7 @@ function ThreadDetailBody({
                 ? (event) => pane.beginPaneDrag?.(event, title)
                 : undefined
             }
-            status={!mobileControlsTarget ? <ThreadStatusBadge status={status} waitingOnUser={awaitingUser} thinking={thinking} /> : null}
+            status={!compact ? <ThreadStatusBadge status={status} waitingOnUser={awaitingUser} thinking={thinking} /> : null}
             metadata={!mobileControlsTarget && Boolean(title) && <><span className="basic-thread-project" hidden={!basic}>{project?.name ?? 'Conversation'}</span><span className="basic-thread-advanced-chrome" hidden={basic} inert={basic || undefined}><ThreadDetailContext key={threadId} agent={{
               providerId: threadProviderId,
               model: threadModel,
@@ -1066,7 +1070,6 @@ function ThreadDetailBody({
               matchCount={searchActive && !search.pending ? search.matches.length : undefined}
               partial={searchActive && search.partial}
             />}
-            {mobileControlsTarget && <ThreadStatusBadge status={status} waitingOnUser={awaitingUser} thinking={thinking} />}
             {!mobileControlsTarget && <span className="basic-thread-advanced-chrome" hidden={basic} inert={basic || undefined}><PluginThreadHeaderActions threadId={threadId} projectId={projectId} /></span>}
             <span className="basic-thread-advanced-chrome" hidden={basic} inert={basic || undefined}><SplitPaneHeaderActions /></span>
             {dockEnabled ? <button type="button" className="icon-btn basic-thread-advanced-chrome" hidden={basic}
@@ -1075,7 +1078,7 @@ function ThreadDetailBody({
               aria-pressed={dockPanels.bottom.isOpen && !toolDock.dock.collapsed}
               onClick={() => !dockPanels.bottom.isOpen ? addDockTab('bottom')
                 : toolDock.update(current => ({ ...current, collapsed: !current.collapsed, maximized: false }))}><PanelBottom size={14} /></button> : null}
-            {!panel.state.isOpen && showSecondaryPanel ? (
+            {!compact && canOpenTools ? (
               <button
                 type="button"
                 className="icon-btn"
@@ -1087,6 +1090,9 @@ function ThreadDetailBody({
                 <PanelRight size={14} />
               </button>
             ) : null}
+            {compact && basic && canOpenTools && <MobileMoreMenu title="Conversation">
+              <button type="button" onClick={panel.open}><PanelRight size={16} aria-hidden="true" /> Thread tools</button>
+            </MobileMoreMenu>}
             <span className="basic-thread-advanced-chrome" hidden={basic} inert={basic || undefined}>{overflow}</span>
           </ThreadDetailActions>
         </header>

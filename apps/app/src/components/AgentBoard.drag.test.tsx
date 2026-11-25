@@ -112,7 +112,7 @@ describe('agent board drag/drop', () => {
     expect(names()).toEqual(['Other']);
   });
 
-  it('uses a single readable phone lane and opens cards without allowing touch drag moves', () => {
+  it('shows all agents on phones and filters cards without allowing touch drag moves', () => {
     layout.compact = true;
     const inspect = vi.fn();
     render(<MemoryRouter><AgentBoardLanes cards={[agentFleetItem(agent), threadFleetItem({ ...thread, status: 'idle' })]} showProject onInspect={inspect} /></MemoryRouter>);
@@ -124,7 +124,10 @@ describe('agent board drag/drop', () => {
     expect(dataTransfer.setData).not.toHaveBeenCalled();
     fireEvent.click(card('CLI probe'));
     expect(inspect).toHaveBeenCalledWith(expect.objectContaining({ id: 'cli' }));
-    fireEvent.click(screen.getByRole('tab', { name: 'Idle 1' }));
+    expect(screen.getByRole('region', { name: 'All agents' }).contains(card('Thread probe'))).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Filter by status' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Idle 1' }));
+    expect(screen.queryByRole('button', { name: /CLI probe/ })).toBeNull();
     fireEvent.click(card('Thread probe'));
     expect(inspect).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'thread' }));
     expect(api.stop).not.toHaveBeenCalled();

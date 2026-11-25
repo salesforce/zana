@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect } from './fixtures/app.js';
+import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 
 test.use({ initialConfig: { sponsorPromptDismissed: true } });
 
@@ -37,12 +38,13 @@ test('bounded Inbox pages preserve cursors through built Electron HTTP and UI', 
   expect(second.data.entries[0].id).toBe('page-4899');
   expect(second.data.entries).toHaveLength(100);
   await page.getByTestId('nav-inbox').click();
-  await expect(page.locator('.inbox-row').filter({ hasText: 'Paged report 4999' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Paged report 4999/ })).toBeVisible();
 });
 
 test('inbox message header stays visible and usable while its content scrolls', async ({ app }, testInfo) => {
   const page = app.window;
   await page.getByTestId('nav-inbox').click();
+  await page.getByRole('button', { name: 'Split view', exact: true }).click();
   await page.locator('.inbox-row').filter({ hasText: 'Long inbox report' }).click();
   const pane = page.locator('.inbox-view-detail');
   const header = pane.locator('.inbox-detail-header');
@@ -82,7 +84,7 @@ test('inbox message header stays visible and usable while its content scrolls', 
       await header.getByRole('button', { name: 'Remove keep flag' }).click();
       await expect.poll(() => pane.evaluate((el) => el.scrollTop)).toBeGreaterThan(300);
     }
-    await page.screenshot({ path: testInfo.outputPath(`inbox-scrolled-${width}-${theme}.png`) });
+    await captureElectronScreenshot(app.electron, page, testInfo.outputPath(`inbox-scrolled-${width}-${theme}.png`));
   }
 
   await header.getByRole('button', { name: 'Inbox', exact: true }).click();

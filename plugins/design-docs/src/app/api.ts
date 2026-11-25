@@ -166,6 +166,9 @@ export interface DesignDocsApi {
   harnessRouting(scope: HarnessScope): Promise<HarnessRouting | null>;
   /** Save (or clear with null) the override; the host rejects a value that cannot launch. Returns what was stored. */
   setHarnessRouting(scope: HarnessScope, value: HarnessRouting | null): Promise<HarnessRouting | null>;
+  /** Whether safe peer changes (identical copies, non-overlapping edits) settle without asking. */
+  autoConverge(): Promise<{ enabled: boolean }>;
+  setAutoConverge(enabled: boolean): Promise<{ enabled: boolean }>;
   peerStatus(): Promise<PeerStatus>;
   groupStatus(): Promise<GroupStatus>;
   enablePeer(peerId: string): Promise<GroupStatus>;
@@ -280,6 +283,8 @@ export function createApi(call: Call): DesignDocsApi {
     harnessDescriptors: (projectId) => typed('harnessDescriptors', projectId ? { projectId } : undefined),
     harnessRouting: (scope) => typed('harnessRouting', scope),
     setHarnessRouting: (scope, value) => typed('setHarnessRouting', { scope, value }),
+    autoConverge: () => typed('autoConverge'),
+    setAutoConverge: (enabled) => typed('setAutoConverge', { enabled }),
     peerStatus: () => typed('peerStatus'),
     groupStatus: () => typed('groupStatus'),
     enablePeer: (peerId) => typed('enablePeer', { peerId }),

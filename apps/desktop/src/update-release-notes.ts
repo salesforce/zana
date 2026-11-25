@@ -66,38 +66,177 @@ function attr(tagAttrs: string, name: string): string | null {
 }
 
 /**
+ * Drop every `<...>` span with one forward scan. A `<` that never closes stays
+ * as text. The result can contain no `<`-to-`>` span: between two removed spans
+ * the kept text has no `<` (it would have opened a span), so a removal can never
+ * join two halves of a tag. Linear, unlike a lazy regex.
+ */
+function stripTags(text: string): string {
+  let out = '';
+  let cursor = 0;
+  for (;;) {
+    const open = text.indexOf('<', cursor);
+    if (open < 0) break;
+    const close = text.indexOf('>', open + 1);
+    if (close < 0) break;
+    out += text.slice(cursor, open);
+    cursor = close + 1;
+  }
+  return out + text.slice(cursor);
+}
+
+interface ElementMatch {
+  /** Lower-cased tag name. */
+  name: string;
+  /** Text between the tag name and the `>` of the opening tag (empty when not requested). */
+  attrs: string;
+  /** Text between the opening tag and its first matching closing tag. */
+  inner: string;
+}
+
+/**
+ * Replace each `<name ...>inner</name>` with `replace(match)`, first closing tag
+ * wins, scanning left to right. Equivalent to
+ * `/<(names)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi` (or without `[^>]*>` when
+ * `needsOpenEnd` is false), but linear: a missing closer is searched for once
+ * per tag name, because no later opener of that name can have one either, and a
+ * missing `>` ends the scan for the same reason.
+ */
+function replaceElements(
+  input: string,
+  names: string,
+  needsOpenEnd: boolean,
+  replace: (match: ElementMatch) => string
+): string {
+  const opener = new RegExp(`<(${names})\\b`, 'gi');
+  const closers = new Map<string, RegExp>();
+  const exhausted = new Set<string>();
+  let out = '';
+  let cursor = 0;
+  for (let found = opener.exec(input); found; found = opener.exec(input)) {
+    const name = found[1]!.toLowerCase();
+    if (exhausted.has(name)) continue;
+    let bodyStart = found.index + found[0].length;
+    let attrs = '';
+    if (needsOpenEnd) {
+      const gt = input.indexOf('>', bodyStart);
+      if (gt < 0) break;
+      attrs = input.slice(bodyStart, gt);
+      bodyStart = gt + 1;
+    }
+    let closer = closers.get(name);
+    if (!closer) {
+      closer = new RegExp(`</${name}\\s*>`, 'gi');
+      closers.set(name, closer);
+    }
+    closer.lastIndex = bodyStart;
+    const closing = closer.exec(input);
+    if (!closing) {
+      exhausted.add(name);
+      continue;
+    }
+    out += input.slice(cursor, found.index) + replace({ name, attrs, inner: input.slice(bodyStart, closing.index) });
+    cursor = closing.index + closing[0].length;
+    opener.lastIndex = cursor;
+  }
+  return out + input.slice(cursor);
+}
+
+/**
+ * Replace each `<name ...>` (or `</name ...>` when `allowClosing`) with
+ * `replacement`. Equivalent to `/(\s*)<\/?(names)\b[^>]*>/gi`, but linear: the
+ * next `>` is found once and reused, and a missing `>` ends the scan because no
+ * later tag can have one either. With `eatLeadingSpace` the whitespace directly
+ * before the tag goes with it.
+ */
+function replaceTagSpans(
+  input: string,
+  names: string,
+  allowClosing: boolean,
+  replacement: string,
+  eatLeadingSpace = false
+): string {
+  const opener = new RegExp(`<${allowClosing ? '\\/?' : ''}(?:${names})\\b`, 'gi');
+  let out = '';
+  let cursor = 0;
+  let gt = -2;
+  for (let found = opener.exec(input); found; found = opener.exec(input)) {
+    const from = found.index + found[0].length;
+    if (gt < from) gt = input.indexOf('>', from);
+    if (gt < 0) break;
+    let start = found.index;
+    if (eatLeadingSpace) while (start > cursor && /\s/.test(input[start - 1]!)) start -= 1;
+    out += input.slice(cursor, start) + replacement;
+    cursor = gt + 1;
+    opener.lastIndex = cursor;
+  }
+  return out + input.slice(cursor);
+}
+
+/** Remove every `<!-- ... -->` comment; an unterminated one stays as text. */
+function stripComments(input: string): string {
+  let out = '';
+  let cursor = 0;
+  for (;;) {
+    const open = input.indexOf('<!--', cursor);
+    if (open < 0) break;
+    const close = input.indexOf('-->', open + 4);
+    if (close < 0) break;
+    out += input.slice(cursor, open);
+    cursor = close + 3;
+  }
+  return out + input.slice(cursor);
+}
+
+const MAX_STRIP_PASSES = 4;
+
+/**
+ * Remove script-like elements and comments. Removing one can join the halves of
+ * another (`<scr<script></script>ipt>`), so repeat until nothing changes; if the
+ * input is still changing after {@link MAX_STRIP_PASSES} passes it is hostile
+ * nesting, so every remaining `<` is dropped instead.
+ */
+function stripHiddenContent(input: string): string {
+  let current = input;
+  for (let pass = 0; pass < MAX_STRIP_PASSES; pass += 1) {
+    const next = stripComments(replaceElements(current, 'script|style|template|iframe|object|svg', false, () => ''));
+    if (next === current) return current;
+    current = next;
+  }
+  return current.replace(/</g, '');
+}
+
+/**
  * Convert the GitHub-rendered release-body HTML subset to markdown. Not a
  * general HTML parser — it only needs to round-trip what `docs/releases/*.md`
  * renders to; unknown tags are stripped to their text.
  */
 export function htmlToMarkdown(html: string): string {
-  let s = html.slice(0, MAX_RAW_CHARS);
   // Content that must never surface as text.
-  s = s.replace(/<(script|style|template|iframe|object|svg)\b[\s\S]*?<\/\1\s*>/gi, '');
-  s = s.replace(/<!--[\s\S]*?-->/g, '');
+  let s = stripHiddenContent(html.slice(0, MAX_RAW_CHARS));
   // Code blocks first, so their contents aren't treated as markup.
   const blocks: string[] = [];
-  s = s.replace(/<pre\b[^>]*>([\s\S]*?)<\/pre\s*>/gi, (_m, inner: string) => {
-    const code = decodeEntities(inner.replace(/<[^>]*>/g, '')).replace(/\n+$/, '');
+  s = replaceElements(s, 'pre', true, ({ inner }) => {
+    const code = decodeEntities(stripTags(inner)).replace(/\n+$/, '');
     blocks.push('\n\n```\n' + code.replace(/```/g, '``​`') + '\n```\n\n');
     return `\u0000${blocks.length - 1}\u0000`;
   });
-  s = s.replace(/<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1\s*>/gi, (_m, level: string, inner: string) => `\n\n${'#'.repeat(Number(level))} ${inner.trim()}\n\n`);
-  s = s.replace(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi, (_m, attrs: string, inner: string) => {
+  s = replaceElements(s, 'h[1-6]', true, ({ name, inner }) => `\n\n${'#'.repeat(Number(name.slice(1)))} ${inner.trim()}\n\n`);
+  s = replaceElements(s, 'a', true, ({ attrs, inner }) => {
     const href = safeHref(attr(attrs, 'href') ?? '');
-    const text = inner.replace(/<[^>]*>/g, '').trim();
+    const text = stripTags(inner).trim();
     return href && text ? `[${text}](${href})` : text;
   });
-  s = s.replace(/<(strong|b)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi, (_m, _t, inner: string) => (inner.trim() ? `**${inner.trim()}**` : ''));
-  s = s.replace(/<(em|i)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi, (_m, _t, inner: string) => (inner.trim() ? `*${inner.trim()}*` : ''));
-  s = s.replace(/<code\b[^>]*>([\s\S]*?)<\/code\s*>/gi, (_m, inner: string) => '`' + inner.replace(/`/g, '') + '`');
-  s = s.replace(/\s*<li\b[^>]*>/gi, '\n- ');
+  s = replaceElements(s, 'strong|b', true, ({ inner }) => (inner.trim() ? `**${inner.trim()}**` : ''));
+  s = replaceElements(s, 'em|i', true, ({ inner }) => (inner.trim() ? `*${inner.trim()}*` : ''));
+  s = replaceElements(s, 'code', true, ({ inner }) => '`' + inner.replace(/`/g, '') + '`');
+  s = replaceTagSpans(s, 'li', false, '\n- ', true);
   s = s.replace(/<\/(ul|ol)\s*>/gi, '\n\n');
   s = s.replace(/<br\s*\/?>/gi, '  \n');
-  s = s.replace(/<hr\b[^>]*>/gi, '\n\n---\n\n');
-  s = s.replace(/<\/?(p|div|blockquote|section|table|tr)\b[^>]*>/gi, '\n\n');
+  s = replaceTagSpans(s, 'hr', false, '\n\n---\n\n');
+  s = replaceTagSpans(s, 'p|div|blockquote|section|table|tr', true, '\n\n');
   // Drop every remaining tag, then decode text entities.
-  s = s.replace(/<[^>]*>/g, '');
+  s = stripTags(s);
   s = decodeEntities(s);
   s = s.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => blocks[Number(i)] ?? '');
   return s
@@ -115,7 +254,7 @@ function toMarkdown(raw: unknown): string {
   if (typeof raw !== 'string') return '';
   const text = raw.slice(0, MAX_RAW_CHARS);
   // A generic feed may already carry markdown; still strip any stray tags.
-  const md = looksLikeHtml(text) ? htmlToMarkdown(text) : decodeEntities(text.replace(/<[^>]*>/g, '')).trim();
+  const md = looksLikeHtml(text) ? htmlToMarkdown(text) : decodeEntities(stripTags(text)).trim();
   return md.length > MAX_UPDATE_NOTE_CHARS ? md.slice(0, MAX_UPDATE_NOTE_CHARS).trimEnd() + '\n\n…' : md;
 }
 

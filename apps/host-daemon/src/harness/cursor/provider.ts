@@ -117,6 +117,10 @@ const CURSOR_ADAPTER: TrustedHarnessAdapter = {
     ],
     terminatesAtDoubleDash: true
   },
+  // No API-error signal on purpose: Cursor persists no error text anywhere Zana can read. Its documented `stop`
+  // hook (status "error") carries no error kind, so every failure, including auth and quota, would read as
+  // retryable `unknown`. Not reproducible without a real logged-in account (the agent API is protobuf and the
+  // CLI needs the OS keychain), so whether `stop` fires on an API failure is unverified.
   status: { mode: 'output-activity', apiErrorSignal: 'none' },
   evidence: [
     cursorEvidence('cursor.facet.opening-prompt', 'CLI accepts opening prompt as spawn argument.'),

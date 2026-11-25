@@ -1,3 +1,5 @@
+import { trimTrailingChar } from "../trim-edges.js";
+
 const WINDOWS_DRIVE_ROOT_PATTERN = /^[A-Za-z]:(?:[\\/]+)?$/u;
 const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[A-Za-z]:(?:[\\/]+)/u;
 const WINDOWS_UNC_PATH_PATTERN = /^\\\\[^\\/]+(?:[\\/]+)[^\\/]+/u;
@@ -41,7 +43,7 @@ export function normalizeProjectPathInput(path: string): string {
     return trimmedPath;
   }
 
-  return trimmedPath.replace(/\/+$/u, "");
+  return trimTrailingChar(trimmedPath, "/");
 }
 
 export function getProjectPathValidationMessage(path: string): string | null {

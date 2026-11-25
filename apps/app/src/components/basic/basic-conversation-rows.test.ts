@@ -5,7 +5,7 @@ import { DEFAULT_BASIC_CONVERSATION_VIEW, type BasicConversationView } from './b
 
 const projects = [
   { id: 'personal', name: 'zcc-workspace', quickAgent: true },
-  { id: 'web', name: 'Website', hostId: 'mac' },
+  { id: 'web', name: 'Website', color: '#2f81f7', hostId: 'mac' },
   { id: 'remote', name: 'SSH project', remote: { host: 'devbox', remotePath: '/work' } },
   { id: 'daemon', name: 'Other machine', hostId: 'devbox' }
 ];
@@ -23,8 +23,9 @@ describe('Basic conversation rows', () => {
       thread('old'), thread('middle', { projectId: 'web', updatedAt: 10 }),
       thread('newest', { updatedAt: 20 }), thread('created', { projectId: 'web', createdAt: 15 })
     ]);
-    expect(list(rows).map(row => [row.thread.id, row.projectName])).toEqual([
-      ['newest', 'Default Project'], ['created', 'Website'], ['middle', 'Website'], ['old', 'Default Project']
+    expect(list(rows).map(row => [row.thread.id, row.projectName, row.projectColor])).toEqual([
+      ['newest', 'Default Project', undefined], ['created', 'Website', '#2f81f7'],
+      ['middle', 'Website', '#2f81f7'], ['old', 'Default Project', undefined]
     ]);
     expect(rows.map(row => row.id)).toEqual(['old', 'middle', 'newest', 'created']);
   });
@@ -73,6 +74,13 @@ describe('Basic conversation rows', () => {
       const rows = [thread('live'), thread('gone', { archivedAt: 5 })];
       expect(ids({ status: 'archived' }, rows)).toEqual(['gone']);
       expect(ids({ status: 'all' }, rows)).toEqual(['live', 'gone']);
+    });
+
+    it('keeps active pins first in saved pin order, including pins without an order', () => {
+      const rows = [thread('recent', { updatedAt: 45 }), thread('second', { pinnedAt: 2, pinOrder: 2 }),
+        thread('legacy', { pinnedAt: 3 }), thread('first', { pinnedAt: 1, pinOrder: 1 }),
+        thread('retired', { archivedAt: 7, pinnedAt: 4, pinOrder: 0, updatedAt: 5 })];
+      expect(ids({ status: 'all' }, rows)).toEqual(['first', 'second', 'legacy', 'recent', 'retired']);
     });
 
     it('limits to a last-activity window', () => {

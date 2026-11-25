@@ -139,11 +139,18 @@ test('launches a directly-launchable OpenCode role despite an inherited unsuppor
     await expect(send).toBeEnabled({ timeout: 15_000 });
     await send.click();
 
-    // Success: launcher closes and the spawned session inspector appears working.
+    // Success: launcher closes and a session spawns and stays alive. The fixture
+    // exits 64 when a forced `--model` rides with `--agent`, so a live session
+    // proves the model was dropped. Asserted on the session record, not on which
+    // inspector surface the UI opens for it.
     await expect(modal).toBeHidden({ timeout: 30_000 });
-    await expect(window.locator('[data-testid="agent-terminal-modal"]')).toBeVisible({ timeout: 30_000 });
-    await expect(window.locator('[data-testid="agent-modal-state"]'))
-      .toHaveAttribute('data-state', 'working', { timeout: 30_000 });
+    const sessionFor = () => window.evaluate(
+      async (id) => (await window.cc.terminals.list(id)).find((s) => s.projectId === id),
+      projectId
+    );
+    await expect.poll(async () => (await sessionFor())?.status, { timeout: 30_000 }).toBe('running');
+    await window.waitForTimeout(2_000);
+    expect(await sessionFor()).toMatchObject({ status: 'running' });
   } finally {
     if (projectId) await window.evaluate((id) => window.cc.projects.remove(id), projectId);
     await window.evaluate(() => window.cc.config.set({ defaultHarness: undefined, opencodeBinary: undefined }));

@@ -44,7 +44,7 @@ test('idle seat while a unit waits raises one idle-capacity notice', async ({ ap
     expect(await idleEvents()).toHaveLength(1);
 
     await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
-    const rows = window.locator('.inbox-row').filter({ hasText: /is idle while unit/ });
+    const rows = window.getByRole('button', { name: /is idle while unit/ });
     await expect(rows.first()).toBeVisible({ timeout: 30_000 });
     await expect(rows).toHaveCount(1);
   } catch (error) { throw jobTeamFailure(ctx, error); }

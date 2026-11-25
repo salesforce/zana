@@ -1,6 +1,7 @@
 import { Fragment, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { placePopoverMenu, type PopoverMenuPlacement } from '../../ui/PopoverPicklist.js';
+import './thread-panel-controls.css';
 
 export interface ThreadToolMenuItem {
   id: string;
@@ -13,11 +14,12 @@ export interface ThreadToolMenuItem {
 }
 
 /** Portalled above the panel; native browser views yield while this menu is open. */
-export function ThreadToolMenu({ anchor, label, items, onClose }: {
+export function ThreadToolMenu({ anchor, label, items, onClose, hideTitle = false }: {
   anchor: HTMLElement;
   label: string;
   items: ThreadToolMenuItem[];
   onClose: (restoreFocus: boolean) => void;
+  hideTitle?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<PopoverMenuPlacement | null>(null);
@@ -43,9 +45,15 @@ export function ThreadToolMenu({ anchor, label, items, onClose }: {
   return createPortal(
     <div ref={ref} className="thread-tool-menu" role="menu" aria-label={label}
       style={{ position: 'fixed', ...position }}
+      onKeyDownCapture={event => {
+        if (event.key !== 'Escape') return;
+        // Close the menu before the enclosing mobile drawer handles Escape.
+        event.preventDefault();
+        event.stopPropagation();
+        onClose(true);
+      }}
       onKeyDown={event => {
-        if (event.key === 'Escape' || event.key === 'Tab') {
-          if (event.key === 'Escape') event.preventDefault();
+        if (event.key === 'Tab') {
           event.stopPropagation();
           onClose(true);
         } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
@@ -58,13 +66,13 @@ export function ThreadToolMenu({ anchor, label, items, onClose }: {
           buttons[next].focus();
         }
       }}>
-      <div className="thread-tool-menu-title">{label}</div>
+      {!hideTitle && <div className="thread-tool-menu-title">{label}</div>}
       {items.map(item => <Fragment key={item.id}>
         {item.separatorBefore ? <div className="thread-tool-menu-separator" role="separator" /> : null}
         <button type="button" role="menuitem" tabIndex={-1} disabled={item.disabled}
         onClick={() => { onClose(true); item.run(); }}>
         {item.icon}<span>{item.label}{item.description ? <small>{item.description}</small> : null}</span>
       </button></Fragment>)}
-    </div>, anchor.ownerDocument.body
+    </div>, anchor.closest('[aria-modal="true"]') ?? anchor.ownerDocument.body
   );
 }

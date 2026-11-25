@@ -1,6 +1,7 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { PluginDatabase, ZccPluginApi } from '@zana-ai/zcc-plugin-sdk/server';
+import { createAutoConvergeSetting } from './src/server/auto-converge-setting.js';
 import { CHANGED_CHANNEL, PEER_STATE_CHANNEL } from './src/shared/contract.js';
 import { createCliCaller, createLocalFileReader, createLocalFileWriter, registerDesignDocCli } from './src/server/cli.js';
 import { registerAgentContext } from './src/server/context.js';
@@ -30,12 +31,12 @@ const PLUGIN_ROOT = dirname(fileURLToPath(import.meta.url));
 
 
 export default function plugin(zcc: ZccPluginApi): void {
-  let autoConverge = false;
-  const settings = zcc.settings.define({ autoConverge: { type: 'boolean', label: 'Automatically settle safe peer changes',
-    description: 'Reconcile identical copies and non-overlapping edits without asking. Overlapping edits still require review.', default: false } });
-  let settingChanged = false;
-  settings.onChange(values => { settingChanged = true; autoConverge = values.autoConverge === true; });
-  void settings.get().then(values => { if (!settingChanged) autoConverge = values.autoConverge === true; }).catch((error: unknown) => zcc.log.warn(`design docs settings load failed; automatic settling stays off: ${String(error).slice(0, 160)}`));
+  // The preference moved from the global plugin settings into Settings → Peers. Define it once only to read an
+  // existing value for migration, then redefine nothing so the global panel no longer lists it. The legacy handle keeps its own descriptors.
+  const legacySettings = zcc.settings.define({ autoConverge: { type: 'boolean', label: 'Automatically settle safe peer changes', default: false } });
+  zcc.settings.define({});
+  const autoConverge = createAutoConvergeSetting(zcc.storage.kv, (message) => zcc.log.warn(message),
+    async () => (await legacySettings.get()).autoConverge === true);
   let syncStore!: DesignDocSyncStore;
   let peerSync: DesignDocPeerService | undefined;
   const database = zcc.storage.database();
@@ -74,7 +75,7 @@ export default function plugin(zcc: ZccPluginApi): void {
     }
   });
   void store.seedBuiltinTemplates(zcc.storage.kv).catch((error: unknown) => zcc.log.warn(`design docs template seed failed: ${String(error)}`));
-  syncStore = new DesignDocSyncStore(guarded, { autoConverge: () => autoConverge });
+  syncStore = new DesignDocSyncStore(guarded, { autoConverge: () => autoConverge.enabled() });
   const sdkPeers = zcc.sdk.peers;
   const fenceDatabase: PluginDatabase = {
     ...database,
@@ -208,7 +209,7 @@ export default function plugin(zcc: ZccPluginApi): void {
     peerSync,
     peers: zcc.sdk.peers
   });
-  registerRpc(zcc, { store, changed, sdk: zcc.sdk, peerSync, pairing, kit, pageUrl, reports, backups, localPeerId: () => localPeerId() });
+  registerRpc(zcc, { autoConverge, store, changed, sdk: zcc.sdk, peerSync, pairing, kit, pageUrl, reports, backups, localPeerId: () => localPeerId() });
 
   // Standalone pages: the doc as its published site, for any browser on this machine.
   const pages = createPageRoutes({

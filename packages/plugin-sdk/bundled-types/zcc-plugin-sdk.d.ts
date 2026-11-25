@@ -918,7 +918,7 @@ export type PluginSdkInbox = PluginSdk['inbox'];
       inbox: {
         search(args: PluginSdkInboxSearchArgs): Promise<PluginSdkInboxSearchResult>;
         read(args: { projectIds: string[]; entryId: string; documentIndex?: number }): Promise<PluginSdkInboxReport>;
-        push(args: { projectId: string; comments: string }): Promise<{ id: string }>;
+        push(args: { projectId: string; comments: string; offerAgentFix?: true }): Promise<{ id: string }>;
       };
       capabilities: PluginCapabilityIntrospection;
       projects: {

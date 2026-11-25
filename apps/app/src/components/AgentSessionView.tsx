@@ -4,6 +4,8 @@ import type { AgentState, CliPlanFile, SessionStats, TerminalSession } from '@za
 import { product } from '../lib/product-client.js';
 import { AgentDetailPanel } from './AgentDetailPanel.js';
 import { AgentSessionHeader } from './AgentSessionHeader.js';
+import { MobileMoreMenu } from './MobilePageHeader.js';
+import { useCompactLayout } from '../hooks/useCompactLayout.js';
 import { CliAgentSurface } from './CliAgentSurface.js';
 import { AgentDiffPanel } from './AgentDiffPanel.js';
 import { useSessionStats } from './AgentInsights.js';
@@ -187,6 +189,7 @@ function DesktopAgentSessionView({
   mobileTitleInShell?: boolean;
 }) {
   const basicUi = useBasicUi();
+  const compact = useCompactLayout();
   const pane = useOptionalPaneContext();
   const viewRef = useRef<HTMLElement>(null);
   const panelOwnerId = agentSessionPanelOwnerId(session.id, modal);
@@ -349,10 +352,13 @@ function DesktopAgentSessionView({
     >
       <div className="thread-detail-split">
       <div className="thread-detail-main agent-session-main">
-        <AgentSessionHeader session={session} state={state} projectName={projectName}
+        <AgentSessionHeader title={session.title}
           useShellTitle={mobileTitleInShell && !modal && pane?.isFocused !== false}>
             <SplitPaneHeaderActions />
-            {!panelOpen ? (
+            {!panelOpen && compact && <MobileMoreMenu title="Agent">
+              <button type="button" onClick={panel.open}><PanelRight size={16} aria-hidden="true" /> Agent tools</button>
+            </MobileMoreMenu>}
+            {!panelOpen && !compact ? (
               <button
                 type="button"
                 className="icon-btn"

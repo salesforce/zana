@@ -13,7 +13,7 @@
 .basic-ui .titlebar { justify-content: flex-start; padding-left: max(20px, var(--shell-leading-reserve, 20px)); }
 .app-shell.basic-ui[data-mobile='false'],
 .app-shell.basic-ui.sidebar-is-collapsed[data-mobile='false'] { --shell-leading-reserve: calc(var(--shell-trigger-left) + var(--shell-trigger-size) + 12px); }
-.basic-ui .titlebar > :not(.basic-ui-shell-heading):not(.basic-ui-mode-switch):not(.titlebar-bell):not(.titlebar-theme) { display: none !important; }
+.basic-ui .titlebar > :not(:is(.basic-ui-shell-heading, .basic-ui-mode-switch, .titlebar-bell, .titlebar-theme, .mobile-thread-title-slot, .mobile-thread-controls-slot)) { display: none !important; }
 .basic-ui .basic-ui-sidebar { padding: 12px 14px 15px; border-right: 0; }
 .basic-ui .basic-ui-sidebar[hidden] { display: none; }
 .basic-ui-new-chat { display: flex; align-items: center; gap: 9px; padding: 11px 12px; border: 1px solid var(--border-strong); border-radius: 9px; text-decoration: none; color: var(--text-primary); font-size: 12px; background: var(--bg-panel); }
@@ -44,11 +44,34 @@
 .basic-ui-conversation-menu-toggle[aria-checked='true'] .basic-ui-conversation-menu-switch { background: var(--accent-blue); }
 .basic-ui-conversation-menu-toggle[aria-checked='true'] .basic-ui-conversation-menu-switch::after { left: 13px; }
 @media (prefers-reduced-motion: reduce) { .basic-ui-conversation-menu-switch, .basic-ui-conversation-menu-switch::after { transition: none; } }
-.basic-ui-chat-row { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 8px; text-decoration: none; color: var(--text-primary); }
-.basic-ui-chat-row:hover, .basic-ui-chat-row.is-active { background: var(--sidebar-hover); }
+.basic-ui-chat-item { display: flex; align-items: center; border-radius: 8px; }
+.basic-ui-chat-item:hover, .basic-ui-chat-item:focus-within, .basic-ui-chat-item:has(.is-active, [aria-expanded='true']) { background: var(--sidebar-hover); }
+.basic-ui-chat-row { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; padding: 8px 6px 8px 10px; border-radius: 8px; text-decoration: none; color: var(--text-primary); }
+.basic-ui-chat-title { display: flex; align-items: center; gap: 5px; }
+.basic-ui-chat-title > svg { flex-shrink: 0; color: var(--text-muted); }
+.basic-ui-chat-actions.basic-ui-conversation-menu-button { flex-shrink: 0; width: 28px; height: 28px; margin-right: 4px; }
+@media (hover: hover) and (pointer: fine) {
+  .basic-ui-chat-actions { opacity: 0; pointer-events: none; }
+  .basic-ui-chat-item:is(:hover, :has(:focus-visible)) .basic-ui-chat-actions,
+  .basic-ui-chat-actions[aria-expanded='true'] { opacity: 1; pointer-events: auto; }
+}
+.basic-ui .basic-ui-chat-row:focus-visible, .basic-ui .basic-ui-chat-actions:focus-visible { outline-offset: -2px; }
+@media (pointer: coarse) {
+  .basic-ui-chat-actions.basic-ui-conversation-menu-button { width: 44px; height: 44px; }
+}
 .basic-ui-chat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.basic-ui-chat-meta { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 10px; line-height: 14px; }
-.basic-ui-chat-project { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
+.basic-ui-chat-meta { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 10px; line-height: 14px; }
+.basic-ui-chat-project {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--basic-chat-project-color, var(--text-muted)) 28%, var(--sidebar-bg));
+  color: color-mix(in srgb, var(--basic-chat-project-color, var(--text-muted)) 20%, var(--text-primary));
+  font-weight: 600;
+}
 .basic-ui-chat-meta > .basic-ui-chat-project + .basic-ui-chat-status::before { content: '·'; margin-right: 6px; color: var(--text-muted); font-weight: 400; }
 .basic-ui-chat-status { flex-shrink: 0; font-size: 10px; color: var(--text-muted); }
 /* Mirrors the advanced rail (.agents-row-working / .agents-row-needs-you). */
@@ -60,6 +83,7 @@
 .basic-ui-sidebar-empty, .basic-ui-sidebar-note { margin: 10px; color: var(--text-muted); font-size: 11px; line-height: 1.8; }
 .basic-ui-sidebar-note { margin-top: 18px; font-size: 10px; }
 .basic-ui-more-chats { width: 100%; border: 0; padding: 12px; background: transparent; color: var(--text-muted); font-size: 11px; cursor: pointer; }
+.basic-ui-has-unsupported-route .titlebar > :is(.mobile-thread-title-slot, .mobile-thread-controls-slot),
 .basic-ui.basic-ui-has-unsupported-route .shell-main { display: none; }
 .basic-ui.sidebar-is-collapsed .basic-ui-unsupported { grid-column: 1 / -1; }
 .basic-ui-unsupported { grid-column: 2 / -1; grid-row: 2; align-self: stretch; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 40px; min-width: 0; text-align: center; color: var(--text-primary); }
@@ -73,18 +97,8 @@
   .basic-ui .basic-ui-shell-heading { margin-right: auto; }
   .basic-ui .basic-ui-sidebar { height: 100%; }
 }
-/* Basic has no mobile back/return control, so the menu mirrors the mode switch's 12px inset. */
 .app-shell.basic-ui[data-mobile='true'] .titlebar { padding-left: 12px; }
-.app-shell.basic-ui[data-mobile='true'] .basic-ui-mode-switch { right: 12px; }
-.app-shell:not(.basic-ui)[data-mobile='true'] .basic-ui-mode-switch { right: 112px; }
-.app-shell:not(.basic-ui)[data-mobile='true'] .titlebar:has(.mobile-thread-controls-slot > *) .basic-ui-mode-switch {
-  position: static;
-  flex: none;
-  transform: none;
-}
-.app-shell:not(.basic-ui)[data-mobile='true'] .titlebar:has(.mobile-thread-controls-slot .thread-detail-search:is(:focus-within, .has-query)) .basic-ui-mode-switch {
-  display: none;
-}
+.app-shell.basic-ui[data-mobile='true'] .titlebar:has(.mobile-thread-title-slot:not(:empty)) .basic-ui-shell-heading { margin-right: 0; flex-shrink: 0; }
 
 .titlebar-theme { -webkit-app-region: no-drag; position: absolute; right: calc(74px + var(--windows-caption-reserve, 0px)); top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--text-muted); cursor: pointer; }
 .titlebar-theme:hover { background: var(--bg-hover); color: var(--text-primary); }

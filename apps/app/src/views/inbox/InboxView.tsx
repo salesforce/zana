@@ -6,6 +6,10 @@ import { InboxDetail } from '@/components/InboxDetail';
 import { InboxOverview } from '@/components/InboxOverview';
 import { InboxPane } from '@/components/listpane/InboxPane';
 import { SavedDetail } from '@/components/SavedDetail';
+import { useBooleanPreference } from '@/lib/use-boolean-preference';
+import './inbox-feed.css';
+
+const FULL_WIDTH_INBOX_KEY = 'zcc.inbox.fullWidth';
 
 /**
  * Inbox surface: the feed list and the detail column live together as an
@@ -32,9 +36,14 @@ export function InboxView() {
   const selectSaved = useSavedSelection((s) => s.selectSaved);
   const savedRecords = useSaved((s) => s.records);
   const compact = useCompactLayout();
+  const [preferFullWidth, setPreferFullWidth] = useBooleanPreference(FULL_WIDTH_INBOX_KEY, true);
+  const toolbarLayout = preferFullWidth ? 'wide' : 'split';
+  const fullWidth = preferFullWidth && !showingSaved;
+  const singlePane = compact || fullWidth;
   const [overviewOpen, setOverviewOpen] = useState(false);
   const root = useRef<HTMLElement>(null);
   const listFocus = useRef<HTMLElement | null>(null);
+  const detailWasOpen = useRef(false);
 
   // Same scoped slice the list column computes, so the landing's questions and
   // AI summary agree with what the feed shows (home = all projects, drilled-in
@@ -51,21 +60,27 @@ export function InboxView() {
   const detailOpen = showingSaved
     ? savedRecords.some((record) => record.id === savedId && (!scopeProjectId || record.projectId === scopeProjectId))
     : entries.some((entry) => entry.id === selectedId) || overviewOpen;
-  const detailVisible = active && (!compact || detailOpen);
+  const detailVisible = active && (!singlePane || detailOpen);
   const detailKey = showingSaved ? savedId : selectedId;
 
   useLayoutEffect(() => {
-    if (!compact || !active) return;
+    if (!singlePane || !active) return;
     if (detailOpen) {
       const detail = root.current?.querySelector('.inbox-view-detail');
       if (detail) detail.scrollTop = 0;
       const focused = document.activeElement;
-      if (focused instanceof HTMLElement && focused.closest('.inbox-list-pane')) listFocus.current = focused;
+      if (focused instanceof HTMLElement && focused.closest('.inbox-list-pane, .inbox-pane-toolbar')) {
+        listFocus.current = focused;
+      }
       root.current?.querySelector<HTMLButtonElement>('.inbox-mobile-back, .inbox-detail-overview-back')?.focus();
-    } else if (listFocus.current?.isConnected) {
-      listFocus.current.focus();
+    } else if (detailWasOpen.current) {
+      const target = listFocus.current?.isConnected ? listFocus.current
+        : root.current?.querySelector<HTMLElement>('.inbox-tab[aria-selected="true"]');
+      target?.focus();
+      listFocus.current = null;
     }
-  }, [compact, active, detailOpen, detailKey]);
+    detailWasOpen.current = detailOpen;
+  }, [singlePane, active, detailOpen, detailKey]);
 
   function backToList() {
     setOverviewOpen(false);
@@ -74,20 +89,30 @@ export function InboxView() {
   }
 
   return (
-    <section ref={root} className="inbox-view panel-body--full" data-compact={compact} data-detail-open={detailOpen}>
-      <InboxPane mobileHeaderEnabled={active && !detailOpen} onShowOverview={compact ? () => { select(null); setOverviewOpen(true); } : undefined} />
+    <section ref={root} className="inbox-view panel-body--full" data-compact={compact} data-full-width={fullWidth} data-toolbar-layout={toolbarLayout} data-detail-open={detailOpen}>
+      <InboxPane
+        toolbarLayout={toolbarLayout}
+        fullWidth={fullWidth}
+        onChangeLayout={(wide) => {
+          if (wide === preferFullWidth) return;
+          if (wide) backToList();
+          setPreferFullWidth(wide);
+        }}
+        mobileHeaderEnabled={active && !detailOpen}
+        onShowOverview={singlePane ? () => { select(null); setOverviewOpen(true); } : undefined}
+      />
       <div className="inbox-view-detail">
-        {compact && (showingSaved || !selectionInScope) && (
+        {singlePane && (showingSaved || !selectionInScope) && (
           <button type="button" className="inbox-mobile-back" onClick={backToList}>
             <ArrowLeft size={16} aria-hidden />
-            {showingSaved ? 'Saved reports' : 'Inbox'}
+            {showingSaved ? 'Saved reports' : fullWidth ? 'Back to Feed' : 'Inbox'}
           </button>
         )}
         {showingSaved ? (
           <SavedDetail visible={detailVisible} />
         ) : selectionInScope ? (
-          <InboxDetail visible={detailVisible} onBack={compact ? backToList : undefined} />
-        ) : (
+          <InboxDetail visible={detailVisible} onBack={singlePane ? backToList : undefined} />
+        ) : (!fullWidth || overviewOpen) && (
           <InboxOverview scopeProjectId={scopeProjectId} entries={entries} />
         )}
       </div>

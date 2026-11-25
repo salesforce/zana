@@ -126,8 +126,8 @@ export const SETTING_PRECEDENCE = [
     mergeRule: 'last',
     note: 'The last thinking argument on the command line wins: Global, then Project, then Persona, then the tab.',
     evidence: [
-      { file: 'apps/host-daemon/src/harness/pi/provider.ts', line: 105, contains: "args.push('--thinking', config.piThinking)" },
-      { file: 'apps/host-daemon/src/harness/pi/provider.ts', line: 125, contains: "args.push('--thinking', settings.piThinking)" }
+      { file: 'apps/host-daemon/src/harness/pi/provider.ts', line: 106, contains: "args.push('--thinking', config.piThinking)" },
+      { file: 'apps/host-daemon/src/harness/pi/provider.ts', line: 126, contains: "args.push('--thinking', settings.piThinking)" }
     ]
   },
   {

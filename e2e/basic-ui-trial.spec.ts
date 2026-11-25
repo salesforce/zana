@@ -378,15 +378,28 @@ test('Basic lists conversations in one list, labelled by project, with search an
   await resize(app, 1440, 900);
   const release = await projectAndThreads(app, ['Weekly release plan', 'Prepare release notes'], 'A useful result', 'Zana release');
   const website = await projectAndThreads(app, ['Homepage introduction', ...Array.from({ length: 30 }, (_, i) => `Website follow-up ${i + 1}`)], 'A useful result', 'Website');
+  await page.evaluate(async ({ releaseId, websiteId }) => {
+    const [release, website] = await Promise.all([
+      window.cc.projects.update(releaseId, { color: '#39c5cf' }),
+      window.cc.projects.update(websiteId, { color: '#2f81f7' })
+    ]);
+    if (!release || !website) throw new Error('Could not set the project colors');
+  }, { releaseId: release.projectId, websiteId: website.projectId });
   await basic(page).click();
   const rows = sidebar(page).locator('.basic-ui-chat-row');
   const search = sidebar(page).getByRole('searchbox', { name: 'Search chats' });
   await expect(sidebar(page).getByRole('button', { name: 'Website', exact: true })).toHaveCount(0);
   await expect(rows).toHaveCount(30);
   const releaseRow = sidebar(page).getByTestId(`basic-chat-row-${release.ids[0]}`);
+  const releasePill = releaseRow.locator('.basic-ui-chat-project');
+  const websitePill = sidebar(page).getByTestId(`basic-chat-row-${website.ids[0]}`).locator('.basic-ui-chat-project');
   await search.fill('release');
   await expect(rows).toHaveCount(2);
-  await expect(releaseRow.locator('.basic-ui-chat-project')).toHaveText('Zana release');
+  await expect(releasePill).toHaveText('Zana release');
+  await expect(releasePill).toHaveCSS('--basic-chat-project-color', '#39c5cf');
+  await expect(releasePill).toHaveCSS('border-radius', '999px');
+  const releaseFill = await releasePill.evaluate(el => getComputedStyle(el).backgroundColor);
+  expect(releaseFill).not.toBe('rgba(0, 0, 0, 0)');
   await search.fill('');
   const roster = sidebar(page).getByRole('navigation', { name: 'Recent conversations' });
   await resize(app, 1440, 500);
@@ -403,7 +416,11 @@ test('Basic lists conversations in one list, labelled by project, with search an
   await page.getByTestId('thread-command-input').fill('Keep this draft while searching');
   await search.fill('INTRODUCTION');
   await expect(rows).toHaveCount(1);
-  await expect(rows.first().locator('.basic-ui-chat-project')).toHaveText('Website');
+  await expect(websitePill).toHaveText('Website');
+  await expect(websitePill).toHaveCSS('--basic-chat-project-color', '#2f81f7');
+  const websiteFill = await websitePill.evaluate(el => getComputedStyle(el).backgroundColor);
+  expect(websiteFill).not.toBe(releaseFill);
+  expect(websiteFill).not.toBe('rgba(0, 0, 0, 0)');
   await search.fill('no project matches');
   await expect(sidebar(page).getByRole('status')).toHaveText('No matching conversations.');
   await search.fill('  WEBSITE  ');
@@ -414,7 +431,9 @@ test('Basic lists conversations in one list, labelled by project, with search an
   await expect(page.getByTestId('thread-command-input')).toBeVisible();
   await captureTrialScreenshot(app, testInfo.outputPath('basic-conversations-light-wide.png'));
   await page.evaluate(() => window.cc.config.set({ theme: 'dark' }));
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await resize(app, 640, 800);
+  await expect(websitePill).not.toHaveCSS('background-color', websiteFill);
   await expect(page.getByTestId('thread-command-input')).toBeInViewport();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await captureTrialScreenshot(app, testInfo.outputPath('basic-conversations-dark-narrow.png'));
@@ -459,6 +478,70 @@ test('Basic conversation menu sorts, shows archived history and keeps the choice
   await expect(sidebar(page).getByTestId('basic-conversation-filter')).toHaveCount(0);
   await expect.poll(names).toEqual(['Alpha checklist', 'Zebra roadmap']);
   await page.evaluate(() => localStorage.removeItem('zana.basicSidebar.conversationView'));
+});
+
+test('Basic conversation row actions pin, rename, archive and restore a chat', async ({ app }) => {
+  const page = app.window;
+  await dismissConsentOverlays(page);
+  await resize(app, 900, 640);
+  const { ids: [first, second] } = await projectAndThreads(app, ['Release checklist', 'Deployment notes']);
+  await basic(page).click();
+
+  const row = sidebar(page).getByTestId(`basic-chat-row-${first}`);
+  const actions = (name: string) => sidebar(page).getByRole('button', { name: `Actions for ${name}`, exact: true });
+  const item = (name: string) => page.getByRole('menuitem', { name, exact: true });
+  await sidebar(page).getByTestId(`basic-chat-row-${second}`).click();
+  await expect(page).toHaveURL(new RegExp(`/threads/${second}$`));
+  const releaseActions = actions('Release checklist');
+  await expect(releaseActions).toHaveCSS('opacity', '0');
+  await row.hover();
+  await expect(releaseActions).toHaveCSS('opacity', '1');
+  const heading = sidebar(page).getByRole('heading', { name: 'Conversations', exact: true });
+  await heading.hover();
+  await expect(releaseActions).toHaveCSS('opacity', '0');
+  await row.press('Tab');
+  await expect(releaseActions).toBeFocused();
+  await expect(releaseActions).toHaveCSS('opacity', '1');
+  await page.keyboard.press('ArrowDown');
+  await expect(item('Pin')).toBeFocused();
+  await expect(releaseActions).toHaveCSS('opacity', '1');
+  await page.keyboard.press('Escape');
+  await expect(actions('Release checklist')).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await item('Pin').click();
+  await expect(sidebar(page).locator('.basic-ui-chat-row').first()).toHaveAttribute('aria-label', /Release checklist.*pinned/);
+  await expect(page).toHaveURL(new RegExp(`/threads/${second}$`));
+
+  await row.hover();
+  await releaseActions.click();
+  await item('Rename').click();
+  const rename = page.getByRole('dialog', { name: 'Rename conversation' });
+  await rename.getByRole('textbox', { name: 'Title' }).fill('Release handoff');
+  await rename.getByRole('button', { name: 'Rename' }).click();
+  await expect(row).toContainText('Release handoff');
+  await row.click();
+  await expect(page).toHaveURL(new RegExp(`/threads/${first}$`));
+  await actions('Release handoff').click();
+  page.once('dialog', dialog => dialog.accept());
+  await item('Archive').click();
+  await expect(row).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Advanced view' })).toHaveAttribute('aria-pressed', 'false');
+  await expect(page).not.toHaveURL(new RegExp(`/threads/${first}$`));
+
+  const selectStatus = async (name: string) => {
+    await sidebar(page).getByRole('button', { name: 'Conversation view options' }).click();
+    await page.getByRole('menuitem', { name: /^Status/ }).click();
+    await page.getByRole('menuitemradio', { name, exact: true }).click();
+    await page.keyboard.press('Escape');
+  };
+  await selectStatus('Archived');
+  await expect(row).toContainText('Archived');
+  await row.hover();
+  await actions('Release handoff').click();
+  await item('Restore').click();
+  await expect(row).toHaveCount(0);
+  await selectStatus('Active');
+  await expect(row).toContainText('Release handoff');
 });
 
 test('Basic is opt-in, keeps a full searchable conversation list, and restores Advanced splits', async ({ app }, testInfo) => {

@@ -26,7 +26,7 @@ export function MobileMoreMenu({ title, children }: { title: string; children: R
   const [open, setOpen] = useState(false);
   return <>
     <button type="button" className="icon-btn" aria-label={`${title} actions`}
-      aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)}>
+      aria-haspopup="dialog" aria-expanded={open} onClick={(event) => { event.currentTarget.focus(); setOpen(true); }}>
       <MoreHorizontal size={20} aria-hidden="true" />
     </button>
     {open && <MobileActionSheet title={`${title} actions`} onClose={() => setOpen(false)}>{children}</MobileActionSheet>}

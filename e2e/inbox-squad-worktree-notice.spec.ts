@@ -52,6 +52,7 @@ test('stamped Squad worktree notices open Squad details without a reply box; wor
 
   await window.reload();
   await window.getByTestId('nav-inbox').click();
+  await window.getByRole('button', { name: 'Split view', exact: true }).click();
   const detail = window.locator('.inbox-detail');
 
   for (const subject of ['Squad worktree retained', 'Squad worktree unavailable']) {

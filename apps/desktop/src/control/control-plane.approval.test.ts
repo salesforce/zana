@@ -1,9 +1,10 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { connect } from 'node:net';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { authorizeRequest, dispatchOp, startControlPlane, type ControlPlaneDeps, type ControlPlaneHandle } from './control-plane.js';
+import { PLUGIN_APPROVAL_TTL_MS } from '@zana-ai/zcc-server/http/plugin-approval-proof';
+import { authorizeRequest, boundedApprovalTimerMs, dispatchOp, startControlPlane, type ControlPlaneDeps, type ControlPlaneHandle } from './control-plane.js';
 
 const auth = { token: 'token', nonce: 'nonce' };
 const args = { pluginId: 'approval-probe', projectId: 'p-1', threadId: 't-1', invocationId: 'i-1',
@@ -75,4 +76,19 @@ it('keeps unrelated authenticated product operations on the default deadline', a
     await vi.advanceTimersByTimeAsync(10001);
     await vi.waitFor(() => expect(response).toEqual({ ok: false, code: 'TIMEOUT', message: 'request timed out' }));
   } finally { socket.destroy(); }
+});
+
+describe('boundedApprovalTimerMs', () => {
+  it.each([
+    [undefined, PLUGIN_APPROVAL_TTL_MS],
+    [Number.NaN, PLUGIN_APPROVAL_TTL_MS],
+    [Number.POSITIVE_INFINITY, PLUGIN_APPROVAL_TTL_MS],
+    [2 ** 31 * 10, PLUGIN_APPROVAL_TTL_MS],
+    [0, 1],
+    [-5, 1],
+    [1500.9, 1500],
+    [PLUGIN_APPROVAL_TTL_MS, PLUGIN_APPROVAL_TTL_MS],
+  ])('maps %s to %s', (requested, expected) => {
+    expect(boundedApprovalTimerMs(requested)).toBe(expected);
+  });
 });

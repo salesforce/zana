@@ -515,7 +515,7 @@ describe('Design Docs RPC', () => {
     expect(method.mock.calls.map(([name]) => name)).not.toContain('setAgentSettings');
     expect(method.mock.calls.map(([name]) => name)).not.toContain('agentHarnesses');
     expect(method.mock.calls.map(([name]) => name)).toEqual(expect.arrayContaining(['harnessDescriptors', 'harnessRouting', 'setHarnessRouting', 'resolvePin']));
-    expect(method).toHaveBeenCalledTimes(71);
+    expect(method).toHaveBeenCalledTimes(73);
   });
 });
 
@@ -666,5 +666,21 @@ describe('Design Docs connection RPC handlers', () => {
     warn.mockRestore();
     const bare = createRpcHandlers({ store, changed: vi.fn(), sdk: { peers: {} } as never, peerSync: peerSync as never });
     await expect(bare.syncNow!(undefined)).resolves.toMatchObject({ synced: 1 });
+  });
+});
+
+describe('auto converge rpc', () => {
+  const sdk = {} as never;
+  it('reads and writes through the setting, accepting only a boolean', async () => {
+    let value = false;
+    const rpc = createRpcHandlers({ store: {} as never, changed: () => undefined, sdk, autoConverge: { get: async () => value, set: async (next) => { value = next; return value; } } });
+    await expect(rpc.autoConverge!({})).resolves.toEqual({ enabled: false });
+    await expect(rpc.setAutoConverge!({ enabled: true })).resolves.toEqual({ enabled: true });
+    await expect(rpc.setAutoConverge!({ enabled: 1 })).rejects.toThrow(/boolean/);
+    await expect(rpc.setAutoConverge!({ enabled: true, extra: 1 })).rejects.toThrow();
+  });
+  it('is unavailable without a setting', async () => {
+    const rpc = createRpcHandlers({ store: {} as never, changed: () => undefined, sdk });
+    await expect(rpc.autoConverge!({})).rejects.toThrow(/unavailable/);
   });
 });

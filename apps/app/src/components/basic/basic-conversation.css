@@ -62,7 +62,7 @@
 }
 
 /* Basic results stay beside the chat only while both surfaces have room. */
-.app-shell.basic-ui .thread-detail-view.is-secondary-open:not(.is-secondary-maximized) .thread-secondary-panel[data-basic-panel]:not([data-basic-panel-compact]),
+.app-shell.basic-ui:not([data-mobile='true']) .thread-detail-view.is-secondary-open:not(.is-secondary-maximized) .thread-secondary-panel[data-basic-panel]:not([data-basic-panel-compact]),
 .app-shell.basic-ui .split-workspace-host > .thread-secondary-panel[data-basic-panel]:not(.is-maximized):not([data-basic-panel-compact]),
 .app-shell.basic-ui .new-chat-panel-layout:not(.is-secondary-maximized) > .thread-secondary-panel[data-basic-panel]:not([data-basic-panel-compact]) {
   position: relative;
@@ -78,7 +78,7 @@
 .app-shell.basic-ui .split-workspace-host:has(> .thread-secondary-panel[data-basic-panel-compact]) > .split-workspace-main {
   display: none;
 }
-.app-shell.basic-ui .thread-detail-view.is-secondary-open .thread-secondary-panel[data-basic-panel-compact],
+.app-shell.basic-ui:not([data-mobile='true']) .thread-detail-view.is-secondary-open .thread-secondary-panel[data-basic-panel-compact],
 .app-shell.basic-ui .split-workspace-host > .thread-secondary-panel[data-basic-panel-compact],
 .app-shell.basic-ui .new-chat-panel-layout > .thread-secondary-panel[data-basic-panel-compact] {
   position: relative;

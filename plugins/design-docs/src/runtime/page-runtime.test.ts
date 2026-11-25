@@ -262,11 +262,14 @@ describe('scripts', () => {
     violation({ blockedURI: `${PAGE_ORIGIN}/a.png`, effectiveDirective: 'img-src' });
     violation({ blockedURI: 'eval', effectiveDirective: 'script-src', lineNumber: 2, sourceFile: 'dd:app.js' });
     violation({ violatedDirective: 'style-src' });
+    // A host that merely starts with the page origin is a different origin and must be reported.
+    violation({ blockedURI: `${PAGE_ORIGIN}.example/x.png`, effectiveDirective: 'img-src' });
     reject('plain');
     expect(ofType('problem').map((message) => message.problem)).toEqual([
       { kind: 'error', message: 'Unhandled promise rejection: nope', source: 'index.html' },
       { kind: 'blocked', message: "The preview's sandbox blocked eval (script-src)", source: 'app.js', line: 2 },
       { kind: 'blocked', message: "The preview's sandbox blocked inline code (style-src)", source: 'index.html' },
+      { kind: 'blocked', message: `The preview's sandbox blocked ${PAGE_ORIGIN}.example/x.png (img-src)`, source: 'index.html' },
       { kind: 'error', message: 'Unhandled promise rejection: plain', source: 'index.html' }
     ]);
   });
@@ -570,6 +573,17 @@ describe('links', () => {
       { type: 'navigate', path: 'x', hash: null, newTab: false, redirect: false },
       { type: 'navigate', path: 'index.html', hash: null, newTab: false, redirect: false }
     ]);
+  });
+
+  it('ignores data: and vbscript: links', async () => {
+    const { doc, ofType, scripts } = setup(
+      '<a id="d" href="data:text/html,<script>1</script>">d</a><a id="v" href="vbscript:msgbox(1)">v</a><a id="ok" href="https://example.com/a">e</a>'
+    );
+    const before = scripts.length;
+    for (const id of ['d', 'v', 'ok']) click(doc.getElementById(id)!);
+    await wait();
+    expect(ofType('open')).toEqual([{ type: 'open', url: 'https://example.com/a' }]);
+    expect(scripts).toHaveLength(before);
   });
 
   it('follows links between standalone pages through the plugin endpoint', async () => {

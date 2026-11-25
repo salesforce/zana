@@ -61,6 +61,7 @@ test('Inbox revisits neither re-run a failed summary nor flash a document skelet
   // 1. Overview revisits: the E2E Claude stub makes every summary fail, which
   //    the old code retried on every mount.
   await page.getByTestId('nav-inbox').click();
+  await page.getByRole('button', { name: 'Split view', exact: true }).click();
   await expect.poll(summarizeCalls, { timeout: 15_000 }).toBe(1);
   for (let visit = 0; visit < 3; visit++) {
     await page.getByTestId('nav-agents').click();

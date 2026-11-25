@@ -6,6 +6,8 @@
  * Everything here is pure and total: hostile input yields `{ ok: false }`,
  * never an exception.
  */
+import { trimChar } from '@zana-ai/zcc-domain/trim-edges';
+
 
 /** Scheme of packaged production builds. */
 export const DEEP_LINK_PROD_SCHEME = 'zana';
@@ -167,7 +169,7 @@ export function resolveDeepLinkChannel(input: ResolveDeepLinkChannelInput): Deep
 export function findDeepLinkInArgv(argv: readonly unknown[], acceptSchemes: readonly string[]): string | null {
   for (const arg of argv) {
     if (typeof arg !== 'string') continue;
-    const trimmed = arg.replace(/^"+|"+$/g, '');
+    const trimmed = trimChar(arg, '"');
     if (parseAnyDeepLink(trimmed, { acceptSchemes }).ok) return trimmed;
   }
   return null;

@@ -52,6 +52,7 @@ import { BaseLaunchProvider } from '../base-provider.js';
 import type { ModelLevel } from '@zana-ai/zcc-domain/harness-adapter';
 import { facetSupport, type TrustedHarnessAdapter } from '../adapter-contract.js';
 import { piLegacyRouting } from './legacy-routing.js';
+import { createPiApiErrorProducer } from './api-error-producer.js';
 
 const PI_EVIDENCE_VERSION = '0.52.12';
 const PI_OPENING_PROMPT_EVIDENCE = {
@@ -81,7 +82,7 @@ const PI_ADAPTER: TrustedHarnessAdapter = {
     model: [{ names: ['--provider', '--model', '--thinking'], arity: 1, acceptsAttachedValue: true }],
     terminatesAtDoubleDash: true
   },
-  status: { mode: 'output-activity', apiErrorSignal: 'none' },
+  status: { mode: 'output-activity', apiErrorSignal: 'sdk-events', apiErrorProducer: createPiApiErrorProducer() },
   legacyRouting: piLegacyRouting,
   evidence: [PI_OPENING_PROMPT_EVIDENCE]
 };

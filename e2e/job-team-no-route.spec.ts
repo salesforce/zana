@@ -116,6 +116,7 @@ test('Stop and fix the plan on the no-route blocker stops the run, keeps the wor
     const ownerModal = window.getByRole('dialog', { name: /^Agent / }).first();
     if (await ownerModal.count()) await ownerModal.getByRole('button', { name: 'Close' }).click();
     await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
+    await window.getByRole('button', { name: 'Split view', exact: true }).click();
     await window.getByRole('button', { name: 'Reload project list' }).click();
     await expect(window.locator('.project-item').filter({ hasText: ctx.projectName }).first()).toBeVisible({ timeout: 15_000 });
     await window.locator('.inbox-row').filter({ hasText: subject }).first().click();
@@ -136,7 +137,7 @@ test('Stop and fix the plan on the no-route blocker stops the run, keeps the wor
       const card = (page?.entries ?? []).find((candidate: { executionId?: string; subject?: string }) =>
         candidate.executionId === id && candidate.subject === 'Fix the plan, then launch again');
       return card ? String((card as { comments?: string }).comments ?? '') : '';
-    }, executionId), { timeout: 30_000, intervals: [500] }).toContain('Step review-step');
+    }, executionId), { timeout: 30_000, intervals: [500] }).toContain('Step "review-step: Review Step"');
     await expect(window.locator('.inbox-row').filter({ hasText: 'Fix the plan, then launch again' }).first()).toBeVisible({ timeout: 15_000 });
 
     // Asking again (resolved blocker / ended run) is a plain error, not a crash, and does not add a second card.

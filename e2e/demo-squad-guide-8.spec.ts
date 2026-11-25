@@ -130,6 +130,7 @@ test('demo: run a Goal as a Squad', async ({ app }) => {
     // --- 05 The outcome ---
     await demo.section({ number: 5, title: 'The outcome', subtitle: 'Inbox → Goal: Atlas site build', hint: 'One row per Goal' });
     await tap(page, page.getByTestId('nav-inbox'));
+    await page.getByRole('button', { name: 'Split view', exact: true }).click();
     const row = page.locator('.inbox-row').filter({ hasText: `Goal: ${TITLE}` }).first();
     await expect(row).toBeVisible({ timeout: 30_000 });
     await tap(page, row);

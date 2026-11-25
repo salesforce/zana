@@ -44,6 +44,18 @@ it('reports declaration metadata without touching saved values', async () => {
   } finally { await handle.dispose(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+it('lets an earlier settings handle read its stored value after the plugin redefines to nothing', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'plugin-settings-legacy-'));
+  writeFileSync(join(dir, 'settings.json'), JSON.stringify({ legacy: true }));
+  const handle = createPluginApi('sample', dir);
+  try {
+    const legacy = handle.api.settings.define({ legacy: { type: 'boolean', label: 'Legacy', default: false } });
+    handle.api.settings.define({});
+    expect(handle.hasSettings).toBe(false);
+    await expect(legacy.get()).resolves.toEqual({ legacy: true });
+  } finally { await handle.dispose(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 it('serializes concurrent field saves and recovers after a failed atomic write', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'plugin-settings-writes-'));
   const handle = createPluginApi('sample', dir);
@@ -706,6 +718,8 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
         id: 'inb-1'
       });
       expect(pushInbox).toHaveBeenCalledWith({ pluginId: 'demo', projectId: 'p1', comments: 'hello' });
+      await handle.api.sdk.inbox.push({ projectId: 'p1', comments: 'Checks failed', offerAgentFix: true });
+      expect(pushInbox).toHaveBeenLastCalledWith({ pluginId: 'demo', projectId: 'p1', comments: 'Checks failed', offerAgentFix: true });
       await expect(handle.api.sdk.projects.list()).resolves.toEqual([
         { id: 'p1', name: 'Alpha', path: '/tmp/a' }
       ]);

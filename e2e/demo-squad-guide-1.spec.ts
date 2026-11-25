@@ -88,6 +88,7 @@ test('demo: what is a Squad', async ({ app }) => {
     };
     await closeOwner();
     await page.getByTestId('nav-inbox').or(page.getByTestId('project-nav-inbox')).click();
+    await page.getByRole('button', { name: 'Split view', exact: true }).click();
     const proposal = page.locator('.inbox-row').filter({ hasText: `Squad launch ready: ${TITLE}` }).first();
     await expect(proposal).toBeVisible({ timeout: 30_000 });
     await proposal.click();
