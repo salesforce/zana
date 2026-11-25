@@ -18,6 +18,11 @@ const DEFAULT_HARD_KILL_AFTER_MS = 2_000;
  * 0xC0000374). The record outlives the first kill until its exit watcher runs,
  * so every repeat caller (close then exit finalization, host shutdown after a
  * stop) must find the pty already released.
+ *
+ * Defence in depth: node-pty 1.2.0-beta.17 nulls the handle after the first
+ * close, so a repeat is harmless there. Remove this set (and the matching
+ * guard in `PtyManager.finalizeExit`) once beta.17 or later is the minimum
+ * node-pty and the upstream fix (microsoft/node-pty#989) is in a stable release.
  */
 const killedWindowsPtys = new WeakSet<object>();
 
@@ -76,21 +81,28 @@ export function terminatePtyProcessTree(
   const hardKillAfterMs = options.hardKillAfterMs ?? DEFAULT_HARD_KILL_AFTER_MS;
   const pid = handle.pid;
   if (process.platform === 'win32') {
-    // Once only: a repeat call would close the pseudoconsole a second time
-    // (see killedWindowsPtys) and a second taskkill could hit a reused PID.
-    if (killedWindowsPtys.has(handle)) return;
+    // The native kill runs once per pty: a repeat would close the pseudoconsole
+    // a second time (see killedWindowsPtys). taskkill is not repeated-unsafe, so
+    // a repeat call still runs it and can reach descendants a first taskkill
+    // missed or raced.
+    const firstKill = !killedWindowsPtys.has(handle);
     killedWindowsPtys.add(handle);
     // node-pty reports 0 until the pseudoconsole has connected. taskkill walks
     // descendants by parentage, so it is started before the plain kill to
     // narrow (not remove) the window in which the root has exited and its PID
     // could be reused. The plain kill follows at once and closes the pseudoconsole.
-    if (pid !== undefined && pid > 0) {
-      (options.stopWindowsTree ?? ((root) => stopWindowsProcessTree(root)))(pid);
-    }
     try {
-      handle.kill();
-    } catch {
-      /* process can win the exit race */
+      if (pid !== undefined && pid > 0) {
+        (options.stopWindowsTree ?? ((root) => stopWindowsProcessTree(root)))(pid);
+      }
+    } finally {
+      if (firstKill) {
+        try {
+          handle.kill();
+        } catch {
+          /* process can win the exit race */
+        }
+      }
     }
     return;
   }

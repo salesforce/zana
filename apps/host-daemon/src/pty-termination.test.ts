@@ -157,7 +157,7 @@ describe('terminatePtyProcessTree on POSIX', () => {
 });
 
 describe('terminatePtyProcessTree repeat calls on Windows', () => {
-  it('releases the pseudoconsole once: a second call neither kills nor taskkills again', () => {
+  it('closes the pseudoconsole once but still re-runs taskkill on a repeat call', () => {
     setPlatform('win32');
     const handle = windowsPtyHandle();
     const stopWindowsTree = vi.fn();
@@ -169,8 +169,25 @@ describe('terminatePtyProcessTree repeat calls on Windows', () => {
     // node-pty 1.2.0-beta.15 closes the pseudoconsole on each kill() and a
     // second close corrupts the heap (0xC0000374, microsoft/node-pty#983).
     expect(handle.kill).toHaveBeenCalledTimes(1);
-    expect(stopWindowsTree).toHaveBeenCalledTimes(1);
+    // A repeat taskkill can still end descendants a first taskkill missed.
+    expect(stopWindowsTree).toHaveBeenCalledTimes(3);
     expect(windowsPtyAlreadyKilled(handle)).toBe(true);
+  });
+
+  it('retries a taskkill that failed the first time without closing the pseudoconsole again', () => {
+    setPlatform('win32');
+    const handle = windowsPtyHandle();
+    const stopWindowsTree = vi.fn()
+      .mockImplementationOnce(() => { throw new Error('taskkill spawn failed'); })
+      .mockImplementation(() => undefined);
+
+    expect(() => terminatePtyProcessTree(handle, { stopWindowsTree })).toThrow('taskkill spawn failed');
+    // The failed first taskkill must not leave the pseudoconsole open.
+    expect(handle.kill).toHaveBeenCalledTimes(1);
+
+    terminatePtyProcessTree(handle, { stopWindowsTree });
+    expect(stopWindowsTree).toHaveBeenCalledTimes(2);
+    expect(handle.kill).toHaveBeenCalledTimes(1);
   });
 
   it('tracks each pty separately', () => {
