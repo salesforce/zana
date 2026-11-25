@@ -116,7 +116,7 @@ import {
 } from './squad-session-lifecycle.js';
 import { createSquadWorktreeRuntime, trustedSquadWorktreeRoot, isWithinSquadWorktreeBase, SQUAD_WORKTREE_ACTION } from './squad-worktree-runtime.js';
 import { createTriggeredSquadLauncher, goalSquadTrigger, scheduledSquadTrigger } from './triggered-squad.js';
-import { MAX_HANDOFF_FILE_BYTES, TeamPlanHandoff, authoredPlanRelPath, correctedPlanRelPath, correctionProseRelPath, createPlanTraceSink, createStallNotice, observeOrchestratorEdge, cleanupHandoffFiles, handoffPromptPath, readAuthoredPlan, writeSourceMirror } from './team-plan-handoff.js';
+import { MAX_HANDOFF_FILE_BYTES, TeamPlanHandoff, authoredPlanRelPath, correctedPlanRelPath, correctionProseRelPath, createPlanTraceSink, createStallNotice, observeOrchestratorEdge, planHandoffDiagnostics, warnLog, cleanupHandoffFiles, handoffPromptPath, readAuthoredPlan, writeSourceMirror } from './team-plan-handoff.js';
 import { PlanCorrectionService } from './plan-correction/service.js';
 import { planCorrectionSubmitter } from './plan-correction/wiring.js';
 import { onOrchestratorIdle } from './coordinator-idle.js';
@@ -651,12 +651,6 @@ if (E2E_LAUNCH && process.platform === 'darwin') {
 export function logMainInfo(context: string, message: string) {
   testTap.recordLog('info', context, message);
   console.info(`[main] ${context}: ${message}`);
-}
-
-/** Warn level so it reaches desktop.log (info is not persisted). Diagnostic use only. */
-export function logMainWarn(context: string, message: string) {
-  testTap.recordLog('warn', context, message);
-  console.warn(`[main] ${context}: ${message}`);
 }
 
 export function logMainError(context: string, err: unknown) {
@@ -8023,9 +8017,9 @@ teamPlanHandoff = new TeamPlanHandoff({
       return record ? { attempt: record.attempt, stateVersion: record.stateVersion } : undefined;
     },
     // DIAGNOSTIC: warn level so the read/register/nudge trace lands in desktop.log.
-    log: logMainWarn
+    log: warnLog
   }),
-  diagnose: (line) => logMainWarn('squad plan handoff edge', JSON.stringify(line)),
+  diagnose: planHandoffDiagnostics(warnLog),
   requireTurnStart: true
 });
 const apiErrorDispatchCtx: DispatchCtx = createApiErrorDispatchCtx({
@@ -8975,7 +8969,7 @@ function wireBridgeListeners() {
     } else agentSounds.remove(`cli:${sessionId}`);
     if (session) captureNativeRecoverySnapshot(session);
     // DIAGNOSTIC: one warn line per orchestrator status edge, so a missing idle edge is visible in desktop.log.
-    observeOrchestratorEdge({ log: logMainWarn, working: (executionId) => teamPlanHandoff.onCoordinatorWorking(executionId) }, sessionId, state, seq, session?.cohort);
+    observeOrchestratorEdge(teamPlanHandoff, warnLog, sessionId, state, seq, session?.cohort);
     if (state === 'idle' && session) {
       onOrchestratorIdle({
         drainCoordinatorWake: (projectId, executionId, id) => squadExecutionService.drainCoordinatorWake(projectId, executionId, id),

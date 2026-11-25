@@ -14,6 +14,8 @@ import {
   TeamPlanHandoff,
   createStallNotice,
   observeOrchestratorEdge,
+  planHandoffDiagnostics,
+  warnLog,
   authoredPlanRelPath,
   boundTraceReason,
   createPlanTraceSink,
@@ -1100,22 +1102,34 @@ describe('plan handoff correlation trace', () => {
 describe('observeOrchestratorEdge', () => {
   it('logs every orchestrator edge and reports working to the handoff', () => {
     const log = vi.fn();
-    const working = vi.fn();
-    observeOrchestratorEdge({ log, working }, 's-1', 'working', 3, { role: 'orchestrator', executionId: 'e-1' });
-    observeOrchestratorEdge({ log, working }, 's-1', 'idle', undefined, { role: 'orchestrator', executionId: 'e-1' });
+    const handoff = { onCoordinatorWorking: vi.fn() };
+    observeOrchestratorEdge(handoff, log, 's-1', 'working', 3, { role: 'orchestrator', executionId: 'e-1' });
+    observeOrchestratorEdge(handoff, log, 's-1', 'idle', undefined, { role: 'orchestrator', executionId: 'e-1' });
     expect(log).toHaveBeenCalledTimes(2);
     expect(JSON.parse(log.mock.calls[0][1])).toEqual({ executionId: 'e-1', sessionId: 's-1', state: 'working', seq: 3 });
-    expect(working).toHaveBeenCalledOnce();
-    expect(working).toHaveBeenCalledWith('e-1');
+    expect(handoff.onCoordinatorWorking).toHaveBeenCalledOnce();
+    expect(handoff.onCoordinatorWorking).toHaveBeenCalledWith('e-1');
   });
 
   it('ignores workers and sessions without an execution', () => {
     const log = vi.fn();
-    const working = vi.fn();
-    observeOrchestratorEdge({ log, working }, 's', 'working', 1, { role: 'worker', executionId: 'e' });
-    observeOrchestratorEdge({ log, working }, 's', 'working', 1, { role: 'orchestrator' });
-    observeOrchestratorEdge({ log, working }, 's', 'working', 1, undefined);
+    const handoff = { onCoordinatorWorking: vi.fn() };
+    observeOrchestratorEdge(handoff, log, 's', 'working', 1, { role: 'worker', executionId: 'e' });
+    observeOrchestratorEdge(handoff, log, 's', 'working', 1, { role: 'orchestrator' });
+    observeOrchestratorEdge(handoff, log, 's', 'working', 1, undefined);
     expect(log).not.toHaveBeenCalled();
-    expect(working).not.toHaveBeenCalled();
+    expect(handoff.onCoordinatorWorking).not.toHaveBeenCalled();
+  });
+});
+
+describe('plan handoff diagnostics logging', () => {
+  it('writes one JSON line per record at warn level', () => {
+    const log = vi.fn();
+    planHandoffDiagnostics(log)({ executionId: 'e', sessionId: 's', event: 'edge', nudges: 1 });
+    expect(log).toHaveBeenCalledWith('squad plan handoff edge', '{"executionId":"e","sessionId":"s","event":"edge","nudges":1}');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warnLog('ctx', 'msg');
+    expect(warn).toHaveBeenCalledWith('[main] ctx: msg');
+    warn.mockRestore();
   });
 });

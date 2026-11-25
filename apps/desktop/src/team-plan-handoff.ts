@@ -692,20 +692,31 @@ export function createStallNotice(
   };
 }
 
+/** DIAGNOSTIC: warn level reaches desktop.log (info lines are not persisted). */
+export function warnLog(context: string, message: string): void {
+  console.warn(`[main] ${context}: ${message}`);
+}
+
+/** DIAGNOSTIC sink for {@link PlanHandoffDeps.diagnose}: one bounded JSON line per record. */
+export function planHandoffDiagnostics(log: (context: string, message: string) => void): (line: PlanHandoffDiagnostic) => void {
+  return (line) => log('squad plan handoff edge', JSON.stringify(line));
+}
+
 /**
  * DIAGNOSTIC: logs one bounded line per orchestrator status edge and tells the handoff when the
- * coordinator starts working. Returns true for an orchestrator session so the caller can stop early.
+ * coordinator starts working. Ignores sessions that are not a Squad orchestrator.
  */
 export function observeOrchestratorEdge(
-  deps: { log(context: string, message: string): void; working(executionId: string): void },
+  handoff: Pick<TeamPlanHandoff, 'onCoordinatorWorking'>,
+  log: (context: string, message: string) => void,
   sessionId: string,
   state: string,
   seq: number | undefined,
   cohort: { role?: string; executionId?: string } | undefined
 ): void {
   if (cohort?.role !== 'orchestrator' || !cohort.executionId) return;
-  deps.log('squad orchestrator edge', JSON.stringify({ executionId: cohort.executionId, sessionId, state, seq }));
-  if (state === 'working') deps.working(cohort.executionId);
+  log('squad orchestrator edge', JSON.stringify({ executionId: cohort.executionId, sessionId, state, seq }));
+  if (state === 'working') handoff.onCoordinatorWorking(cohort.executionId);
 }
 
 /** Generation fence stamped onto a trace at emit time. */
