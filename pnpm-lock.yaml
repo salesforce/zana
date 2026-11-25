@@ -41,8 +41,8 @@ importers:
         specifier: ^2.6.1
         version: 2.7.0
       node-pty:
-        specifier: 1.2.0-beta.15
-        version: 1.2.0-beta.15
+        specifier: 1.2.0-beta.17
+        version: 1.2.0-beta.17
       smol-toml:
         specifier: ^1.9.0
         version: 1.9.1
@@ -438,8 +438,8 @@ importers:
         specifier: ^4.3.2
         version: 4.3.2
       node-pty:
-        specifier: 1.2.0-beta.15
-        version: 1.2.0-beta.15
+        specifier: 1.2.0-beta.17
+        version: 1.2.0-beta.17
       partysocket:
         specifier: ^1.3.0
         version: 1.3.0(react@19.3.0)
@@ -9025,8 +9025,8 @@ packages:
   node-int64@0.4.0:
     resolution: {integrity: sha512-O5lz91xSOeoXP6DulyHfllpq+Eg00MWitZIbtPfoSEvqIHdl5gfcY6hYzDWnj0qD5tz52PI08u9qUvSVeUBeHw==}
 
-  node-pty@1.2.0-beta.15:
-    resolution: {integrity: sha512-vORSzHXi4Ofl7HemVWpuudLqCPdaQb4LfpRCUpE5HPxhp4JYscl8zZwxh11p26v2wvW24WMwnMfLjhRLixrfxA==}
+  node-pty@1.2.0-beta.17:
+    resolution: {integrity: sha512-GapdTQQjXyS9ICBgsnBG27Ltfkh3hzTbFcC8r1MxRLsTVyA/3/8z1Vu+DJSNWhtKjwfTjoSPyCN6hQ/fwxlh9A==}
 
   node-releases@2.0.56:
     resolution: {integrity: sha512-x0InOIyzgdk+eyaWaRJFH5snEtiImgBgblZ2CyPrLmqqcuMQkEvcDPHbzqbD8eDsSeJbVOjn+crzyzHaM4D+/A==}
@@ -19129,7 +19129,7 @@ snapshots:
 
   node-int64@0.4.0: {}
 
-  node-pty@1.2.0-beta.15:
+  node-pty@1.2.0-beta.17:
     dependencies:
       node-addon-api: 7.1.1
 
