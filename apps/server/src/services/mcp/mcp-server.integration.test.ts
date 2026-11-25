@@ -1360,6 +1360,8 @@ describe('startMcpServer bind recovery', () => {
   let handle: McpServerHandle | null = null;
 
   afterEach(async () => {
+    // Undo any Server.prototype.listen spy even when a test failed or rejected mid-way.
+    vi.restoreAllMocks();
     if (handle) {
       await handle.close();
       handle = null;
@@ -1391,7 +1393,7 @@ describe('startMcpServer bind recovery', () => {
       log: (msg) => logs.push(msg)
     });
     expect(handle.port).not.toBe(taken);
-    expect(logs.some((line) => line.includes(`port ${taken} is in use`))).toBe(true);
+    expect(logs.some((line) => line.includes(`preferred port ${taken} is unavailable (EADDRINUSE`))).toBe(true);
     expect(logs.some((line) => line.includes(`[mcp] listening on ${handle!.url}`))).toBe(true);
   });
 
@@ -1399,7 +1401,7 @@ describe('startMcpServer bind recovery', () => {
     // Windows reserves port ranges (Hyper-V/WSL); listen on one fails with EACCES, not EADDRINUSE.
     const reservedPort = 57836;
     const realListen = Server.prototype.listen;
-    const listenSpy = vi.spyOn(Server.prototype, 'listen').mockImplementation(function (this: Server, ...args: unknown[]) {
+    vi.spyOn(Server.prototype, 'listen').mockImplementation(function (this: Server, ...args: unknown[]) {
       if (args[0] === reservedPort) {
         setImmediate(() => this.emit('error', Object.assign(new Error('listen EACCES'), { code: 'EACCES' })));
         return this;
@@ -1414,14 +1416,13 @@ describe('startMcpServer bind recovery', () => {
       projects: { get: () => null },
       log: (msg) => logs.push(msg)
     });
-    listenSpy.mockRestore();
     expect(handle.port).not.toBe(reservedPort);
-    expect(logs.some((line) => line.includes(`port ${reservedPort} is in use or reserved (EACCES)`))).toBe(true);
+    expect(logs.some((line) => line.includes(`preferred port ${reservedPort} is unavailable (EACCES`) && line.includes('falling back to an ephemeral port'))).toBe(true);
   });
 
   it('does not swallow other listen errors on the preferred port', async () => {
     const realListen = Server.prototype.listen;
-    const listenSpy = vi.spyOn(Server.prototype, 'listen').mockImplementation(function (this: Server, ...args: unknown[]) {
+    vi.spyOn(Server.prototype, 'listen').mockImplementation(function (this: Server, ...args: unknown[]) {
       if (args[0] === 4242) {
         setImmediate(() => this.emit('error', Object.assign(new Error('listen EINVAL'), { code: 'EINVAL' })));
         return this;
@@ -1434,6 +1435,5 @@ describe('startMcpServer bind recovery', () => {
       suggestionsStore: createMemorySuggestionsStore(),
       projects: { get: () => null }
     })).rejects.toThrow('listen EINVAL');
-    listenSpy.mockRestore();
   });
 });

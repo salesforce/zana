@@ -1475,7 +1475,7 @@ export async function startMcpServer(opts: McpServerOptions): Promise<McpServerH
     // electron-vite HMR (and a slow before-quit close) can leave the persisted
     // port bound for a beat. Keep serving rather than leaving MCP down.
     if (preferredPort !== 0 && isPreferredPortUnavailable(error)) {
-      log(`[mcp] port ${preferredPort} is in use or reserved (${(error as NodeJS.ErrnoException).code}); falling back to an ephemeral port`);
+      log(`[mcp] preferred port ${preferredPort} is unavailable (${(error as NodeJS.ErrnoException).code}: in use, reserved by the OS, or not permitted); falling back to an ephemeral port`);
       await listenLoopback(httpServer, 0);
     } else {
       throw error;
