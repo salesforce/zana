@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ComponentProps, ReactElement } from 'react';
 import type { SidebarRailItem } from '../SidebarRail.js';
 import type { AppModule } from '@zana-ai/zcc-extension-sdk/renderer';
@@ -50,7 +50,8 @@ const h = vi.hoisted(() => {
     agentCounts: { active: 0, blocked: 0 },
     scheduleCount: 6,
     tabAvailability: {} as Record<string, { available: boolean; reason?: string }>,
-    compact: false
+    compact: false,
+    showInMainWindow: vi.fn(async () => true)
   };
 });
 
@@ -69,6 +70,7 @@ vi.mock('../../store', () => ({
   SIDEBAR_MIN: 256,
   SIDEBAR_MAX: 480
 }));
+vi.mock('../../lib/app-surface.js', async (importOriginal) => ({ ...(await importOriginal<object>()), hasDesktopBridge: () => true }));
 vi.mock('../../modules', () => ({
   useProjectTabModules: () => h.modules
 }));
@@ -87,6 +89,9 @@ vi.mock('../../plugins/plugin-slots', () => ({
     const first = tabs.find((row) => row.pluginId === tab.pluginId);
     return first?.id === tab.id ? tab.pluginId : `${tab.pluginId}:${tab.id}`;
   }
+}));
+vi.mock('../../plugins/plugin-view-windows', () => ({
+  showInMainWindow: h.showInMainWindow
 }));
 vi.mock('../../lib/resolveIcon', () => ({
   resolveIcon: () => () => null
@@ -126,6 +131,8 @@ vi.mock('../../plugins/PluginExclusiveThreadList', () => ({
 }));
 
 import { ProjectScopedNav } from '../ProjectScopedNav.js';
+import { setCommandShortcutOverride } from '../../lib/keyboard-shortcut-settings.js';
+import { anchorTag, stubKeybindingStorage } from '../../__tests__/helpers/keybinding-storage.js';
 
 function renderNav(node: ReactElement, path = '/') {
   return renderToStaticMarkup(<MemoryRouter initialEntries={[path]}>{node}</MemoryRouter>);
@@ -187,7 +194,7 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     expect(markup).toContain('aria-label="Settings"');
     expect(markup).toContain('href="/projects/proj-1/settings"');
     expect(markup).toContain('aria-label="Report a bug"');
-    expect(markup).toContain('aria-label="Open this project in a new window"');
+    expect(markup).toContain('aria-label="New Window"');
     expect(markup).toContain('>Settings<');
     expect(markup).not.toContain('>Open in new window<');
     expect(markup).not.toContain('Project workspace');
@@ -262,20 +269,21 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     h.agentCounts = { active: 0, blocked: 0 };
   });
 
-  it('omits the pop-out control in a dedicated project window', () => {
+  it('offers New Window and Back in a dedicated project window', () => {
     const markup = renderNav(
       <ProjectScopedNav project={project} variant="window" />
     );
 
     expect(markup).toContain('sidebar--titlebar-controls');
     expect(markup).not.toContain('project-focused-nav');
-    expect(markup).not.toContain('aria-label="Open this project in a new window"');
+    expect(markup).toContain('aria-label="New Window"');
     expect(markup).toContain('aria-label="Settings"');
     expect(markup).toContain('href="/projects/proj-1/settings"');
     expect(markup).toContain('aria-label="Report a bug"');
     expect(markup).not.toContain('aria-label="Go back"');
-    expect(markup).not.toContain('class="settings-app-back"');
-    expect(markup).not.toContain('>Back</button>');
+    expect(markup).toContain('aria-label="Back to all projects"');
+    expect(markup).toContain('title="Back to all projects"');
+    expect(markup).toContain('>Back</button>');
   });
 
   it('renders extension project tabs as ordinary destination rows', () => {
@@ -421,5 +429,34 @@ describe('ProjectScopedNav matches the global sidebar chrome', () => {
     expect(css).toContain('.project-scoped-nav .project-terminals {\n  margin: 1px 0 4px 8px;\n}');
     expect(css).toContain('.sidebar-section-sortable:last-child:has(.sidebar-projects:not(.sidebar-projects--collapsed)) .sidebar-projects');
     expect(css).toMatch(/\.settings-app-back \{[\s\S]*?-webkit-app-region: no-drag;/);
+  });
+});
+
+
+describe('ProjectScopedNav shortcut tooltips', () => {
+  beforeEach(() => {
+    stubKeybindingStorage();
+    vi.stubGlobal('navigator', { platform: 'Linux' });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each(['focus', 'window'] as const)('adds shortcuts to New Chat, Explorer and Settings in the %s rail', (variant) => {
+    const markup = renderNav(<ProjectScopedNav project={project} variant={variant} />);
+    expect(anchorTag(markup, 'project-nav-home')).toContain('title="New chat in zana-command-center (Ctrl + N)"');
+    expect(anchorTag(markup, 'project-nav-explorer')).toContain('title="Explorer (Ctrl + B)"');
+    expect(markup).toContain('title="Settings (Ctrl + ,)"');
+    expect(markup).toContain('aria-label="Settings"');
+    expect(anchorTag(markup, 'project-nav-inbox')).toContain('title="Inbox for this project (Ctrl + I)"');
+    expect(anchorTag(markup, 'project-nav-agents')).toContain('title="Agents (Ctrl + O)"');
+    expect(anchorTag(markup, 'project-nav-scheduler')).toContain('title="Scheduler (Ctrl + J)"');
+    expect(anchorTag(markup, 'project-nav-feed')).toContain('title="Feed"');
+  });
+
+  it('follows a rebinding and drops the suffix when unbound', () => {
+    setCommandShortcutOverride('sidebar.toggle', { key: 'k', mod: true, meta: false, control: false, alt: true, shift: false });
+    setCommandShortcutOverride('thread.new', null);
+    const markup = renderNav(<ProjectScopedNav project={project} variant="focus" />);
+    expect(anchorTag(markup, 'project-nav-explorer')).toContain('title="Explorer (Ctrl + Alt + K)"');
+    expect(anchorTag(markup, 'project-nav-home')).toContain('title="New chat in zana-command-center"');
   });
 });

@@ -1,7 +1,7 @@
 import { deferredSeatsOf } from './on-demand-seat.js';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import type { LaunchProfileId, Persona, Project, Team, TeamJobLaunchResponse, TeamJobRenewedSources } from '@zana-ai/zcc-domain/product';
-import type { ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
+import type { ExecutionRecord, ResolvedModelSnapshotV1 } from '@zana-ai/zcc-server/services/execution/store';
 import type { InboxInput } from '@zana-ai/zcc-server/services/inbox/inbox-store';
 import { compatibleNativeRecoverySnapshots, nativeRecoveryLaunchSlot, type ModernSlotExpectation } from './team-native-recovery.js';
 
@@ -223,13 +223,15 @@ export async function gateInvalidProvidedPlan(
 ): Promise<TeamJobLaunchResponse | undefined> {
   if (!args.planError) return undefined;
   if (args.unattended) {
+    // Reasons end in a full stop already; do not add a second one before our next sentence.
+    const reason = args.planError.replace(/[.\s]+$/, '');
     await deps.inboxStore.append({
       projectId: args.projectId,
       projectLabel: args.projectName,
       subject: 'Squad plan needed correction',
       comments: args.viaTrigger
-        ? `Provided Squad plan is invalid: ${args.planError}. Update plan, then run trigger again.`
-        : `Provided Squad plan is invalid: ${args.planError}. Put a complete plan in the goal and launch again, or launch with the infer (freeform) mode to let the coordinator plan.`,
+        ? `Provided Squad plan is invalid: ${reason}. Update plan, then run trigger again.`
+        : `Provided Squad plan is invalid: ${reason}. Put a complete plan in the goal and launch again, or launch with the infer (freeform) mode to let the coordinator plan.`,
       notify: 'loud'
     });
     return { ok: false, code: 'INVALID_PLAN', message: 'provided structured plan is invalid' } as TeamJobLaunchResponse;
@@ -356,4 +358,67 @@ export async function withRenewedSources(
   } finally {
     for (const id of owned) { inFlightSourceIds.delete(id); contestedSourceIds.delete(id); }
   }
+}
+
+/** The text shown for a slot whose persona is not in the live store (editor, list, preflight and launch share it). */
+export function unknownPersonaMessage(personaId: string): string {
+  return `unknown persona: ${personaId}`;
+}
+
+/**
+ * Launch admission's route facts for one resolved slot. `resolvedModels` arrives from the caller,
+ * so the label and roles that decide `Required role` routing come only from the host's configured
+ * slot (its label, and `slot.roles ?? persona.roles`), never from the snapshot. With the roles
+ * carried, a step routes at launch exactly as it did in preview.
+ */
+export function admissionSlotRouteFacts(
+  model: ResolvedModelSnapshotV1,
+  configured: { label?: string; roles?: readonly string[] } | undefined
+) {
+  return {
+    slotId: model.slotId, personaId: model.personaId ?? '', provider: model.provider, model: model.model,
+    ...(configured?.label !== undefined ? { label: configured.label } : {}),
+    ...(configured?.roles !== undefined ? { roles: [...configured.roles] } : {}),
+    level: model.level, roleOwnedModel: model.roleOwnedModel, capabilities: model.capabilities,
+    modalities: model.modalities, maxContextBytes: model.maxContextBytes, health: model.health,
+    observedAt: model.observedAt, maxAgeMs: model.maxAgeMs
+  };
+}
+
+/**
+ * Admission refusal for a Squad whose worker personas are not in the live store. `safeMessage` names the
+ * missing persona ids (control characters stripped, bounded) so the launch dialog can show them.
+ */
+export class UnknownPersonaError extends Error {
+  readonly safeMessage: string;
+  constructor(personaIds: readonly string[]) {
+    const ids = [...new Set(personaIds)]
+      .map((id) => id.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 80))
+      .slice(0, 5);
+    const more = new Set(personaIds).size - ids.length;
+    const list = ids.join(', ') + (more > 0 ? ` and ${more} more` : '');
+    super(`unknown persona: ${list}`);
+    this.name = 'UnknownPersonaError';
+    this.safeMessage = `Squad launch refused: ${ids.length > 1 || more > 0 ? 'these personas are' : 'this persona is'} not available: ${list}. Fix or remove the slot in Settings > Squads.`;
+  }
+}
+
+/**
+ * CLI launch guard. Structured: a launch whose every worker slot names an unresolved
+ * persona fails before anything opens; a partial miss launches the resolved slots
+ * and reports the others as failed. Freeform: any unresolved persona fails the launch,
+ * as Modern does. Returns the joined per-slot reasons, or
+ * undefined when the launch may proceed.
+ */
+export function allWorkersUnresolvedReasons(
+  expectedSlots: ReadonlyArray<{ slotId: string; personaId: string; role: 'worker' | 'orchestrator' }>,
+  knownPersonaIds: ReadonlySet<string>,
+  /** `all` (structured): refuse only when no worker resolves. `any` (freeform, Modern parity): refuse on the first miss. */
+  refuseWhen: 'all' | 'any' = 'all'
+): string | undefined {
+  const workers = expectedSlots.filter((slot) => slot.role === 'worker');
+  if (workers.length === 0) return undefined;
+  const unresolved = workers.filter((slot) => !knownPersonaIds.has(slot.personaId));
+  if (unresolved.length === 0 || (refuseWhen === 'all' && unresolved.length !== workers.length)) return undefined;
+  return unresolved.map((slot) => `${slot.slotId}: ${unknownPersonaMessage(slot.personaId)}`).join('; ');
 }

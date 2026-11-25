@@ -8,7 +8,7 @@ import { ExecutionSourceError, createExecutionSourceRegistry, type ExecutionSour
 import { resolveSourcePolicy } from '@zana-ai/zcc-server/services/execution/source-policy';
 import type { ExecutionRecord } from '@zana-ai/zcc-server/services/execution/store';
 import {
-  createSquadSourceSnapshotter, launchSquad, redactCapturedExecutionSourcePaths,
+  createSquadSourceSnapshotter, launchSquad, redactCapturedExecutionSourcePaths, squadLimitsPolicy, unattendedRosterBlock,
   type SquadLaunchDeps, type SquadLaunchInput, type SquadSourceBundle, type SquadSourceSnapshotArgs
 } from './squad-launch-core.js';
 
@@ -97,6 +97,112 @@ describe('launchSquad', () => {
       planLaunch: { worktree: true, push: true, checks: ['lint'] }
     });
   });
+  describe('plan intake', () => {
+    const attended = { sources: { kind: 'window' as const, windowId: 7 }, owner: { principalId: 'owner' } };
+    const unattended = { sources: { kind: 'session' as const, sessionId: 's' }, owner: { principalId: 'owner' } };
+    const prose = 'Please tidy up the readme and fix the typos.';
+
+    it('falls back to infer-plan for attended prose when the Squad can infer', async () => {
+      const { deps, start } = makeDeps({ canInferPlanForTeam: () => true });
+      const result = await launchSquad(deps, makeInput({ coordinationMode: 'structured', goal: prose }), attended);
+      expect(result.ok).toBe(true);
+      expect(start.mock.calls[0]?.[2]).toMatchObject({ coordinationMode: 'freeform', objective: prose });
+      expect(deps.planCorrectionLaunchBinding.beginLaunch).not.toHaveBeenCalled();
+    });
+
+    it('keeps the card for attended prose when the Squad cannot infer', async () => {
+      const { deps } = makeDeps({ canInferPlanForTeam: () => false });
+      await launchSquad(deps, makeInput({ coordinationMode: 'structured', goal: prose }), attended);
+      expect(deps.planCorrectionLaunchBinding.beginLaunch).toHaveBeenCalledOnce();
+    });
+
+    it('keeps the card when the dependency is absent', async () => {
+      const { deps } = makeDeps();
+      await launchSquad(deps, makeInput({ coordinationMode: 'structured', goal: prose }), attended);
+      expect(deps.planCorrectionLaunchBinding.beginLaunch).toHaveBeenCalledOnce();
+    });
+
+    it('never infers for unattended prose; it refuses and notifies', async () => {
+      const { deps, start } = makeDeps({ canInferPlanForTeam: () => true });
+      const result = await launchSquad(deps, makeInput({ coordinationMode: 'structured', goal: prose }), unattended);
+      expect(result).toMatchObject({ ok: false, code: 'INVALID_PLAN' });
+      expect(start).not.toHaveBeenCalled();
+      expect(deps.inboxStore.append).toHaveBeenCalledOnce();
+    });
+
+    it('does not infer when a plan has steps that fail to parse', async () => {
+      const broken = validPlan.replace('- **Write scope:** `output.txt`\n', '');
+      const { deps } = makeDeps({ canInferPlanForTeam: () => true });
+      await launchSquad(deps, makeInput({ coordinationMode: 'structured', goal: broken.replace('- **Write scope:** `output.txt`', '') }), attended);
+      expect(deps.planCorrectionLaunchBinding.beginLaunch).toHaveBeenCalledOnce();
+    });
+
+    const rosterBlock = { findings: [{ stepId: 'write', requirement: 'required-role' as const, severity: 'blocking' as const, candidateSlots: [], suggestion: '' }], squadName: 'Debug' };
+
+    it('unattended launch with a blocking roster finding is refused with an Inbox notice naming the Squad and step', async () => {
+      const planFindings = vi.fn(async () => rosterBlock);
+      const { deps, start } = makeDeps({ planFindings });
+      const result = await launchSquad(deps, makeInput({ coordinationMode: 'structured', goal: validPlan }), unattended);
+      expect(result).toMatchObject({ ok: false, code: 'INVALID_PLAN' });
+      expect(start).not.toHaveBeenCalled();
+      expect(planFindings).toHaveBeenCalledOnce();
+      const note = (deps.inboxStore.append as unknown as { mock: { calls: [{ comments: string; notify: string }][] } }).mock.calls[0]![0];
+      expect(note.comments).toContain('Squad "Debug"');
+      expect(note.comments).toContain('write');
+      expect(note.notify).toBe('loud');
+    });
+
+    it('unattended launch proceeds when roster findings are only warnings, or the check throws', async () => {
+      for (const planFindings of [
+        vi.fn(async () => ({ findings: [{ ...rosterBlock.findings[0]!, severity: 'warning' as const }], squadName: 'Debug' })),
+        vi.fn(async () => { throw new Error('boom'); })
+      ]) {
+        const { deps, start } = makeDeps({ planFindings });
+        const result = await launchSquad(deps, makeInput({ coordinationMode: 'structured', goal: validPlan }), unattended);
+        expect(result.ok).toBe(true);
+        expect(start).toHaveBeenCalledOnce();
+      }
+    });
+
+    it('attended launch does not run the unattended roster refusal', async () => {
+      const planFindings = vi.fn(async () => rosterBlock);
+      const { deps, start } = makeDeps({ planFindings });
+      await launchSquad(deps, makeInput({ coordinationMode: 'structured', goal: validPlan }), attended);
+      expect(planFindings).not.toHaveBeenCalled();
+      expect(start).toHaveBeenCalledOnce();
+    });
+
+    it('unattendedRosterBlock caps the listed findings', () => {
+      const many = Array.from({ length: 7 }, (_, i) => ({ ...rosterBlock.findings[0]!, stepId: `s${i}` }));
+      expect(unattendedRosterBlock({ findings: many, squadName: 'X' })).toContain('(2 more)');
+      expect(unattendedRosterBlock(undefined)).toBeUndefined();
+    });
+
+    it('a tampered prefill cannot launch past a Must fix: forged findings, bindings and summary never reach start, and main re-judges', async () => {
+      const forged = { planFindings: [], planFindingsHidden: 0, planBindings: [{ stepId: 'write', slotId: 'w1', personaId: 'p' }], planSummary: 'No problems found', mustFix: 0 };
+      // Unattended: the main-side roster check still refuses although the input claims "No problems found".
+      const refused = makeDeps({ planFindings: vi.fn(async () => rosterBlock) });
+      const result = await launchSquad(refused.deps, makeInput({ coordinationMode: 'structured', goal: validPlan, ...forged } as SquadLaunchInput), unattended);
+      expect(result).toMatchObject({ ok: false, code: 'INVALID_PLAN' });
+      expect(refused.start).not.toHaveBeenCalled();
+      expect(refused.deps.planFindings).toHaveBeenCalledOnce();
+      // Attended: whatever the renderer sent is dropped before the execution service, which runs the hard preflight itself.
+      const attendedRun = makeDeps({ planFindings: vi.fn(async () => rosterBlock) });
+      await launchSquad(attendedRun.deps, makeInput({ coordinationMode: 'structured', goal: validPlan, ...forged } as SquadLaunchInput), attended);
+      expect(attendedRun.deps.planFindings).not.toHaveBeenCalled();
+      const [, , request] = attendedRun.start.mock.calls[0] as unknown[] as [unknown, unknown, Record<string, unknown>];
+      for (const key of Object.keys(forged)) expect(request).not.toHaveProperty(key);
+      expect(JSON.stringify(attendedRun.start.mock.calls[0])).not.toContain('No problems found');
+    });
+
+    it('a well-formed plan raises no card', async () => {
+      const { deps, start } = makeDeps({ canInferPlanForTeam: () => true });
+      await launchSquad(deps, makeInput({ coordinationMode: 'structured', goal: validPlan }), attended);
+      expect(deps.planCorrectionLaunchBinding.beginLaunch).not.toHaveBeenCalled();
+      expect(start.mock.calls[0]?.[2]).toMatchObject({ coordinationMode: 'structured' });
+    });
+  });
+
   it('builds the composer request exactly as the desktop launch always has and starts it without options', async () => {
     const { deps, start } = makeDeps();
     const result = await launchSquad(deps, makeInput(), { sources: { kind: 'window', windowId: 7 }, owner: { principalId: 'interactive:local' } });
@@ -121,6 +227,27 @@ describe('launchSquad', () => {
     expect(deps.snapshotSources).toHaveBeenCalledWith({ kind: 'window', windowId: 7 }, expect.objectContaining({
       projectId: 'p1', launchRequestId: 'ui:launch-1', sourceCapabilityIds: [], sourcePaths: [], goalSourceDescriptors: []
     }));
+  });
+
+  it('merges the Squad\'s saved run limits into the policy and bounds a hand-edited value', async () => {
+    const { deps, start } = makeDeps({ teamLimits: () => ({ maxConcurrent: 2, claimWallClockMs: 600_000, claimStallMs: 99, bogus: 1 }) });
+    await launchSquad(deps, makeInput(), { sources: { kind: 'window', windowId: 7 }, owner: { principalId: 'interactive:local' } });
+    expect(start.mock.calls[0]?.[2]).toMatchObject({ policy: { maxConcurrent: 2, maxClaimWallClockMs: 600_000, maxClaimStallMs: 60_000, deadlineMs: AUTONOMOUS_DEFAULTS.timeoutMs } });
+    expect((start.mock.calls[0]?.[2] as { policy: object }).policy).not.toHaveProperty('bogus');
+  });
+
+  it('leaves the policy untouched when the Squad has no limits', async () => {
+    const { deps, start } = makeDeps({ teamLimits: () => undefined });
+    await launchSquad(deps, makeInput(), { owner: { principalId: 'interactive:local' } });
+    expect((start.mock.calls[0]?.[2] as { policy: object }).policy).toEqual({ deadlineMs: AUTONOMOUS_DEFAULTS.timeoutMs, blockedWaitMs: AUTONOMOUS_DEFAULTS.blockedWaitMs });
+  });
+
+  it('squadLimitsPolicy maps each limit and ignores invalid input', () => {
+    expect(squadLimitsPolicy({ maxConcurrent: 3 })).toEqual({ maxConcurrent: 3 });
+    expect(squadLimitsPolicy({ claimWallClockMs: 120_000, claimStallMs: 60_000 })).toEqual({ maxClaimWallClockMs: 120_000, maxClaimStallMs: 60_000 });
+    expect(squadLimitsPolicy({ claimOutputCeilingMs: 600_000 })).toEqual({ maxClaimOutputOnlyMs: 600_000 });
+    expect(squadLimitsPolicy('nope')).toEqual({});
+    expect(squadLimitsPolicy({ maxConcurrent: 0 })).toEqual({});
   });
 
   it('carries the requested completion inbox notice into the execution request', async () => {
@@ -494,7 +621,7 @@ describe('createSquadSourceSnapshotter', () => {
     }));
     expect(result).toEqual({ ok: true, sourceBundle: bundle() });
     expect(fake.issue).toHaveBeenCalledWith({ windowId: 7, projectId: 'p1', paths: ['/repo/a.md'], policy });
-    expect(fake.resolve).toHaveBeenCalledWith({ windowId: 7, projectId: 'p1', capabilityIds: ['cap-1', 'goal-cap'], snapshotKey: 'ui:launch_1' });
+    expect(fake.resolve).toHaveBeenCalledWith({ windowId: 7, projectId: 'p1', capabilityIds: ['cap-1', 'goal-cap'], snapshotKey: 'ui_launch_1' });
   });
 
   it('resolves attached capabilities without issuing when the goal names no files', async () => {
@@ -524,7 +651,7 @@ describe('createSquadSourceSnapshotter', () => {
       [{ binding, projectId: 'p1', paths: ['/repo/a.md'], policy }]
     ]);
     // The goal names a listed file: the registry returns its capability again, resolved once.
-    expect(fake.resolve).toHaveBeenCalledWith({ binding, projectId: 'p1', capabilityIds: ['cap-a', 'cap-b'], snapshotKey: 'ui:launch_1' });
+    expect(fake.resolve).toHaveBeenCalledWith({ binding, projectId: 'p1', capabilityIds: ['cap-a', 'cap-b'], snapshotKey: 'ui_launch_1' });
   });
 
   it('issues only what a session launch has', async () => {
@@ -645,6 +772,23 @@ describe('session sources through the real registry', () => {
     });
     const names = (result as { sourceBundle: SquadSourceBundle }).sourceBundle.sources.map((source) => source.name);
     expect(names).toEqual(['plan.md', 'plan (1).md', 'extra.md']);
+  }));
+
+  it('stores a ui:/agent: launch snapshot in a folder whose name Windows accepts', async () => withFiles(async (dir) => {
+    const registry = registryIn(dir);
+    const policy = await policyIn(dir);
+    const snapshot = createSquadSourceSnapshotter(registry);
+    const base = { projectId: 'p1', sourceCapabilityIds: [], sourcePaths: [], goalSourceDescriptors: [], policy };
+    const [picked] = await registry.issue({ windowId: 7, projectId: 'p1', paths: [join(dir, 'project', 'plan.md')], policy });
+    const fromWindow = await snapshot({ kind: 'window', windowId: 7 }, {
+      ...base, launchRequestId: 'ui:124d771e-b1e0-4ecc-b550-8b40c6e58a69', sourceCapabilityIds: [picked.id]
+    });
+    const fromSession = await snapshot({ kind: 'session', sessionId: 'agent-session' }, {
+      ...base, launchRequestId: 'agent:5', attachments: [{ name: 'validation.md', text: '# attached' }]
+    });
+    expect(fromWindow).toMatchObject({ ok: true, sourceBundle: { contentRef: 'ui_124d771e-b1e0-4ecc-b550-8b40c6e58a69/sources.json' } });
+    expect(fromSession).toMatchObject({ ok: true, sourceBundle: { contentRef: 'agent_5/sources.json' } });
+    expect((await readdir(join(dir, 'store'))).sort()).toEqual(['agent_5', 'ui_124d771e-b1e0-4ecc-b550-8b40c6e58a69']);
   }));
 
   it('refuses attachments for a window provider and an unsafe attachment name', async () => withFiles(async (dir) => {

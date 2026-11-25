@@ -114,7 +114,7 @@ test('demo: build your own Persona and Squad', async ({ app }) => {
   const slotPersona = editor.getByLabel('Slot persona');
   await pick(page, slotPersona.last(), 'Slot persona', 'Docs Writer');
   await beat(600);
-  await tap(page, editor.getByLabel('Mark as orchestrator').first());
+  await tap(page, editor.getByRole('button', { name: 'Orchestrator', exact: true }).first());
   await demo.settle();
 
   // --- 05 Launch options ---

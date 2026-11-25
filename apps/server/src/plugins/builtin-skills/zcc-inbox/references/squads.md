@@ -18,6 +18,18 @@ execution_snapshot({ executionId, after })
 execution_respond({ executionId, expectedStateVersion, blockerId, message })
 ```
 
+Owner recovery: `execution_slot_restart({ executionId, slotId })` restarts a dead or idle
+worker (the same path as the card Restart; one restart per slot per minute, not counted
+against the coordinator's respawn cap; refused while the worker is mid-turn).
+`execution_unit_release({ executionId, workUnitId })` returns a `CLAIMED` unit to `READY`.
+`execution_respond({ executionId, expectedStateVersion, slotId, message })` returns
+`sessionLive` and restarts a dead session before delivering.
+
+Bounded results: `execution_status` and a slot `execution_respond` return `mode: "compact"` by
+default (state, unit table, open blockers, at most 50 units and 20 blockers; a slot respond is a
+receipt). Page events with `execution_history({ executionId, cursor, limit })` (pass `nextCursor` as
+`cursor`). `mode: "full"` returns the whole record and can be tens of KB.
+
 `squad_launch` and `squad_propose` accept flat optional launch fields, including
 `worktree`, `onComplete`, `push`, `checks`, `failurePolicyDefault`, and `target`.
 `target` is `{ kind: 'project-root' }` or `{ kind: 'worktree', branch }`; never

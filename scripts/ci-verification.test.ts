@@ -2,6 +2,8 @@ import { expect, it, vi } from 'vitest';
 import { resolve, join, dirname } from 'node:path';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { runPlan } from './ci-plan.mjs';
 import { boundarySpecs, changedLines, codeLines, coverageFailures, runVerification, mergeCoverage } from './ci-verification.mjs';
 
 it('checks desktop enrollment recovery when identity, persistence or the startup transport changes', () => {
@@ -314,15 +316,15 @@ it('leaves only the generated Agent City snapshot to its parity-checked sources'
 it('runs the private production app suite only for affected paths and fails missing coverage', () => {
   const io = { execute: vi.fn().mockReturnValue('+++ b/apps/app/src/App.tsx\n@@ -1 +1 @@'), read: vi.fn().mockReturnValue('{}'), log: vi.fn(), error: vi.fn() };
   expect(runVerification([], {}, io)).toBe(0);
-  expect(io.execute.mock.calls[0][1]).toContain('HEAD^');
+  expect(io.execute.mock.calls[0][1]).toContain('HEAD^...HEAD');
   expect(io.execute.mock.calls[0][2]).toMatchObject({ maxBuffer: 32 * 1024 * 1024 });
   expect(io.execute.mock.calls[1][1]).toEqual(expect.arrayContaining(['test:e2e', '--', 'e2e/smoke.spec.ts']));
   io.execute.mockClear();
   expect(runVerification(['--coverage', 'coverage.json'], { CI_BASE_SHA: 'base' }, io)).toBe(1);
-  expect(io.execute.mock.calls[0][1]).toEqual(expect.arrayContaining(['base', 'HEAD']));
+  expect(io.execute.mock.calls[0][1]).toEqual(expect.arrayContaining(['base...HEAD']));
   io.execute.mockClear();
   expect(runVerification(['--coverage', 'coverage.json'], { CI_BASE_SHA: 'base', CI_HEAD_SHA: 'pr-head' }, io)).toBe(1);
-  expect(io.execute.mock.calls[0][1]).toEqual(expect.arrayContaining(['base', 'pr-head']));
+  expect(io.execute.mock.calls[0][1]).toEqual(expect.arrayContaining(['base...pr-head']));
   expect(io.read).toHaveBeenCalledWith('coverage.json', 'utf8');
   expect(io.error).toHaveBeenCalledWith(expect.stringContaining('missing coverage'));
   io.execute.mockReturnValue('+++ b/docs/readme.md\n@@ -1 +1 @@'); io.execute.mockClear();
@@ -397,8 +399,9 @@ it('combines complementary root and package coverage even when local ids differ'
 it('keeps the existing required CI check as an always-running gate over every job', () => {
   const workflow = readFileSync(resolve('.github/workflows/ci.yml'), 'utf8');
   expect(workflow).toContain('name: Typecheck and test');
-  expect(workflow).toContain('needs: [plan, unit, unit-packages, coverage, e2e-build, e2e, preview-cross-platform, connect-postgres, squad-windows-admission]');
+  expect(workflow).toContain('needs: [plan, unit, unit-packages, coverage, e2e-build, e2e, preview-cross-platform, connect-postgres, squad-windows-admission, squad-test-faults]');
   expect(workflow).toContain('if: always()');
+  expect(workflow).toContain('test "$TEST_FAULTS_RESULT" = success');
   expect(workflow).toContain('test "$UNIT_RESULT" = success');
   expect(workflow).toContain('test "$PACKAGES_RESULT" = success');
   expect(workflow).toContain('test "$COVERAGE_RESULT" = success');
@@ -449,4 +452,77 @@ it('checks reviewed peer delivery through the built app when its authorization o
     'packages/db/src/data/deferred-thread-messages.ts'
   ]) expect(boundarySpecs([path])).toContain('e2e/thread-peer-communication.spec.ts');
   expect(boundarySpecs(['docs/readme.md'])).not.toContain('e2e/thread-peer-communication.spec.ts');
+});
+
+/** Hermetic temp repo: no global config, signing or hooks from the developer's machine. */
+function tempRepo() {
+  const root = mkdtempSync(join(tmpdir(), 'ci-merge-base-'));
+  const repoDir = join(root, 'repo');
+  const emptyConfig = join(root, 'empty.gitconfig');
+  const noHooks = join(root, 'no-hooks');
+  mkdirSync(repoDir);
+  mkdirSync(noHooks);
+  writeFileSync(emptyConfig, '');
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: emptyConfig, GIT_CONFIG_NOSYSTEM: '1' };
+  const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.test', '-c', 'commit.gpgsign=false', '-c', `core.hooksPath=${noHooks}`, ...args], { cwd: repoDir, encoding: 'utf8', env }).trim();
+  const commit = (path: string, text: string) => {
+    mkdirSync(dirname(join(repoDir, path)), { recursive: true });
+    writeFileSync(join(repoDir, path), text);
+    git('add', '-A');
+    git('commit', '-q', '-m', path);
+  };
+  return { root, git, commit };
+}
+
+/** The PR forks from main and only edits docs; main then changes App.tsx and ci-plan.mjs, before and after the event. */
+function movedMainScenario(repo: ReturnType<typeof tempRepo>) {
+  const { git, commit } = repo;
+  git('init', '-q', '-b', 'main');
+  commit('scripts/ci-plan.mjs', 'export const a = 1;\n');
+  commit('apps/app/src/App.tsx', 'export const b = 1;\n');
+  git('checkout', '-q', '-b', 'pr');
+  commit('docs/readme.md', 'pr change\n');
+  const prHead = git('rev-parse', 'HEAD');
+  git('checkout', '-q', 'main');
+  commit('apps/app/src/App.tsx', 'export const b = 2;\n');
+  commit('scripts/ci-plan.mjs', 'export const a = 2;\n');
+  const eventBase = git('rev-parse', 'HEAD');
+  commit('apps/app/src/App.tsx', 'export const b = 3;\n');
+  // GitHub's synthetic merge ref: PR head merged into main as it is now.
+  git('checkout', '-q', '-b', 'merge-ref');
+  git('merge', '-q', '--no-ff', '-m', 'merge', 'pr');
+  return { prHead, eventBase };
+}
+
+it('charges only the PR to the boundary diff after main moved past the fork point', () => {
+  const repo = tempRepo();
+  try {
+    const { prHead, eventBase } = movedMainScenario(repo);
+    const io = { execute: vi.fn((command: string, args: string[]) => command === 'git' ? repo.git(...args) : ''), read: vi.fn(), log: vi.fn(), error: vi.fn() };
+    // The e2e job checks out the merge ref (HEAD already holds main's newer commit) and names the PR head.
+    expect(runVerification([], { CI_BASE_SHA: eventBase, CI_HEAD_SHA: prHead }, io)).toBe(0);
+    expect(io.execute).toHaveBeenCalledOnce();
+    expect(io.log).toHaveBeenCalledWith('No Electron production boundary changed.');
+  } finally { rmSync(repo.root, { recursive: true, force: true }); }
+});
+
+it('charges only the PR to the coverage diff after main moved past the fork point', () => {
+  const repo = tempRepo();
+  try {
+    const { prHead, eventBase } = movedMainScenario(repo);
+    const io = { execute: (command: string, args: string[]) => repo.git(...args), read: vi.fn().mockReturnValue('{}'), log: vi.fn(), error: vi.fn() };
+    // scripts/ci-plan.mjs exists in this checkout, so a charged change would need coverage and fail.
+    expect(runVerification(['--coverage', 'coverage.json'], { CI_BASE_SHA: eventBase, CI_HEAD_SHA: prHead }, io)).toBe(0);
+    expect(io.error).not.toHaveBeenCalled();
+  } finally { rmSync(repo.root, { recursive: true, force: true }); }
+});
+
+it('plans from the PR head, not the synthetic merge ref that already holds the newer main commits', () => {
+  const repo = tempRepo();
+  try {
+    const { prHead, eventBase } = movedMainScenario(repo);
+    const run = (env: Record<string, string>) => runPlan(env, { execute: (command: string, args: string[]) => repo.git(...args), append: vi.fn(), log: vi.fn() });
+    expect(run({ CI_BASE_SHA: eventBase, CI_HEAD_SHA: prHead }).e2e).toBe(false);
+    expect(run({ CI_BASE_SHA: eventBase }).e2e).toBe(true);
+  } finally { rmSync(repo.root, { recursive: true, force: true }); }
 });

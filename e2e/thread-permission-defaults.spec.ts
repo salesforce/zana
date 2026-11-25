@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { pickComposerSetting } from './fixtures/composer-settings.js';
 import { test, expect, dismissConsentOverlays } from './fixtures/app.js';
 import { waitForThreadProvider } from './fixtures/thread-providers.js';
 import { buildPlugin } from '../packages/plugin-build/src/build-plugin.js';
@@ -52,8 +53,7 @@ test('shared permissions persist and an unsupported single-mode provider has an 
   await home.getByTestId('thread-command-input').fill('Explicitly choose Full for this launch');
   await expect(home.getByText(/default permission policy is unavailable/)).toBeVisible();
   await expect(home.getByTestId('thread-command-send')).toBeDisabled();
-  await home.getByRole('button', { name: 'Permission mode', exact: true }).click();
-  await page.getByRole('option', { name: /^Full Access/ }).click();
+  await pickComposerSetting(page, home, 'permission', 'Full');
   await expect(home.getByTestId('thread-command-send')).toBeEnabled();
   const request = page.waitForRequest(r => r.url().endsWith('/api/v1/threads') && r.method() === 'POST');
   await home.getByTestId('thread-command-send').click();

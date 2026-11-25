@@ -1,4 +1,5 @@
 import { boundedText, LargeTextPreview } from './LargeTextPreview.js';
+import { formatAge } from '@/lib/squad-worker-visibility';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { ExecutionBoardSnapshot } from '@zana-ai/zcc-domain/product';
 import { useUi } from '../store';
@@ -28,6 +29,20 @@ const JOB_DETAILS_EVENT_TAIL = 25;
 
 type ExecutionProjection = ExecutionBoardSnapshot['execution'];
 
+function durationLabel(ms: number): string {
+  return ms % 60_000 === 0 ? `${ms / 60_000} min` : `${Math.round(ms / 1_000)} s`;
+}
+
+/** One-line effective run limits: concurrent workers plus any claim ceilings the run carries. */
+function limitsSummary(limits: NonNullable<ExecutionProjection['limits']>): string {
+  return [
+    `up to ${limits.maxConcurrent} sessions`,
+    limits.claimWallClockMs === undefined ? undefined : `claim wall-clock ${durationLabel(limits.claimWallClockMs)}`,
+    limits.claimStallMs === undefined ? undefined : `claim stall ${durationLabel(limits.claimStallMs)}`,
+    limits.claimOutputCeilingMs === undefined ? undefined : `output-only ceiling ${durationLabel(limits.claimOutputCeilingMs)}`
+  ].filter(Boolean).join(' · ');
+}
+
 /** Identity / lifecycle header block. */
 function jobHeaderLines(projectId: string, execution: ExecutionProjection): string[] {
   const lines: string[] = [];
@@ -46,6 +61,7 @@ function jobHeaderLines(projectId: string, execution: ExecutionProjection): stri
   if (execution.resourceBlock) {
     lines.push(`Resource block: ${execution.resourceBlock.kind} · ${execution.resourceBlock.reason} (at ${formatTimestamp(execution.resourceBlock.blockedAt)})`);
   }
+  if (execution.limits) lines.push(`Limits: ${limitsSummary(execution.limits)}`);
   lines.push(`Telemetry gap count: ${execution.usage?.gapCount ?? 0}`);
   return lines;
 }
@@ -159,11 +175,23 @@ function assembledResultLines(assembled: ExecutionProjection['assembledResult'])
   return lines;
 }
 
+/** Chosen route facts the host adds to an assignment once dispatch has picked a worker. */
+export type AssignmentRoute = { chosenSlotId?: string; chosenReason?: string };
+
+/** Plain-language route line for an assignment, or undefined until a route was recorded. */
+export function chosenRouteText(assignment: AssignmentRoute): string | undefined {
+  const slot = assignment.chosenSlotId?.trim();
+  if (!slot) return undefined;
+  const reason = assignment.chosenReason?.trim();
+  return reason ? `Chosen worker: ${slot} (${reason})` : `Chosen worker: ${slot}`;
+}
+
 /** Route-fit proposal (when present) + the final summary. */
 function routeAndFinalLines(execution: ExecutionProjection): string[] {
   const lines: string[] = [];
   const routeFit = execution.routeFitProposal;
   if (routeFit) lines.push(`Route fit: ${routeFit.fit} · ${routeFit.reason} (evaluator ${routeFit.evaluatorVersion}, samples ${routeFit.samples})`);
+  if (execution.failureReason) lines.push(`Failure reason: ${execution.failureReason}`);
   lines.push(`Final summary: ${execution.finalSummary ?? '—'}`);
   return lines;
 }
@@ -240,6 +268,16 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
   const [busy, setBusy] = useState(false);
   const [replyDraft, setReplyDraft] = useState('');
   const requestIdentityRef = useRef<{ blockerId: string; text: string; id: string } | undefined>(undefined);
+  const blockerFormRef = useRef<HTMLFormElement>(null);
+  const scrolledBlockerRef = useRef<string | undefined>(undefined);
+  // An open blocker is the one thing here a person must act on, so bring it into view once per blocker
+  // instead of leaving it below the run summary in a short panel.
+  const openBlockerId = snapshot && !terminal.has(snapshot.execution.state) ? snapshot.execution.currentBlocker?.id : undefined;
+  useEffect(() => {
+    if (!openBlockerId || scrolledBlockerRef.current === openBlockerId) return;
+    scrolledBlockerRef.current = openBlockerId;
+    blockerFormRef.current?.scrollIntoView?.({ block: 'start' });
+  }, [openBlockerId]);
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, string>>({});
   const [artifactContent, setArtifactContent] = useState<Record<string, string>>({});
   const [followUpInstruction, setFollowUpInstruction] = useState('');
@@ -423,6 +461,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
         const assignedSlotId = assignmentDrafts[assignment.workUnitId] ?? assignment.slotId ?? execution.work?.rosterSlotIds[0] ?? '';
         return <div key={assignment.workUnitId}>
           {assignment.title} → {assignment.slotId ?? 'unassigned'} · {assignment.state}
+          {chosenRouteText(assignment as AssignmentRoute) && <p role="status" className="execution-details-route">{chosenRouteText(assignment as AssignmentRoute)}</p>}
           {assignment.slotId !== undefined && freshSlots.has(assignment.slotId) && <span className="scheduler-pill">Fresh session per unit</span>}
           {assignment.loopRound !== undefined && assignment.loopMax !== undefined && <p role="status" className="execution-details-recovery-reason">{reviewRoundText(assignment.loopRound, assignment.loopMax)}</p>}
           {assignment.recovery && <p role="status" className="execution-details-recovery-reason">Recovering engineer after API error: {RECOVERY_TEXT[assignment.recovery.step] ?? assignment.recovery.step}</p>}
@@ -442,7 +481,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
         </div>;
       })}
       {snapshot.execution.currentBlocker && (
-        <form className="execution-blocker" onSubmit={(event) => {
+        <form ref={blockerFormRef} className="execution-blocker" onSubmit={(event) => {
           event.preventDefault();
           if (isTerminal) return;
           const blocker = snapshot.execution.currentBlocker!;
@@ -453,7 +492,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
           }
           void mutate(() => window.cc.executionBoard.respond(projectId, executionId, execution.stateVersion ?? 0, blocker.id, requestIdentityRef.current!.id, message), true);
         }}>
-          <div className="execution-blocker-heading"><h4>Current blocker</h4><span>{isTerminal ? 'Squad run closed' : 'Needs your response'}</span></div>
+          <div className="execution-blocker-heading"><h4>Current blocker</h4><span>{isTerminal ? 'Squad run closed' : 'Needs your response'}</span>{!isTerminal && snapshot.execution.currentBlocker.waitingSince !== undefined && <span className="execution-blocker-wait" data-testid="execution-blocker-wait">Waiting {formatAge(Date.now() - snapshot.execution.currentBlocker.waitingSince)}</span>}</div>
           <p className="execution-blocker-question">{snapshot.execution.currentBlocker.question}</p>
           {snapshot.execution.currentBlocker.options?.length ? <p className="execution-blocker-options">{snapshot.execution.currentBlocker.options.join(' · ')}</p> : null}
           {isTerminal && <p className="execution-blocker-terminal" role="status">Squad run {execution.state.toLowerCase()}. This blocker is retained as history and can no longer receive a response.</p>}
@@ -524,6 +563,8 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
       </div> : <p>Not assembled.</p>}
       <h4>Route fit</h4>
       {execution.routeFitProposal ? <p>{execution.routeFitProposal.fit} · {execution.routeFitProposal.reason} · inactive proposal ({execution.routeFitProposal.evaluatorVersion})</p> : <p>Not evaluated.</p>}
+      {execution.limits && <p data-testid="execution-limits">Run limits: {limitsSummary(execution.limits)}</p>}
+      {execution.failureReason && <><h4>Failure reason</h4><p>{execution.failureReason}</p></>}
       <h4>Final summary</h4><p>{execution.finalSummary ?? 'Not completed.'}</p>
        <div className="execution-details-actions">
          {!terminal.has(execution.state) && <button className="btn danger" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.stop(projectId, executionId, execution.stateVersion ?? 0))}>Stop Squad run</button>}

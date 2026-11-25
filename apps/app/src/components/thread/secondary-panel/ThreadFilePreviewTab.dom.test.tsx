@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { ThreadFilePreviewTab, ThreadFilePreviewView, ThreadHtmlPreviewFrame } from './ThreadFilePreviewTab.js';
 import { FilePreviewScrollPositionContext } from './filePreviewScrollPositionContext.js';
+import { disposeRetainedHtmlPreviews } from './htmlPreviewRetention.js';
 
 const mocks = vi.hoisted(() => ({ readFile: vi.fn(), hostFileContent: vi.fn(), storageContent: vi.fn() }));
 vi.mock('../../../lib/product-client.js', () => ({
@@ -21,7 +22,7 @@ vi.mock('../../../plugins/plugin-slots.js', async () => {
   return { listFileOpeners: () => openers, subscribePluginSlots: () => () => undefined };
 });
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.resetAllMocks(); localStorage.clear(); });
+afterEach(() => { cleanup(); disposeRetainedHtmlPreviews(document); vi.restoreAllMocks(); vi.resetAllMocks(); localStorage.clear(); });
 
 describe('file opener host preview lifetime', () => {
   it('keeps Open with choices scoped to their file type and honors a changed explicit opener', async () => {
@@ -220,12 +221,12 @@ it('keeps the existing document and shows a failed-refresh status', async () => 
   mocks.hostFileContent.mockRejectedValueOnce(new Error('offline'));
   mocks.readFile.mockResolvedValue({ ok: false });
   view.rerender(<ThreadFilePreviewTab path="report.md" threadId="t1" openerKey="host" previewRevision={1} />);
-  expect((await view.findByRole('status')).textContent).toContain('offline');
+  await view.findByText('Refresh failed: offline');
   expect(view.getByRole('heading', { name: 'Original' })).toBeTruthy();
 });
 
 describe('HTML file preview', () => {
-  it('reloads only its own frame on a retry signal and removes the listener on unmount', () => {
+  it('reloads only its own frame on a retry signal and removes the listener when the registry shuts down', () => {
     const remove = vi.spyOn(window, 'removeEventListener');
     const view = render(<ThreadHtmlPreviewFrame path="a.html" src="/api/v1/file-preview/html?path=a.html" />);
     const original = view.getByTestId('thread-file-preview-html') as HTMLIFrameElement;
@@ -247,6 +248,7 @@ describe('HTML file preview', () => {
     signal(original.contentWindow, { type: 'zcc:html-preview:retry' });
     expect(view.getByTestId('thread-file-preview-html')).toBe(reloaded);
     view.unmount();
+    disposeRetainedHtmlPreviews(document);
     expect(remove).toHaveBeenCalledWith('message', expect.any(Function));
   });
 
@@ -362,6 +364,21 @@ describe('retained reading offset', () => {
     expect(node.scrollTop).toBe(320);
     node.scrollTop = 515;
     fireEvent.scroll(node);
+    expect(position.scrollTop).toBe(515);
+  });
+
+  it('tracks the actual inner Markdown scroll container', async () => {
+    const position = { scrollTop: 320 };
+    const view = render(<FilePreviewScrollPositionContext.Provider value={position}>
+      <ThreadFilePreviewView path="notes.md" content="# Notes" error={null} storage />
+    </FilePreviewScrollPositionContext.Provider>);
+    await view.findByRole('heading', { name: 'Notes' });
+    const preview = view.container.querySelector('.md-document-preview')!;
+    expect(preview.scrollTop).toBe(320);
+    preview.scrollTop = 515; fireEvent.scroll(preview);
+    expect(position.scrollTop).toBe(515);
+    view.unmount();
+    preview.scrollTop = 0; fireEvent.scroll(preview);
     expect(position.scrollTop).toBe(515);
   });
 

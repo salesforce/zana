@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { ShortcutsHelp } from './ShortcutsHelp.js';
+import { registerThreadFindTarget, threadFindClaims } from '../lib/thread-find.js';
 
 afterEach(() => {
   cleanup();
@@ -97,5 +98,133 @@ describe('ShortcutsHelp', () => {
     unmount();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(3);
+  });
+
+});
+
+describe('ShortcutsHelp find', () => {
+  const filter = () => screen.getByRole('searchbox', { name: 'Filter shortcuts' }) as HTMLInputElement;
+  const modal = () => screen.getByRole('dialog', { name: 'Keyboard Shortcuts' });
+  const ctrlF = { key: 'f', ctrlKey: true };
+  let unregisterTarget: (() => void) | null = null;
+
+  afterEach(() => {
+    unregisterTarget?.();
+    unregisterTarget = null;
+  });
+
+  function renderOnLinux(onClose: () => void = () => undefined) {
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('Linux x86_64');
+    return render(<ShortcutsHelp onClose={onClose} />);
+  }
+
+  it('Ctrl+F focuses the filter instead of thread find', () => {
+    renderOnLinux();
+    const target = { root: () => document.body, main: () => document.body, isPrimary: () => true, open: vi.fn() };
+    unregisterTarget = registerThreadFindTarget(target);
+    expect(document.activeElement).toBe(filter());
+    screen.getByRole('button', { name: 'Close' }).focus();
+    const event = new KeyboardEvent('keydown', { ...ctrlF, bubbles: true, cancelable: true });
+    expect(threadFindClaims(event)).toBe(false);
+    document.activeElement!.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(filter());
+  });
+
+  it('filters by label, key combo and section, and hides empty sections', () => {
+    renderOnLinux();
+    fireEvent.change(filter(), { target: { value: 'toggle inbox' } });
+    expect(screen.getAllByText('Toggle Inbox')).toHaveLength(1);
+    expect(screen.queryByText('Next tab')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Tabs' })).toBeNull();
+    fireEvent.change(filter(), { target: { value: 'ctrl+shift+d' } });
+    expect(screen.getByText('Duplicate active tab (same profile)')).toBeTruthy();
+    expect(screen.queryByText('Toggle diff vs HEAD on open file')).toBeNull();
+    fireEvent.change(filter(), { target: { value: 'CTRL + SHIFT + D' } });
+    expect(screen.getByText('Duplicate active tab (same profile)')).toBeTruthy();
+    fireEvent.change(filter(), { target: { value: 'explorer' } });
+    expect(screen.getByText('Save edited file')).toBeTruthy();
+    expect(screen.queryByText('New Chat')).toBeNull();
+  });
+
+  it("hints at a key combo and a section name in the platform's own keys", () => {
+    renderOnLinux();
+    expect(filter().placeholder).toBe('Filter shortcuts, e.g. Ctrl+Shift+D or Explorer');
+    cleanup();
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
+    render(<ShortcutsHelp onClose={() => undefined} />);
+    expect(filter().placeholder).toBe('Filter shortcuts, e.g. Cmd+Shift+D or Explorer');
+    fireEvent.change(filter(), { target: { value: 'Cmd+Shift+D' } });
+    expect(screen.getByText('Duplicate active tab (same profile)')).toBeTruthy();
+  });
+
+  it('reports the count and an empty state', () => {
+    renderOnLinux();
+    fireEvent.change(filter(), { target: { value: 'next tab' } });
+    expect(screen.getByRole('status').textContent).toBe('1 shortcut match');
+    fireEvent.change(filter(), { target: { value: 'zzzz' } });
+    expect(screen.getByText('No shortcuts match “zzzz”.')).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe('0 shortcuts match');
+    fireEvent.change(filter(), { target: { value: '' } });
+    expect(screen.getByRole('status').textContent).toBe('');
+    expect(screen.queryByText(/No shortcuts match/u)).toBeNull();
+  });
+
+  it('Esc clears the filter and keeps the panel open, then closes on the next press', () => {
+    const onClose = vi.fn();
+    renderOnLinux(onClose);
+    fireEvent.change(filter(), { target: { value: 'tab' } });
+    filter().focus();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(filter().value).toBe('');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(filter());
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('puts focus back where it was when the panel closes', () => {
+    const opener = document.createElement('button');
+    document.body.append(opener);
+    opener.focus();
+    const { unmount } = renderOnLinux();
+    expect(document.activeElement).toBe(filter());
+    unmount();
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+
+  it('matches the words people type for key caps', () => {
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
+    render(<ShortcutsHelp onClose={() => undefined} />);
+    fireEvent.change(filter(), { target: { value: 'cmd+shift+d' } });
+    expect(screen.getByText('Duplicate active tab (same profile)')).toBeTruthy();
+    fireEvent.change(filter(), { target: { value: 'option' } });
+    expect(screen.getByText('Close focused pane')).toBeTruthy();
+    fireEvent.change(filter(), { target: { value: 'escape' } });
+    expect(screen.getByText('Close thread search')).toBeTruthy();
+  });
+
+  it('leaves Esc to an IME composition in the filter', () => {
+    const onClose = vi.fn();
+    renderOnLinux(onClose);
+    fireEvent.change(filter(), { target: { value: 'tab' } });
+    fireEvent.keyDown(window, { key: 'Escape', isComposing: true });
+    expect(filter().value).toBe('tab');
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('keeps Tab inside the dialog', () => {
+    renderOnLinux();
+    const close = screen.getByRole('button', { name: 'Close' });
+    filter().focus();
+    const forward = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+    window.dispatchEvent(forward);
+    expect(forward.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(close);
+    const backward = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true });
+    window.dispatchEvent(backward);
+    expect(backward.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(filter());
   });
 });

@@ -99,6 +99,7 @@ async function readExecution(window: Page, projectId: string, executionId: strin
 /** Open the "Plan correction required" Inbox card whose body contains `text`. */
 async function openCorrectionCard(window: Page, text: string): Promise<void> {
   await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
+  await window.getByRole('button', { name: 'Split view', exact: true }).click();
   await expect.poll(async () => {
     const rows = window.locator('.inbox-row').filter({ hasText: 'Plan correction required' });
     const count = await rows.count();
@@ -152,7 +153,7 @@ async function requestCorrection(window: Page, s: Setup, executionId: string): P
   await openCorrectionCard(window, 'Plan requires revisions to proceed');
   expect(await readExecution(window, s.projectId, executionId)).toMatchObject({ workTotal: 0 });
   expect(coordinatorLog(s.projectDir)).not.toContain('assigned');
-  await choose(window, 'Request changes');
+  await choose(window, 'Ask the agent to revise');
   const correctedRel = `.zana/execution-plan-corrected-${executionId}.md`;
   await expect.poll(() => coordinatorLog(s.projectDir), { timeout: 30_000, intervals: [500] })
     .toContain(`plan-correction wrote corrected plan ${correctedRel}`);
@@ -172,7 +173,7 @@ test('goal Squad defective plan parks, is corrected, approved, resumes, and the 
 
     await requestCorrection(window, s, executionId);
     expect(await readExecution(window, s.projectId, executionId)).toMatchObject({ workTotal: 0 });
-    await choose(window, 'Approve');
+    await choose(window, 'Use the corrected plan');
 
     await expect.poll(async () => (await readExecution(window, s!.projectId, executionId))?.state, {
       timeout: 60_000, intervals: [1_000]
@@ -204,7 +205,7 @@ test('editing the goal plan during review makes Approve fail with the "goal plan
     const edited = `${DEFECTIVE_PLAN}\n<!-- edited during review -->`;
     const res = await window.evaluate((input) => window.cc.goals.update(input.id, { statement: input.statement }), { id: goalId, statement: edited });
     expect(res, JSON.stringify(res)).toMatchObject({ ok: true });
-    await choose(window, 'Approve');
+    await choose(window, 'Use the corrected plan');
 
     await expect(window.getByText(/goal plan was edited/i).first()).toBeVisible({ timeout: 30_000 });
     expect(goalStatement(s, goalId)).toBe(edited);

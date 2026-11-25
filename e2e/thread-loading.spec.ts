@@ -52,19 +52,35 @@ test('thread loading is illustrated, motion-aware, and settles on success, failu
     await gate;
     await route.fulfill({ response, json: phase === 'empty' ? { ...body, rows: [], maxSeq: 0 } : body });
   });
-  await window.evaluate((id) => {
-    history.pushState({}, '', `/threads/${id}`);
-    dispatchEvent(new PopStateEvent('popstate'));
-  }, threadId);
-
+  await window.route(url => url.pathname === `/api/v1/threads/${threadId}`, async route => {
+    await gate;
+    await route.continue();
+  });
   const detail = window.getByTestId('thread-detail');
   const timeline = detail.getByTestId('thread-timeline');
   const loading = timeline.getByTestId('thread-loading');
   try {
+    // Capture the first paint directly. A locator that retries can skip the flash.
+    const firstPaint = await window.evaluate(id => new Promise(resolve => {
+      function sample() {
+        const pane = document.querySelector('[data-testid="thread-timeline"][aria-busy="true"]');
+        if (!pane) { requestAnimationFrame(sample); return; }
+        resolve(getComputedStyle(pane).opacity);
+      }
+      history.pushState({}, '', `/threads/${id}`);
+      dispatchEvent(new PopStateEvent('popstate'));
+      requestAnimationFrame(sample);
+    }), threadId);
+    expect(firstPaint).toBe('0');
+    await expect(detail.locator('.thread-detail-heading h1')).toBeEmpty();
+    await expect(detail.getByTestId('thread-detail-status')).toHaveCount(0);
+    await expect(detail.getByTestId('thread-header-meta')).toHaveCount(0);
+    await expect(detail.getByTestId('thread-command-input')).toHaveCount(0);
+    await expect(timeline).toHaveCSS('opacity', '1');
     await expect(loading).toBeVisible();
     await expect(loading).toHaveAttribute('role', 'status');
     await expect(timeline).toHaveAttribute('aria-busy', 'true');
-    await expect(timeline).not.toContainText('Waiting for the first turn');
+    await expect(timeline).not.toContainText('What shall we work on today?');
     await expect(timeline.locator('.thread-working-indicator')).toHaveCount(0);
     await expect(loading).toHaveAttribute('data-art', 'conversation');
     await expect(loading.locator('.fairy')).toHaveCSS('animation-name', 'fairy-conv-flight');
@@ -104,7 +120,7 @@ test('thread loading is illustrated, motion-aware, and settles on success, failu
   const error = detail.getByTestId('thread-timeline-load-error');
   await expect(error).toBeVisible();
   await expect(loading).toHaveCount(0);
-  await expect(timeline).not.toContainText('Waiting for the first turn');
+  await expect(timeline).not.toContainText('What shall we work on today?');
 
   phase = 'empty';
   gate = new Promise<void>((resolve) => { release = resolve; });
@@ -116,14 +132,9 @@ test('thread loading is illustrated, motion-aware, and settles on success, failu
     release();
   }
   await expect(loading).toHaveCount(0);
-  await expect(timeline).toContainText('Waiting for the first turn…');
-  const firstTurn = timeline.getByTestId('thread-first-turn');
-  await expect(firstTurn).toHaveAttribute('data-art', 'first-turn');
-  // Reduced motion is still emulated from above: the waiting scene is visible but still.
-  await expect(firstTurn.locator('.fairy-first-agent')).toBeVisible();
-  await expect(firstTurn.locator('.fairy-first-agent span').first()).toHaveCSS('animation-name', 'none');
-  await window.emulateMedia({ reducedMotion: 'no-preference' });
-  await expect(firstTurn.locator('.fairy-first-agent span').first()).toHaveCSS('animation-name', 'fairy-dot');
+  await expect(timeline.getByRole('heading', { name: 'What shall we work on today?', level: 2 })).toBeVisible();
+  await expect(timeline.getByText('Bring a question, a rough idea, or something to get done.')).toBeVisible();
+  await expect(timeline.locator('.conversation-welcome .zana-brand-icon')).toBeVisible();
   await expect(timeline).toHaveAttribute('aria-busy', 'false');
 });
 
@@ -156,6 +167,7 @@ for (const outcome of ['success', 'failure'] as const) {
       const timeline = window.getByTestId('thread-detail').getByTestId('thread-timeline');
       if (outcome === 'success') {
         await expect(timeline).toContainText('Response to: Hello from the loading test');
+        await expect(window.getByTestId('thread-command-input')).toHaveCount(0);
       } else {
         await expect(window.getByTestId('thread-detail').getByTestId('thread-timeline-load-error')).toBeVisible();
       }
@@ -166,6 +178,7 @@ for (const outcome of ['success', 'failure'] as const) {
       release();
     }
     await expect(window.getByTestId('thread-detail').getByText('Metadata arrived', { exact: true })).toBeVisible();
+    await expect(window.getByTestId('thread-command-input')).toBeVisible();
   });
 }
 

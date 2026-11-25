@@ -51,7 +51,7 @@ async function churn(store: Store, executionId: string, slotId: string, times = 
 
 const engineerRouting = { version: 1 as const, requiredRole: 'engineer' };
 const today = (id = 'unit', title = 'Unit') =>
-  `Work unit ${id} (${title}) made no progress on every eligible worker slot; its worker never started a turn. Check the worker terminal, then retry the unit or restart the run.`;
+  `Work unit "${id}: ${title}" made no progress on every eligible worker slot; none of those workers started a turn. Check the worker terminal, then retry the unit or restart the run.`;
 
 describe('kickoff reassignment honours routing', () => {
   it('picks the next untried engineer slot, never the reviewer seat', async () => fixture(async (filePath) => {
@@ -99,7 +99,7 @@ describe('kickoff reassignment honours routing', () => {
     record = await store.blockKickoffFailure(record.id, 'unit');
     expect(record.blockers).toEqual([expect.objectContaining({
       workUnitId: 'unit', audience: 'human', resolved: false,
-      question: 'Work unit unit (Unit) made no progress, and the only worker slot that can take it (engineer:0) never started a turn. Check that worker\'s terminal, then retry the unit or restart the run.'
+      question: 'Work unit "unit: Unit" made no progress, and the only worker slot that can take it (engineer:0) never started a turn. Check that worker\'s terminal, then retry the unit or restart the run.'
     })]);
   }));
 
@@ -330,9 +330,33 @@ describe('kickoff question stays useful at the edges', () => {
   it('cuts the earlier-recovery note rather than the instructions when it is oversized', () => {
     const question = kickoffBlockerQuestion({ id: 'unit', title: 'Unit' }, 'engineer:0', ` Earlier ${'x'.repeat(5_000)}`);
     expect(question.length).toBeLessThanOrEqual(2_048);
-    expect(question).toContain('(Unit)');
+    expect(question).toContain('"unit: Unit"');
     expect(question.endsWith('then retry the unit or restart the run.')).toBe(true);
   });
+
+  it('names the only seat by its board label when the slot has one', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });
+    const base = request();
+    let record = (await store.claim({ ...base, request: { ...base.request, resolvedModels: [{ slotId: 'engineer:0', personaId: 'engineer', provider: 'anthropic', model: 'm', label: 'Engineer' }] } as never })).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+    record = await store.setAuthorizationContext(record.id, record.stateVersion, {
+      version: 1, principalId: 'owner', authorizedAt: 1, expiresAt: 2, slots: [
+        { slotId: 'orchestrator', personaId: 'lead', authorizationIdDigest: 'o' },
+        { slotId: 'engineer:0', personaId: 'engineer', authorizationIdDigest: 'e' },
+        { slotId: 'reviewer:0', personaId: 'reviewer', authorizationIdDigest: 'r' }
+      ]
+    }, 'authorization-digest');
+    record = await store.replaceResolvedModels(record.id, [
+      { slotId: 'engineer:0', personaId: 'engineer', provider: 'anthropic', model: 'm' },
+      { slotId: 'reviewer:0', personaId: 'reviewer', provider: 'anthropic', model: 'm' }
+    ]);
+    record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true, routing: engineerRouting }]);
+    record = await churn(store, record.id, 'engineer:0', 1);
+    const question = (await store.blockKickoffFailure(record.id, 'unit')).blockers![0].question;
+    expect(question).toContain('the only worker slot that can take it (Engineer) never started a turn');
+    expect(question).not.toContain('engineer:0');
+  }));
 
   it('falls back to the generic question when the one capable slot was never tried', async () => fixture(async (filePath) => {
     // The unit churned on the reviewer seat, so engineer:0 never received it and "never started a turn" would be false.

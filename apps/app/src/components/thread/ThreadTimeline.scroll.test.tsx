@@ -193,3 +193,24 @@ it('supports unscoped timelines and manual return to the latest message', () => 
   fireEvent.click(screen.getByRole('button', { name: 'Scroll to bottom' }));
   expect(pane.scrollTop).toBe(1200);
 });
+
+it('marks a timeline read on open or a new reply when it already sits at the bottom, not while scrolled back', () => {
+  const onReachedBottom = vi.fn();
+  const row = (id: string, seq: number) => ({
+    id, kind: 'conversation' as const, role: 'assistant' as const, text: id,
+    threadId: 'thread-1', turnId: 'turn-1', sourceSeqStart: seq, sourceSeqEnd: seq,
+    createdAt: seq, startedAt: seq, attachments: null, initiator: 'user' as const,
+    senderThreadId: null, systemMessageKind: 'unlabeled' as const, systemMessageSubject: null,
+    turnRequest: { isGrouped: false, kind: 'message' as const, status: 'accepted' as const }, mentions: []
+  });
+  const { pane, rerender } = fixture();
+  const show = (rows: ReturnType<typeof row>[]) => rerender(<ThreadTimeline threadId="thread-1" rows={rows as never} status="idle" thinking={null} onReachedBottom={onReachedBottom} />);
+  show([row('a', 1)]);
+  expect(onReachedBottom).toHaveBeenCalledTimes(1);
+  show([row('a', 1)]);
+  expect(onReachedBottom).toHaveBeenCalledTimes(1);
+  pane.scrollTop = 100;
+  fireEvent.scroll(pane);
+  show([row('a', 1), row('b', 2)]);
+  expect(onReachedBottom).toHaveBeenCalledTimes(1);
+});

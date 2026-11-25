@@ -1,3 +1,4 @@
+import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { product } from '../../lib/product-client.js';
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -159,19 +160,18 @@ export function ProjectFocusView({ project }: { project: Project }) {
     };
   }, [newMenuOpen]);
 
-  // In a per-project window there's nowhere to go "back" to — the rail is
-  // permanently this one project — so the exit-focus affordance is hidden.
+  // Dedicated project windows provide their navigation controls in the sidebar.
   const scopedProjectId = getScopedProjectId();
 
   return (
     <section className="list-pane">
       <AppPageHeader
         className="list-header"
-        actions={!scopedProjectId ? (
+        actions={!scopedProjectId && hasDesktopBridge() ? (
           <button
             type="button"
             className="focus-popout"
-            onClick={() => void product.windows.openProject(project.id)}
+            onClick={() => void product.windows.openNew(project.id)}
             title="Open this project in a new window"
             aria-label="Open this project in a new window"
           >

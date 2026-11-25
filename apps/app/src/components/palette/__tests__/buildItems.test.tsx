@@ -22,6 +22,8 @@ vi.mock('../../../store', async () => {
 });
 vi.mock('../../thread/pickers/model-refresh.js', () => ({ refreshModelsWithToast: vi.fn() }));
 import { refreshModelsWithToast } from '../../thread/pickers/model-refresh.js';
+vi.mock('../../../lib/app-surface.js', () => ({ hasDesktopBridge: vi.fn(() => true) }));
+import { hasDesktopBridge } from '../../../lib/app-surface.js';
 const noop = () => {};
 const asyncNoop = async () => null;
 
@@ -101,6 +103,9 @@ describe('buildPaletteItems', () => {
       'action:new-chat',
       'action:add-project',
       'action:settings',
+      'action:sidebar-expanded',
+      'action:sidebar-rail',
+      'action:sidebar-hidden',
       'action:refresh-models',
       'action:shortcuts',
       'action:inbox',
@@ -128,6 +133,22 @@ describe('buildPaletteItems', () => {
       'action:reopen-last-closed',
       'open-window:p1'
     ]);
+  });
+
+  it('omits native window actions in a browser', () => {
+    vi.mocked(hasDesktopBridge).mockReturnValueOnce(false);
+    expect(buildPaletteItems(baseCtx()).some(item => item.key.startsWith('open-window:'))).toBe(false);
+  });
+
+  it('opens the selected project in a new desktop window and closes the palette', () => {
+    const openNew = vi.fn();
+    const onClose = vi.fn();
+    vi.stubGlobal('window', { cc: { windows: { openNew } } });
+    try {
+      buildPaletteItems(baseCtx({ onClose })).find(item => item.key === 'open-window:p1')!.run();
+      expect(openNew).toHaveBeenCalledExactlyOnceWith('p1');
+      expect(onClose).toHaveBeenCalledOnce();
+    } finally { vi.unstubAllGlobals(); }
   });
 
   it('names the platform file manager on the reveal action', () => {
@@ -182,6 +203,9 @@ describe('buildPaletteItems', () => {
       'action:new-chat',
       'action:add-project',
       'action:settings',
+      'action:sidebar-expanded',
+      'action:sidebar-rail',
+      'action:sidebar-hidden',
       'action:refresh-models',
       'action:shortcuts',
       'action:inbox',
@@ -209,6 +233,43 @@ describe('buildPaletteItems', () => {
     expect(item?.label).toBe('New Chat');
     item!.run();
     expect(setNav).toHaveBeenCalledWith('home');
+  });
+
+  it.each([
+    ['action:sidebar-expanded', 'expanded'],
+    ['action:sidebar-rail', 'rail'],
+    ['action:sidebar-hidden', 'hidden']
+  ] as const)('%s sets the sidebar mode and closes the palette', (key, mode) => {
+    const setSidebarMode = vi.fn();
+    const onClose = vi.fn();
+    vi.mocked(useUi.getState).mockReturnValue({ setSidebarMode } as never);
+    const item = buildPaletteItems(baseCtx({ onClose })).find((i) => i.key === key)!;
+    expect(item.label).toMatch(/^Sidebar: /);
+    item.run();
+    expect(setSidebarMode).toHaveBeenCalledWith(mode);
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('shows the cycle shortcut hint only on the rail entry', () => {
+    const hints = Object.fromEntries(
+      buildPaletteItems(baseCtx())
+        .filter((i) => i.key.startsWith('action:sidebar-'))
+        .map((i) => [i.key, i.hint])
+    );
+    expect(hints['action:sidebar-expanded']).toBeUndefined();
+    expect(hints['action:sidebar-hidden']).toBeUndefined();
+    expect(typeof hints['action:sidebar-rail']).toBe('string');
+  });
+
+  it('drops the rail hint when the shortcut is unbound', async () => {
+    const { setCommandShortcutOverride, resetCommandShortcutOverride } = await import('../../../lib/keyboard-shortcut-settings.js');
+    setCommandShortcutOverride('sidebar.rail.toggle', null);
+    try {
+      const rail = buildPaletteItems(baseCtx()).find((i) => i.key === 'action:sidebar-rail');
+      expect(rail?.hint).toBeUndefined();
+    } finally {
+      resetCommandShortcutOverride('sidebar.rail.toggle');
+    }
   });
 
   it('shows the ⌘, hint on Open Settings only when not drilled into a project', () => {

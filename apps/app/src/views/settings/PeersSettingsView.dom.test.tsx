@@ -415,6 +415,7 @@ describe('Copy diagnostics', () => {
   it('copies link and connection facts without secrets', async () => {
     api.list.mockResolvedValue({ links: [link({ connected: false })], diagnostics: [{ peerInstanceId: 'p1', role: 'inviter', phase: 'linked', side: 'server', state: 'disconnected', reason: 'ssh-down', paused: false, forwarderBlocked: 'lease moved', tunnel: { up: false, downForMs: 120000, failure: 'refused' }, session: null, retries: 2 }] });
     render(<PeersSettingsView />);
+    await screen.findByText('Studio laptop');
     fireEvent.click(await screen.findByRole('button', { name: 'Copy diagnostics' }));
     await waitFor(() => expect(copy.text).toHaveBeenCalled());
     const text = copy.text.mock.calls[0]![0];

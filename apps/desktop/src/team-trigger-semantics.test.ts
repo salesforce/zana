@@ -28,7 +28,7 @@ describe('resolveTriggeredSquadPlan', () => {
   it('keeps an invalid provided plan out of structured coordination and exposes its correction reason', () => {
     const invalidPlan = '### write: Write output <!-- executable-step -->\n\n- **Mode:** Mutating\n- **Work:** Create output.\n- **Verification:** Read output.';
 
-    expect(resolveTriggeredSquadPlan('provided', invalidPlan)).toEqual({
+    expect(resolveTriggeredSquadPlan('provided', invalidPlan)).toMatchObject({
       coordinationMode: 'freeform',
       planError: expect.any(String)
     });
@@ -37,7 +37,7 @@ describe('resolveTriggeredSquadPlan', () => {
   it('detects invalid provided plans using parser marker whitespace and case grammar', () => {
     const invalidPlan = '  ### write: Write output <!--  EXECUTABLE-STEP  -->\n\n- **Mode:** Mutating\n- **Work:** Create output.\n- **Verification:** Read output.';
 
-    expect(resolveTriggeredSquadPlan('provided', invalidPlan)).toEqual({
+    expect(resolveTriggeredSquadPlan('provided', invalidPlan)).toMatchObject({
       coordinationMode: 'freeform',
       planError: expect.any(String)
     });
@@ -50,7 +50,7 @@ describe('resolveTriggeredSquadPlan', () => {
   });
 
   it('parks provided prose with no plan steps for correction instead of falling through to freeform repair', () => {
-    expect(resolveTriggeredSquadPlan('provided', 'Fix the flaky test and ship it.')).toEqual({
+    expect(resolveTriggeredSquadPlan('provided', 'Fix the flaky test and ship it.')).toMatchObject({
       coordinationMode: 'freeform',
       planError: 'no executable steps found'
     });
@@ -211,5 +211,30 @@ describe('resolveSquadPlan precedence (squad-bugs)', () => {
     expect(resolved.coordinationMode).toBe('structured');
     expect(resolved.workUnits?.map((unit) => unit.id)).toEqual(['from-goal']);
     expect(resolved).not.toHaveProperty('planError');
+  });
+});
+
+describe('resolveSquadPlan findings wiring', () => {
+  it('carries parser findings, parserVersion and the declared Squad on an accepted plan', () => {
+    const plan = `## Launch\n\n- **Squad:** delivery\n\n## Execution Plan\n\n${validPlan}\n\n### Stop conditions\n\n- stop`;
+    const resolved = resolveSquadPlan('provided', [plan]);
+    expect(resolved.coordinationMode).toBe('structured');
+    expect(resolved.declaredSquad).toBe('delivery');
+    expect(resolved.parserVersion).toEqual(expect.any(Number));
+    expect(resolved.launch).toBeUndefined();
+  });
+
+  it('carries findings and parserVersion on a rejected plan', () => {
+    const bad = '### write: Write output <!-- executable-step -->\n\n- **Mode:** Mutating\n- **Work:** Create output.\n- **Verification:** Read output.';
+    const resolved = resolveSquadPlan('provided', ['no steps here', bad]);
+    expect(resolved.planError).toBeTruthy();
+    expect(resolved.parserVersion).toEqual(expect.any(Number));
+    expect(resolved.findings?.some((finding) => finding.severity === 'blocking')).toBe(true);
+  });
+
+  it('adds no findings fields for a clean plan', () => {
+    const resolved = resolveSquadPlan('provided', [validPlan]);
+    expect(resolved.findings).toBeUndefined();
+    expect(resolved.declaredSquad).toBeUndefined();
   });
 });

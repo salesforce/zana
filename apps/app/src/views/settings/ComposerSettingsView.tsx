@@ -4,6 +4,8 @@ import { RefreshCw } from 'lucide-react';
 import { Section, Field, CheckboxField, SettingsActionRow } from '@/components/settings/FormFields';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 import { useBooleanPreference } from '@/lib/use-boolean-preference';
+import { ComposerHarnessFields } from './ComposerHarnessFields';
+import './composer-defaults.css';
 import { DefaultThreadPermissionsField } from './DefaultThreadPermissionsField';
 import { reloadComposerCommandCatalog } from '@/lib/composer-commands-reload';
 import {
@@ -61,62 +63,9 @@ export function ComposerSettingsView({ config, onUpdate }: ComposerTabProps) {
   };
 
   return (
-    <>
-      <Section
-        anchorId="launch-surfaces"
-        searchId="composer.launch-surfaces-intro"
-        title="Launch surfaces"
-        help="Choose which composers New Chat and New agent offer. At least Modern or CLI Agent must stay on."
-      >
-        <CheckboxField
-          searchId="composer.cli-agent"
-          label="CLI Agent"
-          help="PTY coding-CLI session. Shown first in the launch switcher."
-          checked={surfaces.showCliAgent}
-          disabled={!canDisableComposerSurface('agent', surfaces)}
-          onChange={(showCliAgent) => updateSurfaces({ showCliAgent })}
-        />
-        <CheckboxField
-          searchId="composer.modern"
-          label="Modern"
-          help="HTTP conversation timeline."
-          checked={surfaces.showModern}
-          disabled={!canDisableComposerSurface('thread', surfaces)}
-          onChange={(showModern) => updateSurfaces({ showModern })}
-        />
-        <CheckboxField
-          searchId="composer.squad"
-          label="Squad"
-          help="Show durable Squad mode."
-          checked={surfaces.showTeam}
-          onChange={(showTeam) => updateSurfaces({ showTeam })}
-        />
-      </Section>
-
-      <Section
-        anchorId="composer"
-        searchId="composer.composer-intro"
-        title="Composer"
-        help="Composer and markdown behavior for new and running agents."
-      >
-        <DefaultThreadPermissionsField
-          value={config.defaultThreadPermissionMode}
-          onChange={(defaultThreadPermissionMode) => onUpdate({ defaultThreadPermissionMode })}
-        />
-        <CheckboxField
-          searchId="composer.navigate-on-create"
-          label="Navigate to agents on creation"
-          help="Open a new agent as soon as you send the first message. Off keeps you on the current page."
-          checked={navigateOnCreate}
-          onChange={setNavigateOnCreate}
-        />
-        <CheckboxField
-          searchId="composer.markdown-in-prompt"
-          label="Markdown in the prompt box"
-          help="Allow headings, lists, and emphasis in the composer. Mentions still work either way."
-          checked={markdownInPrompt}
-          onChange={setMarkdownInPrompt}
-        />
+    <div className="composer-defaults">
+      <Section anchorId="composer" searchId="composer.composer-intro" title="New chat defaults">
+        <ComposerHarnessFields value={config.defaultThreadProviderId} onChange={defaultThreadProviderId => onUpdate({ defaultThreadProviderId })} />
         <Field
           searchId="composer.default-launch-mode"
           label="Default launch mode"
@@ -131,6 +80,10 @@ export function ComposerSettingsView({ config, onUpdate }: ComposerTabProps) {
             onChange={(value) => setLaunchMode(value as LaunchMode)}
           />
         </Field>
+        <DefaultThreadPermissionsField
+          value={config.defaultThreadPermissionMode}
+          onChange={(defaultThreadPermissionMode) => onUpdate({ defaultThreadPermissionMode })}
+        />
         <Field
           searchId="composer.send-mode"
           label="Send mode"
@@ -157,6 +110,22 @@ export function ComposerSettingsView({ config, onUpdate }: ComposerTabProps) {
             }}
           />
         </Field>
+      </Section>
+      <Section title="Writing and navigation" anchorId="composer-editing" searchId="composer.editing">
+        <CheckboxField
+          searchId="composer.navigate-on-create"
+          label="Navigate to agents on creation"
+          help="Open a new agent as soon as you send the first message. Off keeps you on the current page."
+          checked={navigateOnCreate}
+          onChange={setNavigateOnCreate}
+        />
+        <CheckboxField
+          searchId="composer.markdown-in-prompt"
+          label="Markdown in the prompt box"
+          help="Allow headings, lists, and emphasis in the composer. Mentions still work either way."
+          checked={markdownInPrompt}
+          onChange={setMarkdownInPrompt}
+        />
         <CheckboxField
           searchId="composer.rewrite-localhost"
           label="Rewrite localhost links"
@@ -188,7 +157,38 @@ export function ComposerSettingsView({ config, onUpdate }: ComposerTabProps) {
         </SettingsActionRow>
         {commandsReloadNote ? <p className="settings-help">{commandsReloadNote}</p> : null}
       </Section>
-    </>
+      <Section
+        anchorId="launch-surfaces"
+        searchId="composer.launch-surfaces-intro"
+        title="Launch surfaces"
+        help="Choose which composers New Chat and New agent offer. At least Modern or CLI Agent must stay on."
+      >
+        <CheckboxField
+          searchId="composer.cli-agent"
+          label="CLI Agent"
+          help="Start a coding agent in a terminal."
+          checked={surfaces.showCliAgent}
+          disabled={!canDisableComposerSurface('agent', surfaces)}
+          onChange={(showCliAgent) => updateSurfaces({ showCliAgent })}
+        />
+        <CheckboxField
+          searchId="composer.modern"
+          label="Modern"
+          help="Start a conversation in the chat view."
+          checked={surfaces.showModern}
+          disabled={!canDisableComposerSurface('thread', surfaces)}
+          onChange={(showModern) => updateSurfaces({ showModern })}
+        />
+        <CheckboxField
+          searchId="composer.squad"
+          label="Squad"
+          help="Launch a group of agents."
+          checked={surfaces.showTeam}
+          onChange={(showTeam) => updateSurfaces({ showTeam })}
+        />
+      </Section>
+
+    </div>
   );
 }
 

@@ -23,16 +23,17 @@ test('AI Harness makes setup readable and preserves keyboard, enablement, and bi
   await win.getByRole('link', { name: 'Settings', exact: true }).click();
   await win.getByTestId('settings-nav-harness').click();
   const panel = win.locator('.harness-settings');
-  const status = panel.getByTestId('harness-status-list');
-  await expect(status.locator('.opener-row').first()).toBeVisible();
-  const statusBox = (await status.boundingBox())!;
-  const modelsBox = (await panel.locator('#settings-anchor-harness-models').boundingBox())!;
-  expect(statusBox.y + statusBox.height).toBeLessThan(modelsBox.y);
-  await expect(panel.locator('.harness-machine-name')).toContainText('This machine');
-  await expect(status).toContainText('Always on');
-
-  await expect(panel.getByRole('button', { name: 'Check status', exact: true })).toBeEnabled({ timeout: 30_000 });
-  const codex = status.getByRole('switch', { name: 'Show Codex in the New Agent modal' });
+  const status = panel.getByTestId('registered-harness-list');
+  const codexRow = status.locator('[data-harness-family="codex"]');
+  const provider = codexRow.getByRole('button', { name: 'Configure Codex' });
+  await expect(status.getByRole('heading', { name: 'Codex', exact: true })).toHaveCount(1);
+  await expect(panel.getByRole('tablist', { name: 'Harness settings' })).toHaveCount(0);
+  await provider.focus();
+  await provider.press('Enter');
+  await expect(provider).toHaveAttribute('aria-expanded', 'true');
+  const cliSection = codexRow.locator(':scope > :last-child');
+  await expect(cliSection.getByRole('button', { name: 'Advanced settings for Codex' })).toBeVisible();
+  const codex = cliSection.getByRole('switch', { name: 'Show Codex in the New Agent modal' });
   const enabled = await codex.getAttribute('aria-checked') === 'true';
   await codex.click();
   await expect(codex).toHaveAttribute('aria-checked', String(!enabled));
@@ -40,12 +41,9 @@ test('AI Harness makes setup readable and preserves keyboard, enablement, and bi
   await codex.click();
   await expect(codex).toHaveAttribute('aria-checked', String(enabled));
 
-  const modern = panel.getByRole('tab', { name: 'Modern', exact: true });
-  const cli = panel.getByRole('tab', { name: 'CLI Agent', exact: true });
-  await modern.focus();
-  await modern.press('ArrowRight');
-  await expect(cli).toBeFocused();
-  await expect(panel.getByRole('tabpanel', { name: 'CLI Agent' })).toBeVisible();
+  const claude = status.getByRole('button', { name: 'Configure Claude Code' });
+  await claude.click();
+  await expect(provider).toHaveAttribute('aria-expanded', 'false');
   const claudeSettings = panel.getByRole('button', { name: 'Advanced settings for Claude Code' });
   await claudeSettings.click();
   await expect(claudeSettings).toHaveAttribute('aria-expanded', 'true');
@@ -62,25 +60,18 @@ test('AI Harness makes setup readable and preserves keyboard, enablement, and bi
   await expect.poll(() => win.evaluate(() => window.cc.config.get())).toMatchObject({ claudeBinary: 'claude' });
   await claudeSettings.click();
   await expect(binary).toBeHidden();
-  await cli.press('Home');
-  await expect(modern).toBeFocused();
-  const modernPanel = panel.getByRole('tabpanel', { name: 'Modern' });
-  await expect(modernPanel).toBeVisible();
-  const provider = modernPanel.getByRole('button', { name: 'Models for Codex', exact: true });
-  await expect(provider).toBeVisible();
-  await expect(modernPanel.locator('.thread-provider-id')).toHaveCount(0);
+  const modernPanel = codexRow;
   await provider.click();
-  await expect(modernPanel.locator('.thread-provider-id')).toHaveText('provider-codex');
-  const loadModels = modernPanel.getByRole('button', { name: /^(Load|Reload)$/ });
+  const loadModels = modernPanel.getByRole('button', { name: 'Reload models' });
   await expect(loadModels).toBeEnabled({ timeout: 30_000 });
   const requestsBeforeLoad = codexModelRequests;
   await loadModels.click();
   await expect.poll(() => codexModelRequests).toBeGreaterThan(requestsBeforeLoad);
   const search = modernPanel.getByRole('searchbox', { name: 'Search Codex models' });
   await expect(search).toBeVisible({ timeout: 30_000 });
-  const modelId = await modernPanel.locator('.thread-provider-models code').first().innerText();
+  const modelId = await modernPanel.locator('.registered-harness-models li code').first().innerText();
   await search.fill(modelId);
-  await expect(modernPanel.locator('.thread-provider-models')).toContainText(modelId);
+  await expect(modernPanel.locator('.registered-harness-models ul')).toContainText(modelId);
   await search.fill('does-not-exist-in-catalogue');
   await expect(modernPanel.getByText('No models match your search.')).toBeVisible();
   await search.fill('');
@@ -119,7 +110,7 @@ test('AI Harness makes setup readable and preserves keyboard, enablement, and bi
 
   async function captureModels(name: string) {
     // Config updates (including theme changes) invalidate the shared catalogue.
-    const reload = modernPanel.getByRole('button', { name: /^(Load|Reload)$/ });
+    const reload = modernPanel.getByRole('button', { name: 'Reload models' });
     await expect(reload).toBeEnabled({ timeout: 30_000 });
     await reload.click();
     await expect(search).toBeVisible({ timeout: 30_000 });
@@ -132,20 +123,18 @@ test('AI Harness makes setup readable and preserves keyboard, enablement, and bi
     await expect(win.locator('html')).toHaveAttribute('data-theme', theme);
     await win.locator('.settings-panel').evaluate((el) => { el.scrollTop = 0; });
     await capture(`harness-${theme}.png`);
-    await win.locator('#settings-anchor-harness-thread').scrollIntoViewIfNeeded();
-    await capture(`harness-models-${theme}.png`);
     await provider.click();
     await captureModels(`thread-options-${theme}.png`);
     await provider.click();
-    await cli.click();
+    await claude.click();
     await claudeSettings.click();
     await claudeSettings.evaluate((el) => el.scrollIntoView({ block: 'start' }));
     await capture(`cli-options-${theme}.png`);
     await panel.getByRole('group', { name: 'Tools & access', exact: true }).evaluate((el) => el.scrollIntoView({ block: 'start' }));
     await capture(`cli-tools-${theme}.png`);
-    await capture(`cli-default-${theme}.png`, panel.locator('#settings-anchor-harness-defaults'));
+    await capture(`cli-default-${theme}.png`, panel.locator('.harness-default-card'));
     await claudeSettings.click();
-    await modern.click();
+    await claude.click();
   }
 
   await win.setViewportSize({ width: 800, height: 800 });
@@ -154,7 +143,7 @@ test('AI Harness makes setup readable and preserves keyboard, enablement, and bi
   await expect.poll(() => settingsPanel.evaluate((el) => el.scrollWidth <= el.clientWidth), { message: JSON.stringify(overflow) }).toBe(true);
   await settingsPanel.evaluate((el) => { el.scrollTop = 0; });
   await capture('harness-narrow.png');
-  await cli.click();
+  await claude.click();
   await claudeSettings.click();
   // The default 'claude' is stored but shown as an empty field with a placeholder, so a cleared field stays visibly cleared.
   await expect(binary).toHaveValue('');
@@ -162,7 +151,7 @@ test('AI Harness makes setup readable and preserves keyboard, enablement, and bi
   await expect.poll(() => settingsPanel.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
   await claudeSettings.evaluate((el) => el.scrollIntoView({ block: 'start' }));
   await capture('cli-options-narrow.png');
-  await modern.click();
+  await claude.click();
   await provider.click();
   await captureModels('thread-options-narrow.png');
   await expect.poll(() => settingsPanel.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);

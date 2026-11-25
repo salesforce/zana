@@ -5,6 +5,7 @@ import {
   threadEventSchema,
   threadScope,
   type PermissionMode,
+  type MessageSource,
   type PromptInput,
   type ReasoningLevel,
   type ThreadEvent
@@ -40,6 +41,7 @@ export function appendClientTurnRequested(
     serviceTier?: string;
     acpMode?: string;
     senderThreadId?: string;
+    messageSource?: MessageSource;
   }
 ): string | undefined {
   const input = promptInputForTurn(args.prompt, args.promptInput);
@@ -57,6 +59,7 @@ export function appendClientTurnRequested(
     source: args.kind === 'thread-start' ? 'spawn' : 'tell',
     initiator: args.senderThreadId ? 'agent' : 'user',
     senderThreadId: args.senderThreadId ?? null,
+    ...(args.messageSource ? { messageSource: args.messageSource } : {}),
     input,
     target: args.kind === 'steer'
       ? { kind: 'steer', expectedTurnId: args.expectedTurnId ?? null }

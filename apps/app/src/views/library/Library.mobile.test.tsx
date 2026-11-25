@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LibraryDoc, Project } from '@zana-ai/zcc-domain/product';
@@ -32,8 +32,9 @@ vi.mock('./library/DocPreview.js', () => ({ DocPreview: ({ doc, fragment, onOpen
 </> }));
 const project = { id: 'p', name: 'My project', path: '/project' } as Project;
 const note = { id: 'a', title: 'Readable note', kind: 'md', relPath: 'notes/reading.md', scope: 'global', createdAt: 1, updatedAt: 1 } as LibraryDoc;
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000);
   state.compact = true;
   state.library = { docs: [note, { ...note, id: 'b', title: 'Other', relPath: 'other.md' }], loading: false };
 });
@@ -126,6 +127,18 @@ it('retains desktop project auto-selection', () => {
   expect(view.getByRole('textbox')).toBeTruthy();
 });
 
+it('opens both panes in a wide desktop Library when ResizeObserver is unavailable', () => {
+  state.compact = false;
+  vi.stubGlobal('ResizeObserver', undefined);
+  try {
+    const view = render(<MemoryRouter><LibraryView project={project} /></MemoryRouter>);
+    expect(view.getByRole('textbox')).toBeTruthy();
+    expect(view.getByRole('article').textContent).toBe('Readable note content');
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
 it('retains desktop folder toggling and document context actions with native tree buttons', () => {
   state.compact = false;
   const view = render(<MemoryRouter><LibraryPanel /></MemoryRouter>);
@@ -147,4 +160,41 @@ it('offers Reveal in the project library tree context menu', () => {
   const view = render(<MemoryRouter><LibraryView project={project} /></MemoryRouter>);
   fireEvent.contextMenu(view.getByRole('button', { name: 'reading.md' }), { clientX: 100, clientY: 200 });
   expect(view.getByText(`Reveal in ${fileManagerName()}`)).toBeTruthy();
+});
+
+it('browses the owning project in a narrow desktop pane and adapts when widened', () => {
+  state.compact = false;
+  const own = { ...note, id: 'mine', scope: 'project' as const, projectId: 'p', relPath: 'project-note.md' };
+  state.library.docs = [own, { ...own, id: 'theirs', projectId: 'another', relPath: 'private-note.md' }];
+  let width = 360;
+  const size = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => width);
+  let measure!: () => void;
+  const disconnect = vi.fn();
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(callback: () => void) { measure = callback; }
+    observe() {}
+    disconnect = disconnect;
+  });
+  try {
+    const view = render(<MemoryRouter><LibraryView project={project} /></MemoryRouter>);
+    const root = view.container.querySelector('.library-view')!;
+    expect(root.getAttribute('data-mobile-pane')).toBe('documents');
+    expect(view.queryByRole('button', { name: 'private-note.md' })).toBeNull();
+    fireEvent.click(view.getByRole('button', { name: 'project-note.md' }));
+    expect(root.getAttribute('data-mobile-pane')).toBe('document');
+    fireEvent.click(view.getByRole('button', { name: 'Back to documents' }));
+    expect(root.getAttribute('data-mobile-pane')).toBe('documents');
+    width = 0;
+    act(() => measure());
+    expect(root.getAttribute('data-mobile-pane')).toBe('documents');
+    width = 840;
+    act(() => measure());
+    expect(root.hasAttribute('data-mobile-pane')).toBe(false);
+    expect(view.getByRole('article').textContent).toContain('Readable note content');
+    view.unmount();
+    expect(disconnect).toHaveBeenCalled();
+  } finally {
+    size.mockRestore();
+    vi.unstubAllGlobals();
+  }
 });

@@ -1,11 +1,12 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-const fixtures = vi.hoisted(() => ({ slots: [] as any[], view: 'plugin:test/world', last: null as any, executions: [] as any[], inspect: vi.fn(), inspectThread: vi.fn() }));
+const fixtures = vi.hoisted(() => ({ slots: [] as any[], view: 'plugin:test/world', compact: false, last: null as any, executions: [] as any[], inspect: vi.fn(), inspectThread: vi.fn() }));
 vi.mock('@/components/AgentViewToggle', () => ({
-  AgentViewToggle: () => null, ScheduledColumnToggle: () => null,
-  useAgentsBoardView: () => ({ view: fixtures.view, compact: false, pluginViews: fixtures.slots })
+  AgentViewToggle: () => null, ScheduledColumnToggle: () => null, PluginThreadToggles: () => null,
+  useAgentsBoardView: () => ({ view: fixtures.view, compact: fixtures.compact, pluginViews: fixtures.slots })
 }));
 vi.mock('@/hooks/useEnsureThreads', () => ({ useEnsureThreads: () => {} }));
 vi.mock('@/lib/inspect-session', () => ({ inspectAgentSession: fixtures.inspect, inspectThread: fixtures.inspectThread }));
@@ -14,8 +15,10 @@ vi.mock('@/views/agents/SquadFlowView', () => ({ SquadFlowView: () => null }));
 vi.mock('@/components/AgentMonitor', () => ({ AgentMonitor: () => null }));
 vi.mock('@/components/AgentBoard', async importOriginal => ({
   ...await importOriginal<typeof import('@/components/AgentBoard')>(),
-  AgentBoardLanes: ({ executions }: any) => <div data-testid="board-lanes">
-    {executions.map((row: any) => <span key={row.executionId}>{row.jobTitle}</span>)}
+  AgentBoardLanes: ({ executions, mobileSearch, cards }: { executions: any[]; mobileSearch?: ReactNode; cards: any[] }) => <div data-testid="board-lanes">
+    {mobileSearch}
+    {cards.map((card) => <span key={card.id}>{card.title}</span>)}
+    {executions.map((row) => <span key={row.executionId}>{row.jobTitle}</span>)}
   </div>
 }));
 vi.mock('@/components/MobilePageHeader', () => ({ MobilePageHeader: () => null }));
@@ -34,7 +37,7 @@ function View(props: any) {
 const projects = [{ id: 'p1', name: 'One', path: '/one', color: 'blue' }, { id: 'p2', name: 'Two', path: '/two' }] as any[];
 beforeEach(() => {
   fixtures.slots = [{ pluginId: 'test', id: 'world', generation: 2, title: 'World', component: View }];
-  fixtures.view = 'plugin:test/world'; fixtures.inspect.mockClear(); fixtures.inspectThread.mockClear();
+  fixtures.view = 'plugin:test/world'; fixtures.compact = false; fixtures.inspect.mockClear(); fixtures.inspectThread.mockClear();
   fixtures.executions = [{ projectId: 'p1', executionId: 'j1', jobTitle: 'Review', state: 'RUNNING' }, { projectId: 'unknown', executionId: 'j2', jobTitle: 'Missing project', state: 'COMPLETED' }];
   window.cc = { executionBoard: { listProject: async (id: string) => ({ executions: id === 'p1' ? fixtures.executions : [], hasMore: false }) } } as any;
   useData.setState({ projects, terminals: { p1: [{ id: 'a1', profile: 'codex', title: 'Coder', status: 'running', projectId: 'p1' }] as any[] }, includeScheduledAgentsInAgentView: true, idleAttentionSensitivity: 'medium' });
@@ -130,6 +133,24 @@ it('shows a rebooted BLOCKED execution without live agents on the global board',
   fireEvent.click(screen.getByText('Clear filter'));
   expect(screen.getByText('Boot CLAIMED worker')).toBeTruthy();
 });
+it('puts search in the compact project board and keeps it available when the query has no matches', () => {
+  fixtures.compact = true;
+  fixtures.view = 'board';
+  fixtures.executions = [];
+  delete (window as any).cc;
+  render(<MemoryRouter><AgentsBoard scope={{ kind: 'project', project: projects[0] }} /></MemoryRouter>);
+
+  const lanes = screen.getByTestId('board-lanes');
+  const search = screen.getByPlaceholderText('Filter by task…');
+  expect(lanes.contains(search)).toBe(true);
+  expect(screen.getByText('Coder')).toBeTruthy();
+  fireEvent.change(search, { target: { value: 'unmatched' } });
+  expect(lanes.contains(search)).toBe(true);
+  expect(screen.queryByText('Coder')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Clear filter' }));
+  expect(screen.getByText('Coder')).toBeTruthy();
+});
+
 it('opens squad details from the open event and ignores incomplete event details', async () => {
   render(<MemoryRouter><AgentsBoard scope={{ kind: 'project', project: projects[0] }} /></MemoryRouter>);
   await screen.findByRole('button', { name: 'Review' });
@@ -155,4 +176,23 @@ it('shows the fairy spinner on Close idle while agents are closing', async () =>
   expect(busy.querySelector('svg.fairy-spinner')).toBeTruthy();
   release();
   await screen.findByRole('button', { name: 'Close 1 idle agents' });
+});
+it('hides threads owned by a plugin with a board toggle until the toggle is on', async () => {
+  const { interpretPluginApp, clearPluginSlots } = await import('@/plugins/plugin-slots');
+  const { definePluginApp } = await import('@zana-ai/zcc-plugin-sdk');
+  const { useAgentsBoardThreadToggles } = await import('@/plugins/agents-board-thread-toggles');
+  interpretPluginApp('owner', definePluginApp((app) => {
+    app.slots.experimental_agentsBoardThreadToggle({ id: 'threads', title: 'Owned' });
+  }));
+  useAgentsBoardThreadToggles.setState({ shown: {} });
+  const thread = (id: string, title: string, originPluginId: string | null) => ({ id, projectId: 'p1', hostId: 'h', environmentId: null, providerId: 'codex', status: 'idle', title, createdAt: 1, cwd: null, branchName: null, isWorktree: false, originPluginId });
+  useThreads.setState({ threads: [thread('t-own', 'Owned thread', 'owner'), thread('t-other', 'Other plugin thread', 'other'), thread('t-user', 'User thread', null)] as any[] });
+  render(<MemoryRouter><AgentsBoard scope={{ kind: 'project', project: projects[0] }} /></MemoryRouter>);
+  await screen.findByRole('button', { name: 'User thread' });
+  expect(screen.getByRole('button', { name: 'Other plugin thread' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Owned thread' })).toBeNull();
+  act(() => useAgentsBoardThreadToggles.getState().setShown('owner', true));
+  expect(await screen.findByRole('button', { name: 'Owned thread' })).toBeTruthy();
+  clearPluginSlots('owner');
+  localStorage.clear();
 });

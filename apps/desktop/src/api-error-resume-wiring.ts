@@ -8,6 +8,7 @@ import {
   ApiErrorResumeService,
   openRegexSession
 } from '@zana-ai/zcc-server/services/followups/api-error-resume';
+import type { ApiErrorProducer, ApiErrorStopEvent, DispatchCtx } from './api-error-dispatch.js';
 
 export interface ApiErrorResumeWiringDeps {
   getConfig: () => { apiErrorResume?: ApiErrorResumeConfig };
@@ -64,4 +65,44 @@ export function handleApiErrorStop(
   deps.agentStatus.clearToolsInFlight(sessionId);
   // No service: the caller routes the error elsewhere (a Squad worker's engine recovery).
   void deps.service?.onApiErrorStop(sessionId, event).catch((err) => deps.logMainError('api-error-resume', err));
+}
+
+export interface ApiErrorDispatchWiringDeps<S extends { status: string } = { status: string }> {
+  ptys: { getSession(id: string): S | null | undefined };
+  onTurnFailed(sessionId: string): void;
+  /** Hands a live session's stop to resume rules or Squad worker recovery. */
+  routeStop(sessionId: string, session: S, event: ApiErrorStopEvent): void;
+  /** Where an error goes when a message carries one; falls back to the console. */
+  logError?(label: string, error: unknown): void;
+}
+
+/** The dispatch context the neutral seam runs on: liveness, routing and timers come from the host. */
+export function createApiErrorDispatchCtx<S extends { status: string }>(deps: ApiErrorDispatchWiringDeps<S>): DispatchCtx {
+  return {
+    isLive: (id) => { const s = deps.ptys.getSession(id); return !!s && s.status !== 'exited'; },
+    onTurnFailed: (id) => deps.onTurnFailed(id),
+    route: (id, event) => {
+      const s = deps.ptys.getSession(id);
+      if (!s) return;
+      deps.routeStop(id, s, event);
+    },
+    setTimer: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: (handle) => clearTimeout(handle as NodeJS.Timeout),
+    log: (message, error) => {
+      if (error === undefined) console.log(message);
+      else if (deps.logError) deps.logError(message, error);
+      else console.log(message, error);
+    }
+  };
+}
+
+/** The harness's API-error producer for a session, looked up from live then remembered sessions. */
+export function apiErrorProducerLookup(deps: {
+  ptys: { getSession(id: string): { profile: string } | null | undefined; getRememberedSession(id: string): { profile: string } | null | undefined };
+  producerForProfile(profile: string): ApiErrorProducer | undefined;
+}): (sessionId: string) => ApiErrorProducer | undefined {
+  return (sessionId) => {
+    const s = deps.ptys.getSession(sessionId) ?? deps.ptys.getRememberedSession(sessionId);
+    return s ? deps.producerForProfile(s.profile) : undefined;
+  };
 }

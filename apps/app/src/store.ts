@@ -1,4 +1,6 @@
 import { EXPLORER_FILE_ICON_THEME_DEFAULT, EXPLORER_MINIMAP_DEFAULTS, isAgentsViewId, PROJECT_EXPANDED_CAP, resolveExplorerFileIconTheme, resolveExplorerMinimap, type AgentsViewId, type CloseFollowupKeptOpen, type ExplorerFileIconTheme, type ExplorerMinimapConfig, type ExplorerMinimapPrefs } from '@zana-ai/zcc-domain/product';
+import { withAgentTabReplace } from './lib/agent-tab-resume.js';
+import { useApplicationTabs } from './lib/application-tabs.js';
 import { subscribeClientRecovery } from './lib/client-recovery.js';
 import { create } from 'zustand';
 import type {
@@ -77,7 +79,8 @@ import {
   getProjectModeRoutePath,
   getScheduleRoutePath,
   getSchedulerRoutePath,
-  getSettingsTabRoutePath
+  getSettingsTabRoutePath,
+  sessionIdFromPath
 } from './lib/route-paths.js';
 import {
   getRememberedAppRoutePath,
@@ -141,6 +144,47 @@ import {
 function sidebarCollapsedKey(): string {
   const scoped = getScopedProjectId();
   return scoped ? `zcc.sidebarCollapsed.${scoped}` : 'zcc.sidebarCollapsed';
+}
+
+function sidebarModeKey(): string {
+  const scoped = getScopedProjectId();
+  return scoped ? `zcc.sidebarMode.${scoped}` : 'zcc.sidebarMode';
+}
+
+export type SidebarMode = 'expanded' | 'rail' | 'hidden';
+
+/**
+ * What the collapse trigger / shortcut cycles through. `two-state` (default) is
+ * the original expanded <-> hidden toggle; `three-state` adds the icon rail.
+ */
+export type SidebarCollapseBehavior = 'two-state' | 'three-state';
+const SIDEBAR_COLLAPSE_BEHAVIOR_KEY = 'zcc.sidebarCollapseBehavior';
+
+export function readSidebarCollapseBehavior(): SidebarCollapseBehavior {
+  return readLocalStorageItem(SIDEBAR_COLLAPSE_BEHAVIOR_KEY) === 'three-state' ? 'three-state' : 'two-state';
+}
+
+/**
+ * The behavior is one global localStorage value shared by every window but
+ * read once at store creation; follow writes from other windows. Install once
+ * at app init and call the disposer on shutdown.
+ */
+export function installSidebarCollapseBehaviorSync(): () => void {
+  if (typeof window === 'undefined') return () => {};
+  const onStorage = (e: StorageEvent) => {
+    if (e.key !== null && e.key !== SIDEBAR_COLLAPSE_BEHAVIOR_KEY) return;
+    const next = readSidebarCollapseBehavior();
+    if (useUi.getState().sidebarCollapseBehavior !== next) useUi.setState({ sidebarCollapseBehavior: next });
+  };
+  window.addEventListener('storage', onStorage);
+  return () => window.removeEventListener('storage', onStorage);
+}
+
+/** New key first, then the legacy collapsed flag ('1' → hidden), else expanded. */
+export function readSidebarMode(): SidebarMode {
+  const v = readLocalStorageItem(sidebarModeKey());
+  if (v === 'expanded' || v === 'rail' || v === 'hidden') return v;
+  return readLocalStorageItem(sidebarCollapsedKey()) === '1' ? 'hidden' : 'expanded';
 }
 
 /** Built-in nav destinations. App modules (plugins/*) add their own ids. */
@@ -397,6 +441,8 @@ interface UiState {
    * local-only default. Null for generic opens; cleared on close.
    */
   launcherProjectId: string | null;
+  /** Squad the launcher was opened for (Settings > Squads Launch). Null for generic opens; cleared on close. */
+  launcherTeamId: string | null;
   searchOpen: boolean;
   findOpen: boolean;
   /**
@@ -494,6 +540,10 @@ interface UiState {
   // preference shared by the cross-project and per-project boards (persisted to
   // AppConfig.agentsBoardView). Default 'board'.
   agentsBoardView: AgentsBoardView;
+  // Session ids of exited non-zero Squad worker cards the user dismissed (persisted to
+  // AppConfig.dismissedWorkerExits). Until dismissed, such a card stays on the board.
+  dismissedWorkerExits: string[];
+  dismissWorkerExit: (sessionId: string) => void;
   // Session-local phone choice; desktop Flow never opts a phone into Canvas.
   mobileAgentsBoardView: AgentsBoardView | null;
   setMobileAgentsBoardView: (view: AgentsBoardView) => void;
@@ -558,7 +608,17 @@ interface UiState {
   // sidebar: collapsed to an icon rail (labels hidden) to save horizontal
   // space. Persisted per-window in localStorage so a project window's rail
   // doesn't bleed into the main window.
+  // `sidebarCollapsed` keeps meaning "hidden" (the `sidebar-is-collapsed`
+  // class contract); `sidebarMode` is the tri-state source of truth.
   sidebarCollapsed: boolean;
+  sidebarMode: SidebarMode;
+  lastVisibleSidebarMode: 'expanded' | 'rail';
+  setSidebarMode: (mode: SidebarMode) => void;
+  /** Which states the trigger/shortcut cycle through (global, not per project window). */
+  sidebarCollapseBehavior: SidebarCollapseBehavior;
+  setSidebarCollapseBehavior: (behavior: SidebarCollapseBehavior) => void;
+  /** two-state: expanded <-> hidden. three-state: expanded -> rail -> hidden -> expanded. */
+  cycleSidebarMode: () => void;
   toggleSidebar: () => void;
   // sidebar: when true, the Projects list hides projects that have no live
   // (non-exited or background) sessions. Persisted on AppConfig.
@@ -599,6 +659,8 @@ interface UiState {
   setShortcutsOpen: (open: boolean) => void;
   setResumeOpen: (open: boolean) => void;
   setLauncherOpen: (open: boolean, projectId?: string) => void;
+  /** Open the New Agent dialog on the Squad composer with this project and Squad pre-selected. */
+  openSquadLauncher: (projectId: string, teamId: string) => void;
   /** Open / close the first-run walkthrough overlay. */
   setWalkthroughOpen: (open: boolean) => void;
   setWalkthroughHomeMode: (mode: 'thread' | 'agent' | null) => void;
@@ -1029,6 +1091,15 @@ function persistAgentsBoardView(view: AgentsBoardView) {
   product.config.set({ agentsBoardView: view }).catch(() => {});
 }
 
+// Matches the config store's retention cap for AppConfig.dismissedWorkerExits.
+const DISMISSED_WORKER_EXITS_CAP = 200;
+
+// Fire-and-forget: only the dismissed id crosses IPC. Main appends under its serialized config
+// writer and applies the retention cap, so a second window's dismissal is never overwritten.
+function persistDismissedWorkerExit(sessionId: string) {
+  product.config.dismissWorkerExit(sessionId).catch(() => {});
+}
+
 // Per-project debounced git refresh. Terminal output is high-frequency, so
 // we coalesce bursts (build logs, scrolling output) into one git call after
 // activity quiets down for a moment.
@@ -1128,6 +1199,7 @@ export const useUi = create<UiState>((set, get) => ({
   resumeOpen: false,
   launcherOpen: false,
   launcherProjectId: null,
+  launcherTeamId: null,
   walkthroughOpen: false,
   walkthroughHomeMode: null,
   setupOpen: false,
@@ -1148,6 +1220,14 @@ export const useUi = create<UiState>((set, get) => ({
   unread: {},
   projectView: {},
   agentsBoardView: 'board',
+  dismissedWorkerExits: [],
+  dismissWorkerExit: (sessionId) => {
+    const current = get().dismissedWorkerExits;
+    if (current.includes(sessionId)) return;
+    const next = [...current, sessionId].slice(-DISMISSED_WORKER_EXITS_CAP);
+    set({ dismissedWorkerExits: next });
+    persistDismissedWorkerExit(sessionId);
+  },
   mobileAgentsBoardView: null,
   explorerFile: {},
   explorerGoto: {},
@@ -1190,13 +1270,42 @@ export const useUi = create<UiState>((set, get) => ({
   setHostInstallDrawerOpen: (open) => set((s) => ({
     hostInstallDrawer: { ...s.hostInstallDrawer, open }
   })),
-  sidebarCollapsed: readLocalStorageItem(sidebarCollapsedKey()) === '1',
-  toggleSidebar: () =>
+  ...(() => {
+    const mode = readSidebarMode();
+    return {
+      sidebarMode: mode,
+      sidebarCollapsed: mode === 'hidden',
+      lastVisibleSidebarMode: (mode === 'rail' ? 'rail' : 'expanded') as 'expanded' | 'rail'
+    };
+  })(),
+  setSidebarMode: (mode) =>
     set((s) => {
-      const next = !s.sidebarCollapsed;
-      writeLocalStorageItem(sidebarCollapsedKey(), next ? '1' : '0');
-      return { sidebarCollapsed: next };
+      writeLocalStorageItem(sidebarModeKey(), mode);
+      // Legacy mirror for one release so a rollback build reads the right state.
+      writeLocalStorageItem(sidebarCollapsedKey(), mode === 'hidden' ? '1' : '0');
+      return {
+        sidebarMode: mode,
+        sidebarCollapsed: mode === 'hidden',
+        lastVisibleSidebarMode: mode === 'hidden' ? s.lastVisibleSidebarMode : mode
+      };
     }),
+  sidebarCollapseBehavior: readSidebarCollapseBehavior(),
+  setSidebarCollapseBehavior: (behavior) => {
+    writeLocalStorageItem(SIDEBAR_COLLAPSE_BEHAVIOR_KEY, behavior);
+    set({ sidebarCollapseBehavior: behavior });
+  },
+  cycleSidebarMode: () => {
+    const s = useUi.getState();
+    const next: SidebarMode =
+      s.sidebarCollapseBehavior === 'three-state'
+        ? s.sidebarMode === 'expanded' ? 'rail' : s.sidebarMode === 'rail' ? 'hidden' : 'expanded'
+        : s.sidebarMode === 'expanded' ? 'hidden' : 'expanded';
+    s.setSidebarMode(next);
+  },
+  toggleSidebar: () => {
+    const s = useUi.getState();
+    s.setSidebarMode(s.sidebarMode === 'hidden' ? s.lastVisibleSidebarMode : 'hidden');
+  },
   hideIdleProjects: readLocalStorageItem('zcc.hideIdleProjects') === '1',
   toggleHideIdleProjects: () =>
     set((s) => {
@@ -1329,7 +1438,9 @@ export const useUi = create<UiState>((set, get) => ({
   setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
   setResumeOpen: (resumeOpen) => set({ resumeOpen }),
   setLauncherOpen: (launcherOpen, projectId) =>
-    set({ launcherOpen, launcherProjectId: launcherOpen ? projectId ?? null : null }),
+    set({ launcherOpen, launcherProjectId: launcherOpen ? projectId ?? null : null, launcherTeamId: null }),
+  openSquadLauncher: (projectId, teamId) =>
+    set({ launcherOpen: true, launcherProjectId: projectId, launcherTeamId: teamId }),
   setWalkthroughOpen: (walkthroughOpen) =>
     set(walkthroughOpen ? { walkthroughOpen } : { walkthroughOpen, walkthroughHomeMode: null }),
   setWalkthroughHomeMode: (walkthroughHomeMode) => set({ walkthroughHomeMode }),
@@ -1527,8 +1638,13 @@ export const useUi = create<UiState>((set, get) => ({
         break;
     }
   },
+  // Output on the session whose page is open is being read: never flag it.
   markUnread: (sessionId) =>
-    set((s) => (s.unread[sessionId] ? s : { unread: { ...s.unread, [sessionId]: true } })),
+    set((s) =>
+      s.unread[sessionId] || sessionIdFromPath(window.location.pathname) === sessionId
+        ? s
+        : { unread: { ...s.unread, [sessionId]: true } }
+    ),
   clearUnread: (sessionId) =>
     set((s) => {
       if (!s.unread[sessionId]) return s;
@@ -1687,6 +1803,8 @@ interface DataState {
   configLoaded: boolean;
   projects: Project[];
   terminals: Record<string, TerminalSession[]>; // by project id
+  /** True once a project's terminals list resolved (absent = not loaded or load failed). */
+  terminalsLoaded: Record<string, boolean>;
   claudeSessions: Record<string, ClaudeSessionSummary[]>; // by project id
   closedTabs: Record<string, ClosedTab[]>; // by project id, most recent at end
   /**
@@ -2277,6 +2395,7 @@ export function _resetMinimapSyncForTesting(initial: ExplorerMinimapPrefs = EXPL
 export const useData = create<DataState>((set, get) => ({
   projects: [],
   terminals: {},
+  terminalsLoaded: {},
   claudeSessions: {},
   closedTabs: {},
   detachedStack: {},
@@ -2753,6 +2872,9 @@ export const useData = create<DataState>((set, get) => ({
       ) {
         useUi.setState({ agentsBoardView: config.agentsBoardView });
       }
+      if (Array.isArray(config.dismissedWorkerExits)) {
+        useUi.setState({ dismissedWorkerExits: config.dismissedWorkerExits.filter((id) => typeof id === 'string') });
+      }
       if (config.inboxGrouping === 'project' || config.inboxGrouping === 'time') {
         useUi.setState({ inboxGrouping: config.inboxGrouping });
       }
@@ -2796,9 +2918,10 @@ export const useData = create<DataState>((set, get) => ({
         projects.map(async (p) => {
           try {
             const sessions = await product.terminals.list(p.id);
-            if (sessions.length > 0) {
-              set((s) => ({ terminals: { ...s.terminals, [p.id]: sessions } }));
-            }
+            set((s) => ({
+              terminals: sessions.length > 0 ? { ...s.terminals, [p.id]: sessions } : s.terminals,
+              terminalsLoaded: { ...s.terminalsLoaded, [p.id]: true }
+            }));
           } catch {
             /* couldn't read this project's live terminals — skip it on restore */
             hydrationFailed.add(p.id);
@@ -2814,7 +2937,7 @@ export const useData = create<DataState>((set, get) => ({
       // belongs to the unscoped main window. The scoped window already hydrated
       // its own live ptys above (display only). A thread view window may have
       // no project, so it is checked on its own.
-      if (!isScopedWindow() && !isThreadViewSurface() && hasDesktopBridge()) {
+      if (!isScopedWindow() && !isThreadViewSurface() && hasDesktopBridge() && !window.cc.windows?.secondary) {
         await get().restoreSessions(hydrationFailed);
       }
     } catch (err) {
@@ -2870,7 +2993,7 @@ export const useData = create<DataState>((set, get) => ({
       inbox: ({ entries }) => useInbox.setState({ entries, loading: false }),
       suggestions: ({ entries }) => useSuggestions.setState({ entries, loading: false }),
       saved: records => useSaved.setState({ records, loading: false }),
-      terminals: (projectId, sessions) => set(state => ({ terminals: { ...state.terminals, [projectId]: sessions } }))
+      terminals: (projectId, sessions) => set(state => ({ terminals: { ...state.terminals, [projectId]: sessions }, terminalsLoaded: { ...state.terminalsLoaded, [projectId]: true } }))
     }, scopedProjectId ?? undefined);
 
 
@@ -3526,16 +3649,19 @@ export const useData = create<DataState>((set, get) => ({
     useSplitWorkspace.getState().forgetScope(projectSplitScopeKey(id));
     set((s) => {
       const terminals = { ...s.terminals };
+      const terminalsLoaded = { ...s.terminalsLoaded };
       const claudeSessions = { ...s.claudeSessions };
       const closedTabs = { ...s.closedTabs };
       const gitStatus = { ...s.gitStatus };
       delete terminals[id];
+      delete terminalsLoaded[id];
       delete claudeSessions[id];
       delete closedTabs[id];
       delete gitStatus[id];
       return {
         projects: s.projects.filter((p) => p.id !== id),
         terminals,
+        terminalsLoaded,
         claudeSessions,
         closedTabs,
         gitStatus
@@ -3687,6 +3813,8 @@ export const useData = create<DataState>((set, get) => ({
     if (closeFailed) {
       pushErrorToast("Removed from the board. Couldn't confirm the process stopped.");
     }
+    // Closing the process closes its nav tab; the tab never outlives the session.
+    useApplicationTabs.getState().closeTab(`agent:${sessionId}`, false);
     useUi.getState().clearUnread(sessionId);
     // If the closed tab occupied any split slot, drop it from the slots.
     useUi.getState().removeFromSplit(projectId, sessionId);
@@ -4010,7 +4138,7 @@ export const useData = create<DataState>((set, get) => ({
     return alive ? sessionId : null;
   },
 
-  async restartTerminal(sessionId, projectId) {
+  restartTerminal: (sessionId, projectId) => withAgentTabReplace(sessionId, projectId, async () => {
     const list = get().terminals[projectId] || [];
     const idx = list.findIndex((t) => t.id === sessionId);
     if (idx === -1) return null;
@@ -4112,9 +4240,9 @@ export const useData = create<DataState>((set, get) => ({
     });
     useUi.getState().selectTab(projectId, created.id);
     return created;
-  },
+  }),
 
-  async reconnectRemote(sessionId, projectId) {
+  reconnectRemote: (sessionId, projectId) => withAgentTabReplace(sessionId, projectId, async () => {
     const project = get().projects.find((p) => p.id === projectId);
     // Reconnect only applies to remote projects — a local pty that "exited"
     // really died and has no detached tmux twin to re-attach to.
@@ -4190,7 +4318,7 @@ export const useData = create<DataState>((set, get) => ({
     useCatchUpSummary.getState().clear(sessionId);
     useUi.getState().selectTab(projectId, created.id);
     return created;
-  },
+  }),
 
   async reopenLastClosed(projectId) {
     const stack = get().closedTabs[projectId] || [];

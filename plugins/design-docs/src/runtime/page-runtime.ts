@@ -31,6 +31,7 @@ import {
   type ToPage
 } from '../shared/frame-protocol.js';
 import { copyContextSelection, MAX_CONTEXT_REFERENCE_TEXT } from '@zana-ai/zcc-plugin-sdk/app';
+import { createPageFind } from './page-find.js';
 import { passageContext } from '../shared/passage-context.js';
 import { PAGE_ORIGIN, pageTargetOf, pageUrl, type PageTarget } from '../shared/page.js';
 import { fileKindOf, mediaTypeOf } from '../shared/paths.js';
@@ -75,6 +76,15 @@ const REPORT_DELAY_MS = 150;
 const WINDOW_EVENTS = /^(load|unload|beforeunload|resize|scroll|hashchange|popstate|message|pageshow|pagehide|online|offline|storage|focus|blur|error)$/;
 /** URLs the app may open for a page, in a browser of the reader's choosing. */
 const OPENABLE = /^(https?|mailto):$/;
+
+/** True when `uri` is a URL on the page origin. A prefix match would also accept `https://doc.invalid.example`. */
+function isPageOriginUri(uri: string): boolean {
+  try {
+    return new URL(uri).origin === PAGE_ORIGIN;
+  } catch {
+    return false;
+  }
+}
 
 const HIGHLIGHT_CSS =
   `::highlight(${COMMENT_HIGHLIGHT}) { background-color: rgba(212, 160, 23, 0.28); text-decoration: underline 2px rgb(212, 160, 23); }\n` +
@@ -335,7 +345,7 @@ export function startPageRuntime(win: PageWindow, options: RuntimeOptions = {}):
   });
   doc.addEventListener('securitypolicyviolation', (event) => {
     // The runtime answers these itself: on* attributes in the frame, doc files everywhere.
-    if ((frame && event.effectiveDirective === 'script-src-attr') || event.blockedURI.startsWith(PAGE_ORIGIN)) return;
+    if ((frame && event.effectiveDirective === 'script-src-attr') || isPageOriginUri(event.blockedURI)) return;
     const blocked = event.blockedURI || 'inline code';
     report({
       kind: 'blocked',
@@ -663,6 +673,8 @@ export function startPageRuntime(win: PageWindow, options: RuntimeOptions = {}):
     if (!href) return () => navigate({ path: config.path, hash: null }, { newTab });
     const url = absoluteUrl(href);
     if (!url) return null;
+    // Only these schemes act on a click. data: and vbscript: links are inert here, never opened or run.
+    if (url.protocol === 'data:' || url.protocol === 'vbscript:') return null;
     if (url.protocol === 'javascript:') {
       return frame ? () => addScript(safeDecode(url.href.slice('javascript:'.length)), `${config.path} (javascript: link)`) : null;
     }
@@ -802,6 +814,7 @@ export function startPageRuntime(win: PageWindow, options: RuntimeOptions = {}):
     style.setAttribute('data-dd-runtime', '');
     style.textContent = HIGHLIGHT_CSS;
     (doc.head ?? doc.documentElement).appendChild(style);
+    const pageFind = createPageFind(doc, post);
     doc.addEventListener('copy', event => copyContextSelection(event, doc.body, passageContext(config.docId, config.path, '')));
     doc.addEventListener('selectionchange', debounce(win, REPORT_DELAY_MS, reportSelection));
     win.addEventListener('scroll', reportScroll, { passive: true });
@@ -817,6 +830,7 @@ export function startPageRuntime(win: PageWindow, options: RuntimeOptions = {}):
           paint();
         } else if (message?.type === 'focus' && typeof message.quote === 'string') focusQuote(message.quote);
         else if (message?.type === 'clear-selection') win.getSelection()?.removeAllRanges();
+        else if (message?.type === 'find' && (message.query === null || typeof message.query === 'string') && [0, 1, -1].includes(message.step)) pageFind.handle(message);
       };
     }
   } else {

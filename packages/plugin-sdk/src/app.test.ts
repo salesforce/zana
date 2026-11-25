@@ -165,6 +165,28 @@ describe('definePluginApp', () => {
     expect(set.contentScripts[0]?.id).toBe('boot');
   });
 
+  it.each([true, false, undefined])('collects the project tab shortcut opt-in (%s)', projectTabShortcut => {
+    const def = definePluginApp(app => app.slots.threadPanelAction({
+      id: 'notes', title: 'Notes', component: () => null, projectTabShortcut
+    }));
+    for (const set of [collectPluginAppRegistrations(def), collectPluginApp('notes', 1, def)]) {
+      expect(set.threadPanelActions[0]?.projectTabShortcut).toBe(projectTabShortcut || undefined);
+    }
+  });
+
+  it.each(['experimental_ownedThreadTitle', 'experimental_ownedThreadIcon'] as const)(
+    'collects and validates the owning plugin’s %s in both collectors', field => {
+      const view = () => null;
+      const definition = (component: typeof view) => definePluginApp(app => {
+        app.slots.threadPanelAction({ id: 'profile', title: 'Profile', component: () => null, [field]: component });
+      });
+      for (const collect of [collectPluginAppRegistrations, (def: ReturnType<typeof definition>) => collectPluginApp('notes', 1, def)]) {
+        expect(collect(definition(view)).threadPanelActions[0]?.[field]).toBe(view);
+        expect(() => collect(definition('invalid' as never))).toThrow(field);
+      }
+    }
+  );
+
   it('collects composer meta/advanced and accepts the cli-agent scope', () => {
     const def = definePluginApp((app) => {
       app.composer.customize({
@@ -569,5 +591,20 @@ describe.each([
     {}
   ])('rejects ambiguous or missing renderers: %s', registration => {
     expect(() => collect(definePluginApp(app => app.slots.pendingInteraction({ id: 'questions', ...registration } as never)))).toThrow();
+  });
+});
+
+describe.each([
+  ['host', (definition: ReturnType<typeof definePluginApp>) => collectPluginApp('test', 1, definition)],
+  ['test harness', collectPluginAppRegistrations]
+] as const)('%s Basic sidebar registration', (_name, collect) => {
+  const registration = { id: 'sample', path: 'sample', title: 'Sample', icon: 'List', component: () => null };
+  it('retains the optional component and rejects a malformed contribution', () => {
+    const section = () => null;
+    const appWith = (value: unknown) => definePluginApp(app => app.slots.navPanel({
+      ...registration, experimental_basicSidebarSection: value as typeof section
+    }));
+    expect(collect(appWith(section)).navPanels[0]?.experimental_basicSidebarSection).toBe(section);
+    expect(() => collect(appWith(42))).toThrow(/experimental_basicSidebarSection/);
   });
 });

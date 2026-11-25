@@ -2,7 +2,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { UI_USER } from '../server/rpc.js';
-import { DirectiveCard, ThreadPanel, saveMessageAsDoc } from './slots.js';
+import { DirectiveCard, ThreadPanel, readTabState, saveMessageAsDoc } from './slots.js';
 import { createHarness, type Harness } from './test-harness.js';
 
 function twoFileDoc(harness: Harness, projectId: string | null = 'p1') {
@@ -186,5 +186,48 @@ describe('save as design doc', () => {
     expect(harness.toasts.at(-1)).toEqual({ message: 'Could not save the design doc: Thread missing was not found.', kind: 'error' });
     expect(openPanel).not.toHaveBeenCalled();
     expect(harness.store.list({})).toEqual([]);
+  });
+});
+
+describe('thread side panel tab state', () => {
+  it('restores the saved doc and file over the opening params', async () => {
+    const harness = createHarness();
+    const doc = twoFileDoc(harness);
+    harness.render(
+      <ThreadPanel pluginId="design-docs" threadId="t" projectId="p1" params={null} tabState={{ docId: doc.id, path: 'api.md' }} onTabStateChange={() => undefined} />
+    );
+    expect(await screen.findByText('Endpoints')).toBeTruthy();
+  });
+
+  it('ignores malformed tab state and works without a write-back callback', async () => {
+    const harness = createHarness();
+    const doc = twoFileDoc(harness);
+    harness.render(<ThreadPanel pluginId="design-docs" threadId="t" projectId="p1" params={{ docId: doc.id, path: 'api.md' }} tabState={{ docId: 5 } as never} />);
+    expect(await screen.findByText('Endpoints')).toBeTruthy();
+    fireEvent.click(screen.getByTitle('Files in this doc'));
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Files' })).getByRole('button', { name: /^README\.md/ }));
+    expect(await screen.findByText('Overview')).toBeTruthy();
+  });
+
+  it('writes the location on pick, file open and back', async () => {
+    const harness = createHarness();
+    twoFileDoc(harness);
+    const onTabStateChange = vi.fn();
+    harness.render(<ThreadPanel pluginId="design-docs" threadId="t" projectId="p1" params={null} onTabStateChange={onTabStateChange} />);
+    fireEvent.click(await screen.findByText('Payments'));
+    expect(onTabStateChange).toHaveBeenLastCalledWith({ docId: expect.any(String), path: null });
+    fireEvent.click(await screen.findByTitle('Files in this doc'));
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Files' })).getByRole('button', { name: /^api\.md/ }));
+    expect(onTabStateChange).toHaveBeenLastCalledWith({ docId: expect.any(String), path: 'api.md' });
+    fireEvent.click(screen.getByRole('button', { name: 'All design docs' }));
+    expect(onTabStateChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it('parses saved locations defensively', () => {
+    expect(readTabState(null)).toBeNull();
+    expect(readTabState([] as never)).toBeNull();
+    expect(readTabState({ docId: '' })).toBeNull();
+    expect(readTabState({ docId: 'd', path: 3 })).toEqual({ docId: 'd', path: null });
+    expect(readTabState({ docId: 'd', path: 'a.md' })).toEqual({ docId: 'd', path: 'a.md' });
   });
 });

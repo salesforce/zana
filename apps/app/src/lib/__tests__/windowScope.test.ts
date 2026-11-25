@@ -12,8 +12,10 @@ async function loadWith(
   vi.resetModules();
   const store = sessionStore ?? new Map<string, string>();
   vi.stubGlobal('window', {
-    location: { search },
+    location: { search, href: 'http://localhost/agents' + search },
+    history: { state: null, replaceState: vi.fn() },
     sessionStorage: {
+      removeItem: (key: string) => store.delete(key),
       getItem: (key: string) => store.get(key) ?? null,
       setItem: (key: string, value: string) => {
         store.set(key, value);
@@ -38,6 +40,14 @@ describe('windowScope', () => {
     const { getScopedProjectId, isScopedWindow } = await loadWith('');
     expect(getScopedProjectId()).toBeNull();
     expect(isScopedWindow()).toBe(false);
+  });
+
+  it('drops the saved project after Back and keeps the destination on reload', async () => {
+    const stored = new Map([['zcc.scopedProjectId', 'old']]);
+    const scope = await loadWith('?tab=all&projectId=', stored);
+    expect(scope.getScopedProjectId()).toBeNull();
+    expect(String(vi.mocked(window.history.replaceState).mock.calls[0][2])).toBe('http://localhost/agents?tab=all');
+    expect((await loadWith('', stored)).getScopedProjectId()).toBeNull();
   });
 
   it('treats a blank/whitespace projectId as unscoped', async () => {

@@ -127,6 +127,7 @@ export function createMenubarThreadSource(deps: MenubarThreadSourceDeps) {
       if (!isOpenableThread(thread, projectId)) return { ok: false, reason: 'thread unavailable' };
       deps.hub.emit('threads:open', {
         type: 'thread-open',
+        targetWindow: 'main',
         threadId: thread.id,
         projectId: thread.projectId,
         split: 'right',

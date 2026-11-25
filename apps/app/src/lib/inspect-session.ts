@@ -1,3 +1,4 @@
+import { hasDesktopBridge } from './app-surface.js';
 import { getAgentSessionRoutePath, getThreadRoutePath } from './route-paths.js';
 import { keepsProjectFocusRail } from './shellLayout.js';
 import { getScopedProjectId } from './windowScope.js';
@@ -26,15 +27,16 @@ export function inspectRouteProjectId(projectId: string | null | undefined): str
 }
 
 /**
- * Open a CLI agent: first-class session page when Classic session view is on;
- * inspector overlay otherwise.
+ * Open a CLI agent: first-class session page when Classic session view is on or
+ * desktop tabs are available; inspector overlay otherwise.
  */
 export function inspectAgentSession(
   sessionId: string,
   projectId: string,
   navigate: InspectNavigate
 ): void {
-  if (useData.getState().classicSessionViewEnabled) {
+  const { classicSessionViewEnabled, threadTabsEnabled } = useData.getState();
+  if (classicSessionViewEnabled || (threadTabsEnabled && !isCompactViewport())) {
     navigate(getAgentSessionRoutePath(sessionId, inspectRouteProjectId(projectId)));
     return;
   }
@@ -67,8 +69,9 @@ export function inspectThread(
 export function threadOpenListener(navigate: { current: InspectNavigate }): (payload: unknown) => void {
   return (payload) => {
     if (!payload || typeof payload !== 'object') return;
-    const event = payload as { type?: unknown; threadId?: unknown; projectId?: unknown; file?: unknown; terminal?: unknown };
+    const event = payload as { type?: unknown; targetWindow?: unknown; threadId?: unknown; projectId?: unknown; file?: unknown; terminal?: unknown };
     if (event.type !== 'thread-open' || event.file || event.terminal) return;
+    if (event.targetWindow === 'main' && (!hasDesktopBridge() || window.cc.windows?.secondary)) return;
     if (typeof event.threadId !== 'string' || typeof event.projectId !== 'string') return;
     useUi.getState().enterProjectFocus(event.projectId);
     inspectThread(event.threadId, event.projectId, navigate.current);

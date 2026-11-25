@@ -48,7 +48,7 @@ test('sidebar project search, keyboard actions, and Settings stay usable in both
   }
   await win.getByTestId('nav-inbox').click();
   const rail = win.locator('.sidebar--global');
-  const filter = rail.getByRole('textbox', { name: 'Filter machines or projects' });
+  const filter = rail.getByRole('textbox', { name: 'Filter machines, projects or chats' });
   await expect(filter).toBeVisible();
   await filter.fill('commerce');
   await expect(rail.getByRole('button', { name: 'Open commerce-app', exact: true })).toBeVisible();
@@ -63,7 +63,7 @@ test('sidebar project search, keyboard actions, and Settings stay usable in both
   await expect(filter).toHaveValue('');
   await expect(rail.getByRole('button', { name: 'Open design-system', exact: true })).toBeVisible();
   await filter.fill('missing-project-xyz');
-  await expect(rail.locator('.list-empty[role="status"]')).toContainText('No machines or projects match');
+  await expect(rail.locator('.list-empty[role="status"]')).toContainText('No machines, projects or chats match');
   await rail.getByRole('button', { name: 'Clear filter', exact: true }).click();
   await expect(rail.locator('.list-empty[role="status"]')).toHaveCount(0);
 

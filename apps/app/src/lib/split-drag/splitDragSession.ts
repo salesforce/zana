@@ -1,3 +1,4 @@
+import { createOverlay, positionOverlay } from './overlay.js';
 import { suppressPostDragClick } from '../suppress-post-drag-click.js';
 import { guardEmbeddedFrames } from './frameGuard.js';
 import { pickZone, zoneBox, type SplitZone, type ZoneDecision } from './zones.js';
@@ -226,28 +227,4 @@ function createGhost(label: string): HTMLElement {
   ghost.className = 'split-drag-ghost';
   ghost.textContent = label;
   return ghost;
-}
-
-function createOverlay(): HTMLElement {
-  const overlay = document.createElement('div');
-  overlay.className = 'split-drag-overlay';
-  const label = document.createElement('div');
-  label.className = 'split-drag-overlay-label';
-  label.dataset.splitDragLabel = '';
-  overlay.append(label);
-  return overlay;
-}
-
-function positionOverlay(
-  overlay: HTMLElement,
-  box: { left: number; top: number; width: number; height: number },
-  label: string
-): void {
-  overlay.style.display = 'block';
-  overlay.style.left = `${box.left}px`;
-  overlay.style.top = `${box.top}px`;
-  overlay.style.width = `${box.width}px`;
-  overlay.style.height = `${box.height}px`;
-  const labelEl = overlay.querySelector<HTMLElement>('[data-split-drag-label]');
-  if (labelEl) labelEl.textContent = label;
 }

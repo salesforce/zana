@@ -186,9 +186,11 @@ export function countConversationThreadEvents(db: ZccDatabase, threadId: string)
 
 /** Request boundaries are hints; an oversized group can span several bounded pages. */
 export function conversationTimelineWindowStart(db: ZccDatabase, threadId: string, beforeSeq: number, groups: number): number {
-  const hints = db.sqlite.prepare(`SELECT sequence FROM thread_events WHERE thread_id = ?
-    AND type = 'client/turn/requested' AND sequence < ? ORDER BY sequence DESC LIMIT ?`)
-    .all(threadId, beforeSeq, groups) as { sequence: number }[];
+  const seek = db.sqlite.prepare(`SELECT sequence FROM thread_events WHERE thread_id = ?
+    AND type = ? AND sequence < ? ORDER BY sequence DESC LIMIT ?`);
+  const hints = ['client/turn/requested', 'system/plugin/message']
+    .flatMap(type => seek.all(threadId, type, beforeSeq, groups) as { sequence: number }[])
+    .sort((a, b) => b.sequence - a.sequence).slice(0, groups);
   return hints.length < groups ? 1 : hints[hints.length - 1]!.sequence;
 }
 

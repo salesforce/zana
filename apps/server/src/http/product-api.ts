@@ -1,4 +1,6 @@
 import { handleThreadPeerReviewApi } from './thread-peer-review-api.js';
+import { threadSenderAttribution, withSenderContext } from './thread-sender-source.js';
+import { desktopRpcDigest } from './ui-send-proof.js';
 import { handlePeerToolsApi } from './peer-tools-api.js';
 import { listNativeCapabilities } from "../services/skills/native-capabilities.js";
 import { handleHelpVideosApi } from './help-videos-api.js';
@@ -43,7 +45,9 @@ import { conversationHistoryAsync } from '../services/threads/conversation-histo
 import { randomUUID } from 'node:crypto';
 import { isAbsolute, join, relative, sep, posix, win32 } from 'node:path';
 import { homedir } from 'node:os';
-import { realpathSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { readdir, readFile } from 'node:fs/promises';
+import { parsePersonaFileContent, pushPersonaWarning, type PersonaLoadWarning } from '@zana-ai/zcc-domain/persona-validation';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type {
   AppConfig,
@@ -60,6 +64,7 @@ import { listJsonFiles, readJsonFile, writeJsonFile } from './disk-json.js';
 import { applyTrustedOriginCors, readJsonBody, sendBytes, sendJson, beginNdjson } from './json.js';
 import {
   TEAM_GOAL_MAX_CHARS,
+  TEAM_PLAN_TEXT_MAX_CHARS,
   TEAM_ID_MAX_CHARS,
   TEAM_REPLY_MAX_CHARS,
   TEAM_TITLE_MAX_CHARS,
@@ -124,6 +129,7 @@ import { listQueuedMessages, createQueuedMessage, updateQueuedMessage, deleteQue
 import { readLastThreadExecution } from '../services/threads/thread-last-execution.js';
 import { markThreadRead } from '../services/threads/thread-reads.js';
 import { readThreadHostFile } from '../services/threads/thread-host-file.js';
+import { readThreadMarkdown, writeThreadMarkdown } from './thread-markdown.js';
 import { sendVideoPreview } from './video-preview.js';
 import { sendHtmlPreview } from './html-preview.js';
 import { listThreadStorageFiles, readThreadStorageFile } from '../services/threads/thread-storage.js';
@@ -296,6 +302,12 @@ async function handlePluginAppRpc(
   const body = (await readJsonBody(request, 3 * 1024 * 1024)) as { method?: unknown; args?: unknown };
   if (typeof body.method !== 'string' || body.method.trim().length === 0) {
     sendJson(response, 400, { error: 'method required' });
+    return;
+  }
+  if (body.method.startsWith('desktop.') && !ctx.verifyUiSend(
+    headerValue(request.headers, 'x-zcc-desktop-rpc'), id, desktopRpcDigest(body.method, body.args), 'plugin-desktop'
+  )) {
+    sendJson(response, 403, { error: 'Open the Zana desktop app to manage these settings.' });
     return;
   }
   try {
@@ -899,7 +911,7 @@ export async function handleProductHttp(
     }
 
     if (path === '/api/v1/personas' && method === 'GET') {
-      sendJson(response, 200, { personas: listJsonFiles(join(ctx.dataDir, 'personas')) });
+      sendJson(response, 200, await readPersonaDiagnostics(ctx.dataDir, ctx.toProjects().map((project) => project.path)));
       return true;
     }
 
@@ -915,6 +927,8 @@ export async function handleProductHttp(
       const goal = typeof body?.goal === 'string' ? body.goal.trim() : '';
       const previewMode = path.endsWith('/preview') ? (body as Partial<ProductTeamLaunchInput> & { coordinationMode?: unknown })?.coordinationMode : undefined;
       const mode = body?.mode === 'freeform' || body?.mode === 'structured' ? body.mode : previewMode === 'freeform' || previewMode === 'structured' ? previewMode : '';
+      const planRaw = body?.planText;
+      const planText = typeof planRaw === 'string' ? planRaw.trim() : undefined;
       const title = typeof body?.title === 'string' ? body.title.trim() : undefined;
       const summary = typeof body?.summary === 'string' ? body.summary.trim() : undefined;
       const { launchOptionsSchema } = await import('@zana-ai/zcc-domain/launch-options');
@@ -922,6 +936,10 @@ export async function handleProductHttp(
         ['worktree', 'onComplete', 'push', 'checks', 'failurePolicyDefault', 'target']
           .filter((key) => body && key in body).map((key) => [key, (body as Record<string, unknown>)[key]])
       ));
+      if (planRaw !== undefined && (typeof planRaw !== 'string' || planRaw.length > TEAM_PLAN_TEXT_MAX_CHARS)) {
+        sendJson(response, 400, { ok: false, code: 'INVALID', message: `planText must be a string of at most ${TEAM_PLAN_TEXT_MAX_CHARS} characters` });
+        return true;
+      }
       if (!options.success || body?.previewToken !== undefined && (typeof body.previewToken !== 'string' || body.previewToken.length > 256)) {
         sendJson(response, 400, { ok: false, code: 'INVALID', message: 'Invalid launch options' });
         return true;
@@ -951,6 +969,7 @@ export async function handleProductHttp(
           teamId,
           projectId,
           goal,
+          ...(planText ? { planText } : {}),
           mode,
           ...options.data,
           ...(body?.previewToken ? { previewToken: body.previewToken } : {}),
@@ -1675,6 +1694,15 @@ export async function handleProductHttp(
         }
         sendHostFailure(response, error);
       }
+      return true;
+    }
+
+    const threadMarkdown = routeParams(path, '/api/v1/threads/:id/markdown');
+    if (threadMarkdown && (method === 'GET' || method === 'PUT')) {
+      try {
+        const input = method === 'GET' ? Object.fromEntries(requestUrl.searchParams) : await readJsonBody(request, 12_100_000);
+        sendJson(response, 200, await (method === 'GET' ? readThreadMarkdown(ctx, threadMarkdown.id, input) : writeThreadMarkdown(ctx, threadMarkdown.id, input)));
+      } catch (error) { sendHostFailure(response, error); }
       return true;
     }
 
@@ -2436,6 +2464,7 @@ export async function handleProductHttp(
         acpMode?: unknown;
         permissionMode?: unknown;
         pageContext?: unknown;
+        fromThreadId?: unknown;
       };
       const mode = body.mode === 'start' || body.mode === 'auto' || body.mode === 'steer'
         || body.mode === 'queue-if-active' || body.mode === 'steer-if-active'
@@ -2446,7 +2475,8 @@ export async function handleProductHttp(
         if (!target) throw new ThreadCreateError(404, 'thread-not-found', 'Conversation is not registered');
         // An existing conversation can be opened beside another plugin's page;
         // its immutable creation origin does not own the current surrounding view.
-        const input = await withPluginPageContext(ctx.plugins, body.input ?? body.text, body.pageContext, { projectId: target.projectId });
+        const sender = threadSenderAttribution(ctx.db, body.fromThreadId, 'messaged', target.id);
+        const input = await withPluginPageContext(ctx.plugins, withSenderContext(body.input ?? body.text, sender), body.pageContext, { projectId: target.projectId });
         const thread = await sendConversationTurn(ctx, id!, input, mode, {
           permissionMode: body.permissionMode === 'accept-edits' || body.permissionMode === 'auto' || body.permissionMode === 'full'
             ? body.permissionMode : undefined,
@@ -2454,7 +2484,7 @@ export async function handleProductHttp(
           reasoningLevel: parseReasoningLevel(body.reasoningLevel),
           serviceTier: typeof body.serviceTier === 'string' ? body.serviceTier : undefined,
           acpMode: typeof body.acpMode === 'string' ? body.acpMode : undefined
-        });
+        }, sender.messageSource ? { messageSource: sender.messageSource } : {});
         sendJson(response, 200, { ok: true, thread: conversationThreadView(ctx, thread) });
       } catch (error) {
         if (error instanceof ThreadCreateError) {
@@ -2482,7 +2512,9 @@ export async function handleProductHttp(
       }
       try {
         const pluginPanel = resolvePluginPanelBinding(body, ctx.plugins);
-        const promptInput = await withPluginPageContext(ctx.plugins, body.input ?? body.prompt, body.pageContext, {
+        // Another agent thread started this one: show who, like a bot message.
+        const sender = threadSenderAttribution(ctx.db, body.fromThreadId, 'started this thread');
+        const promptInput = await withPluginPageContext(ctx.plugins, withSenderContext(body.input ?? body.prompt, sender), body.pageContext, {
           projectId: typeof body.projectId === 'string' ? body.projectId : '',
           expectedPluginId: pluginPanel?.originPluginId ?? (typeof body.originPluginId === 'string' ? body.originPluginId : undefined)
         });
@@ -2491,6 +2523,7 @@ export async function handleProductHttp(
           providerId: typeof body.providerId === 'string' ? body.providerId : 'claude-code',
           input: flattenThreadInput(body.input ?? body.prompt),
           promptInput,
+          ...(sender.messageSource ? { messageSource: sender.messageSource } : {}),
           hostId: typeof body.hostId === 'string' ? body.hostId : undefined,
           id: typeof body.id === 'string' ? body.id : undefined,
           environment: environmentChoice?.data,
@@ -4053,7 +4086,7 @@ function sendTeamOpResult(
     return;
   }
   const status =
-    result.code === 'DISABLED' || result.code === 'CONFLICT' || result.code === 'TERMINAL' ? 409
+    result.code === 'DISABLED' || result.code === 'CONFLICT' || result.code === 'TERMINAL' || result.code === 'STOP_INCOMPLETE' ? 409
       : result.code === 'NOT_FOUND' || result.code === 'unknown-session' ? 404
         : result.code === 'INVALID' || result.code === 'NO_ORCHESTRATOR' || result.code === 'INVALID_CAPABILITY' ? 400
           : result.code === 'DENIED' ? 409
@@ -4119,3 +4152,44 @@ function sendHostFailure(response: ServerResponse, error: unknown): void {
 export function isProductApiPath(pathname: string): boolean {
   return pathname.startsWith('/api/');
 }
+
+/**
+ * User persona files that pass the shared validator (the same rules the app's
+ * PersonaStore applies), plus a warning per dropped user or project persona
+ * file. Warnings carry the basename, source and a fixed reason only. This
+ * server runs apart from Electron main, which owns the PersonaStore, so it
+ * re-applies the shared validator to the same directories.
+ */
+export async function readPersonaDiagnostics(
+  dataDir: string,
+  projectPaths: readonly string[]
+): Promise<{ personas: unknown[]; warnings: PersonaLoadWarning[] }> {
+  const personas: unknown[] = [];
+  const warnings: PersonaLoadWarning[] = [];
+  const scan = async (dir: string, source: PersonaLoadWarning['source']) => {
+    let names: string[];
+    try { names = await readdir(dir); } catch { return; }
+    const files = names.filter((file) => file.endsWith('.json'));
+    // Bounded concurrency; results are consumed in directory order so the
+    // response (and the warnings cap) is identical to a sequential scan.
+    for (let i = 0; i < files.length; i += PERSONA_SCAN_CONCURRENCY) {
+      const batch = files.slice(i, i + PERSONA_SCAN_CONCURRENCY);
+      const contents = await Promise.all(batch.map((file) => readFile(join(dir, file), 'utf8').catch(() => null)));
+      batch.forEach((file, index) => {
+        const content = contents[index];
+        if (content === null) {
+          pushPersonaWarning(warnings, { file, source, reason: 'unreadable_file' });
+          return;
+        }
+        const parsed = parsePersonaFileContent(content);
+        if (parsed.reason) pushPersonaWarning(warnings, { file, source, reason: parsed.reason });
+        else if (source === 'user') personas.push(parsed.value);
+      });
+    }
+  };
+  await scan(join(dataDir, 'personas'), 'user');
+  for (const path of projectPaths) await scan(join(path, '.zcc', 'personas'), 'project');
+  return { personas, warnings };
+}
+
+const PERSONA_SCAN_CONCURRENCY = 16;

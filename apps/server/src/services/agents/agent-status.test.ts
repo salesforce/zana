@@ -729,6 +729,51 @@ describe('AgentStatusTracker (tool-in-flight idle-veto)', () => {
     expect(seen).toEqual(['blocked']);
   });
 
+  it('clears the blocked overlay when the approved tool finishes', () => {
+    const tracker = new AgentStatusTracker();
+    const seen: string[] = [];
+    tracker.on('status', (_id, state) => seen.push(state));
+
+    tracker.turnStarted('s1');
+    tracker.toolStarted('s1'); // PreToolUse, then the permission prompt opens
+    tracker.markBlocked('s1');
+    vi.advanceTimersByTime(250);
+    expect(seen).toEqual(['blocked']);
+
+    tracker.toolFinished('s1'); // user approved, the tool ran
+    vi.advanceTimersByTime(250);
+
+    expect(seen).toEqual(['blocked', 'working']);
+    expect(tracker.get('s1')).toBe('working');
+  });
+
+  it('keeps the blocked overlay while another tool is still in flight', () => {
+    const tracker = new AgentStatusTracker();
+    const seen: string[] = [];
+    tracker.on('status', (_id, state) => seen.push(state));
+
+    tracker.toolStarted('s1'); // waiting on approval
+    tracker.toolStarted('s1'); // a parallel tool
+    tracker.markBlocked('s1');
+    vi.advanceTimersByTime(250);
+
+    tracker.toolFinished('s1'); // the parallel tool ends; the prompt is still open
+    vi.advanceTimersByTime(250);
+
+    expect(tracker.get('s1')).toBe('blocked');
+    expect(seen).toEqual(['blocked']);
+  });
+
+  it('does not clear a pending native input request when a tool finishes', () => {
+    const tracker = new AgentStatusTracker();
+    tracker.toolStarted('s1');
+    tracker.inputRequested('s1', 'req-1');
+    tracker.toolFinished('s1');
+    vi.advanceTimersByTime(250);
+
+    expect(tracker.get('s1')).toBe('blocked');
+  });
+
   it('toolFinished clamps at zero on an unmatched stop', () => {
     const tracker = new AgentStatusTracker();
     const seen: string[] = [];

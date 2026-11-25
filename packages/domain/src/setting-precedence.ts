@@ -126,8 +126,8 @@ export const SETTING_PRECEDENCE = [
     mergeRule: 'last',
     note: 'The last thinking argument on the command line wins: Global, then Project, then Persona, then the tab.',
     evidence: [
-      { file: 'apps/host-daemon/src/harness/pi/provider.ts', line: 105, contains: "args.push('--thinking', config.piThinking)" },
-      { file: 'apps/host-daemon/src/harness/pi/provider.ts', line: 125, contains: "args.push('--thinking', settings.piThinking)" }
+      { file: 'apps/host-daemon/src/harness/pi/provider.ts', line: 106, contains: "args.push('--thinking', config.piThinking)" },
+      { file: 'apps/host-daemon/src/harness/pi/provider.ts', line: 126, contains: "args.push('--thinking', settings.piThinking)" }
     ]
   },
   {
@@ -136,7 +136,7 @@ export const SETTING_PRECEDENCE = [
     layers: ['squad', 'global'],
     mergeRule: 'first',
     evidence: [
-      { file: 'apps/desktop/src/team-routing-enforcement.ts', line: 20, contains: 'team?.routingEnforced ?? globalEnabled' }
+      { file: 'apps/desktop/src/team-routing-enforcement.ts', line: 32, contains: 'team?.routingEnforced ?? globalEnabled' }
     ]
   },
   {
@@ -146,7 +146,7 @@ export const SETTING_PRECEDENCE = [
     mergeRule: 'first',
     note: 'The built-in default is Infer plan from goal when the orchestrator can write a plan, otherwise Plan provided in goal. In the composer, the Squad default applies until you pick a mode.',
     evidence: [
-      { file: 'apps/desktop/src/squad-proposals/service.ts', line: 362, contains: "planningInput ?? team.defaultPlanning ?? (canInfer ? 'infer' : 'provided')" }
+      { file: 'apps/desktop/src/squad-proposals/service.ts', line: 427, contains: "planningInput ?? team.defaultPlanning ?? (canInfer ? 'infer' : 'provided')" }
     ]
   },
   {

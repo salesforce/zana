@@ -1,17 +1,21 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { PanelRight } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 import type { Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { useData } from '../../store.js';
 import { useCompactLayout } from '../../hooks/useCompactLayout.js';
+import { useBasicPanelLayout } from '../../hooks/useBasicPanelLayout.js';
 import { useOptionalPaneContext } from '../thread-detail/PaneContext.js';
 import { product } from '../../lib/product-client.js';
 import { getBrowserUrlHost } from '../../lib/browser-url.js';
+import { isBasicUiRouteSupported, setBasicUiMode, useBasicUi } from '../../lib/basic-ui.js';
 import { ThreadPanelOwnerProvider, agentSessionPanelOwnerId } from '../../plugins/thread-panel-owner.js';
 import { ThreadSecondaryPanel, type ThreadPanelToolKind } from '../../components/thread/secondary-panel/ThreadSecondaryPanel.js';
 import { ThreadNewTabPage } from '../../components/thread/secondary-panel/ThreadNewTabPage.js';
 import { ThreadFilePreviewTab } from '../../components/thread/secondary-panel/ThreadFilePreviewTab.js';
 import { ThreadExplorerTab } from '../../components/thread/secondary-panel/ThreadExplorerTab.js';
 import { ThreadInboxTab } from '../../components/thread/secondary-panel/ThreadInboxTab.js';
+import { PluginTabDeck } from '../../components/thread/secondary-panel/PluginTabDeck.js';
 import { ThreadPluginTab } from '../../components/thread/secondary-panel/ThreadPluginTab.js';
 import { DockedTerminalTab } from '../../components/thread/secondary-panel/DockedTerminalTab.js';
 import { BrowserTabDeck } from '../../components/thread/secondary-panel/BrowserTabDeck.js';
@@ -42,11 +46,22 @@ export function NewChatPanelLayout(props: NewChatPanelLayoutProps) {
 }
 
 function DraftChatPanel({ scopeId, project, hostId, children, onHandoff }: NewChatPanelLayoutProps & { onHandoff: () => void }) {
+  const basic = useBasicUi();
+  const location = useLocation();
+  const basicRouteHidden = basic && !isBasicUiRouteSupported(location.pathname);
   const ownerId = `new-chat:${scopeId}`;
   const viewRef = useRef<HTMLDivElement>(null);
+  const basicCompact = useBasicPanelLayout(viewRef, basic);
   const compact = useCompactLayout();
   const pane = useOptionalPaneContext();
   const panel = useSecondaryPanel(ownerId, { getContainerWidthPx: () => viewRef.current?.clientWidth ?? 0 });
+  const wasBasicPanelOpen = useRef(false);
+  useEffect(() => {
+    if (basic && wasBasicPanelOpen.current && !panel.state.isOpen) {
+      viewRef.current?.querySelector<HTMLButtonElement>('[data-testid="thread-secondary-show"]')?.focus({ preventScroll: true });
+    }
+    wasBasicPanelOpen.current = basic && panel.state.isOpen;
+  }, [basic, panel.state.isOpen]);
   const panelStateRef = useRef(panel.state);
   panelStateRef.current = panel.state;
   useInAppBrowserPanel(ownerId, panel);
@@ -110,36 +125,37 @@ function DraftChatPanel({ scopeId, project, hostId, children, onHandoff }: NewCh
       onOpenRecent={item => panel.addTab(tabInputFromRecentItem(item))}
     />;
   } else if (closable.kind === 'file-preview' && closable.path) {
-    body = <ThreadFilePreviewTab path={closable.path} projectId={project?.id ?? null} previewRevision={closable.previewRevision} openerKey={closable.openerKey} lineNumber={closable.lineNumber ?? null} />;
+    body = <ThreadFilePreviewTab previewId={closable.id} path={closable.path} projectId={project?.id ?? null} previewRevision={closable.previewRevision} openerKey={closable.openerKey} lineNumber={closable.lineNumber ?? null} />;
   } else if (closable.kind === 'explorer') {
     body = <ThreadExplorerTab projectId={project?.id ?? null} />;
   } else if (closable.kind === 'inbox') {
     body = <ThreadInboxTab projectId={project?.id ?? null} />;
   } else if (closable.kind === 'terminal' && closable.sessionId) {
     body = <DockedTerminalTab sessionId={closable.sessionId} />;
-  } else if (closable.kind === 'plugin' && closable.moduleId) {
-    body = <ThreadPluginTab moduleId={closable.moduleId} projectId={project?.id ?? null} actionId={closable.actionId} params={closable.params} layout={closable.layout} surface="thread" tabId={closable.id} />;
   }
 
   return <ThreadPanelOwnerProvider ownerId={ownerId}>
-    <div ref={viewRef} data-testid="new-chat-panel-layout" className={`new-chat-panel-layout${open ? ' is-secondary-open' : ''}${open && panel.state.isMaximized ? ' is-secondary-maximized' : ''}${compact ? ' is-compact' : ''}`}
+    <div ref={viewRef} data-testid="new-chat-panel-layout" data-basic-panel-compact={basicCompact || undefined} className={`new-chat-panel-layout${open ? ' is-secondary-open' : ''}${open && panel.state.isMaximized ? ' is-secondary-maximized' : ''}${compact ? ' is-compact' : ''}`}
       style={open ? { ['--thread-secondary-width' as string]: `${panel.state.widthPx}px` } : undefined}>
-      <div className="new-chat-panel-main">{children({ onCreated: handoff, onAgentCreated: session => handoff(agentSessionPanelOwnerId(session.id, !useData.getState().classicSessionViewEnabled), session.id) })}</div>
+      <div className="new-chat-panel-main" hidden={basic && open && (basicCompact || panel.state.isMaximized)} inert={basic && open && (basicCompact || panel.state.isMaximized) || undefined}>{children({ onCreated: handoff, onAgentCreated: session => handoff(agentSessionPanelOwnerId(session.id, !useData.getState().classicSessionViewEnabled), session.id) })}</div>
       {!open && <div className="new-chat-panel-launchers" role="toolbar" aria-label="Side panel">
         <button type="button" className="icon-btn" title="Show right panel" aria-label="Show right panel" data-testid="thread-secondary-show" onClick={() => {
           if (closable) panel.open(); else panel.openNewTab();
         }}><PanelRight size={14} /></button>
       </div>}
-      {open && <ThreadSecondaryPanel state={panel.state} showInfoPin={false} showDiffPin={false} showPlanPin={false}
+      {open && <ThreadSecondaryPanel state={panel.state} basic={basic} basicCompact={basicCompact} onOpenAdvanced={() => setBasicUiMode('advanced')} showInfoPin={false} showDiffPin={false} showPlanPin={false}
         onSelectInfo={() => undefined} onSelectDiff={() => undefined} onNewTab={panel.openNewTab}
         onAddTool={project ? addTool : undefined}
         onCloseTab={panel.closeTab} onCloseTabs={panel.closeTabs} onActivateTab={panel.activateTab}
         onToggleMaximized={panel.toggleMaximized} onHide={panel.close} onResize={panel.setWidth}>
         {error && <p role="alert" className="thread-detail-empty">{error}</p>}
         {body}
+        <PluginTabDeck tabs={panel.state.tabs} activeId={panel.state.activeId} ownerId={ownerId}
+          render={(tab, active) => <ThreadPluginTab moduleId={tab.moduleId!} projectId={project?.id ?? null} actionId={tab.actionId} params={tab.params} layout={tab.layout} surface="thread" tabId={tab.id}
+            active={active} tabState={tab.tabState} onTabStateChange={(next) => panel.setTabState(tab.id, next)} />} />
         <BrowserTabDeck browserTabs={panel.state.tabs.filter(tab => tab.kind === 'browser')}
           activeBrowserTabId={closable?.kind === 'browser' ? closable.id : null}
-          canShowNativeBrowserView={open && pane?.isFocused !== false} threadId={ownerId}
+          canShowNativeBrowserView={open && !basicRouteHidden && pane?.isFocused !== false} threadId={ownerId}
           onUpdate={({ tabId, url, title }) => {
             if (!handedOff.current) panel.patchTab(tabId, { url, title: title || getBrowserUrlHost(url) || 'Browser' });
           }} />

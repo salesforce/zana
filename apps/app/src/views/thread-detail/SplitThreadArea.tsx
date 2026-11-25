@@ -21,6 +21,7 @@ import { SchedulerView } from '../scheduler/SchedulerView.js';
 import { ScheduleDetailPage } from '../scheduler/ScheduleDetailPage.js';
 import { useRouteState } from '../../hooks/useRouteState.js';
 import { useIsCompactViewport } from '../../hooks/useIsCompactViewport.js';
+import { useBasicUi } from '../../lib/basic-ui.js';
 import { useData, useUi } from '../../store.js';
 import { getScopedProjectId } from '../../lib/windowScope.js';
 import {
@@ -75,6 +76,7 @@ import { SplitDivider } from './SplitDivider.js';
 import { SplitPaneBar } from './SplitPaneBar.js';
 import { paneUsesHostBar } from './split-pane-bar-title.js';
 import { ProjectModePane } from '../project/ProjectModePane.js';
+import { connectedDomParkingHost, moveConnectedElement, supportsConnectedMove } from '../../lib/connected-dom-parking.js';
 
 const EMPTY_PATH: SplitPath = [];
 const PANE_DRAG_ENGAGE_DISTANCE_PX = 8;
@@ -85,6 +87,7 @@ type BeginPaneDrag = (paneId: string, event: ReactPointerEvent, label: string) =
 export function SplitThreadArea({ routeContent }: { routeContent: PaneContent }) {
   const navigate = useNavigate();
   const isCompact = useIsCompactViewport();
+  const basicUi = useBasicUi();
   const route = useRouteState();
   const storeFocusedProjectId = useUi((s) => s.focusedProjectId);
   const focusedProjectId = route.focusedProjectId ?? storeFocusedProjectId;
@@ -103,7 +106,7 @@ export function SplitThreadArea({ routeContent }: { routeContent: PaneContent })
   const setMaximizedPaneIdAtom = useSplitWorkspace((s) => s.setMaximizedPaneId);
   const routeKey = paneContentRoute(routeContent);
   const cancelDrag = useRef<(() => void) | null>(null);
-  useEffect(() => () => cancelDrag.current?.(), [scopeKey, isCompact]);
+  useEffect(() => () => cancelDrag.current?.(), [scopeKey, isCompact, basicUi]);
 
   // Render must not switch the shared scope. A route render React discards
   // would flip it under the tree on screen, which flips it back, and the
@@ -133,7 +136,9 @@ export function SplitThreadArea({ routeContent }: { routeContent: PaneContent })
   // store here.
   const effectiveLayout: SplitLayout = reconcileLayoutForContent(layout, routeContent);
   const panes = listPanes(effectiveLayout.root);
-  const isSplitActive = !isCompact && panes.length > 1;
+  // Basic presents the focused conversation while retaining every portal host
+  // and the saved Advanced layout, just like the existing compact presentation.
+  const isSplitActive = !isCompact && !basicUi && panes.length > 1;
   const focusedPaneId = effectiveLayout.focusedPaneId;
   const paneCount = countPanes(effectiveLayout.root);
   // Portal hosts outlive tree slots. Reparenting a slot must not remount editors,
@@ -501,7 +506,21 @@ interface SplitTreeProps {
 
 function PaneSlot({ host, hidden = false }: { host: HTMLDivElement; hidden?: boolean }) {
   const attach = useCallback((slot: HTMLDivElement | null) => {
-    if (slot && host.parentElement !== slot) slot.replaceChildren(host);
+    if (slot) {
+      if (host.parentElement !== slot) moveConnectedElement(slot, host);
+      // Navigation can reuse a slot with a different portal host. Clear only
+      // the obsolete siblings, without detaching the newly attached iframe.
+      for (const child of [...slot.children]) if (child !== host) child.remove();
+    } else if (host.isConnected && supportsConnectedMove(host.ownerDocument)) {
+      // The split tree can change shape without unmounting its portal. Keep
+      // its iframe contexts connected between the old and new slot refs.
+      const parking = connectedDomParkingHost(host.ownerDocument);
+      moveConnectedElement(parking, host);
+      queueMicrotask(() => {
+        // A closed pane has no replacement slot; release its empty host.
+        if (host.parentElement === parking) host.remove();
+      });
+    }
   }, [host]);
   return <div className="split-pane-slot" hidden={hidden} ref={attach} />;
 }

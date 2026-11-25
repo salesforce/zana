@@ -1,3 +1,5 @@
+import { redactUserinfoUrls } from './redact-userinfo-url.js';
+
 const REDACTED = '[redacted]';
 
 /**
@@ -19,15 +21,37 @@ const SECRET_PATTERNS: RegExp[] = [
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9._-]{10,}\.[A-Za-z0-9._-]{10,}\b/g,
   // Authorization: Bearer <token>.
   /\bBearer\s+[-._~+/=A-Za-z0-9]{12,}\b/gi,
-  // PEM private key blocks.
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
   // key=value / key: value secret assignments (api_key, token, password, secret, cookie).
   /\b(?:api[_-]?key|token|password|passwd|secret|cookie)\s*[:=]\s*(?:'[^']*'|"[^"]*"|[^\s'"`]+)/gi,
   // Secret-bearing query-string params (keeps the key, redacts the value).
-  /([?&](?:api[_-]?key|token|password|secret)=)[^&#\s]+/gi,
-  // URLs with embedded userinfo credentials (scheme://user:pass@host).
-  /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@[^\s/]+/gi
+  /([?&](?:api[_-]?key|token|password|secret)=)[^&#\s]+/gi
 ];
+
+const PEM_BEGIN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/g;
+const PEM_END = /-----END [A-Z ]*PRIVATE KEY-----/g;
+
+/**
+ * Replace PEM private key blocks. Same result as the lazy
+ * `BEGIN…[\s\S]*?…END` regex it replaces, but linear: the regex rescanned to
+ * the end of the input for every unterminated BEGIN. Here the scan only moves
+ * forward past each replaced block, and stops at the first BEGIN with no END
+ * after it, since no later BEGIN can have one either.
+ */
+export function redactPemBlocks(text: string, replacement: string): string {
+  const begin = new RegExp(PEM_BEGIN);
+  const end = new RegExp(PEM_END);
+  let out = '';
+  let cursor = 0;
+  for (let found = begin.exec(text); found; found = begin.exec(text)) {
+    end.lastIndex = found.index + found[0].length;
+    const closing = end.exec(text);
+    if (closing === null) break;
+    out += text.slice(cursor, found.index) + replacement;
+    cursor = closing.index + closing[0].length;
+    begin.lastIndex = cursor;
+  }
+  return out + text.slice(cursor);
+}
 
 /**
  * Strip obvious secrets from agent transcript prose before it is interpolated
@@ -43,7 +67,7 @@ const SECRET_PATTERNS: RegExp[] = [
  * so the redacted URL still reads sensibly; every other match becomes `[redacted]`.
  */
 export function redactTranscript(transcript: string): string {
-  let redacted = transcript;
+  let redacted = redactPemBlocks(transcript, REDACTED);
   for (const pattern of SECRET_PATTERNS) {
     redacted = redacted.replace(pattern, (...args: unknown[]) => {
       // First capture group, when present, is the preserved `?key=`/`&key=` prefix.
@@ -53,5 +77,6 @@ export function redactTranscript(transcript: string): string {
         : REDACTED;
     });
   }
-  return redacted;
+  // URLs with embedded userinfo credentials (scheme://user:pass@host).
+  return redactUserinfoUrls(redacted, REDACTED);
 }

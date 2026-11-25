@@ -41,6 +41,14 @@ export function createInferredPlanCorrection(deps: InferredPlanCorrectionDeps) {
       await deps.begin(ctx.executionId, reason, false);
       return deps.reviewInvalid(ctx, reason);
     },
+    /** The Squad-check round was already spent: open the correction decision now, no further plain nudges. */
+    async escalate(ctx: CoordinatorHandoffContext, reason: string): Promise<ReviewVerdict> {
+      const verdict = await deps.reviewInvalid(ctx, reason);
+      if (verdict !== undefined) return verdict;
+      strikes.delete(ctx.executionId);
+      await deps.begin(ctx.executionId, reason, false);
+      return deps.reviewInvalid(ctx, reason);
+    },
     forget(executionId: string): void {
       strikes.delete(executionId);
     }

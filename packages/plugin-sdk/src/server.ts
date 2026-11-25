@@ -20,8 +20,14 @@ import type {
   DispatchAdmissionContract,
   PluginCapabilityIntrospection,
   PluginInteractions,
+  PluginThreadInteractions,
   ProjectTabAvailabilityContract,
   ToolSettledContract
+} from './contracts.js';
+export { PluginThreadInteractionError } from './contracts.js';
+export type {
+  PluginRelayedHumanActor, PluginThreadInteraction, PluginThreadInteractionErrorCode,
+  PluginThreadInteractionResolution, PluginThreadInteractions
 } from './contracts.js';
 
 import type { PluginDatabaseBackup, PluginDatabaseBackupOptions } from './database-backup.js';
@@ -117,6 +123,8 @@ export interface PluginDatabase {
 }
 
 export interface PluginStorage {
+  /** Server-only device key, scoped to this installed plugin. Throws if protected storage is unavailable. */
+  deviceKey(): Promise<Uint8Array>;
   kv: PluginKvStorage;
   database(): PluginDatabase;
   /**
@@ -130,6 +138,7 @@ export interface PluginStorage {
 }
 
 export interface PluginRpc {
+  /** Methods prefixed with desktop. require a trusted desktop window. */
   method(name: string, handler: (args: unknown) => unknown | Promise<unknown>): void;
   /** Typed-contract twin of `method`. Handlers are registered by name; schema is advisory. */
   register(
@@ -382,7 +391,31 @@ export interface PluginSdkThreadEventListArgs {
   order?: 'asc' | 'desc';
 }
 
-export interface PluginSdkThreadSendArgs {
+/**
+ * Who a plugin-delivered message shows as in the thread (for example a bot
+ * reply). The host stamps the calling plugin's id; this is display only.
+ */
+export interface PluginSdkMessageSource {
+  kind: 'bot' | 'thread' | 'user' | 'routine' | 'job';
+  /** Up to 80 characters. */
+  label: string;
+  /** `#rrggbb` accent. */
+  color?: string;
+  /** Thread the label links to. */
+  threadId?: string;
+  /** Short verb shown after the label, such as `replied`. Up to 80 characters. */
+  detail?: string;
+}
+
+/** Sender attribution shared by `threads.send` and `threads.spawn`. */
+export interface PluginSdkMessageAttribution {
+  /** Renders the message as coming from this source instead of the user. */
+  source?: PluginSdkMessageSource;
+  /** Header the agent reads before the prompt; hidden from the thread view. Up to 500 characters. */
+  agentContext?: string;
+}
+
+export interface PluginSdkThreadSendArgs extends PluginSdkMessageAttribution {
   threadId: string;
   prompt: string;
   visibility?: 'visible' | 'agent-only';
@@ -392,9 +425,11 @@ export interface PluginSdkThreadSendArgs {
 /** How `threads.spawn` picks a harness when no `providerId` is given. */
 export type PluginSdkThreadSpawnHarness = 'project-default';
 
-export interface PluginSdkThreadSpawnArgs {
+export interface PluginSdkThreadSpawnArgs extends PluginSdkMessageAttribution {
   projectId: string;
-  prompt: string;
+  /** Required unless deferFirstTurn creates an empty conversation. */
+  prompt?: string;
+  deferFirstTurn?: boolean;
   /**
    * Exact thread provider id. Wins over `harness`; an unknown id rejects.
    * With neither `providerId` nor `harness`, the host uses its first
@@ -514,6 +549,8 @@ export interface PluginSdkQueuedMessage {
 }
 
 export interface PluginSdkThreads {
+  /** Check sdk.capabilities.forThread for `thread-interactions` before using on older hosts. */
+  readonly interactions: PluginThreadInteractions;
   spawn(args: PluginSdkThreadSpawnArgs): Promise<{ id: string }>;
   get(args: { threadId: string }): Promise<PluginSdkThreadSummary | null>;
   list(args?: PluginSdkThreadListArgs): Promise<PluginSdkThreadSummary[]>;
@@ -522,6 +559,10 @@ export interface PluginSdkThreads {
   events: {
     list(args: PluginSdkThreadEventListArgs): Promise<PluginSdkThreadEventRow[]>;
   };
+  /** Append a display-only message to a thread created by this plugin. Starts no model turn. */
+  postMessage?(args: { threadId: string; text: string }): Promise<void>;
+  /** True when `send` / `spawn` honor `source` and `agentContext`. Older hosts drop them. */
+  readonly messageSources?: true;
   send(args: PluginSdkThreadSendArgs): Promise<{ id: string }>;
   stop(args: PluginSdkThreadIdArgs): Promise<{ ok: true }>;
   output(args: PluginSdkThreadIdArgs): Promise<PluginSdkThreadOutput>;
@@ -621,6 +662,8 @@ export interface PluginSdkProviders {
 export interface PluginSdkInboxPushArgs {
   projectId: string;
   comments: string;
+  /** Offer an editable agent draft seeded with the Inbox message. */
+  offerAgentFix?: true;
 }
 
 export interface PluginSdkInbox {

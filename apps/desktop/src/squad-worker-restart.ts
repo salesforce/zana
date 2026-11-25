@@ -20,7 +20,7 @@ export type SquadWorkerRestartResult =
   | { ok: true }
   | {
       ok: false;
-      reason: 'not-found' | 'not-a-worker' | 'remote' | 'no-capability' | 'busy' | 'exit-timeout' | 'restart-timeout' | 'relaunch-failed';
+      reason: 'not-found' | 'not-a-worker' | 'remote' | 'no-capability' | 'busy' | 'exit-timeout' | 'restart-timeout' | 'relaunch-failed' | 'run-closing';
       message?: string;
     };
 type RestartFailure = Extract<SquadWorkerRestartResult, { ok: false }>;
@@ -184,6 +184,8 @@ interface PendingRestart {
   relaunchTimer?: unknown;
   /** Settles once `closeSession` (expected close + tmux kill) has finished. */
   closed?: Promise<unknown>;
+  /** Launch fence: false once the run is closing, so nothing is spawned for it. */
+  maySpawn?: () => Promise<boolean>;
   /** Set once the attempt is over: every later step of it stops. */
   over: boolean;
   resolve(result: SquadWorkerRestartResult): void;
@@ -210,12 +212,12 @@ export class SquadWorkerRestarter {
     this.restartTimeoutMs = deps.restartTimeoutMs ?? DEFAULT_RESTART_TIMEOUT_MS;
   }
 
-  async restart(sessionId: string): Promise<SquadWorkerRestartResult> {
+  async restart(sessionId: string, opts?: { maySpawn?: () => Promise<boolean> }): Promise<SquadWorkerRestartResult> {
     const refused = this.refusal(sessionId);
     if (refused) return refused;
     const session = this.deps.getSession(sessionId)!;
     return new Promise<SquadWorkerRestartResult>((resolve) => {
-      const entry: PendingRestart = { session, over: false, resolve };
+      const entry: PendingRestart = { session, over: false, resolve, maySpawn: opts?.maySpawn };
       this.pending.set(sessionId, entry);
       entry.exitTimer = this.setTimer(() => {
         if (entry.relaunchTimer === undefined) void this.abandon(sessionId, entry, { ok: false, reason: 'exit-timeout' });
@@ -313,6 +315,12 @@ export class SquadWorkerRestarter {
     });
   }
 
+  /** The launch fence; a fence that cannot be read counts as closed. */
+  private async mayStillSpawn(entry: PendingRestart): Promise<boolean> {
+    if (!entry.maySpawn) return true;
+    try { return await entry.maySpawn(); } catch { return false; }
+  }
+
   private async runRelaunch(sessionId: string, entry: PendingRestart): Promise<void> {
     let message: string | undefined;
     try {
@@ -322,6 +330,10 @@ export class SquadWorkerRestarter {
       if (!this.current(sessionId, entry)) return;
       if (this.deps.sessionGone && !await this.deps.sessionGone(sessionId)) throw new Error('the old session is still running');
       if (!this.current(sessionId, entry)) return;
+      if (!await this.mayStillSpawn(entry)) {
+        await this.abandon(sessionId, entry, { ok: false, reason: 'run-closing', message: 'the Squad run is closing' });
+        return;
+      }
       const result = await relaunchSquadWorker(this.deps, entry.session);
       if (result.ok) {
         await this.relaunched(sessionId, entry, result.value);
@@ -334,11 +346,35 @@ export class SquadWorkerRestarter {
     await this.abandon(sessionId, entry, { ok: false, reason: 'relaunch-failed', message });
   }
 
+  /** Closes a relaunched session that was never bound; one retry, then logged so the leak is visible. */
+  private async closeUnbound(entry: PendingRestart, newSessionId: string): Promise<void> {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        await this.deps.closeSession(newSessionId);
+        return;
+      } catch (error) {
+        if (attempt === 2) {
+          console.error(`[main] squad worker restart: could not close unbound session ${newSessionId} (replacing ${entry.session.id}, run ${entry.session.cohort?.executionId ?? 'unknown'})`, error);
+        }
+      }
+    }
+  }
+
   private async relaunched(sessionId: string, entry: PendingRestart, session: TerminalSession): Promise<void> {
     if (!this.current(sessionId, entry)) {
       // The attempt timed out and its exit already ran, so the worker counts as gone: close the late
       // session too. At quit it is left to the shutdown path like every other session.
-      if (!this.disposed) await this.deps.closeSession(session.id).catch(() => undefined);
+      if (!this.disposed) await this.closeUnbound(entry, session.id);
+      return;
+    }
+    // Cancellation may have fenced the run while the relaunch was in flight: the new session is unbound, so close it.
+    if (!await this.mayStillSpawn(entry)) {
+      await this.closeUnbound(entry, session.id);
+      await this.abandon(sessionId, entry, { ok: false, reason: 'run-closing', message: 'the Squad run is closing' });
+      return;
+    }
+    if (!this.current(sessionId, entry)) {
+      if (!this.disposed) await this.closeUnbound(entry, session.id);
       return;
     }
     this.end(sessionId, entry);

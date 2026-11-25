@@ -153,7 +153,7 @@ is checked by reload/dev; a successful command does not verify the rendered UI.
   zcc schedule reload <id> --json
   zcc schedule run-now <id>
   zcc schedule enable|disable <id>
-  zcc team launch --team <id> --project <id> --goal "..." [--mode structured|freeform] [--wait]
+  zcc team launch --team <id> --project <id> --goal "..." [--mode structured|freeform] [--plan-file <path>] [--dry-run] [--wait]
   zcc team status|wait|answer|stop <id>
   zcc team ls
 

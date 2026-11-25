@@ -26,6 +26,7 @@ export const REMAPPABLE_COMMANDS: Array<{
   { command: 'thread.find', label: 'Search in thread', help: 'Search the conversation in the open thread.' },
   { command: 'file.quickOpen', label: 'Quick Open', help: 'Open a file in the selected project.' },
   { command: 'sidebar.toggle', label: 'Toggle explorer', help: 'Switch between terminals and the file explorer.' },
+  { command: 'sidebar.rail.toggle', label: 'Cycle navigation sidebar', help: 'Collapse or expand the sidebar. Customize navigation chooses whether it also stops at the icon-only rail.' },
   { command: 'settings.open', label: 'Settings', help: 'Open or close Settings. Inside a project, opens its Project settings.' },
   { command: 'browser.focusLocation', label: 'Browser address bar', help: 'Focus the in-app browser address bar.' },
   { command: 'browser.find', label: 'Find in page', help: 'Find text in the in-app browser tab.' },
@@ -77,6 +78,12 @@ export const DEFAULT_APP_KEYBINDINGS: AppDefaultKeybindings = [
     command: 'sidebar.toggle',
     desktopOnly: false,
     shortcut: { key: 'b', mod: true, meta: false, control: false, alt: false, shift: false },
+    when: { all: [], none: [] }
+  },
+  {
+    command: 'sidebar.rail.toggle',
+    desktopOnly: false,
+    shortcut: { key: 'b', mod: true, meta: false, control: false, alt: false, shift: true },
     when: { all: [], none: [] }
   },
   {
@@ -251,4 +258,27 @@ export function shortcutLabelForCommand(
 export function titleWithShortcut(label: string, command: AppCommandId): string {
   const shortcut = shortcutLabelForCommand(command);
   return shortcut === null ? label : `${label} (${shortcut})`;
+}
+
+/**
+ * Shortcuts wired directly in `shortcuts.ts` (Mod + key) that are not remappable,
+ * so they have no command in the settings above. Keep in step with that file.
+ */
+export const FIXED_NAV_SHORTCUT_KEYS = { inbox: 'i', agents: 'o', scheduler: 'j' } as const;
+
+/** The fixed shortcut key for a global nav row id, if it has one. */
+export function fixedNavShortcutKey(id: string): string | undefined {
+  return Object.hasOwn(FIXED_NAV_SHORTCUT_KEYS, id)
+    ? FIXED_NAV_SHORTCUT_KEYS[id as keyof typeof FIXED_NAV_SHORTCUT_KEYS]
+    : undefined;
+}
+
+/** `label (Ctrl + I)` for a fixed Mod+key shortcut. */
+export function titleWithFixedShortcut(
+  label: string,
+  key: string,
+  platform = typeof navigator === 'undefined' ? '' : navigator.platform
+): string {
+  const shortcut = { key, mod: true, meta: false, control: false, alt: false, shift: false };
+  return `${label} (${formatAppShortcut(shortcut, platform)})`;
 }

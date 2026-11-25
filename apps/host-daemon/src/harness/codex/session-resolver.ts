@@ -27,9 +27,13 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readFile, readdir, stat } from 'node:fs/promises';
 
-/** Root of Codex's rollout store. Overridable for tests via {@link CodexSessionResolver}. */
-export function codexSessionsRoot(): string {
-  return join(homedir(), '.codex', 'sessions');
+/**
+ * Root of Codex's rollout store: `$CODEX_HOME/sessions`, falling back to `~/.codex/sessions`.
+ * Read at call time so a changed environment is honoured. Overridable for tests via {@link CodexSessionResolver}.
+ */
+export function codexSessionsRoot(env: NodeJS.ProcessEnv = process.env): string {
+  const configured = env.CODEX_HOME?.trim();
+  return join(configured ? configured : join(homedir(), '.codex'), 'sessions');
 }
 
 /** A resolved Codex session: its minted UUID and the rollout file path. */
@@ -132,7 +136,7 @@ function dateKeyOf(ms: number): string {
  * call retries.
  */
 export class CodexSessionResolver {
-  private readonly root: string;
+  private readonly configuredRoot: string | undefined;
   private readonly now: () => number;
   private readonly maxFilesPerScan: number;
   private readonly cache = new Map<string, CodexSessionMatch>();
@@ -141,9 +145,14 @@ export class CodexSessionResolver {
   private readonly generations = new Map<string, number>();
 
   constructor(deps: ResolverDeps = {}) {
-    this.root = deps.root ?? codexSessionsRoot();
+    this.configuredRoot = deps.root;
     this.now = deps.now ?? Date.now;
     this.maxFilesPerScan = deps.maxFilesPerScan ?? 200;
+  }
+
+  /** The sessions root every rollout must live under: the injected root, else `$CODEX_HOME/sessions`. */
+  get root(): string {
+    return this.configuredRoot ?? codexSessionsRoot();
   }
 
   /** Drop a cached match (call on session close to free memory — Rule 5). */

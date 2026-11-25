@@ -1,13 +1,15 @@
 // @vitest-environment happy-dom
+import { MemoryRouter } from 'react-router-dom';
 import { useState } from 'react';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppConfig, HarnessVerifyResult } from '@zana-ai/zcc-domain/product';
 import type { HarnessAdapterDescriptor } from '@zana-ai/zcc-domain/harness-adapter';
 import { HarnessView } from './HarnessView.js';
 import { resetThreadModelCatalog } from '../../components/thread/pickers/thread-model-catalog.js';
 
-vi.mock('./RegisteredHarnesses.js', () => ({ RegisteredHarnesses: () => null }));
+vi.mock('./ProviderAuthentication.js', () => ({ ProviderAuthentication: () => null }));
+
 
 const state = vi.hoisted(() => ({
   rows: [] as HarnessVerifyResult[],
@@ -28,6 +30,7 @@ vi.mock('../../hooks/useHosts.js', () => ({
   primaryHost: (hosts: Array<unknown>) => hosts[0]
 }));
 vi.mock('../../lib/product-client.js', () => ({ product: {
+  pluginApps: { list: vi.fn(async () => []), onChanged: vi.fn(() => () => {}) },
   threads: { providers: state.providers },
   harness: { descriptors: state.descriptors },
   hosts: { providerCliStatus: state.cliStatus }
@@ -59,23 +62,20 @@ afterEach(() => { cleanup(); resetThreadModelCatalog(); });
 
 function View({ initial = {} as AppConfig, update = vi.fn(async () => undefined) } = {}) {
   const [config, setConfig] = useState(initial);
-  return <HarnessView config={config} onConfigDraft={setConfig} onUpdate={update} />;
+  return <MemoryRouter><HarnessView config={config} onConfigDraft={setConfig} onUpdate={update} /></MemoryRouter>;
 }
 
 async function openBinary(family: 'Claude Code' | 'Codex') {
-  state.anchor = 'harness-legacy';
   await waitFor(() => expect(state.descriptors).toHaveBeenCalled());
-  const panel = screen.getByRole('tabpanel', { name: 'CLI Agent' });
-  const row = within(panel).getByRole('button', { name: `Advanced settings for ${family}` });
-  fireEvent.click(within(row).getByText(family));
-  return within(panel).getByRole('textbox', { name: `${family} binary` }) as HTMLInputElement;
+  fireEvent.click(screen.getByRole('button', { name: `Configure ${family}` }));
+  fireEvent.click(screen.getByRole('button', { name: `Advanced settings for ${family}` }));
+  return screen.getByRole('textbox', { name: `${family} binary` }) as HTMLInputElement;
 }
 
 describe('clearing a harness binary field', () => {
   it('sends an empty string when an emptied field is blurred', async () => {
     const update = vi.fn(async () => undefined);
-    state.anchor = 'harness-legacy';
-    render(<View initial={{ claudeBinary: '/opt/claude', codexBinary: '/opt/codex' } as AppConfig} update={update} />);
+      render(<View initial={{ claudeBinary: '/opt/claude', codexBinary: '/opt/codex' } as AppConfig} update={update} />);
     const claude = await openBinary('Claude Code');
     expect(claude.value).toBe('/opt/claude');
     fireEvent.change(claude, { target: { value: '   ' } });
@@ -89,8 +89,7 @@ describe('clearing a harness binary field', () => {
 
   it('sends nothing when an untouched or unchanged field is blurred', async () => {
     const update = vi.fn(async () => undefined);
-    state.anchor = 'harness-legacy';
-    render(<View initial={{ claudeBinary: 'claude', codexBinary: '/opt/codex' } as AppConfig} update={update} />);
+      render(<View initial={{ claudeBinary: 'claude', codexBinary: '/opt/codex' } as AppConfig} update={update} />);
     const claude = await openBinary('Claude Code');
     fireEvent.blur(claude);
     const codex = await openBinary('Codex');
@@ -104,8 +103,7 @@ describe('clearing a harness binary field', () => {
   });
 
   it('renders an empty input when no explicit binary is stored or Claude reports its default', async () => {
-    state.anchor = 'harness-legacy';
-    render(<View initial={{ claudeBinary: 'claude' } as AppConfig} />);
+      render(<View initial={{ claudeBinary: 'claude' } as AppConfig} />);
     const claude = await openBinary('Claude Code');
     expect(claude.value).toBe('');
     expect(claude.placeholder).toBe('claude');
@@ -114,8 +112,7 @@ describe('clearing a harness binary field', () => {
   });
 
   it('keeps what the user types, even the word claude, until blur', async () => {
-    state.anchor = 'harness-legacy';
-    render(<View initial={{ claudeBinary: '/opt/claude' } as AppConfig} />);
+      render(<View initial={{ claudeBinary: '/opt/claude' } as AppConfig} />);
     const claude = await openBinary('Claude Code');
     fireEvent.change(claude, { target: { value: 'claude' } });
     expect(claude.value).toBe('claude');

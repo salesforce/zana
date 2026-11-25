@@ -12,6 +12,10 @@ import {
   MAX_HANDOFF_FILE_BYTES,
   PLAN_TRACE_REASON_MAX,
   TeamPlanHandoff,
+  createStallNotice,
+  observeOrchestratorEdge,
+  planHandoffDiagnostics,
+  warnLog,
   authoredPlanRelPath,
   boundTraceReason,
   createPlanTraceSink,
@@ -233,6 +237,8 @@ describe('TeamPlanHandoff.onCoordinatorIdle', () => {
     readAuthoredPlan?: () => Promise<AuthoredPlanRead>;
     register?: () => Promise<{ ok: boolean; message?: string }>;
     maxNudges?: number;
+    requireTurnStart?: boolean;
+    diagnose?: (line: unknown) => void;
   } = {}) {
     const nudge = vi.fn();
     const register = vi.fn(overrides.register ?? (async () => ({ ok: true })));
@@ -244,7 +250,9 @@ describe('TeamPlanHandoff.onCoordinatorIdle', () => {
       nudge,
       cleanup,
       logError: () => {},
-      maxNudges: overrides.maxNudges
+      maxNudges: overrides.maxNudges,
+      requireTurnStart: overrides.requireTurnStart,
+      diagnose: overrides.diagnose
     });
     return { handoff, nudge, register, cleanup };
   }
@@ -278,6 +286,53 @@ describe('TeamPlanHandoff.onCoordinatorIdle', () => {
     const absolute = `/root/${authoredPlanRelPath('exec-1')}`;
     expect(nudge.mock.calls[0][1]).toContain(`no plan file found at \`${absolute}\``);
     expect(nudge.mock.calls[0][1]).toContain(`to \`${absolute}\` using your file-write tool`);
+  });
+
+  it('spares the idle edge that fires before the first turn, then nudges on the next', async () => {
+    const lines: Array<{ event: string; note?: string }> = [];
+    const { handoff, nudge } = deps({ requireTurnStart: true, readAuthoredPlan: async () => ({ status: 'missing' }), diagnose: (line) => lines.push(line as { event: string }) });
+    await handoff.onCoordinatorIdle(ctx);
+    expect(nudge).not.toHaveBeenCalled();
+    expect(lines.some((line) => line.event === 'skip' && line.note === 'early idle before first turn')).toBe(true);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(nudge).toHaveBeenCalledOnce();
+  });
+
+  it('nudges on the first idle edge once the coordinator was seen working', async () => {
+    const { handoff, nudge } = deps({ requireTurnStart: true, readAuthoredPlan: async () => ({ status: 'missing' }) });
+    handoff.onCoordinatorWorking(ctx.executionId);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(nudge).toHaveBeenCalledOnce();
+  });
+
+  it('registers a file that appeared while the nudge was being decided instead of nudging', async () => {
+    const reads: AuthoredPlanRead[] = [{ status: 'missing' }, { status: 'ok', units, realPath: '/root/.zana/execution-plan-exec-1.md' }];
+    const { handoff, nudge, register } = deps({ readAuthoredPlan: async () => reads.shift() ?? { status: 'missing' } });
+    await handoff.onCoordinatorIdle(ctx);
+    expect(nudge).not.toHaveBeenCalled();
+    expect(register).toHaveBeenCalledWith(ctx, units);
+  });
+
+  it('keeps an idle edge that arrives mid-pass and re-reads once the pass finishes', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    // The pass (read + pre-nudge re-read) sees no file; only the queued re-run finds it.
+    const reads: AuthoredPlanRead[] = [{ status: 'missing' }, { status: 'missing' }];
+    const { handoff, register } = deps({
+      isPlanless: async () => { await gate; return true; },
+      readAuthoredPlan: async () => reads.shift() ?? { status: 'ok', units, realPath: '/root/.zana/execution-plan-exec-1.md' }
+    });
+    const first = handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx);
+    release();
+    await first;
+    expect(register).toHaveBeenCalledOnce();
+  });
+
+  it('never lets a throwing diagnostic sink change the handoff', async () => {
+    const { handoff, register } = deps({ diagnose: () => { throw new Error('sink'); } });
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenCalledOnce();
   });
 
   it('nudges with the validation reason when the plan file is invalid', async () => {
@@ -502,12 +557,142 @@ describe('TeamPlanHandoff.onCoordinatorIdle', () => {
     expect(nudge).toHaveBeenCalledTimes(2);
   });
 
+  it('registers a plan that appears after the nudge budget was spent, and reports the stall once', async () => {
+    let present = false;
+    const reportStalled = vi.fn();
+    const nudge = vi.fn();
+    const register = vi.fn(async () => ({ ok: true }));
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => (present ? { status: 'ok', units, realPath: '/root/.zana/execution-plan-exec-1.md' } : { status: 'missing' }),
+      register,
+      nudge,
+      cleanup: async () => {},
+      logError: () => {},
+      maxNudges: 2,
+      reportStalled
+    });
+    await handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx); // budget spent, still no file
+    await handoff.onCoordinatorIdle(ctx);
+    expect(nudge).toHaveBeenCalledTimes(2);
+    expect(reportStalled).toHaveBeenCalledOnce();
+    present = true; // the orchestrator finally writes its plan
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenCalledOnce();
+    expect(register).toHaveBeenCalledWith(ctx, units);
+  });
+
+  it('stall notice appends one deduped Inbox entry and logs a failed append', async () => {
+    const append = vi.fn(async () => ({}));
+    createStallNotice(append, () => {})(ctx, 'no plan file found');
+    expect(append).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'p-1', executionId: 'exec-1', dedupeKey: 'execution-plan-stalled:exec-1', subject: 'Squad plan not registered yet'
+    }));
+    const logError = vi.fn();
+    createStallNotice(async () => { throw new Error('inbox down'); }, logError)(ctx, 'x');
+    await vi.waitFor(() => expect(logError).toHaveBeenCalledOnce());
+  });
+
+  it('reports a stall once even when a valid plan keeps being rejected by the host', async () => {
+    const reportStalled = vi.fn();
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/root/.zana/execution-plan-exec-1.md' }),
+      register: async () => ({ ok: false, message: 'nope' }),
+      nudge: () => {},
+      cleanup: async () => {},
+      logError: () => {},
+      maxNudges: 0,
+      reportStalled
+    });
+    await handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(reportStalled).toHaveBeenCalledOnce();
+  });
+
+  it('survives a throwing stall report', async () => {
+    const logError = vi.fn();
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => ({ status: 'invalid', reason: 'bad' }),
+      register: async () => ({ ok: true }),
+      nudge: () => {},
+      cleanup: async () => {},
+      logError,
+      maxNudges: 0,
+      reportStalled: () => { throw new Error('boom'); }
+    });
+    await handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx); // exhausted + invalid file: silent wait
+    expect(logError).toHaveBeenCalledOnce();
+  });
+
   it('re-registers after forget() (fresh execution state)', async () => {
     const { handoff, register } = deps();
     await handoff.onCoordinatorIdle(ctx);
     handoff.forget(ctx.executionId);
     await handoff.onCoordinatorIdle(ctx);
     expect(register).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('TeamPlanHandoff one automatic Squad-check round', () => {
+  const ctx: CoordinatorHandoffContext = { sessionId: 's-1', projectId: 'p-1', projectRoot: '/root', executionId: 'exec-1', slotId: 'orchestrator:lead' };
+  const units: ExecutionWorkUnitInput[] = [{ id: 'a', title: 'A', task: 'do a', dependencies: [] }];
+  function build(judge: () => Promise<{ message: string; reason: string } | undefined>) {
+    const nudge = vi.fn();
+    const register = vi.fn(async () => ({ ok: true }));
+    const escalateInvalid = vi.fn(async () => 'wait' as const);
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/root/.zana/execution-plan-exec-1.md' }),
+      register, nudge, cleanup: async () => {}, logError: () => {},
+      judgeAuthored: judge, escalateInvalid
+    });
+    return { handoff, nudge, register, escalateInvalid };
+  }
+
+  it('a bad-role inferred plan triggers exactly one correction round, a second bad plan escalates instead of re-sending', async () => {
+    const judge = vi.fn(async () => ({ message: 'Your plan failed the Squad check.\n- Step `a`', reason: 'Step a asks for a role this Squad does not have.' }));
+    const { handoff, nudge, register, escalateInvalid } = build(judge);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(nudge).toHaveBeenCalledOnce();
+    expect(nudge.mock.calls[0]![1]).toContain('Your plan failed the Squad check');
+    expect(register).not.toHaveBeenCalled();
+    await handoff.onCoordinatorIdle(ctx);
+    expect(nudge).toHaveBeenCalledOnce();
+    expect(escalateInvalid).toHaveBeenCalledWith(ctx, 'Step a asks for a role this Squad does not have.');
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it('a corrected plan after the round registers normally', async () => {
+    const judge = vi.fn().mockResolvedValueOnce({ message: 'fix', reason: 'r' }).mockResolvedValueOnce(undefined);
+    const { handoff, nudge, register } = build(judge);
+    await handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(nudge).toHaveBeenCalledOnce();
+    expect(register).toHaveBeenCalledOnce();
+  });
+
+  it('a throwing judge fails open and still registers', async () => {
+    const { handoff, register } = build(async () => { throw new Error('boom'); });
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenCalledOnce();
+  });
+
+  it('escalation falls back to reviewInvalid when no escalate hook is wired', async () => {
+    const reviewInvalid = vi.fn(async () => 'reject' as const);
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/root/p.md' }),
+      register: vi.fn(async () => ({ ok: true })), nudge: vi.fn(), cleanup: async () => {}, logError: () => {},
+      judgeAuthored: async () => ({ message: 'm', reason: 'r' }), reviewInvalid
+    });
+    await handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(reviewInvalid).toHaveBeenCalledOnce();
   });
 });
 
@@ -911,5 +1096,204 @@ describe('plan handoff correlation trace', () => {
     const throwingLog = vi.fn(() => { throw new Error('log down'); });
     expect(() => createPlanTraceSink({ generation: async () => undefined, log: throwingLog })(event)).not.toThrow();
     await vi.waitFor(() => expect(throwingLog).toHaveBeenCalledOnce());
+  });
+});
+
+describe('observeOrchestratorEdge', () => {
+  it('logs every orchestrator edge and reports working to the handoff', () => {
+    const log = vi.fn();
+    const handoff = { onCoordinatorWorking: vi.fn() };
+    observeOrchestratorEdge(handoff, log, 's-1', 'working', 3, { role: 'orchestrator', executionId: 'e-1' });
+    observeOrchestratorEdge(handoff, log, 's-1', 'idle', undefined, { role: 'orchestrator', executionId: 'e-1' });
+    expect(log).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(log.mock.calls[0][1])).toEqual({ executionId: 'e-1', sessionId: 's-1', state: 'working', seq: 3 });
+    expect(handoff.onCoordinatorWorking).toHaveBeenCalledOnce();
+    expect(handoff.onCoordinatorWorking).toHaveBeenCalledWith('e-1', 's-1');
+  });
+
+  it('ignores workers and sessions without an execution', () => {
+    const log = vi.fn();
+    const handoff = { onCoordinatorWorking: vi.fn() };
+    observeOrchestratorEdge(handoff, log, 's', 'working', 1, { role: 'worker', executionId: 'e' });
+    observeOrchestratorEdge(handoff, log, 's', 'working', 1, { role: 'orchestrator' });
+    observeOrchestratorEdge(handoff, log, 's', 'working', 1, undefined);
+    expect(log).not.toHaveBeenCalled();
+    expect(handoff.onCoordinatorWorking).not.toHaveBeenCalled();
+  });
+});
+
+describe('plan handoff diagnostics logging', () => {
+  it('writes one JSON line per record at warn level', () => {
+    const log = vi.fn();
+    planHandoffDiagnostics(log)({ executionId: 'e', sessionId: 's', event: 'edge', nudges: 1 });
+    expect(log).toHaveBeenCalledWith('squad plan handoff edge', '{"executionId":"e","sessionId":"s","event":"edge","nudges":1}');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warnLog('ctx', 'msg');
+    expect(warn).toHaveBeenCalledWith('[main] ctx: msg');
+    warn.mockRestore();
+  });
+});
+
+describe('TeamPlanHandoff bounded work after exhaustion and release at run end', () => {
+  const ctx: CoordinatorHandoffContext = {
+    sessionId: 's-9', projectId: 'p-1', projectRoot: '/root', executionId: 'exec-9', slotId: 'orchestrator:lead'
+  };
+  const units: ExecutionWorkUnitInput[] = [{ id: 'a', title: 'A', task: 'do a', dependencies: [] }];
+
+  function build(digest: { v: string }, registerResult = { ok: false, message: 'cycle' } as { ok: boolean; message?: string }) {
+    const register = vi.fn(async () => registerResult);
+    const nudge = vi.fn();
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => true,
+      readAuthoredPlan: async () => ({ status: 'ok', units, realPath: '/root/.zana/plan.md', bodyDigest: digest.v }),
+      register,
+      nudge,
+      cleanup: async () => {},
+      logError: () => {},
+      maxNudges: 1
+    });
+    return { handoff, register, nudge };
+  }
+
+  it('does not re-submit the same rejected plan on every idle edge once exhausted', async () => {
+    const digest = { v: 'd1' };
+    const { handoff, register } = build(digest);
+    await handoff.onCoordinatorIdle(ctx); // rejected, nudge 1
+    await handoff.onCoordinatorIdle(ctx); // rejected, budget spent -> exhausted
+    expect(register).toHaveBeenCalledTimes(2);
+    await handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenCalledTimes(2);
+    digest.v = 'd2'; // the orchestrator rewrote the file
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenCalledTimes(3);
+  });
+
+  it('releases the entry when the orchestrator session exits', async () => {
+    const digest = { v: 'd1' };
+    const { handoff, register } = build(digest, { ok: true });
+    await handoff.onCoordinatorIdle(ctx);
+    await handoff.onCoordinatorIdle(ctx); // done latch
+    expect(register).toHaveBeenCalledTimes(1);
+    handoff.forgetSession('other-session'); // unrelated session keeps the entry
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenCalledTimes(1);
+    handoff.forgetSession('s-9');
+    await handoff.onCoordinatorIdle(ctx); // fresh entry
+    expect(register).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the session id from the working edge so an exit before any idle edge releases it', async () => {
+    const { handoff, register } = build({ v: 'd1' }, { ok: true });
+    handoff.onCoordinatorWorking('exec-9', 's-9');
+    handoff.forgetSession('s-9');
+    await handoff.onCoordinatorIdle(ctx);
+    expect(register).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('stall notice against the real inbox store', () => {
+  it('folds repeated notices for one execution into one row and does not promise polling', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'stall-notice-'));
+    try {
+      const { createInboxStore } = await import('@zana-ai/zcc-server/services/inbox/inbox-store');
+      const store = createInboxStore({ filePath: join(dir, 'inbox.jsonl') });
+      const notice = createStallNotice((input) => store.append(input), () => {});
+      const ctx: CoordinatorHandoffContext = { sessionId: 's', projectId: 'p-1', projectRoot: '/r', executionId: 'exec-1', slotId: 'o' };
+      notice(ctx, 'first');
+      await new Promise((r) => setTimeout(r, 50));
+      notice(ctx, 'second');
+      await new Promise((r) => setTimeout(r, 50));
+      notice({ ...ctx, executionId: 'exec-2' }, 'other');
+      await new Promise((r) => setTimeout(r, 50));
+      const entries = (await readFile(join(dir, 'inbox.jsonl'), 'utf-8')).split(String.fromCharCode(10)).map((l) => l.trim()).filter(Boolean).map((l) => JSON.parse(l));
+      expect(entries).toHaveLength(2);
+      expect(entries.find((e) => e.dedupeKey === 'execution-plan-stalled:exec-1').comments).toContain('second');
+      expect(entries[0].comments).not.toContain('keeps checking');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('TeamPlanHandoff bounded timed re-check', () => {
+  const ctx: CoordinatorHandoffContext = {
+    sessionId: 's-t', projectId: 'p-1', projectRoot: '/root', executionId: 'exec-t', slotId: 'orchestrator:lead'
+  };
+  const units: ExecutionWorkUnitInput[] = [{ id: 'a', title: 'A', task: 'do a', dependencies: [] }];
+
+  function build(read: { current: AuthoredPlanRead }, planless = { v: true }) {
+    const register = vi.fn(async () => ({ ok: true }));
+    const nudge = vi.fn();
+    const readAuthoredPlan = vi.fn(async () => read.current);
+    const handoff = new TeamPlanHandoff({
+      isPlanless: async () => planless.v,
+      readAuthoredPlan,
+      register,
+      nudge,
+      cleanup: async () => {},
+      logError: () => {},
+      maxNudges: 2,
+      timedRecheck: { intervalMs: 1000, windowMs: 3500 }
+    });
+    return { handoff, register, nudge, readAuthoredPlan };
+  }
+
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('registers a plan that appears after the last idle edge, without sending a nudge', async () => {
+    const read = { current: { status: 'missing' } as AuthoredPlanRead };
+    const { handoff, register, nudge } = build(read);
+    await handoff.onCoordinatorIdle(ctx);
+    expect(nudge).toHaveBeenCalledTimes(1);
+    read.current = { status: 'ok', units, realPath: '/root/.zana/p.md' };
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(register).toHaveBeenCalledTimes(1);
+    expect(nudge).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(register).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops re-checking when the window ends', async () => {
+    const read = { current: { status: 'missing' } as AuthoredPlanRead };
+    const { handoff, readAuthoredPlan, nudge } = build(read);
+    await handoff.onCoordinatorIdle(ctx);
+    const afterEdge = readAuthoredPlan.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(20000);
+    const ticks = readAuthoredPlan.mock.calls.length - afterEdge;
+    expect(ticks).toBeGreaterThan(0);
+    expect(ticks).toBeLessThanOrEqual(4);
+    expect(nudge).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops when the execution already has a plan, and when the session is released', async () => {
+    const read = { current: { status: 'missing' } as AuthoredPlanRead };
+    const planless = { v: true };
+    const first = build(read, planless);
+    await first.handoff.onCoordinatorIdle(ctx);
+    planless.v = false;
+    await vi.advanceTimersByTimeAsync(1000);
+    const reads = first.readAuthoredPlan.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(first.readAuthoredPlan.mock.calls.length).toBe(reads);
+
+    const second = build(read);
+    await second.handoff.onCoordinatorIdle(ctx);
+    const before = second.readAuthoredPlan.mock.calls.length;
+    second.handoff.forgetSession('s-t');
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(second.readAuthoredPlan.mock.calls.length).toBe(before);
+  });
+
+  it('survives a failing read inside a tick and keeps going', async () => {
+    const read = { current: { status: 'missing' } as AuthoredPlanRead };
+    const { handoff, readAuthoredPlan, register } = build(read);
+    await handoff.onCoordinatorIdle(ctx);
+    readAuthoredPlan.mockRejectedValueOnce(new Error('disk'));
+    await vi.advanceTimersByTimeAsync(1000);
+    read.current = { status: 'ok', units, realPath: '/root/.zana/p.md' };
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(register).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,3 +1,4 @@
+import { PlanReviewDisclosure, planHasMustFix, type PlanRecheck } from './PlanReviewDisclosure.js';
 import { product } from '../lib/product-client.js';
 import { SquadLaunchPolicyFields, SquadResolvedLaunchDetails } from './SquadLaunchSettings.js';
 import { launchOptionsSchema, type LaunchOptions, type ExecutionResolvedLaunchV1 } from '@zana-ai/zcc-domain/launch-options';
@@ -60,6 +61,7 @@ export function TeamComposer({
   onComposerProjectIdChange,
   initialText,
   prefill,
+  initialTeamId,
   resolveLaunchPreview,
   onClose
 }: {
@@ -67,10 +69,15 @@ export function TeamComposer({
   initialText?: string;
   /** A reviewed proposal from a conversation; seeds the form and tags the launch with its id. */
   prefill?: SquadLaunchPrefill;
+  /** Preselect this Squad when no proposal is pre-filled (Settings > Squads Launch). */
+  initialTeamId?: string;
   resolveLaunchPreview?: (input: { teamId: string; projectId: string; goal: string; coordinationMode: 'structured' | 'freeform'; sourceCapabilityIds: string[] } & LaunchOptions) => Promise<ExecutionResolvedLaunchV1>;
   onClose?: () => void;
 } & ComposerProjectSelectionProps) {
   const session = useComposerSession();
+  // A re-check replaces the plan review wholesale, so a fixed plan can clear its Must fix without a new proposal.
+  const [recheck, setRecheck] = useState<{ proposalId: string; plan: PlanRecheck } | null>(null);
+  const livePlan = prefill ? (recheck?.proposalId === prefill.proposalId ? recheck.plan : prefill) : undefined;
   const reviewedBound = Boolean(prefill?.launchPreview || prefill?.launchOptions);
   const projects = useData((s) => s.projects);
   const loadProjects = useData((s) => s.loadProjects);
@@ -89,7 +96,7 @@ export function TeamComposer({
     onComposerProjectIdChange?.(resolved);
   };
   const preferredProjectId = preferredComposerProjectId({ projects, lastProjectId, selectedProjectId });
-  const [draftTeamId, setTeamId] = useComposerSetting(session, 'team.id', prefill?.teamId ?? '');
+  const [draftTeamId, setTeamId] = useComposerSetting(session, 'team.id', prefill?.teamId ?? initialTeamId ?? '');
   const teamId = reviewedBound ? prefill!.teamId : draftTeamId;
   const [coordinationMode, setCoordinationMode] = useComposerSetting<Extract<TeamCoordinationMode, 'structured' | 'freeform'>>(session, 'team.coordination',
     () => prefill?.coordinationMode ?? useData.getState().teamDefaultCoordinationMode
@@ -105,7 +112,7 @@ export function TeamComposer({
   const [targetValue, setTargetValue] = useState(NO_TARGET);
   const [launchOptions, setLaunchOptions] = useState<LaunchOptions>(() => prefill?.launchOptions ?? {});
   const [customizeOpen, setCustomizeOpen] = useState(false);
-  const [reviewOpen, setReviewOpen] = useState(reviewedBound);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [previewGeneration, setPreviewGeneration] = useState(0);
   const [previewState, setPreviewState] = useState<{ key: string; generation: number; resolved?: ExecutionResolvedLaunchV1; preview?: SquadLaunchPrefill['launchPreview']; error?: string }>();
   const launchBusyRef = useRef(false);
@@ -266,8 +273,9 @@ export function TeamComposer({
     : summaryView.over
       ? squadSummaryTooLongMessage(summaryLength)
       : null;
-   const canLaunch = Boolean(teamId && project && goalReady && !launching && !textOverMessage && optionsValid.success && previewReady);
-  const sendLabel = launching ? 'Launching squad' : goalView.over ? 'Goal is too long for a Squad' : summaryView.over ? 'Summary is too long for a Squad' : 'Launch squad';
+   const mustFix = planHasMustFix(livePlan);
+   const canLaunch = Boolean(teamId && project && goalReady && !launching && !textOverMessage && optionsValid.success && previewReady && !mustFix);
+  const sendLabel = launching ? 'Launching squad' : mustFix ? 'Fix the plan first' : goalView.over ? 'Goal is too long for a Squad' : summaryView.over ? 'Summary is too long for a Squad' : 'Launch squad';
 
   const pickSources = async () => {
     if (!project) return;
@@ -516,6 +524,20 @@ export function TeamComposer({
             <p data-testid="team-composer-attachment-note">{SQUAD_ATTACHMENT_FROZEN_NOTE}</p>
           ) : null}
         </section>
+      ) : null}
+      {prefill && livePlan ? (
+        <PlanReviewDisclosure prefill={livePlan} proposalId={prefill.proposalId} proposerTitle={prefill.proposerTitle}
+          planFiles={prefill.sources.filter((source) => !source.attachment).map((source) => source.path ?? source.name)}
+          onRechecked={(plan) => setRecheck({ proposalId: prefill.proposalId, plan })}
+          onSent={() => {
+            pushToast(`Sent to ${prefill.proposerTitle ?? 'the conversation'}. A new Squad launch will appear in your Inbox when it is ready.`);
+            onClose?.();
+          }} />
+      ) : null}
+      {prefill ? (
+        <p className="team-composer-goal-hint" data-testid="team-composer-goal-hint">
+          <strong>Squad goal.</strong> Sent to the Squad when you press Launch. Not a message to {prefill.proposerTitle ?? 'the conversation'}.
+        </p>
       ) : null}
       {error ? (
         <p className="thread-command-error" data-testid="team-command-error">{error}</p>

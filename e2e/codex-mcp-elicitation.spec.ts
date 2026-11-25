@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { pickComposerSetting } from "./fixtures/composer-settings.js";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test, expect } from "./fixtures/app.js";
@@ -240,9 +241,7 @@ test("Codex MCP approval, form, URL, decline and stop complete through the built
     _meta: null,
   });
 
-  const picker = window.getByLabel("Permission mode", { exact: true });
-  await picker.click();
-  await window.getByRole("option", { name: /^Accept Edits/ }).click();
+  await pickComposerSetting(window, window.getByTestId("thread-detail"), "permission", "Edits");
   await ask("Allow calendar tool?");
   await expect(banner).toContainText("create_event");
   await expect(banner).toContainText("Review");
@@ -257,8 +256,7 @@ test("Codex MCP approval, form, URL, decline and stop complete through the built
     _meta: null,
   });
 
-  await picker.click();
-  await window.getByRole("option", { name: /^Full Access/ }).click();
+  await pickComposerSetting(window, window.getByTestId("thread-detail"), "permission", "Full");
   await send();
   await answered(5);
   expect(responses()[4]).toEqual({

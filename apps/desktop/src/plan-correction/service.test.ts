@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
+import { PARSER_VERSION } from '@zana-ai/zcc-server/services/execution/portable-plan';
 import { COORDINATOR_WAKE_MESSAGE_MAX, PLAN_CORRECTION_HELD_MESSAGE, PLAN_CORRECTION_MAX_RETRIES, PLAN_CORRECTION_STALL_IDLE_EDGES, PlanCorrectionService, runPlanCorrectionHostAction } from './service.js';
 
 const ctx = { sessionId: 's-1', projectId: 'p-1', projectRoot: '/root', executionId: 'e-1', slotId: 'lead' };
@@ -131,6 +132,21 @@ it('does not nudge when the request-changes persist loses to a cancellation', as
   expect(stopExecution).toHaveBeenCalled();
 });
 
+it('does not report a cancelled correction while the stop is unverified, and finishes it on the retry', async () => {
+  const { service, bindInboxAction, store, stopExecution } = create();
+  await service.begin(ctx.executionId, 'bad plan', false);
+  await service.review(ctx, source);
+  const offer = latestOffer(bindInboxAction);
+  stopExecution.mockRejectedValueOnce(new Error('CANCEL_INCOMPLETE: Team sessions are still closing: worker-1'));
+
+  await expect(service.respond(ctx.executionId, 'cancel', offer)).rejects.toThrow('CANCEL_INCOMPLETE');
+  // The ledger fence is already down so no plan can register or resume, but the action is not consumed.
+  expect((await store.get(ctx.executionId))?.status).toBe('cancelled');
+
+  await expect(service.respond(ctx.executionId, 'cancel', offer)).resolves.toBe('cancelled');
+  expect(stopExecution).toHaveBeenCalledTimes(2);
+});
+
 it('logs an unreadable source plan and still instructs the coordinator', async () => {
   const { service, bindInboxAction, readSourcePlan, wakeCoordinator } = create();
   const logWarning = vi.fn();
@@ -245,6 +261,8 @@ describe('PlanCorrectionService', () => {
 
     const entry = appendInbox.mock.calls[0]![0];
     expect(entry.comments).toContain('Problem with the supplied plan: parser expected a dependency');
+    expect(entry.comments).toContain('Use the corrected plan starts work');
+    expect(entry.comments).not.toMatch(/Request changes|Approve/);
     expect(entry.comments).toContain('Proposed corrected plan: 1 step.');
     expect(entry.comments).toContain('1. **Source** (`source`). No declared file writes.');
     expect(entry.comments).toContain('Review the proposed corrected plan below');
@@ -255,9 +273,9 @@ describe('PlanCorrectionService', () => {
       correctedPlanPath: '.zana/execution-plan-corrected-e-1.md'
     });
     expect(entry.questions[0]?.options).toEqual([
-      { id: 'approve', label: 'Approve' },
-      { id: 'changes', label: 'Request changes' },
-      { id: 'cancel', label: 'Cancel' }
+      { id: 'approve', label: 'Use the corrected plan' },
+      { id: 'changes', label: 'Ask the agent to revise' },
+      { id: 'cancel', label: 'Cancel the run' }
     ]);
   });
 
@@ -281,9 +299,9 @@ describe('PlanCorrectionService', () => {
       expect(entry.comments).toContain('- step "U1" id normalized to "u1"');
       expect(entry.comments).toContain('- step u2 dependency "U1" normalized to "u1"');
       expect(entry.questions[0]?.options).toEqual([
-        { id: 'approve', label: 'Approve' },
-        { id: 'changes', label: 'Request changes' },
-        { id: 'cancel', label: 'Cancel' }
+        { id: 'approve', label: 'Use the corrected plan' },
+        { id: 'changes', label: 'Ask the agent to revise' },
+        { id: 'cancel', label: 'Cancel the run' }
       ]);
       expect(latestOffer(bindInboxAction).digest).toBe(launchDigest(normalized.units));
     });
@@ -765,6 +783,7 @@ describe('PlanCorrectionService', () => {
     // The card names the launch defect recorded by begin().
     expect(pending.reason).toBe('bad plan');
     expect(appendInbox.mock.calls[0]![0].comments).toContain('Problem with the supplied plan: bad plan');
+    expect(appendInbox.mock.calls[0]![0].comments).toContain('Cancel the run stops it');
     expect(appendInbox.mock.calls[0]![0].comments).not.toContain('authored plan is invalid');
     expect(appendInbox.mock.calls[0]![0].decisionGuidance).toMatchObject({ diagnostic: 'bad plan' });
 
@@ -938,6 +957,32 @@ describe('PlanCorrectionService identity and digest races (squad-bugs)', () => {
     expect(records.get(ctx.executionId).status).not.toBe('approved');
     expect(records.get(ctx.executionId).approvedDigest).toBeUndefined();
     expect(offeredDigest).toBe(launchDigest(source.units));
+  });
+
+  it('stamps the parser version on an offer and keeps unstamped records valid', async () => {
+    const { service, readCorrectedPlan, records } = create();
+    await service.begin(ctx.executionId, 'bad plan', false);
+    await service.review(ctx, source);
+    expect(records.get(ctx.executionId).parserVersion).toBe(PARSER_VERSION);
+    const record = records.get(ctx.executionId);
+    delete record.parserVersion;
+    const offeredActionId = record.offeredActionId;
+    readCorrectedPlan.mockResolvedValue(source);
+    await service.review(ctx, source);
+    expect(records.get(ctx.executionId).offeredActionId).toBe(offeredActionId);
+  });
+
+  it('re-offers instead of carding when the offer was stamped by another parser version', async () => {
+    const { service, appendInbox, records } = create();
+    await service.begin(ctx.executionId, 'bad plan', false);
+    await service.review(ctx, source);
+    const first = records.get(ctx.executionId);
+    first.parserVersion = PARSER_VERSION - 1;
+    const callsBefore = appendInbox.mock.calls.length;
+    await service.review(ctx, source);
+    expect(records.get(ctx.executionId).parserVersion).toBe(PARSER_VERSION);
+    expect(records.get(ctx.executionId).offeredDigest).toBe(launchDigest(source.units));
+    expect(appendInbox.mock.calls.length).toBeGreaterThan(callsBefore);
   });
 
   it('two concurrent approvals of one offer resume exactly once', async () => {
@@ -1225,6 +1270,8 @@ describe('lost correction wake escalation', () => {
     await confirmation.onUnconsumed();
     expect(appendInbox).toHaveBeenCalledTimes(cards + 1);
     expect(appendInbox.mock.calls.at(-1)![0].comments).toMatch(/^The coordinator did not pick up the correction request: it stayed idle after the request was delivered twice\. Plan requires revisions/);
+    expect(appendInbox.mock.calls.at(-1)![0].comments).toContain('This is a Must fix');
+    expect(appendInbox.mock.calls.at(-1)![0].comments).toContain('Select Ask the agent to revise');
     expect(records.get(ctx.executionId)).toMatchObject({ status: 'pending', retries: 2 });
     // The escalation consumed the request: a duplicate signal adds nothing.
     await confirmation.onUnconsumed();
@@ -1240,6 +1287,7 @@ describe('lost correction wake escalation', () => {
     await lastConfirmation(wakeCoordinator).onUnconsumed();
     const card = appendInbox.mock.calls.at(-1)![0];
     expect(card.comments).toMatch(/^The coordinator did not pick up the correction request.*Problem with the supplied plan: bad plan/s);
+    expect(card.comments).not.toMatch(/Request changes|Approve /);
     expect(card.questions[0].options.map((option: { id: string }) => option.id)).toEqual(['approve', 'changes', 'cancel']);
   });
 

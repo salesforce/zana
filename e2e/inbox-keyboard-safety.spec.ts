@@ -45,6 +45,7 @@ for (const tab of ['Feed', 'Saved'] as const) {
     const savedBefore = readFileSync(savedFile, 'utf8');
 
     await page.getByTestId('nav-inbox').click();
+    await page.getByRole('button', { name: 'Split view', exact: true }).click();
     await page.getByRole('tab', { name: new RegExp(`^${tab}`) }).click();
     const rows = page.locator('.inbox-view .inbox-row');
     const first = rows.filter({ hasText: titles[0] });

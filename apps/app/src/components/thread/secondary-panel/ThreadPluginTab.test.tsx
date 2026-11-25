@@ -54,6 +54,25 @@ describe('ThreadPluginTab', () => {
     expect(renderToStaticMarkup(<ThreadPluginTab moduleId="example" actionId="inspect" projectId="p1" />)).not.toContain('tabId');
   });
 
+  it('passes keep-alive state only when the host supplies it', () => {
+    projects.actions = [{
+      pluginId: 'example', id: 'inspect', title: 'Inspect', generation: 1,
+      component: (props) => <output>{JSON.stringify(props)}</output>
+    }];
+    const bare = renderToStaticMarkup(<ThreadPluginTab moduleId="example" actionId="inspect" projectId="p1" />);
+    expect(bare).not.toContain('active');
+    expect(bare).not.toContain('tabState');
+    const hidden = renderToStaticMarkup(<ThreadPluginTab moduleId="example" actionId="inspect" projectId="p1" active={false} />);
+    expect(hidden).toContain('&quot;active&quot;:false');
+    expect(hidden).not.toContain('tabState');
+    const saved = renderToStaticMarkup(<ThreadPluginTab moduleId="example" actionId="inspect" projectId="p1" active tabState={{ docId: 'd1' }} onTabStateChange={() => undefined} />);
+    expect(saved).toContain('&quot;active&quot;:true');
+    expect(saved).toContain('&quot;tabState&quot;:{&quot;docId&quot;:&quot;d1&quot;}');
+    // A tab with no saved state yet still gets an explicit null once it can save.
+    const empty = renderToStaticMarkup(<ThreadPluginTab moduleId="example" actionId="inspect" projectId="p1" onTabStateChange={() => undefined} />);
+    expect(empty).toContain('&quot;tabState&quot;:null');
+  });
+
   it('shows a tool only in the side panels it opens in', () => {
     projects.current = [{ id: 'p1', name: 'Alpha', path: '/tmp/alpha' }];
     projects.actions = [{
@@ -79,6 +98,18 @@ describe('ThreadPluginTab', () => {
       component: ({ projectId }) => <output>{projectId === undefined ? 'no owner' : projectId}</output>
     }];
     expect(renderToStaticMarkup(<ThreadPluginTab moduleId="example" actionId="inspect" projectId={null} />)).toContain('no owner');
+  });
+
+  it('opens a scoped project tab from the launcher but keeps parameterized links in the action', () => {
+    projects.current = [{ id: 'p1' }];
+    projects.actions = [{
+      pluginId: 'example', id: 'document', title: 'Notes', generation: 1, projectTabShortcut: true,
+      component: () => <output>Document reader</output>
+    }];
+    const props = { moduleId: 'example', actionId: 'document', projectId: 'p1' };
+    expect(renderToStaticMarkup(<ThreadPluginTab {...props} params={null} />)).toContain('plugin</div>');
+    expect(renderToStaticMarkup(<ThreadPluginTab {...props} params={{ path: 'file.md' }} />)).toContain('Document reader');
+    expect(renderToStaticMarkup(<ThreadPluginTab {...props} projectId={null} />)).toContain('Project is unavailable');
   });
 
   it('shows a placeholder when the project is missing', () => {

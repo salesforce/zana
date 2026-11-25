@@ -38,7 +38,7 @@ for (const explicitOrigin of [false, true]) {
     const openReport = async () => {
       await window.reload();
       await window.getByTestId('nav-inbox').click();
-      await window.locator('.inbox-row').filter({ hasText: 'Thread result ready' }).click();
+      await window.getByRole('button', { name: /Thread result ready/ }).click();
       await expect(window.locator('.inbox-detail').getByText('Archived', { exact: true })).toBeVisible();
     };
 

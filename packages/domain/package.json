@@ -5,6 +5,8 @@
   "type": "module",
   "exports": {
     "./onboarding": "./src/onboarding.ts",
+    "./trim-edges": "./src/trim-edges.ts",
+    "./linear-time-testing": "./src/linear-time-testing.ts",
     "./computer-label": "./src/computer-label.ts",
     "./cli-host-guard": "./src/cli-host-guard.ts",
     ".": {
@@ -36,6 +38,11 @@
       "types": "./src/schedule.ts",
       "source": "./src/schedule.ts",
       "default": "./src/schedule.ts"
+    },
+    "./persona-validation": {
+      "types": "./src/persona-validation.ts",
+      "source": "./src/persona-validation.ts",
+      "default": "./src/persona-validation.ts"
     },
     "./persona": {
       "types": "./src/persona.ts",

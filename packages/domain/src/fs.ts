@@ -11,6 +11,7 @@ export type {
   FsMutateResult,
   FsReadDataUrlResult,
   WalkedFile,
+  WalkResult,
   SearchOptions,
   SearchHit,
   SearchResult,

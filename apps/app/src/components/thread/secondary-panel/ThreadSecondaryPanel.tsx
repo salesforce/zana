@@ -19,6 +19,8 @@ import {
 import './mobile-panel.css';
 import './thread-panel-controls.css';
 import { ThreadToolMenu, type ThreadToolMenuItem } from './ThreadToolMenu.js';
+import { BasicPanelChrome, basicPanelActiveSupported } from './BasicPanelChrome.js';
+import '../../basic/basic-conversation.css';
 
 export type ThreadPanelToolKind = 'terminal' | 'browser' | 'explorer';
 
@@ -34,6 +36,7 @@ export function ThreadSecondaryPanel({
   onSelectPlan,
   onNewTab,
   onAddTool,
+  projectShortcuts = [],
   canAddBrowser = true,
   onCloseTab,
   onCloseTabs,
@@ -41,6 +44,9 @@ export function ThreadSecondaryPanel({
   onToggleMaximized,
   onHide,
   onResize,
+  basic = false,
+  basicCompact = false,
+  onOpenAdvanced,
   dock
 }: {
   state: ThreadSecondaryPanelState;
@@ -54,6 +60,7 @@ export function ThreadSecondaryPanel({
   onSelectPlan?: () => void;
   onNewTab: () => void;
   onAddTool?: (kind: ThreadPanelToolKind) => void;
+  projectShortcuts?: ThreadToolMenuItem[];
   canAddBrowser?: boolean;
   onCloseTab: (tabId: string) => void;
   onCloseTabs?: (tabIds: string[]) => void;
@@ -61,6 +68,9 @@ export function ThreadSecondaryPanel({
   onToggleMaximized: () => void;
   onHide: () => void;
   onResize: (widthPx: number, containerWidthPx: number) => void;
+  basic?: boolean;
+  basicCompact?: boolean;
+  onOpenAdvanced?: () => void;
   dock?: {
     side: 'right' | 'bottom';
     dragging?: boolean;
@@ -83,6 +93,7 @@ export function ThreadSecondaryPanel({
   const activeTabRef = useRef<HTMLSpanElement>(null);
   const pin = activePinnedView(state);
   const activeTab = activeClosableTab(state);
+  const basicUnsupported = basic && !basicPanelActiveSupported(state);
   const pinnedTabs = [
     ...(showInfoPin ? [{ id: 'info', title: 'Info', label: 'Show info', testId: 'thread-info-pin', icon: <Info size={15} />, select: onSelectInfo }] : []),
     ...(showDiffPin ? [{ id: 'diff', title: 'Changes', label: 'Show workspace diff', testId: 'thread-diff-pin', icon: <GitCompare size={15} />, select: onSelectDiff }] : []),
@@ -93,7 +104,7 @@ export function ThreadSecondaryPanel({
     if (restoreFocus && menu?.anchor.isConnected) menu.anchor.focus();
     setMenu(null);
   }, [menu]);
-  useEffect(() => { setMenu(null); }, [state.activeId, dock?.collapsed, compact]);
+  useEffect(() => { setMenu(null); }, [state.activeId, dock?.collapsed, compact, basic]);
   const menuTabId = menu?.tabId ?? state.activeId;
   const menuPinnedTab = pinnedTabs.find(tab => tab.id === menuTabId);
   const menuClosableTab = state.tabs.find(tab => tab.id === menuTabId);
@@ -113,6 +124,7 @@ export function ThreadSecondaryPanel({
       ...(canAddBrowser ? [{ id: 'browser', label: 'Browser', icon: <Globe />, run: () => onAddTool('browser') }] : []),
       { id: 'explorer', label: 'Files', icon: <FolderTree />, run: () => onAddTool('explorer') }
     ] : []),
+    ...projectShortcuts,
     { id: 'more', label: 'More tools…', icon: <Plus />, run: onNewTab }
   ] : [
     ...(dock && menuTab ? [{ id: 'move', label: `Move ${menuTab.title} to ${dock.side === 'bottom' ? 'right' : 'bottom'} panel`,
@@ -188,8 +200,15 @@ export function ThreadSecondaryPanel({
       onDragOver={dock?.onDragOver}
       onDrop={dock?.onDrop}
       data-mobile-panel={compact || undefined}
+      data-basic-panel={basic || undefined}
+      data-basic-panel-compact={basic && basicCompact || undefined}
+      hidden={basic && dock?.side === 'bottom'}
       aria-label={dock?.side === 'bottom' ? 'Bottom tools' : 'Agent panel'}
       onKeyDown={(event) => {
+        if (basic && basicCompact && !event.defaultPrevented && event.key === 'Escape'
+          && event.target instanceof Element && event.target.closest('.basic-secondary-chrome')) {
+          event.preventDefault(); onHide(); return;
+        }
         if (!compact || event.defaultPrevented || event.key !== 'Escape') return;
         event.stopPropagation();
         if (viewsOpen) toggleViews();
@@ -197,11 +216,20 @@ export function ThreadSecondaryPanel({
       }}
       style={{ ['--thread-secondary-width' as string]: `${Math.max(SECONDARY_PANEL_MIN_WIDTH_PX, state.widthPx)}px`, ...(dock?.side === 'bottom' ? { ['--thread-tool-bottom-height' as string]: `${dock.heightPx ?? 240}px` } : {}) }}
     >
-      {compact ? <MobilePanelNavigation state={state} open={viewsOpen} toggleRef={viewToggleRef} onToggle={toggleViews}
+      {!compact && !basicCompact && !state.isMaximized && dock?.side !== 'bottom' && <div
+        className="thread-secondary-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize right panel"
+        onMouseDown={onResizeMouseDown}
+      />}
+      {basic ? <BasicPanelChrome compact={basicCompact} state={state} showInfo={showInfoPin} showPlan={Boolean(showPlanPin)}
+        onSelectInfo={onSelectInfo} onSelectPlan={onSelectPlan} onActivateTab={onActivateTab} onCloseTab={onCloseTab}
+        onToggleMaximized={onToggleMaximized} onHide={onHide} /> : compact ? <MobilePanelNavigation state={state} open={viewsOpen} toggleRef={viewToggleRef} onToggle={toggleViews}
         showInfoPin={showInfoPin} showDiffPin={showDiffPin} showPlanPin={showPlanPin}
         onSelectInfo={onSelectInfo} onSelectDiff={onSelectDiff} onSelectPlan={onSelectPlan}
         onActivateTab={onActivateTab} onCloseTab={onCloseTab} onNewTab={onNewTab} onHide={onHide} /> : <>
-      {dock?.side === 'bottom' ? <div
+      {dock?.side === 'bottom' && <div
         className="thread-tool-bottom-resizer"
         role="separator" tabIndex={0} aria-orientation="horizontal" aria-label="Resize bottom panel"
         aria-valuemin={120} aria-valuemax={480} aria-valuenow={dock.heightPx ?? 240}
@@ -218,12 +246,6 @@ export function ThreadSecondaryPanel({
           const stop = () => { target.onpointermove = null; target.onpointerup = null; target.onpointercancel = null; target.onlostpointercapture = null; };
           target.onpointerup = target.onpointercancel = target.onlostpointercapture = stop;
         }}
-      /> : <div
-        className="thread-secondary-resizer"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize right panel"
-        onMouseDown={onResizeMouseDown}
       />}
       <div className="thread-secondary-chrome" data-testid="thread-secondary-chrome">
         {!dock ? <div className="thread-secondary-pins">{pinnedTabs.map(tab => <button
@@ -317,18 +339,25 @@ export function ThreadSecondaryPanel({
         </div>
       </div>
       </>}
-      {menu && !compact ? <ThreadToolMenu anchor={menu.anchor}
+      {menu && !compact && !basic ? <ThreadToolMenu anchor={menu.anchor}
         label={menu.kind === 'add' ? `Add to ${dock?.side} panel` : menuTab?.title ?? 'Panel actions'}
         items={menuItems} onClose={closeMenu} /> : null}
-      <div className="thread-secondary-body" hidden={(compact && viewsOpen) || dock?.collapsed}>
-        <FilePreviewScrollPositionContext.Provider value={scrollPosition}>{dock?.collapsed ? null : children}</FilePreviewScrollPositionContext.Provider>
+      <div className="thread-secondary-body" hidden={(!basic && compact && viewsOpen) || dock?.collapsed}>
+        {basicUnsupported ? <section className="basic-panel-handoff" role="status">
+          <h3>Available in Advanced</h3>
+          <p>{activeTab?.title ?? (pin === 'diff' ? 'Workspace changes' : 'This tool')} is part of the full workspace. Your open tools are kept.</p>
+          <button type="button" className="btn btn-secondary" onClick={onOpenAdvanced}>Open {activeTab?.title ?? 'tool'} in Advanced</button>
+        </section> : null}
+        <div className="thread-secondary-retained-content" hidden={basicUnsupported} inert={basicUnsupported || undefined}>
+          <FilePreviewScrollPositionContext.Provider value={scrollPosition}>{dock?.collapsed ? null : children}</FilePreviewScrollPositionContext.Provider>
+        </div>
       </div>
-      {footer && secondaryPanelShowsInspectorFooter(state) ? (
+      {!basic && footer && secondaryPanelShowsInspectorFooter(state) ? (
         <div className="thread-secondary-footer" data-testid="thread-secondary-footer" hidden={compact && viewsOpen}>
           {footer}
         </div>
       ) : null}
-      {dock?.dragging ? <div className="thread-tool-drag-target">{dock.side === 'bottom' ? 'Dock below conversation' : 'Dock in right panel'}</div> : null}
+      {!basic && dock?.dragging ? <div className="thread-tool-drag-target">{dock.side === 'bottom' ? 'Dock below conversation' : 'Dock in right panel'}</div> : null}
     </aside>
   );
 }

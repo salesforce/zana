@@ -29,6 +29,7 @@ describe('SquadLaunchSettings', () => {
     setup(); preview.mockResolvedValue(response()); const valid = vi.fn(); render(<Harness valid={valid} />);
     await vi.waitFor(() => expect(valid).toHaveBeenLastCalledWith(true));
     const launchPreview = screen.getByRole('status');
+    await vi.waitFor(() => expect(launchPreview.textContent).toContain('Location: Project root (HEAD) at /project'));
     expect(launchPreview.textContent).toContain('Location: Project root (HEAD) at /project');
     expect(launchPreview.textContent).toContain('Use checkout (This launch)');
     expect(launchPreview.textContent).toContain('Merge then remove (Plan)');

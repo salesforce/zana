@@ -16,6 +16,7 @@ import {
   type ProjectIcon
 } from '@zana-ai/zcc-domain';
 import { capabilityRegistry, terminalCapabilityKey } from './capability-registry.js';
+import { createPluginThreadInteractions } from './plugin-thread-interactions.js';
 import { readHostFile, writeHostFile } from '../http/files-via-host.js';
 import { readPluginProjectFile, writePluginProjectFile } from '../http/plugin-project-files.js';
 import {
@@ -27,6 +28,7 @@ import {
 import { environmentPullRequest } from '../services/environments/environment-actions.js';
 import { conversationHistoryAsync } from '../services/threads/conversation-history.js';
 import { threadSummary } from './thread-events.js';
+import { parsePluginMessageAttribution, type PluginMessageAttribution } from './plugin-message-source.js';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { parsePluginLinkNote } from '../services/peers/plugin-link-notes.js';
@@ -319,7 +321,7 @@ export function createPluginApi(
     onNeedsConfiguration?: (message: string) => void;
     /** `zcc.status` calls: a message marks the plugin, `null` clears its mark. Falls back to `onNeedsConfiguration`. */
     onPluginStatus?: (message: string | null) => void;
-    spawnThread?: (args: PluginSdkThreadSpawnArgs & { pluginId: string }) => Promise<{ id: string }>;
+    spawnThread?: (args: Omit<PluginSdkThreadSpawnArgs, 'source' | 'agentContext'> & { pluginId: string } & PluginMessageAttribution) => Promise<{ id: string }>;
     getThread?: (args: { pluginId: string; threadId: string }) => Promise<PluginSdkThreadSummary | null>;
     listThreadEvents?: (args: {
       pluginId: string;
@@ -328,13 +330,14 @@ export function createPluginApi(
       types?: readonly string[];
       order?: 'asc' | 'desc';
     }) => Promise<PluginSdkThreadEventRow[]>;
+    postThreadMessage?: (args: { pluginId: string; threadId: string; text: string }) => Promise<void>;
     sendThread?: (args: {
       pluginId: string;
       threadId: string;
       prompt: string;
       visibility?: 'visible' | 'agent-only';
       mode?: 'start' | 'auto' | 'steer' | 'queue-if-active' | 'steer-if-active';
-    }) => Promise<{ id: string }>;
+    } & PluginMessageAttribution) => Promise<{ id: string }>;
     stopThread?: (args: { pluginId: string; threadId: string }) => Promise<{ ok: true }>;
     threadOutput?: (args: { pluginId: string; threadId: string }) => Promise<PluginSdkThreadOutput>;
     defaultExecutionOptions?: (args: { pluginId: string; threadId: string }) => Promise<PluginSdkExecutionOptions>;
@@ -385,7 +388,7 @@ export function createPluginApi(
       set: JsonObject;
       remove: readonly string[];
     }) => Promise<JsonObject>;
-    pushInbox?: (args: { pluginId: string; projectId: string; comments: string }) => Promise<{ id: string }>;
+    pushInbox?: (args: { pluginId: string; projectId: string; comments: string; offerAgentFix?: true }) => Promise<{ id: string }>;
     listProjects?: (args: { pluginId: string }) => Promise<Array<{ id: string; name: string; path?: string; icon?: ProjectIcon }>>;
     productContext?: import('../http/product-context.js').ProductHttpContext;
     /** Names the manifest allows this plugin to set on remote machines (`zcc.extra.remoteEnvironment`). */
@@ -702,12 +705,20 @@ export function createPluginApi(
    * a plugin/renderer can pick WHICH thread to ask about but cannot make a
    * capability answer `available: true` that main's wiring doesn't back.
    */
-  function capabilityDescriptors(key: import('@zana-ai/zcc-domain').CapabilitySurfaceKey | null): CapabilityDescriptor[] {
+  function capabilityDescriptors(key: import('@zana-ai/zcc-domain').CapabilitySurfaceKey | null, thread?: ReturnType<typeof getConversationThread>): CapabilityDescriptor[] {
     return [
       ...capabilityRegistry.describe(key).map(row => row.id === 'interactions' && row.available
         && !(key?.surface === 'pty' ? options?.requestPluginInteraction : options?.upsertInteraction)
         ? { id: row.id, available: false, reason: 'Interaction host wiring unavailable' } : row),
-      options?.hostCall ? { id: 'project-rpc', available: true } : { id: 'project-rpc', available: false, reason: 'Project RPC host wiring unavailable' }
+      options?.hostCall ? { id: 'project-rpc', available: true } : { id: 'project-rpc', available: false, reason: 'Project RPC host wiring unavailable' },
+      {
+        id: 'thread-interactions',
+        ...(options?.productContext?.pendingInteractions
+          ? thread && thread.originPluginId === pluginId
+            ? { available: true }
+            : { available: false, reason: 'Requires a conversation created by this plugin' }
+          : { available: false, reason: 'Thread interaction host wiring unavailable' })
+      }
     ];
   }
 
@@ -723,6 +734,7 @@ export function createPluginApi(
     openCopy: (file) => backupCopyHandle(createSqliteDatabase(file))
   });
 
+  const threadInteractions = createPluginThreadInteractions(pluginId, options?.productContext);
   const api: ZccPluginApi = {
     sshConnections: {
       register(provider) {
@@ -758,6 +770,12 @@ export function createPluginApi(
       }
     },
     storage: {
+      deviceKey: async () => {
+        assertLive();
+        const derive = options?.productContext?.pluginDeviceKey;
+        if (!derive) throw new Error('Device secure storage is unavailable.');
+        return derive(pluginId);
+      },
       kv: {
         get: async <T>(key: string) => { assertLive(); return kv.get<T>(key); },
         set: async (key, value) => {
@@ -1280,6 +1298,11 @@ export function createPluginApi(
         }
       },
       threads: {
+        interactions: {
+          list: async (args) => { assertLive(); return threadInteractions.list(args); },
+          resolve: async (args) => { assertLive(); return threadInteractions.resolve(args); }
+        },
+        messageSources: true,
         search: async (args) => {
           assertLive();
           if (!options?.productContext) throw new Error('zcc.sdk is not available in this runtime');
@@ -1301,13 +1324,19 @@ export function createPluginApi(
           const projectId = typeof args?.projectId === 'string' ? args.projectId.trim() : '';
           const prompt = typeof args?.prompt === 'string' ? args.prompt : '';
           if (!projectId) throw new Error('projectId is required');
-          if (!prompt.trim()) throw new Error('prompt is required');
+          const deferFirstTurn = args.deferFirstTurn === true;
+          if (deferFirstTurn && args.prompt !== undefined) throw new Error('omit prompt when deferring the first turn');
+          if (!deferFirstTurn && !prompt.trim()) throw new Error('prompt is required');
+          const attribution = parsePluginMessageAttribution(pluginId, args);
+          if (deferFirstTurn && (attribution.messageSource || attribution.agentContext)) {
+            throw new Error('omit source and agentContext when deferring the first turn');
+          }
           const spawnProviderId = typeof args?.providerId === 'string' && args.providerId.trim() ? args.providerId.trim() : undefined;
           const spawnHarness = args?.harness !== undefined && args?.harness !== null ? parseSpawnHarness(args.harness) : undefined;
           return options.spawnThread({
             pluginId,
             projectId,
-            prompt,
+            ...(deferFirstTurn ? { deferFirstTurn: true } : { prompt, ...attribution }),
             ...(spawnProviderId ? { providerId: spawnProviderId } : {}),
             ...(spawnHarness ? { harness: spawnHarness } : {}),
             ...(typeof args?.parentThreadId === 'string' && args.parentThreadId.trim()
@@ -1356,6 +1385,15 @@ export function createPluginApi(
             });
           }
         },
+        postMessage: async (args) => {
+          assertLive();
+          if (!options?.postThreadMessage) throw new Error('Thread message posting is unavailable');
+          const threadId = typeof args?.threadId === 'string' ? args.threadId.trim() : '';
+          if (!threadId) throw new Error('threadId is required');
+          const text = typeof args?.text === 'string' ? args.text.trim() : '';
+          if (!text || text.length > 8000) throw new Error('Message must be 1 to 8000 characters');
+          await options.postThreadMessage({ pluginId, threadId, text });
+        },
         send: async (args) => {
           assertLive();
           if (!options?.sendThread) {
@@ -1380,7 +1418,8 @@ export function createPluginApi(
             threadId,
             prompt,
             ...(visibility ? { visibility } : {}),
-            ...(mode ? { mode } : {})
+            ...(mode ? { mode } : {}),
+            ...parsePluginMessageAttribution(pluginId, args)
           });
         },
         stop: async (args) => {
@@ -1567,7 +1606,7 @@ export function createPluginApi(
           const comments = typeof args?.comments === 'string' ? args.comments : '';
           if (!projectId) throw new Error('projectId is required');
           if (!comments.trim()) throw new Error('comments is required');
-          return options.pushInbox({ pluginId, projectId, comments });
+          return options.pushInbox({ pluginId, projectId, comments, ...(args.offerAgentFix === true && { offerAgentFix: true }) });
         }
       },
       projects: {
@@ -1851,7 +1890,7 @@ export function createPluginApi(
           }
           const key = thread ? { surface: 'modern' as const, harness: thread.providerId, headless: false, hookBase: true }
             : session ? terminalCapabilityKey(session) : null;
-          return { capabilities: capabilityDescriptors(key) };
+          return { capabilities: capabilityDescriptors(key, thread) };
         },
         forExecution: async ({ executionId }) => {
           assertLive();

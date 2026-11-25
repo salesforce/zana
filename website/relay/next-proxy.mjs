@@ -57,6 +57,30 @@ export async function waitForHttp(origin, timeoutMs = 60_000) {
 }
 
 /**
+ * Resolve an incoming request target against the Next origin.
+ *
+ * Returns null unless the target is an origin-form path ("/..." but not
+ * "//..." or "/\...") that still resolves to the configured origin. A
+ * protocol-relative or absolute-form target would otherwise replace the host
+ * and turn the proxy into a request forwarder for arbitrary hosts.
+ *
+ * @param {string | undefined} rawUrl
+ * @param {string} origin
+ * @returns {URL | null}
+ */
+export function resolveNextTarget(rawUrl, origin) {
+  const path = rawUrl ?? '/';
+  if (!/^\/(?![/\\])/u.test(path)) return null;
+  let target;
+  try {
+    target = new URL(path, `${origin}/`);
+  } catch {
+    return null;
+  }
+  return target.origin === new URL(origin).origin ? target : null;
+}
+
+/**
  * Reverse-proxy an HTTP request to the Next standalone listener.
  *
  * @param {import('node:http').IncomingMessage} request
@@ -64,12 +88,24 @@ export async function waitForHttp(origin, timeoutMs = 60_000) {
  * @param {string} origin
  */
 export function proxyToNext(request, response, origin) {
-  const target = new URL(request.url ?? '/', `${origin}/`);
+  const target = resolveNextTarget(request.url, origin);
+  if (!target) {
+    response.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' });
+    response.end('Bad request');
+    request.resume();
+    return;
+  }
   const headers = { ...request.headers };
   delete headers.connection;
+  // Host and port come only from the configured origin; the request target
+  // contributes the path and query, so it can never select the upstream host.
+  const base = new URL(origin);
   const upstream = httpRequest(
-    target,
     {
+      protocol: base.protocol,
+      hostname: base.hostname,
+      port: base.port,
+      path: `${target.pathname}${target.search}`,
       method: request.method,
       headers
     },

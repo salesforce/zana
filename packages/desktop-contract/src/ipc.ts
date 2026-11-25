@@ -32,6 +32,7 @@ export const IPC = {
     readArtifact: 'executionBoard:readArtifact',
     dismiss: 'executionBoard:dismiss',
     stop: 'executionBoard:stop',
+    stopAndFixPlan: 'executionBoard:stopAndFixPlan',
     retry: 'executionBoard:retry',
     retryWork: 'executionBoard:retryWork',
     releaseWork: 'executionBoard:releaseWork',
@@ -95,6 +96,8 @@ export const IPC = {
     /** Summarize ONE live agent's work into an inbox entry on demand (the
      *  terminal modal's "Summarize to inbox" button). */
     summarizeSession: 'terminals:summarizeSession',
+    /** Restart a Squad worker card in place so it keeps its slot and run binding. Main authorizes. */
+    restartSquadWorker: 'terminals:restartSquadWorker',
     /** Summarize agents' work into ONE folded inbox digest AND file a per-agent
      *  follow-up for any that left unfinished work, before the renderer closes
      *  them (the Agents view's "Close" button with "summarise first" + modal item). */
@@ -181,6 +184,7 @@ export const IPC = {
   config: {
     get: 'config:get',
     set: 'config:set',
+    dismissWorkerExit: 'config:dismissWorkerExit',
     addTrustedPreviewFolder: 'config:addTrustedPreviewFolder',
     removeTrustedPreviewFolder: 'config:removeTrustedPreviewFolder',
     /** Broadcast to EVERY window after a `config:set` so other windows
@@ -253,6 +257,7 @@ export const IPC = {
     resolveDoc: 'fs:resolveDoc',
     writeFile: 'fs:writeFile',
     walkFiles: 'fs:walkFiles',
+    walkFilesWithStatus: 'fs:walkFilesWithStatus',
     searchFiles: 'fs:searchFiles',
     readDataUrl: 'fs:readDataUrl',
     createFile: 'fs:createFile',
@@ -403,6 +408,7 @@ export const IPC = {
     onChanged: 'pluginApps:onChanged',
     setEnabled: 'pluginApps:setEnabled',
     callRpc: 'pluginApps:callRpc',
+    callDesktopRpc: 'pluginApps:callDesktopRpc',
     getSettings: 'pluginApps:getSettings',
     setSettings: 'pluginApps:setSettings',
     checkUpdates: 'pluginApps:checkUpdates',
@@ -638,6 +644,8 @@ export const IPC = {
    */
   windows: {
     openProject: 'windows:openProject',
+    openNew: 'windows:openNew',
+    leaveProject: 'windows:leaveProject',
     openPluginView: 'windows:openPluginView',
     closePluginView: 'windows:closePluginView',
     pluginViewCloseReady: 'windows:pluginViewCloseReady',
@@ -806,6 +814,7 @@ export const IPC = {
   },
   personas: {
     list: 'personas:list',
+    loadWarnings: 'personas:loadWarnings',
     onChanged: 'personas:onChanged',
     revealDir: 'personas:revealDir',
     save: 'personas:save',
@@ -825,6 +834,8 @@ export const IPC = {
     startJob: 'teams:startJob',
     preview: 'teams:preview',
     reviewProposal: 'teams:reviewProposal',
+    recheckProposalPlan: 'teams:recheckProposalPlan',
+    messageProposer: 'teams:messageProposer',
     launchAutonomous: 'teams:launchAutonomous',
     stopAutonomous: 'teams:stopAutonomous',
     exportBundle: 'teams:exportBundle',

@@ -52,3 +52,31 @@ export async function respondToInboxBlocker(entry: InboxEntry, reply: string): P
     return false;
   }
 }
+
+/**
+ * Advisory only: engine-raised "no worker can run this step" blockers carry this id prefix. Main re-reads the
+ * blocker and refuses anything else, so a forged id cannot stop a run.
+ */
+export function isNoRouteBlockerEntry(entry: Pick<InboxEntry, 'executionId' | 'blockerId'>): boolean {
+  return !!entry.executionId && !!entry.blockerId?.startsWith('no-route:');
+}
+
+/** "Stop and fix the plan": stops the run (work already done is kept) and leaves a plan-fix card in the Inbox. */
+export async function stopAndFixPlanFromInbox(entry: InboxEntry): Promise<boolean> {
+  const { executionId, blockerId } = entry;
+  if (!executionId || !blockerId) return false;
+  try {
+    const result = await product.executionBoard.stopAndFixPlan(entry.projectId, executionId, blockerId);
+    if (result.ok) {
+      useInboxAnswered.getState().markAnswered(entry.id);
+      useUi.getState().pushToast('Run stopped. Work already done is kept. Fix the plan, then launch again.', 'info');
+      return true;
+    }
+    useUi.getState().pushToast(result.message || 'Could not stop the run', 'error');
+    return false;
+  } catch (err) {
+    console.error('[inbox] executionBoard.stopAndFixPlan failed', { executionId, blockerId, err });
+    useUi.getState().pushToast(err instanceof Error ? err.message : 'Could not stop the run', 'error');
+    return false;
+  }
+}

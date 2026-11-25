@@ -84,6 +84,7 @@ import {
   wrapSystemInstructions,
 } from "../system-instruction-echo.js";
 import { resolveAcpDialect } from "../dialect.js";
+import { parseBearerToken } from "./bearer-token.js";
 import {
   buildAcpPermissionInteractionPayload,
   extractAcpWritePaths,
@@ -487,8 +488,7 @@ const MAX_PAYLOAD_SIZE_BYTES = 1_000_000;
 function isAuthorizedMcpHttpRequest(request: IncomingMessage, token: string): boolean {
   const header = request.headers.authorization;
   const value = Array.isArray(header) ? header[0] : header;
-  const match = value ? value.match(/^Bearer\s+(.+)$/i) : null;
-  const provided = match?.[1];
+  const provided = parseBearerToken(value);
   if (!provided) return false;
   const providedBuf = Buffer.from(provided);
   const expectedBuf = Buffer.from(token);

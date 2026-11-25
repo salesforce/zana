@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { peerMessageDisplay } from './peer-message.js';
+import { peerMessageDisplay, peerMessageSource } from './peer-message.js';
 import { PeerMessageSource } from './PeerMessageSource.js';
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const row = { role: 'user', initiator: 'agent', senderThreadId: 'thread-1',
@@ -24,6 +24,13 @@ describe('peer conversation presentation', () => {
     const peer = peerMessageDisplay({ ...row, text: row.text.replace('kind:thread', 'kind:cli-agent') })!;
     render(<PeerMessageSource peer={peer} />);
     expect(screen.queryByRole('link')).toBeNull(); expect(screen.getByText('Queue reviewer · CLI Agent')).toBeTruthy();
+  });
+  it('maps thread and CLI peers to bot-style message sources', () => {
+    expect(peerMessageSource(peerMessageDisplay(row)!, 'thread-1')).toEqual({
+      pluginId: 'sdk', kind: 'thread', label: 'Queue reviewer', threadId: 'thread-1', detail: 'messaged'
+    });
+    const cli = peerMessageDisplay({ ...row, text: row.text.replace('kind:thread', 'kind:cli-agent') })!;
+    expect(peerMessageSource(cli, 'thread-1')).toEqual({ pluginId: 'sdk', kind: 'thread', label: 'Queue reviewer', detail: 'CLI Agent' });
   });
   it('preserves legacy messages without a display label', () => {
     expect(peerMessageDisplay({ ...row, text: '[bb message from thread:thread-1]\nlegacy body' })).toMatchObject({ label: 'thread-1', text: 'legacy body' });

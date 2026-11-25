@@ -22,7 +22,7 @@
   "dependencies": {
     "drizzle-orm": "^0.45.2",
     "marked": "^18.0.9",
-    "mermaid": "^11.17.0",
+    "mermaid": "^12.3.0",
     "nanoid": "^6.0.1",
     "next": "^16.4.5",
     "pg": "^8.23.0",
@@ -41,7 +41,7 @@
     "cross-env": "^10.1.0",
     "drizzle-kit": "^0.31.10",
     "postcss": "^8.5.26",
-    "sharp": "^0.35.3",
+    "sharp": "^0.35.5",
     "shiki": "^4.4.3",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"

@@ -10,7 +10,7 @@ export interface ApiErrorResumeCoverage {
 
 /** Section intro, shared with its settings-search entry so the two never drift. */
 export const API_ERROR_RESUME_HELP =
-  "When an agent's turn stops on an API error that matches a rule below, Zana sends it a message so it carries on. Off by default. Covers CLI Agent tabs, Squad engineers and scheduled runs for agents that report API errors.";
+  "When an agent's turn stops on an API error that matches a rule below, Zana sends it a message so it carries on. Off by default.";
 
 export const API_ERROR_RESUME_NONE_COVERED =
   'None of the agents installed on this machine can report API errors yet. Agents on other hosts may still be covered.';

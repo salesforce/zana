@@ -40,3 +40,10 @@ it('treats malformed envelopes as ordinary values and propagates real IPC failur
   electron.invoke.mockRejectedValueOnce(failure);
   await expect(cc.pluginApps.callRpc('docs', 'x')).rejects.toBe(failure);
 });
+
+it('routes desktop-only methods through the desktop RPC channel', async () => {
+  const cc = await api();
+  electron.invoke.mockResolvedValueOnce({ ready: true });
+  await expect(cc.pluginApps.callRpc('helper', 'desktop.status')).resolves.toEqual({ ready: true });
+  expect(electron.invoke).toHaveBeenLastCalledWith(IPC.pluginApps.callDesktopRpc, 'helper', 'desktop.status', undefined);
+});

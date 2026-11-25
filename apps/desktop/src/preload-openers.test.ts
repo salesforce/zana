@@ -70,3 +70,18 @@ it('forwards only the installed id and recovery action through the plugin bridge
   handler({},message); expect(listener).toHaveBeenCalledExactlyOnceWith(message);
   off(); expect(electron.off).toHaveBeenCalledExactlyOnceWith(IPC.browser.pageMessage,handler);
  });
+
+it('forwards worker dismissal, squad worker restart and persona load warnings to main', async () => {
+  await import('./preload.js');
+  const api = electron.expose.mock.calls.find(([name]) => name === 'cc')![1];
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValue({});
+  await api.config.dismissWorkerExit('w1');
+  await api.terminals.restartSquadWorker('w2');
+  await api.personas.loadWarnings();
+  expect(electron.invoke.mock.calls).toEqual([
+    [IPC.config.dismissWorkerExit, 'w1'],
+    [IPC.terminals.restartSquadWorker, 'w2'],
+    [IPC.personas.loadWarnings]
+  ]);
+});

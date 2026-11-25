@@ -223,10 +223,14 @@ describe('execution assignment transports', () => {
     await service.dispatchReady(coordinator);
     clock.now = (await store.get(coordinator.executionId))!.workUnits![0].leaseExpiresAt! + 1;
     await service.reconcileActive();
+    // #789: the single seat is retried once (one re-delivery), then the next expiry asks a person.
+    expect((await store.get(coordinator.executionId))!.workUnits![0]).toMatchObject({ state: 'CLAIMED', claimGeneration: 2 });
+    clock.now = (await store.get(coordinator.executionId))!.workUnits![0].leaseExpiresAt! + 1;
+    await service.reconcileActive();
     const record = (await store.get(coordinator.executionId))!;
     expect(record.workUnits![0].state).toBe('BLOCKED');
     expect(record.blockers).toEqual([expect.objectContaining({ workUnitId: 'a', audience: 'human', resolved: false })]);
-    expect(deliverAssignment).toHaveBeenCalledOnce();
+    expect(deliverAssignment).toHaveBeenCalledTimes(2);
   }));
 
   it('does not reclaim an uncertain assignment from a working member until the stall ceiling', async () => fixture(async (filePath) => {
@@ -240,8 +244,12 @@ describe('execution assignment transports', () => {
     expect((await store.get(coordinator.executionId))!.workUnits![0]).toMatchObject({ state: 'CLAIMED', claimGeneration: 1 });
     clock.now = first.workUnits![0].claimedAt! + first.request.policy!.maxClaimStallMs! + 1;
     await service.reconcileActive();
+    expect((await store.get(coordinator.executionId))!.workUnits![0]).toMatchObject({ state: 'CLAIMED', claimGeneration: 2 }); // #789 same-seat retry
+    const second = (await store.get(coordinator.executionId))!.workUnits![0];
+    clock.now = second.claimedAt! + first.request.policy!.maxClaimStallMs! + 1;
+    await service.reconcileActive();
     expect((await store.get(coordinator.executionId))!.workUnits![0].state).toBe('BLOCKED');
-    expect(deliverAssignment).toHaveBeenCalledOnce();
+    expect(deliverAssignment).toHaveBeenCalledTimes(2);
   }));
 
   it('deduplicates concurrent dispatch while awaiting a runtime receipt', async () => fixture(async (filePath) => {
@@ -748,6 +756,42 @@ describe('execution admission', () => {
   }));
 
 
+  it('closes the launch request and bounds the stored reason when launchTeam throws', async () => fixture(async (filePath) => {
+    const cancelTeamLaunch = vi.fn(async () => ({ ok: true }));
+    const serviceDeps = deps(filePath, {
+      cancelTeamLaunch,
+      launchTeam: async () => { throw new Error(`/Users/me/secret/dir ${'q'.repeat(5000)}`); }
+    });
+    const result = await new ExecutionService(serviceDeps).start('owner', 'project-1', request);
+    expect(result).toMatchObject({ ok: false, code: 'TEAM_LAUNCH_FAILED' });
+    expect(cancelTeamLaunch).toHaveBeenCalledWith(expect.any(String), expect.any(String));
+    const record = (await serviceDeps.store.get('execution-1'))!;
+    expect(record.state).toBe('FAILED');
+    expect(record.failureReason!.length).toBeLessThanOrEqual(2048);
+    expect(record.failureReason).not.toContain('/Users/me');
+  }));
+
+  it('still fails the run when the launch cleanup itself rejects', async () => fixture(async (filePath) => {
+    const logError = vi.fn();
+    const serviceDeps = deps(filePath, {
+      logError,
+      cancelTeamLaunch: async () => { throw new Error('lifecycle down'); },
+      launchTeam: async () => { throw new Error('boom'); }
+    });
+    const result = await new ExecutionService(serviceDeps).start('owner', 'project-1', request);
+    expect(result).toMatchObject({ ok: false, code: 'TEAM_LAUNCH_FAILED', message: 'boom' });
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('launch cleanup'), expect.any(Error));
+  }));
+
+  it('bounds an over-long launch failure message from the host', async () => fixture(async (filePath) => {
+    const serviceDeps = deps(filePath, { launchTeam: async () => ({ ok: false, message: 'm'.repeat(5000) }) });
+    const result = await new ExecutionService(serviceDeps).start('owner', 'project-1', request);
+    expect(result).toMatchObject({ ok: false });
+    const record = (await serviceDeps.store.get('execution-1'))!;
+    expect(record.state).toBe('FAILED');
+    expect(record.failureReason!.length).toBeLessThanOrEqual(2048);
+  }));
+
   it('does not claim an execution or authorize workers when the machine route is unsupported', async () => fixture(async (filePath) => {
     const authorizeTeamLaunch = vi.fn();
     const launchTeam = vi.fn();
@@ -1100,32 +1144,114 @@ describe('execution claim recovery', () => {
   // worker mid-work every ceiling window and re-dispatched from zero — infinite churn on any
   // unit that legitimately outlives the ceiling. A short lease makes each renew persist so the
   // host OUTPUT path (advanceProgress:true) actually advances progressAt.
-  it('does NOT force-reclaim a worker that keeps making OUTPUT progress past the raw claim-age ceiling (run 928ff675)', async () => fixture(async (filePath) => {
+  it('does NOT force-reclaim an output-only worker at the wall clock or stall limit; only the output-only ceiling reclaims it (run 928ff675)', async () => fixture(async (filePath) => {
     let now = 1_000;
     const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => now, workClaimLeaseMs: 40_000 });
-    let record = (await store.claim({ callerPrincipalId: 'owner', projectId: 'project-1', teamId: 'team-1', jobTitle: 'Work', requestDigest: 'digest', launchRequestId: 'request-1', resolvedModels: [], request: { version: 1, slots: [{ initialTask: 'Work' }], resolvedModels: [], policy: { maxClaimWallClockMs: 120_000, maxClaimStallMs: 100_000 } } })).record;
+    let record = (await store.claim({ callerPrincipalId: 'owner', projectId: 'project-1', teamId: 'team-1', jobTitle: 'Work', requestDigest: 'digest', launchRequestId: 'request-1', resolvedModels: [], request: { version: 1, slots: [{ initialTask: 'Work' }], resolvedModels: [], policy: { maxClaimWallClockMs: 120_000, maxClaimStallMs: 100_000, maxClaimOutputOnlyMs: 200_000 } } })).record;
     record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
     record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
     record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
     record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit'); // claimedAt=1_000, progressAt=1_000, lease→41_000
     const service = new ExecutionService(deps(filePath, { store, now: () => now, claimRecoveryObserveEnabled: () => true, claimRecoveryEnforceEnabled: () => true, getAgentState: () => 'working', getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'running' }] }) }));
-    // Worker emits output every 35s (< the 40s lease, so each renew is within the persist window
-    // and advances progressAt). It keeps working well past claimedAt+120_000 (the raw ceiling) —
-    // the progress-keyed ceiling must NOT reclaim it while it makes progress.
-    for (const elapsed of [35_000, 70_000, 105_000, 140_000]) {
+    // Output every 35s keeps the lease live but never moves progressAt. The claim outlives the 100s stall
+    // limit and the 120s wall clock (output-only claims are exempt from both).
+    for (const elapsed of [35_000, 70_000, 105_000, 140_000, 175_000]) {
       now = 1_000 + elapsed;
-      await service.renewWorkerLease(record.id, 'slot-1'); // host OUTPUT path: advanceProgress:true
+      await service.renewWorkerLease(record.id, 'slot-1'); // host OUTPUT path: lease only
       await service.reconcileActive();
       const unit = (await store.get(record.id))?.workUnits?.[0];
       expect(unit?.state).toBe('CLAIMED');
-      expect(unit?.progressAt).toBe(now); // output kept the progress clock fresh
+      expect(unit?.progressAt).toBe(1_000); // output did not move the progress clock
     }
-    // now=141_000 > claimedAt+120_000: past the raw ceiling age, yet still CLAIMED (progressing).
-    // Output stops; once progress goes stale for the full ceiling window, the backstop fires.
-    now += 130_000; // 130_000 >= 120_000 wall-clock since the last progressAt
+    // Still printing at 210s with no turn or file change: the 200s output-only ceiling reclaims it.
+    now = 1_000 + 210_000;
+    await service.renewWorkerLease(record.id, 'slot-1');
     await service.reconcileActive();
     expect((await store.get(record.id))?.workUnits?.[0]).toMatchObject({ state: 'READY', claimGeneration: 1 });
   }));
+
+  describe('claim clocks (AC1): output lease vs progress', () => {
+    async function claimed(filePath: string, policy: Record<string, number>, clockRef: { t: number }) {
+      const store = createExecutionStore({ filePath, id: () => 'execution-1', now: () => clockRef.t, workClaimLeaseMs: 40_000 });
+      let record = (await store.claim({ callerPrincipalId: 'owner', projectId: 'project-1', teamId: 'team-1', jobTitle: 'Work', requestDigest: 'digest', launchRequestId: 'request-1', resolvedModels: [], request: { version: 1, slots: [{ initialTask: 'Work' }], resolvedModels: [], policy } })).record;
+      record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+      record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
+      record = await store.registerPlan(record.id, record.stateVersion, [{ id: 'unit', title: 'Unit', task: 'Work', dependencies: [], readOnly: true }]);
+      record = await store.claimWork(record.id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
+      const service = new ExecutionService(deps(filePath, { store, now: () => clockRef.t, claimRecoveryObserveEnabled: () => true, claimRecoveryEnforceEnabled: () => true, getAgentState: () => 'working', getTeamLaunch: async () => ({ workers: [{ slotId: 'slot-1', sessionId: 'worker-1', projectId: 'project-1', process: 'running' }] }) }));
+      return { store, service, id: record.id };
+    }
+    const unitOf = async (store: ReturnType<typeof createExecutionStore>, id: string) => (await store.get(id))!.workUnits![0];
+    const POLICY = { maxClaimWallClockMs: 1_200_000, maxClaimStallMs: 600_000, maxClaimOutputOnlyMs: 1_800_000 };
+    // The stall limit is judged when the (40s) lease lapses, so sweep like the periodic reconcile does.
+    const sweepTo = async (clock: { t: number }, service: ExecutionService, to: number) => { while (clock.t < to) { clock.t = Math.min(to, clock.t + 20_000); await service.reconcileActive(); } };
+
+    it('(a) a silent claim is reclaimed at the 10 minute stall limit', async () => fixture(async (filePath) => {
+      const clock = { t: 1_000 };
+      const { store, service, id } = await claimed(filePath, POLICY, clock);
+      await sweepTo(clock, service, 1_000 + 599_000);
+      expect((await unitOf(store, id)).state).toBe('CLAIMED');
+      await sweepTo(clock, service, 1_000 + 660_000);
+      expect((await unitOf(store, id)).state).toBe('READY');
+    }));
+
+    it('(b) an output-only claim survives the 20 minute wall clock and is reclaimed at the 30 minute ceiling', async () => fixture(async (filePath) => {
+      const clock = { t: 1_000 };
+      const { store, service, id } = await claimed(filePath, POLICY, clock);
+      for (let elapsed = 30_000; elapsed <= 1_790_000; elapsed += 30_000) {
+        clock.t = 1_000 + elapsed;
+        await service.renewWorkerLease(id, 'slot-1');
+        await service.reconcileActive();
+        expect((await unitOf(store, id)).state).toBe('CLAIMED');
+      }
+      clock.t = 1_000 + 1_801_000;
+      await service.renewWorkerLease(id, 'slot-1');
+      await service.reconcileActive();
+      expect((await unitOf(store, id)).state).toBe('READY');
+    }));
+
+    it('(c) a claim with turns survives silent tool calls inside the stall limit; repeated stalls go READY once then FAILED STALLED', async () => fixture(async (filePath) => {
+      const clock = { t: 1_000 };
+      const { store, service, id } = await claimed(filePath, POLICY, clock);
+      const beat = async (turnCount: number) => {
+        const record = (await store.get(id))!;
+        const unit = record.workUnits![0];
+        await store.heartbeatWork(id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit', { claimId: unit.claimId!, claimGeneration: unit.claimGeneration!, turnCount });
+      };
+      // A turn every 9 minutes (a long silent tool call between them) never trips the 10 minute limit.
+      for (let i = 1; i <= 4; i += 1) {
+        clock.t += 540_000;
+        await beat(i);
+        await service.reconcileActive();
+        expect((await unitOf(store, id)).state).toBe('CLAIMED');
+      }
+      // Then silence: reclaimed to READY once.
+      await sweepTo(clock, service, clock.t + 660_000);
+      expect(await unitOf(store, id)).toMatchObject({ state: 'READY', stallReclaims: 1 });
+      // Re-claimed, turns again, silent again: FAILED with STALLED, never CLAIMED forever.
+      let record = (await store.get(id))!;
+      await store.claimWork(id, record.stateVersion, { role: 'worker', slotId: 'slot-1' }, 'unit');
+      await beat(1);
+      await sweepTo(clock, service, clock.t + 660_000);
+      expect(await unitOf(store, id)).toMatchObject({ state: 'FAILED', failureCode: 'STALLED' });
+    }));
+
+    it('all three clocks: stall, wall clock and output ceiling each reclaim only their own claim shape', async () => fixture(async (filePath) => {
+      const clock = { t: 1_000 };
+      const { store, service, id } = await claimed(filePath, { maxClaimWallClockMs: 300_000, maxClaimStallMs: 100_000, maxClaimOutputOnlyMs: 500_000 }, clock);
+      // Output at 90s keeps it off the stall and wall clocks; progressAt stays at claim time.
+      clock.t = 1_000 + 90_000;
+      await service.renewWorkerLease(id, 'slot-1');
+      await service.reconcileActive();
+      expect((await unitOf(store, id)).state).toBe('CLAIMED');
+      // Past the output ceiling (500s) with output still flowing: reclaimed.
+      for (const at of [200_000, 310_000, 420_000]) { clock.t = 1_000 + at; await service.renewWorkerLease(id, 'slot-1'); await service.reconcileActive(); expect((await unitOf(store, id)).state).toBe('CLAIMED'); }
+      clock.t = 1_000 + 510_000;
+      await service.renewWorkerLease(id, 'slot-1');
+      await service.reconcileActive();
+      expect((await unitOf(store, id)).state).toBe('READY');
+    }));
+  });
 
   it('reclaims an expired claim when its live worker returned to rest without an outcome', async () => fixture(async (filePath) => {
     let now = 1_000;
@@ -2031,6 +2157,10 @@ describe('SquadExecutionService', () => {
     clock.t += 700_000; // >= default job-team maxClaimStallMs (600_000)
     replyToSession.mockClear();
     await service.redispatchStalled();
+    // #789: the only seat is re-dispatched once before a person is asked.
+    expect((await service.status('owner', 'project-1', 'execution-1'))?.workUnits?.[0]).toMatchObject({ state: 'CLAIMED', assignedSlotId: 'slot-1' });
+    clock.t += 700_000;
+    await service.redispatchStalled();
     const recovered = await service.status('owner', 'project-1', 'execution-1');
     expect(recovered?.workUnits?.[0]).toMatchObject({ state: 'BLOCKED', noProgressSlots: [expect.objectContaining({ slotId: 'slot-1' })] });
     expect(replyToSession).toHaveBeenCalledWith('coordinator', expect.stringContaining('NO_PROGRESS_EXHAUSTED'));
@@ -2058,9 +2188,13 @@ describe('SquadExecutionService', () => {
     clock.t = 60_000 + 700_000; // now - progressAt >= job-team maxClaimStallMs (600_000)
     replyToSession.mockClear();
     await service.redispatchStalled();
+    // First stalled reclaim of a claim that turned: READY once, re-dispatched to the same seat.
+    expect((await store.get('execution-1'))!.workUnits![0]).toMatchObject({ state: 'CLAIMED', assignedSlotId: 'slot-1' });
+    clock.t += 700_000;
+    await service.redispatchStalled();
+    // The retry claim never turned, so it follows the kickoff path: lone seat already retried -> human block.
     const recovered = (await store.get('execution-1'))!.workUnits![0];
     expect(recovered).toMatchObject({ state: 'BLOCKED', noProgressSlots: [expect.objectContaining({ slotId: 'slot-1' })] });
-    expect(replyToSession).toHaveBeenCalledWith('coordinator', expect.stringContaining('NO_PROGRESS_EXHAUSTED'));
   }));
 
   it('blocks a no-progress unit to a human after its only worker slot is quarantined', async () => fixture(async (filePath) => {
@@ -2074,6 +2208,9 @@ describe('SquadExecutionService', () => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1', now });
     const service = new SquadExecutionService(wedgedClaimDeps(filePath, now, replyToSession, { store }));
     await startWedgedClaim(service);
+    clock.t += 700_000;
+    await service.redispatchStalled();
+    expect((await store.get('execution-1'))!.workUnits![0]).toMatchObject({ state: 'CLAIMED', assignedSlotId: 'slot-1' }); // #789 same-seat retry
     clock.t += 700_000;
     await service.redispatchStalled();
     const blocked = (await store.get('execution-1'))!;
@@ -5762,21 +5899,22 @@ describe('provided-plan persistence caps', () => {
 describe('withDurableClaimWallClockBackstop', () => {
   const DEFAULT_MS = 20 * 60_000;
   const STALL_MS = 10 * 60_000;
+  const CEIL_MS = 30 * 60_000;
 
   it('injects BOTH the wall-clock ceiling and the stall ceiling for every durable worker-DAG mode when unset', () => {
     for (const mode of ['job-team', 'structured', 'freeform'] as const) {
-      expect(withDurableClaimWallClockBackstop(mode, undefined)).toEqual({ maxClaimWallClockMs: DEFAULT_MS, maxClaimStallMs: STALL_MS });
+      expect(withDurableClaimWallClockBackstop(mode, undefined)).toEqual({ maxClaimWallClockMs: DEFAULT_MS, maxClaimStallMs: STALL_MS, maxClaimOutputOnlyMs: CEIL_MS });
       // Preserves other policy fields, only adds the backstops.
-      expect(withDurableClaimWallClockBackstop(mode, { deadlineMs: 5 })).toEqual({ deadlineMs: 5, maxClaimWallClockMs: DEFAULT_MS, maxClaimStallMs: STALL_MS });
+      expect(withDurableClaimWallClockBackstop(mode, { deadlineMs: 5 })).toEqual({ deadlineMs: 5, maxClaimWallClockMs: DEFAULT_MS, maxClaimStallMs: STALL_MS, maxClaimOutputOnlyMs: CEIL_MS });
     }
   });
 
   it('injects the missing stall ceiling even when the wall-clock ceiling is caller-set', () => {
-    expect(withDurableClaimWallClockBackstop('structured', { maxClaimWallClockMs: 1_000 })).toEqual({ maxClaimWallClockMs: 1_000, maxClaimStallMs: STALL_MS });
+    expect(withDurableClaimWallClockBackstop('structured', { maxClaimWallClockMs: 1_000 })).toEqual({ maxClaimWallClockMs: 1_000, maxClaimStallMs: STALL_MS, maxClaimOutputOnlyMs: CEIL_MS });
   });
 
   it('leaves BOTH caller-set ceilings untouched (caller wins, referentially identical)', () => {
-    const policy = { maxClaimWallClockMs: 1_000, maxClaimStallMs: 500 };
+    const policy = { maxClaimWallClockMs: 1_000, maxClaimStallMs: 500, maxClaimOutputOnlyMs: 2_000 };
     expect(withDurableClaimWallClockBackstop('structured', policy)).toBe(policy);
   });
 
@@ -5881,6 +6019,8 @@ describe('execution DAG robustness (Plan 3: generic synthetic DAGs)', () => {
     await service.dispatchReady(coordinatorBinding); // 'a' CLAIMED, coordinator PARKED, worker never emits output
     clock.t += 700_000; // past default job-team maxClaimStallMs (600_000) → 'a' is a stranded claim
     replyToSession.mockClear();
+    await service.redispatchStalled();
+    clock.t += 700_000; // #789: the lone seat is retried once, then blocks
     await service.redispatchStalled();
     const status = await service.status('owner', 'project-1', 'execution-1');
     expect(status?.workUnits?.find((u) => u.id === 'a')).toMatchObject({ state: 'BLOCKED', noProgressSlots: [expect.objectContaining({ slotId: 'slot-1' })] });

@@ -10,9 +10,11 @@ import {
   type PluginServiceOptions
 } from '../plugins/plugin-service.js';
 import {
+  appendConversationThreadEvent,
   getConversationThread,
   getEnvironment,
   getPrimaryHost,
+  getThreadExecutionState,
   listConversationThreadEventsWindow,
   queryConversationThreads
 } from '@zana-ai/zcc-db';
@@ -33,7 +35,7 @@ import { listThreadProviders } from '../services/threads/thread-provider-catalog
 import type { ProductHttpContext } from './product-context.js';
 import { conversationThreadOutput } from '../plugins/thread-events.js';
 import { readHostFile } from './files-via-host.js';
-import type { PluginSdkProject, PluginSdkThreadSummary } from '@zana-ai/zcc-plugin-sdk/server';
+import type { PluginSdkInboxPushArgs, PluginSdkProject, PluginSdkThreadSummary } from '@zana-ai/zcc-plugin-sdk/server';
 import { resolvePluginDefaultExecutionOptions, overlayCustomModels } from '../services/threads/thread-execution-options.js';
 import { readLastThreadExecution } from '../services/threads/thread-last-execution.js';
 import { asControlResult, callControlAsProductServer } from './cli-agent-ops.js';
@@ -54,10 +56,11 @@ import { ThreadCreateError } from './thread-create.js';
 import { resolveProjectHost } from './project-host.js';
 import { InteractionService } from '../services/interactions/interaction-service.js';
 import { startInteractionMaintenance } from '../services/interactions/interaction-maintenance.js';
+import { attributedPromptInput } from '../plugins/plugin-message-source.js';
 
 export async function productPushInbox(
   ctx: Pick<ProductHttpContext, 'projects' | 'inbox'>,
-  args: { pluginId: string; projectId: string; comments: string }
+  args: PluginSdkInboxPushArgs & { pluginId: string }
 ): Promise<{ id: string }> {
   const project = ctx.projects.list().find((row) => row.id === args.projectId);
   if (!project) throw new Error('unrecognized projectId');
@@ -65,7 +68,8 @@ export async function productPushInbox(
     projectId: args.projectId,
     projectLabel: project.name,
     comments: args.comments,
-    extensionSource: { extensionId: args.pluginId }
+    extensionSource: { extensionId: args.pluginId },
+    ...(args.offerAgentFix === true && { offerAgentFix: true })
   });
   return { id: entry.id };
 }
@@ -270,14 +274,31 @@ export function createAttachedProductPluginService(
       }));
       return order === 'desc' ? mapped.slice().reverse() : mapped;
     },
-    sendThread: async ({ threadId, prompt, visibility, mode }) => {
+    postThreadMessage: async ({ pluginId, threadId, text }) => {
+      const thread = getConversationThread(ctx.db, threadId);
+      if (!thread || thread.originPluginId !== pluginId || thread.archivedAt != null) {
+        throw new Error('Posting requires an active conversation owned by the plugin');
+      }
+      const type = 'system/plugin/message';
+      const payload = { type, scope: { kind: 'thread' }, threadId, pluginId, text };
+      const { sequence } = appendConversationThreadEvent(ctx.db, { threadId, type, payload });
+      ctx.hub.emit('threads:event', { threadId, sequence, kind: 'thread.event', type, payload });
+    },
+    sendThread: async ({ threadId, prompt, visibility, mode, messageSource, agentContext }) => {
+      const existing = getConversationThread(ctx.db, threadId);
+      const useInitialPlan = existing?.originPluginId && !existing.providerThreadId
+        && getThreadExecutionState(ctx.db, threadId)?.requestedMode === 'plan'
+        && !readLastThreadExecution(ctx, threadId).acpMode;
+      const input = useInitialPlan
+        ? [{ ...slashPlanPromptInput(prompt).input, ...(visibility ? { visibility } : {}) }]
+        : attributedPromptInput(prompt, { agentContext }, visibility);
       const thread = await sendConversationTurn(
         ctx,
         threadId,
-        [{ type: 'text', text: prompt, mentions: [], ...(visibility ? { visibility } : {}) }],
+        input,
         mode ?? 'start',
         undefined,
-        { origin: 'system' }
+        { origin: 'system', ...(messageSource ? { messageSource } : {}) }
       );
       return { id: thread.id };
     },
@@ -388,6 +409,7 @@ export function createAttachedProductPluginService(
       pluginId,
       projectId,
       prompt,
+      deferFirstTurn,
       providerId,
       harness,
       parentThreadId,
@@ -399,7 +421,9 @@ export function createAttachedProductPluginService(
       environment,
       hostId,
       serviceTier,
-      pluginMetadata
+      pluginMetadata,
+      messageSource,
+      agentContext
     }) => {
       // Local projects created before host binding belong to the primary
       // machine. Probe and route on the same host thread creation will use,
@@ -434,14 +458,16 @@ export function createAttachedProductPluginService(
       // plugin's per-call choice); resolved overrides win over the yolo hint.
       const effectiveModel = model ?? routing?.model;
       const effectivePermissionMode = permissionMode ?? routing?.permissionMode ?? resolved.permissionMode;
-      const planned = routing?.slashPlan ? slashPlanPromptInput(prompt) : null;
+      const planned = prompt && routing?.slashPlan ? slashPlanPromptInput(prompt) : null;
       let thread: Awaited<ReturnType<typeof createConversationFromRequest>>;
       try {
         thread = await createConversationFromRequest(ctx, {
           projectId,
           providerId: resolved.providerId,
-          input: [planned?.text ?? prompt],
-          promptInput: [planned?.input ?? { type: 'text', text: prompt, mentions: [] }] as never,
+          input: prompt ? [planned?.text ?? prompt] : [],
+          promptInput: prompt ? (planned ? [planned.input] : attributedPromptInput(prompt, { agentContext })) : [],
+          ...(messageSource ? { messageSource } : {}),
+          ...(deferFirstTurn ? { deferFirstTurn: routing?.slashPlan ? 'slash-plan' : true } : {}),
           title: title?.trim() || `Plugin: ${pluginId}`,
           parentThreadId,
           originPluginId: pluginId,

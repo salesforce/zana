@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { registerSpawnedTreeRoot } from '@zana-ai/zcc-agent-process-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { terminatePtyProcessTree, type KillablePtyHandle } from './pty-termination.js';
+import { terminatePtyProcessTree, windowsPtyAlreadyKilled, type KillablePtyHandle } from './pty-termination.js';
 
 const realPlatform = process.platform;
 
@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 describe('terminatePtyProcessTree on Windows', () => {
-  it('releases the pty with a signal-less kill, then stops its tree by PID', () => {
+  it('starts the tree stop while the root holds its PID, then releases the pty', () => {
     setPlatform('win32');
     const groupKill = vi.spyOn(process, 'kill');
     const order: string[] = [];
@@ -41,7 +41,7 @@ describe('terminatePtyProcessTree on Windows', () => {
 
     expect(handle.kill).toHaveBeenCalledTimes(1);
     expect(handle.kill).toHaveBeenCalledWith();
-    expect(order).toEqual(['kill', 'tree 4242']);
+    expect(order).toEqual(['tree 4242', 'kill']);
     // No process groups on Windows.
     expect(groupKill).not.toHaveBeenCalled();
   });
@@ -57,6 +57,21 @@ describe('terminatePtyProcessTree on Windows', () => {
     };
     expect(() => terminatePtyProcessTree(handle, { stopWindowsTree })).not.toThrow();
     expect(stopWindowsTree).toHaveBeenCalledWith(4242);
+  });
+
+  it('uses the shared Windows tree kill by default and still releases the pty', () => {
+    setPlatform('win32');
+    // The fixture PID is listed as protected, so the shared helper refuses it
+    // and no real taskkill can run against an unrelated process on this host.
+    const previous = process.env.ZANA_PROTECTED_PIDS;
+    process.env.ZANA_PROTECTED_PIDS = '4242';
+    try {
+      const handle = windowsPtyHandle();
+      expect(() => terminatePtyProcessTree(handle)).not.toThrow();
+      expect(handle.kill).toHaveBeenCalledWith();
+    } finally {
+      if (previous === undefined) delete process.env.ZANA_PROTECTED_PIDS; else process.env.ZANA_PROTECTED_PIDS = previous;
+    }
   });
 
   it.each([undefined, 0])('never runs taskkill for pid %s', (pid) => {
@@ -138,5 +153,66 @@ describe('terminatePtyProcessTree on POSIX', () => {
     vi.advanceTimersByTime(100);
     expect(groupKill).toHaveBeenCalledWith(-4242, 0);
     expect(groupKill).toHaveBeenCalledWith(-4242, 'SIGKILL');
+  });
+});
+
+describe('terminatePtyProcessTree repeat calls on Windows', () => {
+  it('closes the pseudoconsole once but still re-runs taskkill on a repeat call', () => {
+    setPlatform('win32');
+    const handle = windowsPtyHandle();
+    const stopWindowsTree = vi.fn();
+
+    terminatePtyProcessTree(handle, { stopWindowsTree });
+    terminatePtyProcessTree(handle, { stopWindowsTree });
+    terminatePtyProcessTree(handle, { stopWindowsTree });
+
+    // node-pty 1.2.0-beta.15 closes the pseudoconsole on each kill() and a
+    // second close corrupts the heap (0xC0000374, microsoft/node-pty#983).
+    expect(handle.kill).toHaveBeenCalledTimes(1);
+    // A repeat taskkill can still end descendants a first taskkill missed.
+    expect(stopWindowsTree).toHaveBeenCalledTimes(3);
+    expect(windowsPtyAlreadyKilled(handle)).toBe(true);
+  });
+
+  it('retries a taskkill that failed the first time without closing the pseudoconsole again', () => {
+    setPlatform('win32');
+    const handle = windowsPtyHandle();
+    const stopWindowsTree = vi.fn()
+      .mockImplementationOnce(() => { throw new Error('taskkill spawn failed'); })
+      .mockImplementation(() => undefined);
+
+    expect(() => terminatePtyProcessTree(handle, { stopWindowsTree })).toThrow('taskkill spawn failed');
+    // The failed first taskkill must not leave the pseudoconsole open.
+    expect(handle.kill).toHaveBeenCalledTimes(1);
+
+    terminatePtyProcessTree(handle, { stopWindowsTree });
+    expect(stopWindowsTree).toHaveBeenCalledTimes(2);
+    expect(handle.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it('tracks each pty separately', () => {
+    setPlatform('win32');
+    const first = windowsPtyHandle(100);
+    const second = windowsPtyHandle(200);
+    const stopWindowsTree = vi.fn();
+
+    terminatePtyProcessTree(first, { stopWindowsTree });
+    terminatePtyProcessTree(second, { stopWindowsTree });
+
+    expect(first.kill).toHaveBeenCalledTimes(1);
+    expect(second.kill).toHaveBeenCalledTimes(1);
+    expect(windowsPtyAlreadyKilled(windowsPtyHandle())).toBe(false);
+  });
+
+  it('does not suppress a repeat kill on POSIX', () => {
+    setPlatform('linux');
+    vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const handle = { pid: 4242, kill: vi.fn() };
+
+    terminatePtyProcessTree(handle, { hardKillAfterMs: 0 });
+    terminatePtyProcessTree(handle, { hardKillAfterMs: 0 });
+
+    expect(handle.kill).toHaveBeenCalledTimes(2);
+    expect(windowsPtyAlreadyKilled(handle)).toBe(false);
   });
 });

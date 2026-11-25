@@ -1,3 +1,4 @@
+import { rewriteCodexFileCitations } from "./file-citations.js";
 import {
   type ProviderErrorCategory,
   type ProviderErrorInfo,
@@ -783,7 +784,7 @@ function translateCodexItemShape(
     case "agentMessage":
       return {
         kind: "translated",
-        shape: { type: "agentMessage", text: parsedItem.text },
+        shape: { type: "agentMessage", text: rewriteCodexFileCitations(parsedItem.text) },
         presentation: AGENT_MESSAGE_PRESENTATION,
         status: "completed",
         approvalDenied: false,

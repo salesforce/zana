@@ -94,7 +94,8 @@ test('Design Docs Ask agent prefills the side panel composer and stays on the do
   await expect.poll(() => win.url()).toContain(docId);
   await captureElectronScreenshot(app.electron, win, testInfo.outputPath('design-docs-global-rail.png'));
 
-  await askReviewAndSend(win, { docId, panel: 'design-docs', stayOn: docId });
+  // The global page scopes its panel state to the open doc, so the owner is the page tuple, not just the panel name.
+  await askReviewAndSend(win, { docId, panel: 'design-docs', owner: `["design-docs",null,"${docId}"]`, stayOn: docId });
   await captureElectronScreenshot(app.electron, win, testInfo.outputPath('design-docs-global-agent.png'));
 
   // Linked conversations use the same agent tab, never a second embedded chat in the doc rail.

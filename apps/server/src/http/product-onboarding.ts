@@ -1,6 +1,7 @@
 import type { ServerResponse } from 'node:http';
 import { getOnboardingProfile } from '../services/onboarding-profile.js';
 import type { OnboardingGitAuthService } from '../services/onboarding-git-auth.js';
+import { resolveIdentityHint } from '../services/onboarding-identity-hint.js';
 import { sendJson } from './json.js';
 
 const GIT = '/api/v1/onboarding/git';
@@ -14,6 +15,15 @@ export async function handleOnboardingApi(response: ServerResponse, path: string
     if (method !== 'GET') return false;
     try {
       sendJson(response, 200, { profile: getOnboardingProfile() });
+    } catch {
+      sendJson(response, 503, { error: 'Setup configuration is unavailable' });
+    }
+    return true;
+  }
+  if (path === '/api/v1/onboarding/identity-hint') {
+    if (method !== 'GET') return false;
+    try {
+      sendJson(response, 200, { hint: await resolveIdentityHint(getOnboardingProfile()) });
     } catch {
       sendJson(response, 503, { error: 'Setup configuration is unavailable' });
     }

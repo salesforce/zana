@@ -54,7 +54,11 @@ export function writeAppConfig(
       // Isolated runs quit with live sessions; the quit prompt would block teardown and
       // pop a dialog on the developer's desktop. Specs that test the prompt opt back in.
       confirmQuitOnLiveSessions: false,
-      onboarding: { version: 1, profileId: 'salesforce-employees', audience: 'general', step: 'complete' },
+      onboarding: {
+        version: 2, profileId: 'salesforce-employees', audience: 'general',
+        steps: { harness: 'done', workplace: 'skipped', bundle: 'skipped', advanced: 'done' },
+        completedAt: '2026-01-01T00:00:00Z'
+      },
       ...initialConfig };
   if (!allowLiveClaude && config.claudeBinary === undefined) {
     config.claudeBinary = DISABLED_CLAUDE_BINARY;

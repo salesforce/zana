@@ -8,7 +8,7 @@ import { ThreadArchiveQuickAction } from '../threadCardActions.js';
 import { usePaneContentSplitDrag, useThreadRowSplitDrag } from '../sidebar/useThreadRowSplitDrag.js';
 import { usePaneContentSplitIndicator } from '../sidebar/paneContentSplitIndicator.js';
 import { SplitPaneMiniMap } from '../sidebar/SplitPaneMiniMap.js';
-import { ProviderIcon } from '../thread/pickers/ProviderIcon.js';
+import { ThreadIdentityIcon } from '../thread/ThreadIdentityIcon.js';
 import {
   fleetKindLabel,
   threadRailStatus,
@@ -148,9 +148,7 @@ export function ProjectThreadRailRow({
         aria-current={active ? 'true' : undefined}
         title={`${title} · ${thread.status}`}
       >
-        <span className="tab-profile-icon" aria-hidden="true">
-          <ProviderIcon providerId={thread.providerId} size={14} />
-        </span>
+        <ThreadIdentityIcon thread={thread} className="tab-profile-icon" />
         <span className="project-terminal-text">
           <span className="project-terminal-name">{title}</span>
           <span className="project-terminal-detail">

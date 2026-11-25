@@ -28,6 +28,7 @@ const capability = {
 
 function bind(launch: ReturnType<typeof vi.fn>) {
   const restoreCapabilities = {
+    get: vi.fn(() => capability),
     reserve: vi.fn(() => ({ capability, reservationId: 'res' })),
     consume: vi.fn(),
     release: vi.fn(),
@@ -109,5 +110,35 @@ describe('terminals restore / reconnect handlers', () => {
     expect(result.code).toBe('NOT_FOUND');
     expect(launch).not.toHaveBeenCalled();
     expect(squadWorktreeHasActiveFollowUp('exec-h')).toBe(false);
+  });
+
+  it('refuses to restore a Squad worker capability outside its run', async () => {
+    const launch = vi.fn();
+    const restoreCapabilities = bind(launch);
+    (restoreCapabilities as any).get = vi.fn(() => ({ request: { cohort: { role: 'worker', executionId: 'e1' } } }));
+    const out = await handlers.get(IPC.terminals.restore)!({ capabilityId: 'cap-1' });
+    expect(out).toMatchObject({ ok: false, code: 'DENIED' });
+    expect(restoreCapabilities.reserve).not.toHaveBeenCalled();
+    expect(launch).not.toHaveBeenCalled();
+  });
+
+  it('refuses a legacy restore request that carries a worker cohort', async () => {
+    const launch = vi.fn();
+    bind(launch);
+    const out = await handlers.get(IPC.terminals.restore)!({
+      legacyRequest: { projectId: 'p1', profile: 'claude', cols: 80, rows: 24, cohort: { role: 'worker', executionId: 'e1' } }
+    });
+    expect(out).toMatchObject({ ok: false, code: 'DENIED' });
+    expect(launch).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the capability store cannot look a capability up', async () => {
+    const launch = vi.fn();
+    const caps = bind(launch);
+    delete (caps as any).get;
+    const out = await handlers.get(IPC.terminals.restore)!({ capabilityId: 'cap-1' });
+    expect(out).toMatchObject({ ok: false, code: 'DENIED' });
+    expect(caps.reserve).not.toHaveBeenCalled();
+    expect(launch).not.toHaveBeenCalled();
   });
 });

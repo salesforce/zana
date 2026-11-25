@@ -66,6 +66,15 @@ it('explains missing thread scope', () => {
   expect(h.resolve).not.toHaveBeenCalled();
 });
 
+it('leaves local file anchors to a plugin or document host that owns their navigation', () => {
+  const view = render(<MarkdownContent text="[Guide](./docs/guide.md)" fileLinksAsAnchors />);
+  expect(screen.getByRole('link', { name: 'Guide' }).getAttribute('href')).toBe('./docs/guide.md');
+  expect(h.resolve).not.toHaveBeenCalled();
+  view.rerender(<MarkdownContent text="[Guide](./docs/guide.md)" documentLinks />);
+  expect(screen.getByRole('link', { name: 'Guide' }).getAttribute('href')).toBe('./docs/guide.md');
+  expect(h.resolve).not.toHaveBeenCalled();
+});
+
 it.each(['https://example.com/a.md', '//workspace/a.md', '//workspace/volumes/repo/guide.md', '/threads/t1', 'example.com', 'report.md']) (
   'preserves navigation for %s', (destination) => {
     render(<MarkdownContent text={`[Navigate](${destination})`} threadId="t1" />);

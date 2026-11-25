@@ -18,6 +18,11 @@ const UNIT_MS: Record<string, number> = {
   d: 86_400_000
 };
 
+function isDigit(text: string, index: number): boolean {
+  const code = text.charCodeAt(index);
+  return code >= 48 && code <= 57;
+}
+
 /**
  * Parse a human interval ("5m", "1h30m", "300000ms") into milliseconds.
  * Returns null on garbage input. Coerces below the minimum (60s) up to the
@@ -26,19 +31,27 @@ const UNIT_MS: Record<string, number> = {
 export function parseEvery(every: string): number | null {
   const trimmed = (every ?? '').trim().toLowerCase();
   if (!trimmed) return null;
-  const re = /(\d+(?:\.\d+)?)(ms|s|m|h|d)/g;
+  // Single left-to-right pass: `<number><unit>` repeated, nothing in between.
+  // A global regex here restarts from every digit of a long digit run, which
+  // is quadratic on input such as "000...0".
   let total = 0;
-  let consumed = 0;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(trimmed)) !== null) {
-    const value = parseFloat(match[1]);
-    const unit = match[2];
+  let i = 0;
+  while (i < trimmed.length) {
+    const numberStart = i;
+    while (isDigit(trimmed, i)) i += 1;
+    if (i === numberStart) return null;
+    if (trimmed[i] === '.' && isDigit(trimmed, i + 1)) {
+      i += 1;
+      while (isDigit(trimmed, i)) i += 1;
+    }
+    const value = parseFloat(trimmed.slice(numberStart, i));
+    const unit = trimmed.startsWith('ms', i) ? 'ms' : trimmed.charAt(i);
     const ms = UNIT_MS[unit];
     if (!ms) return null;
     total += value * ms;
-    consumed += match[0].length;
+    i += unit.length;
   }
-  if (total <= 0 || consumed !== trimmed.length) return null;
+  if (total <= 0) return null;
   const rounded = Math.round(total);
   if (rounded > MAX_INTERVAL_MS) return MAX_INTERVAL_MS;
   return Math.max(MIN_INTERVAL_MS, rounded);

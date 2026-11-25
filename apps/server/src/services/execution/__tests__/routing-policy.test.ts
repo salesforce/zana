@@ -22,13 +22,23 @@ describe('evaluateSlotEligibility', () => {
     }
   });
 
-  it('rejects roles matching neither the exact persona id nor the exact label', () => {
-    for (const requiredRole of ['builtin:reviewer', 'Writer', 'reviewer', ' Reviewer ']) {
+  it('matches tags and treats comma-separated required roles as AND constraints', () => {
+    const tagged = { ...deliveryReviewer, roles: ['Security', 'Reviewer'] };
+    for (const requiredRole of ['Security', ' reviewer ', 'security,reviewer']) {
+      expect(evaluateSlotEligibility({ version: 1, requiredRole }, tagged, 200))
+        .toMatchObject({ status: 'PASS', reasons: [] });
+    }
+    expect(evaluateSlotEligibility({ version: 1, requiredRole: 'security,writer' }, tagged, 200))
+      .toMatchObject({ status: 'FAIL', reasons: expect.arrayContaining([expect.stringContaining('required role missing')]) });
+  });
+
+  it('rejects roles matching no persona id, label, or tag', () => {
+    for (const requiredRole of ['builtin:reviewer', 'Writer']) {
       expect(evaluateSlotEligibility({ version: 1, requiredRole }, deliveryReviewer, 200))
-        .toMatchObject({ status: 'FAIL', reasons: ['required role mismatch'] });
+        .toMatchObject({ status: 'FAIL', reasons: expect.arrayContaining([expect.stringContaining('required role missing')]) });
     }
     expect(evaluateSlotEligibility({ version: 1, requiredRole: 'Reviewer' }, { ...deliveryReviewer, label: undefined }, 200))
-      .toMatchObject({ status: 'FAIL', reasons: ['required role mismatch'] });
+      .toMatchObject({ status: 'FAIL', reasons: expect.arrayContaining([expect.stringContaining('required role missing')]) });
   });
 
   it('does not let a matching label bypass other hard requirements', () => {

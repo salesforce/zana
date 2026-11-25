@@ -6,8 +6,8 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 const state = vi.hoisted(() => ({ focusedProjectId: null as string | null, scopedProjectId: null as string | null }));
 vi.mock('../../store', () => ({
   useUi: (selector: (s: unknown) => unknown) => selector({
-    focusedProjectId: state.focusedProjectId, sidebarCollapsed: true,
-    toggleSidebar: vi.fn(), setPaletteOpen: vi.fn()
+    focusedProjectId: state.focusedProjectId, sidebarMode: 'hidden', setSidebarMode: vi.fn(),
+    cycleSidebarMode: vi.fn(), setPaletteOpen: vi.fn()
   })
 }));
 vi.mock('../../lib/windowScope', () => ({ getScopedProjectId: () => state.scopedProjectId }));
@@ -18,6 +18,7 @@ vi.mock('../CollapsedUnreadThreads', () => ({ CollapsedUnreadThreads: () => null
 vi.mock('../MobileAgentsBack', () => ({ MobileAgentsBack: () => null }));
 
 import { SidebarTriggerOverlay } from '../SidebarTriggerOverlay.js';
+import { resetCommandShortcutOverride, setCommandShortcutOverride } from '../../lib/keyboard-shortcut-settings.js';
 
 function Location() { return <output data-testid="location">{useLocation().pathname}</output>; }
 afterEach(() => { cleanup(); state.focusedProjectId = null; state.scopedProjectId = null; });
@@ -33,5 +34,24 @@ describe('collapsed New Chat navigation', () => {
     render(<MemoryRouter initialEntries={['/inbox']}><SidebarTriggerOverlay /><Location /></MemoryRouter>);
     fireEvent.click(screen.getByRole('button', { name: 'New Chat', exact: true }));
     expect(screen.getByTestId('location').textContent).toBe(expected);
+  });
+});
+
+describe('title-bar shortcut tooltips', () => {
+  afterEach(() => { resetCommandShortcutOverride('thread.search'); resetCommandShortcutOverride('thread.new'); });
+
+  it('shows shortcuts on the toggle, Search and New Chat while keeping their names', () => {
+    render(<MemoryRouter><SidebarTriggerOverlay /></MemoryRouter>);
+    expect(screen.getByRole('button', { name: 'Expand sidebar' }).getAttribute('title')).toBe('Expand sidebar (Ctrl + Shift + B)');
+    expect(screen.getByRole('button', { name: 'Search', exact: true }).getAttribute('title')).toBe('Search (Ctrl + P)');
+    expect(screen.getByRole('button', { name: 'New Chat', exact: true }).getAttribute('title')).toBe('New Chat (Ctrl + N)');
+  });
+
+  it('follows a rebinding and drops the suffix when unbound', () => {
+    setCommandShortcutOverride('thread.search', { key: 'k', mod: true, meta: false, control: false, alt: false, shift: false });
+    setCommandShortcutOverride('thread.new', null);
+    render(<MemoryRouter><SidebarTriggerOverlay /></MemoryRouter>);
+    expect(screen.getByRole('button', { name: 'Search', exact: true }).getAttribute('title')).toBe('Search (Ctrl + K)');
+    expect(screen.getByRole('button', { name: 'New Chat', exact: true }).getAttribute('title')).toBe('New Chat');
   });
 });

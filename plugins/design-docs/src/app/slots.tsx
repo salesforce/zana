@@ -166,13 +166,23 @@ function DocPicker({ projectId, onPick }: { projectId: string | null; onPick(doc
   );
 }
 
-function readParams(params: PluginThreadPanelProps['params']): { docId: string | null; path: string | null } {
+type Location = { docId: string | null; path: string | null };
+
+function readParams(params: PluginThreadPanelProps['params']): Location {
   if (!params || typeof params !== 'object' || Array.isArray(params)) return { docId: null, path: null };
   const record = params as Record<string, unknown>;
   return {
     docId: typeof record.docId === 'string' && record.docId ? record.docId : null,
     path: typeof record.path === 'string' && record.path ? record.path : null
   };
+}
+
+/** A saved location, or null when the state is absent or malformed. */
+export function readTabState(state: PluginThreadPanelProps['tabState']): Location | null {
+  if (!state || typeof state !== 'object' || Array.isArray(state)) return null;
+  const record = state as Record<string, unknown>;
+  if (typeof record.docId !== 'string' || !record.docId) return null;
+  return { docId: record.docId, path: typeof record.path === 'string' && record.path ? record.path : null };
 }
 
 /**
@@ -184,16 +194,21 @@ export function ThreadPanel(props: PluginThreadPanelProps) {
   return <ThreadPanelBody key={`${docId}\u0000${path}`} {...props} />;
 }
 
-function ThreadPanelBody({ params, projectId }: PluginThreadPanelProps) {
+function ThreadPanelBody({ params, projectId, tabState, onTabStateChange }: PluginThreadPanelProps) {
   const navigate = useZccNavigate();
   const initial = readParams(params);
-  const [location, setLocation] = useState(initial);
+  // The host clears tabState when params change, so a saved location is always for these params.
+  const [location, setLocation] = useState<Location>(() => readTabState(tabState) ?? initial);
+  const update = (next: Location) => {
+    setLocation(next);
+    onTabStateChange?.(next.docId ? { docId: next.docId, path: next.path } : null);
+  };
   const picked = !initial.docId;
 
   if (!location.docId) {
     return (
       <Root>
-        <DocPicker projectId={projectId ?? null} onPick={(docId) => setLocation({ docId, path: null })} />
+        <DocPicker projectId={projectId ?? null} onPick={(docId) => update({ docId, path: null })} />
       </Root>
     );
   }
@@ -206,11 +221,11 @@ function ThreadPanelBody({ params, projectId }: PluginThreadPanelProps) {
         path={location.path}
         layout="compact"
         contextProjectId={projectId ?? null}
-        onOpenPath={(path) => setLocation({ docId, path })}
-        onDeleted={() => setLocation({ docId: null, path: null })}
+        onOpenPath={(path) => update({ docId, path })}
+        onDeleted={() => update({ docId: null, path: null })}
         headerExtra={
           <>
-            {picked ? <IconButton icon={ArrowLeft} label="All design docs" onClick={() => setLocation({ docId: null, path: null })} /> : null}
+            {picked ? <IconButton icon={ArrowLeft} label="All design docs" onClick={() => update({ docId: null, path: null })} /> : null}
             <IconButton
               icon={ExternalLink}
               label="Open in Design Docs"

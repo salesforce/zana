@@ -199,7 +199,7 @@ export default async function plugin(zcc: ZccPluginApi) {
   const usage = ['Usage:', '  zcc ${opts.id} list', '  zcc ${opts.id} add <title>'].join('\\n');
   zcc.cli.register({
     name: '${opts.id}',
-    summary: 'Manage the ${opts.name} example todo list',
+    summary: ${JSON.stringify(`Manage the ${opts.name} example todo list`)},
     commands: [
       { name: 'list', summary: 'List todos', usage: 'zcc ${opts.id} list' },
       { name: 'add', summary: 'Add a todo', usage: 'zcc ${opts.id} add <title>' }
@@ -306,7 +306,7 @@ function TodosPanel() {
 
   return (
     <div style={{ padding: 24, height: '100%', boxSizing: 'border-box' }}>
-      <h2 style={{ marginTop: 0 }}>${opts.name}</h2>
+      <h2 style={{ marginTop: 0 }}>{${JSON.stringify(opts.name)}}</h2>
       <form onSubmit={onAdd} style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         <input
           value={title}

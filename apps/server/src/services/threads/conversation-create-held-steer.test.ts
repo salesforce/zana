@@ -68,6 +68,17 @@ describe('steering a thread that is still starting', () => {
   });
 });
 
+describe('plugin message attribution on create', () => {
+  it('records the message source on the opening turn request', async () => {
+    const messageSource = { pluginId: 'bots', kind: 'routine' as const, label: 'Digest' };
+    await createConversationFromRequest(ctx, { id: threadId, projectId: 'p', providerId: 'test-provider', input: ['go'], promptInput: [{ type: 'text', text: 'go', mentions: [] }], messageSource });
+    const requested = () => vi.mocked(ctx.hub.emit).mock.calls
+      .map(call => call[1] as { type?: string; payload?: unknown })
+      .find(event => event.type === 'client/turn/requested');
+    await vi.waitFor(() => expect(requested()?.payload).toMatchObject({ messageSource }));
+  });
+});
+
 describe('admission of a thread create', () => {
   const create = (id: string, extra: Record<string, unknown> = {}) =>
     createConversationFromRequest(ctx, { id, projectId: 'p', providerId: 'test-provider', input: ['go'], ...extra });

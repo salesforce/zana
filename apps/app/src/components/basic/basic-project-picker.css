@@ -1,0 +1,5 @@
+.basic-composer-project { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--text-muted); }
+.basic-composer-project > svg { flex-shrink: 0; }
+.basic-composer-project .ui-popover-picklist { max-width: 100%; }
+.basic-composer-setup { margin: 10px 0 0; font-size: 12px; color: var(--text-muted); }
+.basic-composer-setup p { margin: 0 0 7px; line-height: 1.5; }

@@ -1,5 +1,6 @@
-import { Children, isValidElement, memo, useCallback, useMemo, useState, type ReactNode } from 'react';
-import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
+import { Children, createContext, isValidElement, memo, useCallback, useContext, useMemo, useState, type ComponentPropsWithoutRef, type ReactNode } from 'react';
+import ReactMarkdown, { defaultUrlTransform, type ExtraProps } from 'react-markdown';
+import type { ProjectFileScope } from '@zana-ai/zcc-desktop-contract';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -36,8 +37,83 @@ import {
   highlightMarkdownCode,
   languageFromMarkdownClassName
 } from './markdown-code-highlight.js';
-import { boundedText, LargeTextPreview } from './LargeTextPreview.js';
+import { isOversizedText, LargeTextPreview } from './LargeTextPreview.js';
 import { CodeBlockWithCopy, fencedCodeText } from './FencedCodeBlock.js';
+
+// Stable component types keep asynchronous link resolution and folder selection
+// alive when streaming text, timeline hints, or display preferences change.
+const MarkdownLinkScope = createContext<{
+  threadId?: string;
+  projectId?: string | null;
+  filePathHints?: readonly string[];
+  exportable: boolean;
+  hostname?: string;
+  rewriteLocalhost: boolean;
+  documentLinks?: boolean;
+  fileLinksAsAnchors?: boolean;
+  onTaskChange?: (bodyOffset: number, checked: boolean) => void;
+}>({ exportable: false, rewriteLocalhost: REWRITE_LOCALHOST_LINKS_DEFAULT });
+
+function MarkdownAnchor({ node: _node, ...props }: ComponentPropsWithoutRef<'a'> & { node?: unknown }) {
+  const { threadId, projectId, filePathHints, hostname, rewriteLocalhost, documentLinks, fileLinksAsAnchors } = useContext(MarkdownLinkScope);
+  if (documentLinks) return <a {...props} />;
+  const mentionId = parseThreadMentionHref(props.href);
+  if (mentionId) {
+    return <a className="thread-mention-pill" href={getThreadRoutePath(mentionId, projectId ?? undefined)}>{props.children}</a>;
+  }
+  const localTarget = classifyMarkdownFileTarget(props.href);
+  if (localTarget?.kind === 'file' && fileLinksAsAnchors && !threadId) return <a {...props} />;
+  if (localTarget) {
+    if (localTarget.kind === 'file' && threadId) {
+      return (
+        <MarkdownFileLink token={localTarget.path} lineNumber={localTarget.lineNumber} href={props.href} title={props.title ?? localTarget.path} threadId={threadId} projectId={projectId} hints={filePathHints} link>
+          {props.children}
+        </MarkdownFileLink>
+      );
+    }
+    return (
+      <UnavailableMarkdownFileLink message={localTarget.kind === 'invalid'
+        ? localTarget.message : 'Open this file link from a thread to preview it.'}>
+        {props.children}
+      </UnavailableMarkdownFileLink>
+    );
+  }
+  const href = rewriteLocalhostLinkHref({ currentHostname: hostname, enabled: rewriteLocalhost, href: props.href });
+  return <a {...props} href={href} target="_blank" rel="noreferrer" onClick={(event) => {
+    if (!href || event.shiftKey || event.altKey) return;
+    if (handleHttpLinkClick(href, { event, ownerId: threadId })) event.preventDefault();
+  }} />;
+}
+
+function MarkdownInlineCode(props: ComponentPropsWithoutRef<'code'>) {
+  const { threadId, projectId, filePathHints, exportable } = useContext(MarkdownLinkScope);
+  const className = typeof props.className === 'string' ? props.className : '';
+  const fenced = /(^|\s)language-/.test(className) || /(^|\s)hljs(\s|$)/.test(className);
+  const token = inlineCodeText(props.children);
+  const rawPath = !fenced && !exportable && threadId ? parseInlineFileCodePath(token) : null;
+  if (rawPath && threadId) {
+    const previewPath = resolveThreadFilePreviewPath(token, filePathHints);
+    return <MarkdownFileLink token={rawPath} title={previewPath ?? rawPath} threadId={threadId} projectId={projectId} hints={filePathHints}>
+      {props.children}
+    </MarkdownFileLink>;
+  }
+  return <code className={className || undefined}>{props.children}</code>;
+}
+
+function MarkdownListItem({ node, ...props }: ComponentPropsWithoutRef<'li'> & ExtraProps) {
+  return <li {...props} data-task-start={node?.position?.start.offset} />;
+}
+
+function MarkdownTaskInput({ node: _node, ...props }: ComponentPropsWithoutRef<'input'> & ExtraProps) {
+  const { onTaskChange } = useContext(MarkdownLinkScope);
+  return <input {...props}
+    disabled={!onTaskChange || props.type !== 'checkbox'}
+    aria-label={props.type === 'checkbox' ? 'Toggle checklist item' : undefined}
+    onChange={event => {
+      const start = event.currentTarget.closest('li[data-task-start]')?.getAttribute('data-task-start');
+      if (start !== null && start !== undefined) onTaskChange?.(Number(start), event.currentTarget.checked);
+    }} />;
+}
 
 /**
  * Shared markdown / doc rendering for the inbox.
@@ -59,6 +135,29 @@ import { CodeBlockWithCopy, fencedCodeText } from './FencedCodeBlock.js';
  * @param copyableCode  Pin a "Copy code" button to fenced code blocks. On by
  *   default; the PDF export turns it off so the button isn't printed.
  */
+type MdNode = { type: string; value?: string; children?: MdNode[] };
+
+type HastNode = { type: string; value?: string; children?: HastNode[] };
+
+function hastText(node: HastNode): string {
+  return node.type === 'text' ? (node.value ?? '') : (node.children ?? []).map(hastText).join('');
+}
+
+/** True when a table's `thead` has no visible text in any cell (`| | |`). */
+function isEmptyHeader(node: HastNode | undefined): boolean {
+  return Boolean(node) && hastText(node as HastNode).trim() === '';
+}
+
+/** An HTML comment is a note for tools (such as `<!-- executable-step -->`), never text for the reader. Code blocks are untouched. */
+function remarkDropHtmlComments() {
+  const prune = (node: MdNode): void => {
+    if (!node.children) return;
+    node.children = node.children.filter((child) => !(child.type === 'html' && /^\s*<!--[\s\S]*-->\s*$/u.test(child.value ?? '')));
+    node.children.forEach(prune);
+  };
+  return (tree: MdNode) => prune(tree);
+}
+
 export function DocContent({
   path,
   content,
@@ -78,7 +177,8 @@ export function DocContent({
   storage?: boolean;
   copyableCode?: boolean;
 }) {
-  if (boundedText(content).length < content.length) return <LargeTextPreview text={content} />;
+  const oversizedContent = useMemo(() => isOversizedText(content), [content]);
+  if (oversizedContent) return <LargeTextPreview text={content} ignoreDataUrls />;
   const lower = path.toLowerCase();
   if (lower.endsWith('.md') || lower.endsWith('.markdown') || lower.endsWith('.mdx')) {
     // Library docs carry a `---`…`---` metadata header. react-markdown has no
@@ -174,7 +274,11 @@ export const MarkdownContent = memo(function MarkdownContent({
   filePathHints,
   lightboxItems: providedLightboxItems,
   copyableCode = true,
-  fileLinksAsAnchors = false
+  fileLinksAsAnchors = false,
+  onTaskChange,
+  documentLinks = false,
+  localDocumentImages = true,
+  fileScope
 }: {
   text: string;
   mermaidTheme?: 'dark' | 'default';
@@ -190,9 +294,18 @@ export const MarkdownContent = memo(function MarkdownContent({
   copyableCode?: boolean;
   /** Leave file-like hrefs as plain anchors for a host (e.g. a plugin) that resolves them in its own click handler. */
   fileLinksAsAnchors?: boolean;
+  /** Only document editors supply this. Conversation checklists stay read-only. */
+  onTaskChange?: (bodyOffset: number, checked: boolean) => void;
+  documentLinks?: boolean;
+  /** Legacy remote previews must never resolve relative images on this desktop. */
+  localDocumentImages?: boolean;
+  fileScope?: ProjectFileScope;
 }) {
-  const preview = boundedText(text);
-  const body = unwrapBareFence(preview);
+  const oversized = useMemo(() => isOversizedText(text), [text]);
+  const body = useMemo(() => {
+    if (oversized) return '';
+    return documentPath !== undefined ? text : unwrapBareFence(text);
+  }, [oversized, text, documentPath]);
   const [rewriteLocalhost] = useBooleanPreference(
     REWRITE_LOCALHOST_LINKS_STORAGE_KEY,
     REWRITE_LOCALHOST_LINKS_DEFAULT
@@ -208,6 +321,7 @@ export const MarkdownContent = memo(function MarkdownContent({
     () => [
       remarkGfm,
       remarkMath,
+      remarkDropHtmlComments,
       ...(breaks ? [remarkBreaks] : []),
       ...(threadMentions ? [remarkThreadMentions] : [])
     ],
@@ -240,8 +354,9 @@ export const MarkdownContent = memo(function MarkdownContent({
   const renderImage = useCallback((props: { src?: string | Blob; alt?: string; title?: string }) => {
     const raw = typeof props.src === 'string' ? props.src : '';
     const alt = props.alt || 'Image';
-    if (documentPath !== undefined && !/^(https?:|data:image\/|blob:|\/\/)/iu.test(raw)) {
-      return <DocumentImage documentPath={documentPath} src={raw} alt={alt} title={props.title} threadId={threadId} storage={storage} />;
+    if (documentPath !== undefined && !/^(https:|data:image\/|blob:)/iu.test(raw)) {
+      if (/^(http:|\/\/)/iu.test(raw) || !localDocumentImages) return <span title={raw}>{alt}</span>;
+      return <DocumentImage documentPath={documentPath} src={raw} alt={alt} title={props.title} threadId={threadId} storage={storage} fileScope={fileScope} />;
     }
     const src = threadId ? raw : conversationImageSrc(projectId, raw);
     if (!src) return null;
@@ -249,10 +364,11 @@ export const MarkdownContent = memo(function MarkdownContent({
       <ThreadDisplayedImage path={src} threadId={threadId} alt={alt} title={props.title} variant="markdown"
         onOpen={exportable ? undefined : () => setLightbox({ src, alt })} />
     );
-  }, [documentPath, threadId, storage, projectId, exportable]);
-  if (preview.length < text.length) return <LargeTextPreview text={text} />;
+  }, [documentPath, threadId, storage, projectId, exportable, localDocumentImages, fileScope]);
+  if (oversized) return <LargeTextPreview text={text} ignoreDataUrls />;
   return (
     <>
+      <MarkdownLinkScope.Provider value={{ threadId, projectId, filePathHints, exportable, hostname, rewriteLocalhost, documentLinks, fileLinksAsAnchors, onTaskChange }}>
       <div className="inbox-md">
         <ReactMarkdown
         remarkPlugins={remarkPlugins}
@@ -264,60 +380,9 @@ export const MarkdownContent = memo(function MarkdownContent({
           [rehypeKatex, { throwOnError: false, output: 'html' }]
         ]}
         components={{
-          // Plain click opens the OS browser. Cmd/Ctrl-click opens the
-          // in-app side panel. The syntax-tree node is not a DOM attribute.
-          a: ({ node: _node, ...props }) => {
-            const mentionId = parseThreadMentionHref(
-              typeof props.href === 'string' ? props.href : undefined
-            );
-            if (mentionId) {
-              return (
-                <a
-                  className="thread-mention-pill"
-                  href={getThreadRoutePath(mentionId, projectId ?? undefined)}
-                >
-                  {props.children}
-                </a>
-              );
-            }
-            const localTarget = classifyMarkdownFileTarget(
-              typeof props.href === 'string' ? props.href : undefined
-            );
-            if (localTarget && !(fileLinksAsAnchors && localTarget.kind === 'file' && !threadId)) {
-              if (localTarget.kind === 'file' && threadId) {
-                return (
-                  <MarkdownFileLink token={localTarget.path} lineNumber={localTarget.lineNumber} href={props.href} title={props.title ?? localTarget.path} threadId={threadId} projectId={projectId} hints={filePathHints} link>
-                    {props.children}
-                  </MarkdownFileLink>
-                );
-              }
-              return (
-                <UnavailableMarkdownFileLink message={localTarget.kind === 'invalid'
-                  ? localTarget.message : 'Open this file link from a thread to preview it.'}>
-                  {props.children}
-                </UnavailableMarkdownFileLink>
-              );
-            }
-            const href = rewriteLocalhostLinkHref({
-              currentHostname: hostname,
-              enabled: rewriteLocalhost,
-              href: typeof props.href === 'string' ? props.href : undefined
-            });
-            return (
-              <a
-                {...props}
-                href={href}
-                target="_blank"
-                rel="noreferrer"
-                onClick={(event) => {
-                  if (!href || event.shiftKey || event.altKey) return;
-                  if (handleHttpLinkClick(href, { event, ownerId: threadId })) {
-                    event.preventDefault();
-                  }
-                }}
-              />
-            );
-          },
+          a: MarkdownAnchor,
+          li: MarkdownListItem,
+          input: MarkdownTaskInput,
           // GFM tables get a wrapper so horizontal overflow scrolls within
           // the comments block instead of stretching the whole panel.
           table: ({ node: _node, children, ...props }) => (
@@ -325,40 +390,23 @@ export const MarkdownContent = memo(function MarkdownContent({
               <table {...props}>{Children.toArray(children)}</table>
             </div>
           ),
+          // A header row whose cells are all empty (`| | |`) is only an empty
+          // shaded bar: leave it out of the DOM.
+          thead: ({ node, children, ...props }) =>
+            isEmptyHeader(node) ? null : <thead {...props}>{children}</thead>,
           // Intercept ```mermaid fences and render them as diagrams. A
           // non-mermaid fence falls through to the default <pre>. We hook
           // `pre` (not `code`) so the rendered SVG isn't nested inside a
           // monospace code block.
           pre: renderFencedPre,
-          code: (props) => {
-            const className = typeof props.className === 'string' ? props.className : '';
-            const fenced = /(^|\s)language-/.test(className) || /(^|\s)hljs(\s|$)/.test(className);
-            const token = inlineCodeText(props.children);
-            const rawPath = !fenced && !exportable && threadId
-              ? parseInlineFileCodePath(token)
-              : null;
-            if (rawPath && threadId) {
-              const previewPath = resolveThreadFilePreviewPath(token, filePathHints);
-              return (
-                <MarkdownFileLink
-                  token={rawPath}
-                  title={previewPath ?? rawPath}
-                  threadId={threadId}
-                  projectId={projectId}
-                  hints={filePathHints}
-                >
-                  {props.children}
-                </MarkdownFileLink>
-              );
-            }
-            return <code className={className || undefined}>{props.children}</code>;
-          },
+          code: MarkdownInlineCode,
           img: renderImage
         }}
       >
         {body}
       </ReactMarkdown>
       </div>
+      </MarkdownLinkScope.Provider>
       {lightbox ? (
         <ThreadImageLightbox
           src={lightbox.src}

@@ -16,6 +16,7 @@ const handlers = new Map<string, (...args: any[]) => Promise<unknown>>();
 const callPluginRpc = vi.fn();
 function bind(runtimeSupervisor: unknown) {
   bindIpcCtx({
+    safeHandleFromWindow: (channel: string, handler: (...a: any[]) => any) => handlers.set(channel, async (...args) => handler({}, ...args)),
     runtimeSupervisor,
     safeHandle: (channel: string, handler: (...a: any[]) => any, onError: (e: unknown) => unknown) =>
       handlers.set(channel, async (...args: any[]) => {
@@ -55,4 +56,12 @@ it('uses the loopback product server when no runtime supervisor is bound', async
   vi.mocked(callPluginRpcOnProductServer).mockResolvedValueOnce('ok');
   await expect(handlers.get(IPC.pluginApps.callRpc)!('docs', 'save')).resolves.toBe('ok');
   expect(logMainError).not.toHaveBeenCalled();
+});
+
+it('requires the trusted window channel for desktop RPCs', async () => {
+  await expect(handlers.get(IPC.pluginApps.callRpc)!('demo','desktop.list')).rejects.toThrow('owner desktop');
+  await expect(handlers.get(IPC.pluginApps.callDesktopRpc)!('demo','list')).rejects.toThrow('desktop RPC');
+  expect(callPluginRpc).not.toHaveBeenCalled();
+  callPluginRpc.mockResolvedValueOnce([]);
+  await expect(handlers.get(IPC.pluginApps.callDesktopRpc)!('demo','desktop.list')).resolves.toEqual([]);
 });

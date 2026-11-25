@@ -83,6 +83,11 @@ export interface OutputActivityDeps {
   setTimer: (fn: () => void, ms: number) => NodeJS.Timeout;
   /** Clear a silence-timer handle. Injected to pair with {@link setTimer}. */
   clearTimer: (handle: NodeJS.Timeout) => void;
+  /**
+   * Called on each edge from not-working into working (a turn, or a resumed burst of output, began).
+   * Used to arm body-less API-error producers. Must not throw; a throw is swallowed.
+   */
+  onBusyEdge?: (sessionId: string) => void;
 }
 
 interface Entry {
@@ -121,10 +126,15 @@ export class OutputActivityMonitor {
     if (!entry.working) {
       entry.working = true;
       this.deps.sink.report(sessionId, 'working');
+      this.busyEdge(sessionId);
     }
     if (entry.timer !== null) this.deps.clearTimer(entry.timer);
     const ms = Math.max(1, Math.round(this.deps.idleAfterMs?.() ?? DEFAULT_IDLE_AFTER_MS));
     entry.timer = this.deps.setTimer(() => this.onSilence(sessionId), ms);
+  }
+
+  private busyEdge(sessionId: string): void {
+    try { this.deps.onBusyEdge?.(sessionId); } catch { /* never break status reporting */ }
   }
 
   /**
@@ -145,6 +155,7 @@ export class OutputActivityMonitor {
       entry.working = true;
       entry.waiting = false;
       this.deps.sink.report(sessionId, 'working');
+      this.busyEdge(sessionId);
     }
     // (Re)arm the silence timer on every chunk.
     if (entry.timer !== null) this.deps.clearTimer(entry.timer);

@@ -45,7 +45,7 @@ function customize() {
 beforeEach(() => {
   h.configSet.mockReset().mockResolvedValue({});
   h.onHistory.mockClear();
-  useUi.setState({ sidebarCollapsed: false, sidebarNavHidden: [], projectSidebarNavHidden: [], sidebarNavOrder: null, projectSidebarNavOrder: null });
+  useUi.setState({ sidebarCollapseBehavior: 'two-state', sidebarCollapsed: false, sidebarNavHidden: [], projectSidebarNavHidden: [], sidebarNavOrder: null, projectSidebarNavOrder: null });
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -298,5 +298,31 @@ describe('sidebar visibility and customization', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'History' }));
     expect(closeDrawer).toHaveBeenCalledOnce();
     expect(h.onHistory).toHaveBeenCalledOnce();
+  });
+});
+
+describe('Collapsed behavior setting', () => {
+  it('offers two-state by default and switches to three-state, persisting the choice', () => {
+    render(<Rail />);
+    const popup = customize();
+    const two = within(popup).getByRole('radio', { name: /Expanded, Hidden/ }) as HTMLInputElement;
+    const three = within(popup).getByRole('radio', { name: /Expanded, Rail, Hidden/ }) as HTMLInputElement;
+    expect(two.checked).toBe(true);
+    expect(three.checked).toBe(false);
+    fireEvent.click(three);
+    expect(useUi.getState().sidebarCollapseBehavior).toBe('three-state');
+    expect((within(screen.getByRole('dialog', { name: 'Customize navigation' })).getByRole('radio', { name: /Expanded, Rail, Hidden/ }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(two);
+    expect(useUi.getState().sidebarCollapseBehavior).toBe('two-state');
+  });
+
+  it('Restore defaults also resets Collapsed behavior to two-state', () => {
+    render(<Rail />);
+    useUi.getState().setSidebarCollapseBehavior('three-state');
+    const popup = customize();
+    expect((within(popup).getByRole('radio', { name: /Expanded, Rail, Hidden/ }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(within(popup).getByRole('button', { name: 'Restore defaults' }));
+    expect(useUi.getState().sidebarCollapseBehavior).toBe('two-state');
+    expect((within(screen.getByRole('dialog', { name: 'Customize navigation' })).getByRole('radio', { name: /Expanded, Hidden/ }) as HTMLInputElement).checked).toBe(true);
   });
 });

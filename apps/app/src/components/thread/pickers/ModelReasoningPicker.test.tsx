@@ -138,7 +138,7 @@ describe('ModelReasoningPicker', () => {
     const css = readFileSync(new URL('../../../styles/global.css', import.meta.url), 'utf8');
     expect(source).toContain('aria-label={provider.label}');
     expect(source).toContain('aria-label="Harness"');
-    expect(source).toContain('model-reasoning-picker-section-label">Harness');
+    expect(source).toContain('<span>Harness</span>');
     expect(source).not.toContain('title={provider.label}');
     expect(css).toContain('.model-reasoning-picker-tab:hover::after');
     expect(css).toContain('content: attr(aria-label)');

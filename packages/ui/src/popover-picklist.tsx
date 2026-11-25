@@ -27,7 +27,7 @@ export function placePopoverMenu(
   viewport: { width: number; height: number },
   minWidth: number
 ): PopoverMenuPlacement {
-  const width = Math.max(trigger.width, minWidth);
+  const width = Math.min(Math.max(trigger.width, minWidth), Math.max(0, viewport.width - 2 * VIEWPORT_PAD));
   let left = trigger.left;
   if (left + width > viewport.width - VIEWPORT_PAD) {
     left = trigger.right - width;
@@ -40,7 +40,7 @@ export function placePopoverMenu(
   const spaceBelow = viewport.height - trigger.bottom - VIEWPORT_PAD;
   const spaceAbove = trigger.top - VIEWPORT_PAD;
   const openAbove = spaceBelow < FLIP_BELOW_PX && spaceAbove > spaceBelow;
-  const available = Math.max(120, openAbove ? spaceAbove : spaceBelow);
+  const available = Math.max(0, (openAbove ? spaceAbove : spaceBelow) - MENU_GAP);
   const cap = Math.min(
     MENU_MAX_HEIGHT_PX,
     Math.floor(viewport.height * MENU_MAX_HEIGHT_VH)
@@ -284,14 +284,26 @@ export function PopoverPicklist<T extends string>({
 
   useIsomorphicLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
-    const rect = anchorToParent
-      ? triggerRef.current.parentElement?.getBoundingClientRect() ?? triggerRef.current.getBoundingClientRect()
-      : triggerRef.current.getBoundingClientRect();
-    setPosition(placePopoverMenu(
-      rect,
-      { width: window.innerWidth, height: window.innerHeight },
-      minWidth
-    ));
+    const trigger = triggerRef.current;
+    const anchor = (anchorToParent && trigger.parentElement) || trigger;
+    const place = () => {
+      setPosition(placePopoverMenu(anchor.getBoundingClientRect(), {
+        width: window.innerWidth, height: window.innerHeight
+      }, minWidth));
+    };
+    const onScroll = (event: Event) => {
+      if (!menuRef.current?.contains(event.target as Node)) place();
+    };
+    place();
+    window.addEventListener('resize', place);
+    document.addEventListener('scroll', onScroll, true);
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(place);
+    observer?.observe(anchor);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', place);
+      document.removeEventListener('scroll', onScroll, true);
+    };
   }, [open, anchorToParent, minWidth]);
 
   useEffect(() => {
@@ -325,7 +337,7 @@ export function PopoverPicklist<T extends string>({
       setActiveIndex(selectedIndex >= 0 ? selectedIndex : Math.max(0, firstEnabledIndex));
     } else {
       setQuery('');
-      if (wasOpenRef.current) triggerRef.current?.focus();
+      if (wasOpenRef.current) triggerRef.current?.focus({ preventScroll: true });
     }
     wasOpenRef.current = open;
   }, [open, searchable, value]);
@@ -335,8 +347,8 @@ export function PopoverPicklist<T extends string>({
   const menuPlaced = open && position !== null;
   useEffect(() => {
     if (!menuPlaced) return;
-    if (searchable) searchRef.current?.focus();
-    else menuRef.current?.focus();
+    if (searchable) searchRef.current?.focus({ preventScroll: true });
+    else menuRef.current?.focus({ preventScroll: true });
   }, [menuPlaced, searchable]);
 
   useEffect(() => {
@@ -346,7 +358,12 @@ export function PopoverPicklist<T extends string>({
   useEffect(() => {
     if (!open || !activeOption || activeOption.sticky) return;
     const node = menuRef.current?.querySelector(`[id="${CSS.escape(optionId(activeOption))}"]`);
-    if (node instanceof HTMLElement) node.scrollIntoView({ block: 'nearest' });
+    const list = node?.closest<HTMLElement>('.launch-model-picker-options');
+    if (!node || !list) return;
+    const option = node.getBoundingClientRect();
+    const bounds = list.getBoundingClientRect();
+    if (option.bottom > bounds.bottom) list.scrollTop += option.bottom - bounds.bottom;
+    else if (option.top < bounds.top) list.scrollTop -= bounds.top - option.top;
   }, [activeIndex, activeOption, open]);
 
   return (
@@ -409,7 +426,6 @@ export function PopoverPicklist<T extends string>({
                 placeholder={searchPlaceholder}
                 aria-label={searchPlaceholder}
                 aria-activedescendant={activeOption ? optionId(activeOption) : undefined}
-                onKeyDown={handleMenuKeyDown}
               />
             </div>
           )}

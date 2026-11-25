@@ -3,6 +3,7 @@ import { normalizePortableAttachments } from '../projects/portable-attachments.j
 import { projectOnHost, ProjectSourceUnavailableError } from '@zana-ai/zcc-domain/project';
 import type { ThreadStartResult } from '@zana-ai/zcc-contracts/host-rpc';
 import {
+  appendConversationThreadEvent,
   createConversationThread,
   createEnvironment,
   findProjectEnvironmentByHostPath,
@@ -94,6 +95,8 @@ export interface CreateConversationInput {
   projectId: string;
   providerId: string;
   input: string[];
+  /** Plugin SDK only. Provision the conversation and wait for its first real message. */
+  deferFirstTurn?: true | 'slash-plan';
   promptInput?: unknown;
   hostId?: string;
   id?: string;
@@ -113,6 +116,8 @@ export interface CreateConversationInput {
   automatedSkillIds?: string[];
   /** Who produced the opening prompt; absent means a person. */
   origin?: DispatchOrigin;
+  /** Display attribution for a plugin-delivered opening message. */
+  messageSource?: import('@zana-ai/zcc-domain/thread-runtime').MessageSource;
 }
 
 const THREAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -242,7 +247,8 @@ async function startConversationOnHost(
     model: args.input.model,
     reasoningLevel: args.input.reasoningLevel,
     serviceTier: args.input.serviceTier,
-    acpMode: args.input.acpMode
+    acpMode: args.input.acpMode,
+    ...(args.input.messageSource ? { messageSource: args.input.messageSource } : {})
   });
   const checkpoint = getThreadProvider(providerId)?.capabilities.fork === 'checkpoint'
     ? getLatestConversationCheckpoint(ctx.db, args.thread.id)?.checkpoint
@@ -363,6 +369,12 @@ export async function createConversationFromRequest(
   input.serviceTier = authorizedServiceTier(ctx, input.providerId, input.serviceTier);
   const pluginResolvedPromptInput = await withResolvedPluginMentionContext(ctx.plugins, input.promptInput);
   const textPrompt = flattenThreadInput(pluginResolvedPromptInput).map((part) => part.trim()).filter((part) => part.length > 0);
+  // Name from what people see, not an agent-only sender header.
+  const titlePrompt = flattenThreadInput(
+    Array.isArray(pluginResolvedPromptInput)
+      ? pluginResolvedPromptInput.filter((part) => !(part && typeof part === 'object' && (part as { visibility?: unknown }).visibility === 'agent-only'))
+      : pluginResolvedPromptInput
+  ).map((part) => part.trim()).filter((part) => part.length > 0);
   const promptSource = textPrompt.length > 0 ? textPrompt : input.input.map((part) => part.trim()).filter((part) => part.length > 0);
   let resolvedPromptInput = pluginResolvedPromptInput;
   let prompt = hostPromptInputFromInput(
@@ -370,14 +382,14 @@ export async function createConversationFromRequest(
     promptSource,
     (path) => resolvePromptAttachmentPath(ctx.dataDir, input.projectId, path)
   );
-  if (prompt.length === 0) {
+  if (prompt.length === 0 && !input.deferFirstTurn) {
     throw new ThreadCreateError(400, 'invalid-input', 'input is required');
   }
 
   let project = requireProject(ctx, input.projectId);
   // Main-authorized creates are squad member starts, admitted by their own entry.
   // A create cannot be held for later, so a wait is a refusal and nothing is created.
-  if (!authorizedContext) {
+  if (!authorizedContext && !input.deferFirstTurn) {
     const refusal = admissionRefusal(await admitDispatch(ctx, {
       projectId: project.id,
       surface: 'modern',
@@ -498,6 +510,31 @@ export async function createConversationFromRequest(
     }
   }
 
+  async function finishEmptyThread(thread: ConversationThreadRow, lease: ConversationSendLease): Promise<ConversationThreadRow> {
+    const environment = getEnvironment(ctx.db, thread.environmentId!);
+    if (!getThreadProvider(providerId)) throw new ThreadCreateError(400, 'invalid-provider', `unknown thread provider: ${providerId}`);
+    await validateProviderModelSelection(ctx, {
+      hostId, providerId, cwd: modelCatalogCwd(environment, threadStartCwd(environment, input.cwd), dropCwd || (project?.remote && !remoteToolProxy)),
+      model: input.model, reasoningLevel: input.reasoningLevel
+    });
+    lease.assertCurrent();
+    const permissionMode = clampPermissionModeToHost(ctx.db, hostId, input.permissionMode!) ?? 'accept-edits';
+    const requestedMode = input.deferFirstTurn === 'slash-plan' ? 'plan' : input.acpMode ?? 'agent';
+    const idle = ctx.db.transaction(() => {
+      recordThreadExecutionMode(ctx.db, { threadId: thread.id, requestedMode, effectiveMode: requestedMode });
+      appendConversationThreadEvent(ctx.db, {
+        threadId: thread.id, type: 'thread/prepared',
+        payload: { type: 'thread/prepared', execution: {
+          model: input.model, reasoningLevel: input.reasoningLevel, permissionMode,
+          serviceTier: input.serviceTier, acpMode: input.acpMode
+        } }
+      });
+      return updateConversationThreadStatus(ctx.db, thread.id, 'idle')!;
+    });
+    ctx.hub.emit('threads:updated', conversationThreadView(ctx, idle));
+    return idle;
+  }
+
   if (choice.kind === 'reuse') {
     const existing = getEnvironment(ctx.db, choice.environmentId);
     if (!existing || existing.projectId !== project.id || existing.hostId !== hostId) {
@@ -519,7 +556,7 @@ export async function createConversationFromRequest(
         hostId,
         environmentId: existing.id,
         providerId,
-        title: threadTitle(input, textPrompt),
+        title: threadTitle(input, titlePrompt),
         titleSource: threadTitleSource(input),
         status: 'starting',
         parentThreadId: input.parentThreadId ?? null,
@@ -560,6 +597,7 @@ export async function createConversationFromRequest(
           });
         }
         lease.assertCurrent();
+        if (input.deferFirstTurn) return await finishEmptyThread(thread, lease);
         if (authorizedContext?.prepareOnly) {
           updateConversationThreadStatus(ctx.db, thread.id, 'idle');
           return getConversationThread(ctx.db, thread.id)!;
@@ -575,7 +613,7 @@ export async function createConversationFromRequest(
           ? (getConversationThread(ctx.db, thread.id) ?? thread)
           : thread;
         ctx.hub.emit('threads:updated', conversationThreadView(ctx, running));
-        requestAutoThreadTitle(ctx, input, running.id, textPrompt);
+        requestAutoThreadTitle(ctx, input, running.id, titlePrompt);
         emitPluginThreadEvent(ctx, {
           name: 'thread.active',
           threadId: running.id,
@@ -633,7 +671,7 @@ export async function createConversationFromRequest(
         hostId,
         environmentId: environment.id,
         providerId,
-        title: threadTitle(input, textPrompt),
+        title: threadTitle(input, titlePrompt),
         titleSource: threadTitleSource(input),
         status: 'starting',
         parentThreadId: input.parentThreadId ?? null,
@@ -667,7 +705,7 @@ export async function createConversationFromRequest(
         hostId,
         environmentId: existing.id,
         providerId,
-        title: threadTitle(input, textPrompt),
+        title: threadTitle(input, titlePrompt),
         titleSource: threadTitleSource(input),
         status: 'starting',
         parentThreadId: input.parentThreadId ?? null,
@@ -709,6 +747,7 @@ export async function createConversationFromRequest(
         mergeBaseBranch: provisioned.defaultBranch
       });
       lease.assertCurrent();
+      if (input.deferFirstTurn) return await finishEmptyThread(created.thread, lease);
       if (authorizedContext?.prepareOnly) {
         updateConversationThreadStatus(ctx.db, created.thread.id, 'idle');
         return getConversationThread(ctx.db, created.thread.id)!;
@@ -733,7 +772,7 @@ export async function createConversationFromRequest(
         ? (getConversationThread(ctx.db, created.thread.id) ?? created.thread)
         : created.thread;
       ctx.hub.emit('threads:updated', conversationThreadView(ctx, running));
-      requestAutoThreadTitle(ctx, input, running.id, textPrompt);
+      requestAutoThreadTitle(ctx, input, running.id, titlePrompt);
       emitPluginThreadEvent(ctx, {
         name: 'thread.active',
         threadId: running.id,

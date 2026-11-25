@@ -1,4 +1,5 @@
 import { ControlError } from './errors.js';
+import { trimTrailingSlashes } from './trim-slashes.js';
 
 export interface ProductHttpOptions {
   fetchImpl?: typeof fetch;
@@ -13,7 +14,7 @@ export class ProductHttpClient {
   readonly sleep: (ms: number) => Promise<void>;
 
   constructor(serverUrl: string, opts: ProductHttpOptions = {}) {
-    this.serverUrl = serverUrl.replace(/\/+$/, '');
+    this.serverUrl = trimTrailingSlashes(serverUrl);
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.nowMs = opts.nowMs ?? (() => Date.now());
     this.sleep = opts.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -111,7 +112,7 @@ export async function probeHealth(
   fetchImpl: typeof fetch = fetch
 ): Promise<boolean> {
   try {
-    const response = await fetchImpl(new URL('/api/v1/health', `${serverUrl.replace(/\/+$/, '')}/`), {
+    const response = await fetchImpl(new URL('/api/v1/health', `${trimTrailingSlashes(serverUrl)}/`), {
       method: 'GET'
     });
     if (!response.ok) return false;

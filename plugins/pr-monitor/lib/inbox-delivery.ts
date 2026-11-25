@@ -58,8 +58,8 @@ export function inboxCommentForDelta(delta: PrStatusDelta): string {
 export function inboxDeliveriesForDeltas(
   deltas: PrStatusDelta[],
   settings: PrMonitorSettings
-): Array<{ projectId: string; comments: string; pr: MonitoredPr }> {
-  const out: Array<{ projectId: string; comments: string; pr: MonitoredPr }> = [];
+): Array<{ projectId: string; comments: string; pr: MonitoredPr; offerAgentFix?: true }> {
+  const out: Array<{ projectId: string; comments: string; pr: MonitoredPr; offerAgentFix?: true }> = [];
   for (const delta of deltas) {
     if (!isInterestingDelta(delta)) continue;
     const delivery = computeNotifyDelivery(delta.pr, settings);
@@ -67,7 +67,8 @@ export function inboxDeliveriesForDeltas(
     out.push({
       projectId: delta.pr.projectId,
       comments: inboxCommentForDelta(delta),
-      pr: delta.pr
+      pr: delta.pr,
+      ...(delta.newStatus === 'failed' && { offerAgentFix: true })
     });
   }
   return out;

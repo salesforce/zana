@@ -31,7 +31,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         summary: 'A full-height page in the global sidebar, or a page listed under Plugins.',
         bullets: [
           'Default `placement: "sidebar"` registers a rail row at `/plugins/<id>/<path>`.',
-          '`placement: "extensions"` lists the page in the Plugins hub instead.',
+          '`placement: "extensions"` lists the page under Plugins instead of the rail.',
           '`placement: "unlisted"` is a full `/plugins/<id>/<path>` page with no rail row and no hub listing — open it from a footer or palette action via `toPluginPanel`.',
           'Optional header and sidebar accessory.'
         ],
@@ -211,7 +211,9 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           '`scopes` default to `["thread"]`. Include `"agent-session"` for the CLI-agent inspector.',
           'Include `"plugin-page"` to list the tab beside your own pages; `pages` narrows it to some `navPanel` / `projectTab` ids. Open it from the page with `useZccNavigate().openPanelTool`.',
           'The `surface` prop says which side panel shows the tab; `threadId` is empty beside a plugin page.',
-          '`tabId` is stable across tab switches and new when a closed tab reopens, so state can reset there.'
+          '`tabId` is stable across tab switches and new when a closed tab reopens, so state can reset there.',
+          'The host keeps opened tabs mounted while hidden (the 4 most recent, plus the active one), so in-memory state survives a switch. `active` is false while hidden: pause polling then. An older hidden tab is unmounted and remounts later.',
+          'To survive a reload or that remount, save small JSON (8 KiB at most) with `onTabStateChange(state)`. It returns as `tabState` and resets when the tab reopens with different `params`. Both props are absent on older hosts.'
         ],
         firstParty: ['Tasks', 'Side chat', 'Workflows']
       },
@@ -270,6 +272,24 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         apiSymbols: ['PluginAppSlots.fileOpener'],
         bullets: ['Listed in thread file preview “Open with”.'],
         firstParty: ['Library', 'Salesforce']
+      },
+      {
+        id: 'experimental_browserToolbarAction',
+        title: 'Browser toolbar action',
+        summary: 'A control in the toolbar of each thread browser tab.',
+        apiSymbols: [
+          'PluginAppSlots.experimental_browserToolbarAction',
+          'PluginBrowserToolbarActionProps',
+          'PluginBrowserPage',
+          'PluginBrowserComposer'
+        ],
+        bullets: [
+          'Register `{ id, title, component }`. Props carry `threadId`, `tabId`, `url`, `page` and a `composer` scoped to the same thread.',
+          '`page` is `null` off desktop. `page.evaluate(expression, { world })` runs a bounded expression, isolated by default; `"main"` is best-effort framework inspection.',
+          'Inside an expression, `bridge.postMessage(data)` sends untrusted page data to `page.onMessage`, filtered by tab and thread.',
+          '`composer.insert(reference)` adds a context badge; `update`, `onSubmitted` and `focus` keep it current.'
+        ],
+        experimental: true
       }
     ]
   },
@@ -310,7 +330,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
       {
         id: 'settingsSection',
         title: 'Settings section',
-        summary: 'A React settings UI on the plugin’s hub page.',
+        summary: 'A React settings UI on the plugin’s Settings page.',
         apiSymbols: ['PluginAppSlots.settingsSection', 'ZccPluginApi.settings'],
         bullets: [
           'Renders `title` and `description` under Settings → Plugins → [plugin name].',
@@ -327,7 +347,9 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
     blurb: 'APIs with no pixels — skills, CLI, MCP, workers.',
     sections: [
       { title: 'Agent capabilities', surfaceIds: ['skills', 'cli', 'mcp'] },
-      { title: 'Host services', surfaceIds: ['settings-define', 'background', 'desktop-browsers', 'approvals'] },
+      { title: 'Agent runtime', surfaceIds: ['providers', 'hooks'] },
+      { title: 'Server plumbing', surfaceIds: ['server-io', 'services'] },
+      { title: 'Host services', surfaceIds: ['settings-define', 'background', 'desktop-browsers', 'approvals', 'remote-hosts'] },
       { title: 'Runtime', surfaceIds: ['contentScripts', 'experimental_providerIcon'] }
     ],
     surfaces: [
@@ -363,10 +385,63 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         firstParty: ['Library']
       },
       {
+        id: 'providers',
+        title: 'Agent providers',
+        tagline: 'Bring a coding agent harness.',
+        summary: 'Register a thread provider: its bridge, models, launch options and optional usage readings.',
+        bullets: [
+          '`zcc.agents.experimental_registerProvider(declaration)` adds a harness to the thread and New Chat pickers.',
+          'Pair with [Provider icon](experimental_providerIcon) for the picker glyph.',
+          '`sdk.providers.list()` reports `available: false` when the bridge failed or the harness is not installed on that host.'
+        ],
+        apiSymbols: ['PluginAgents.experimental_registerProvider', 'PluginProviderDeclaration'],
+        firstParty: ['Claude Code', 'Codex', 'Pi', 'ACP'],
+        experimental: true
+      },
+      {
+        id: 'hooks',
+        title: 'Platform hooks',
+        tagline: 'Admit dispatches and police native tools.',
+        summary: 'Server-owned checkpoints before a prompt is sent and before a native tool runs.',
+        bullets: [
+          '`hooks.on(handler)` decides dispatch admission; only an explicit human Send now bypasses a wait.',
+          '`hooks.onToolPolicy(handler)` allows, denies or asks for Claude / Codex tool calls. Declare `zcc.toolPolicy: true` and register during activation.',
+          'One handler of each kind per plugin. Tool input is redacted before it reaches the plugin.'
+        ],
+        apiSymbols: ['ZccPluginApi.hooks', 'PluginHooks', 'PluginToolPolicyRequest']
+      },
+      {
+        id: 'server-io',
+        title: 'Server I/O',
+        tagline: 'RPC, HTTP, realtime, storage, processes.',
+        summary: 'The plumbing between your plugin server, its UI and the host.',
+        bullets: [
+          '`rpc.method` for renderer calls; `http.route` for authenticated routes (bodies up to 25 MiB).',
+          '`realtime.publish` pushes events your UI receives; `storage.kv` persists per-plugin state.',
+          '`process.spawn` starts host-tracked children (no shell, at most 8 live) that are reaped on stop.',
+          '`status.needsConfiguration` marks the plugin until it is set up; `onDispose` runs LIFO teardown.'
+        ],
+        apiSymbols: ['ZccPluginApi.rpc', 'ZccPluginApi.http', 'ZccPluginApi.realtime', 'ZccPluginApi.storage', 'ZccPluginApi.process']
+      },
+      {
+        id: 'services',
+        title: 'Plugin services',
+        tagline: 'Call another plugin’s SDK.',
+        summary: 'Publish a typed SDK other plugins consume through a live proxy.',
+        bullets: [
+          '`services.provide(impl)` is keyed by your plugin id; nobody else can impersonate it.',
+          '`services.use(id)` survives provider reloads and throws `service_unavailable` until provided; `has(id)` checks first.',
+          'Share a types-only contract; never hand consumers credentials.'
+        ],
+        apiSymbols: ['ZccPluginApi.services', 'PluginServices'],
+        firstParty: ['Salesforce'],
+        experimental: true
+      },
+      {
         id: 'settings-define',
         title: 'Defined settings',
         tagline: 'Host-rendered schema.',
-        summary: '`zcc.settings.define` descriptors the hub form can persist.',
+        summary: '`zcc.settings.define` descriptors the host settings form can persist.',
         bullets: ['`status.needsConfiguration` deep-links here.'],
         apiSymbols: ['ZccPluginApi.settings.define', 'ZccPluginApi.status.needsConfiguration']
       },
@@ -419,6 +494,18 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
         experimental: true
       },
       {
+        id: 'remote-hosts',
+        title: 'Remote machines',
+        tagline: 'SSH preparation and remote env.',
+        summary: 'Prepare managed SSH aliases and supply environment variables to sessions on other machines.',
+        bullets: [
+          '`sshConnections.register({ owns, prepare })` prepares explicit bootstrap and repair only; background recovery never calls it.',
+          '`remoteEnvironment.provide(resolve)` sets only names allowlisted in `zcc.extra.remoteEnvironment`; values stay in daemon memory.',
+          '`host.projectCall` routes project-bound RPC to the project’s machine.'
+        ],
+        apiSymbols: ['ZccPluginApi.sshConnections', 'ZccPluginApi.remoteEnvironment', 'PluginSshConnections', 'PluginRemoteEnvironment']
+      },
+      {
         id: 'contentScripts',
         title: 'Content scripts',
         tagline: 'Per-window mount/dispose.',
@@ -428,6 +515,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           'Feature-detect `context.experimental_observeAgents`: an initial snapshot and changes for up to 1,000 visible agents, with ID, thread/CLI kind and working/idle/needs-you/unknown state. No prompts or output; idle does not mean success.',
           'Treat `ready: false` as unavailable and reset transition baselines. Scoped windows remain unready; the first ready snapshot is a silent baseline. The API is absent on older hosts.',
           '`context.experimental_onSignal(channel, listener)` receives only this plugin\'s realtime channel. Both observers return unsubscribe functions and are released on abort.',
+          '`context.experimental_setThreadRowStatus(threadId, { icon, label, tone? })` shows a status on that thread\'s sidebar row; pass `null` to clear it.',
           'For one effect across main windows, elect an owner with Chromium Web Locks after readiness; release locks, timers and audio on disposal. No extra activity polling is needed.',
           'Users select their own audio directly in Settings → Notifications, with no plugin required. Sound Studio is an optional forkable example for audio collections and custom playback rules. Register sound players with notificationSoundProvider: Settings → Notifications selects one provider. The provider still owns input priority and its playback rules.'
         ],

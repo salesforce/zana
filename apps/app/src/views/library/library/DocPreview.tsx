@@ -1,9 +1,6 @@
 import { LibraryAssetPreview } from './LibraryAssetPreview.js';
 import { product } from '../../../lib/product-client.js';
 import React, { useEffect, useRef, useState } from 'react';
-import { Pencil, Eye, Save, Type, Code2 } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import Editor from '@monaco-editor/react';
 // Side-effect: wires up MonacoEnvironment (local workers) + loader.config. See
 // util/monacoSetup.ts — shared with ExplorerView and the modal's DiffViewer.
@@ -11,18 +8,15 @@ import '@/lib/monacoSetup';
 
 import type { LibraryDoc } from '@zana-ai/zcc-domain/product';
 import { useUi } from '@/store';
-import { MermaidDiagram } from '@/components/MermaidDiagram';
-import { extractMermaid } from '@/components/markdown-mermaid';
-import { CopyableFencedPre } from '@/components/FencedCodeBlock';
 import { useMonacoTheme } from '@/hooks/useMonacoTheme';
 import { useAiEnhanceSelection } from '@/components/AiEnhanceSelection';
 import { StencilLines } from '@/components/ui/Skeleton';
-import { parseFrontMatter } from '@zana-ai/zcc-extension-sdk/helpers';
-import { LibraryMarkdownEditor } from './LibraryMarkdownEditor.js';
+import MarkdownDocument from '../../../components/markdown/MarkdownDocument.js';
+import { recallMarkdownDraft, rememberMarkdownDraft } from '../../../components/markdown/markdown-drafts.js';
 import { DocumentPdfButton } from '@/components/DocumentPdfButton';
 import { LibrarySaveRecovery } from './LibrarySaveRecovery.js';
 import { DocumentLinkBoundary } from '../../../components/DocumentLinkBoundary.js';
-import { documentLinkUrlTransform, type DocumentLink } from '../../../components/document-links.js';
+import type { DocumentLink } from '../../../components/document-links.js';
 
 export interface DocPreviewProps {
   doc: LibraryDoc;
@@ -32,8 +26,6 @@ export interface DocPreviewProps {
   autoEdit?: boolean;
   onAutoEditConsumed?: () => void;
 }
-
-type EditSurface = 'rich' | 'source';
 
 /**
  * Preview + (for markdown) inline edit for a single library doc. Shared by the
@@ -59,9 +51,6 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed, fragment, onOpen
   const identityRef = useRef(identity);
   identityRef.current = identity;
   const operationEpoch = useRef(0);
-  const draftRef = useRef(draft);
-  draftRef.current = draft;
-  const [editSurface, setEditSurface] = useState<EditSurface>('rich');
   const editable = doc.kind === 'md' && doc.id !== '' && !!doc.relPath;
   const { registerEditor, modal: aiEnhanceModal } = useAiEnhanceSelection();
 
@@ -74,7 +63,6 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed, fragment, onOpen
     setEditing(false);
     setSaving(false);
     setSaveError(undefined);
-    setEditSurface('rich');
 
     if (doc.kind === 'md' || doc.kind === 'code') {
       // Read as text through the library's own scope-confined seam — a GLOBAL
@@ -91,8 +79,11 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed, fragment, onOpen
         .then((result) => {
           if (!active) return;
           if (result.ok && result.content !== undefined) {
-            setContent(result.content);
-            setRevision(result.sha256);
+            const cached = recallMarkdownDraft(identity);
+            setContent(cached?.content ?? result.content);
+            setDraft(cached?.draft ?? result.content);
+            setRevision(cached?.sha256 ?? result.sha256);
+            if (cached) setEditing(true);
           } else {
             setError(result.message ?? 'Failed to read file');
           }
@@ -109,19 +100,10 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed, fragment, onOpen
   // Honor "open in edit mode" once the content has loaded (new idea flow).
   useEffect(() => {
     if (autoEdit && editable && content !== null) {
-      setDraft(content);
-      setEditSurface('rich');
       setEditing(true);
       onAutoEditConsumed?.();
     }
   }, [autoEdit, editable, content, onAutoEditConsumed]);
-
-  const beginEdit = () => {
-    setSaveError(undefined);
-    setDraft(content ?? '');
-    setEditSurface('rich');
-    setEditing(true);
-  };
 
   const saveEdit = async (expectedRevision = revision) => {
     if (!doc.relPath || saving) return;
@@ -143,10 +125,11 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed, fragment, onOpen
       }
       setContent(submitted);
       setRevision(res.sha256);
+      rememberMarkdownDraft(identity, { content: submitted, draft: recallMarkdownDraft(identity)?.draft ?? submitted, sha256: res.sha256 });
       setSaveError(undefined);
       // Keystrokes entered while the write was in flight remain an unsaved
       // draft based on the acknowledged revision, rather than disappearing.
-      if (draftRef.current === submitted) setEditing(false);
+      // Keep the selected view and any newer keystrokes after saving.
       // Keep the manifest title in step with the note's first heading so the
       // list label tracks what the idea is actually about. Best-effort.
       const heading = firstHeading(submitted);
@@ -189,101 +172,19 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed, fragment, onOpen
           onOpenDocument?.(link);
         }}>
         <div className="library-edit-bar">
-          <DocumentPdfButton
-            path={doc.relPath}
-            title={doc.title}
-            content={editing ? draft : content}
-          />
-          {editing ? (
-            <>
-              <button
-                type="button"
-                className="library-edit-btn primary"
-                onClick={() => void saveEdit()}
-                disabled={saving}
-                title="Save (writes the file)"
-              >
-                <Save size={13} />
-                <span>{saving ? 'Saving…' : 'Save'}</span>
-              </button>
-              <button
-                type="button"
-                className={`library-edit-btn${editSurface === 'rich' ? ' active' : ''}`}
-                onClick={() => setEditSurface('rich')}
-                disabled={saving}
-                aria-pressed={editSurface === 'rich'}
-                title="Rich text editor"
-              >
-                <Type size={13} />
-                <span>Rich</span>
-              </button>
-              <button
-                type="button"
-                className={`library-edit-btn${editSurface === 'source' ? ' active' : ''}`}
-                onClick={() => setEditSurface('source')}
-                disabled={saving}
-                aria-pressed={editSurface === 'source'}
-                title="Markdown source"
-              >
-                <Code2 size={13} />
-                <span>Source</span>
-              </button>
-              <button
-                type="button"
-                className="library-edit-btn"
-                onClick={() => setEditing(false)}
-                disabled={saving}
-                title="Discard changes and return to preview"
-              >
-                <Eye size={13} />
-                <span>Preview</span>
-              </button>
-            </>
-          ) : (
-            editable && (
-              <button
-                type="button"
-                className="library-edit-btn"
-                onClick={beginEdit}
-                title="Edit this note"
-              >
-                <Pencil size={13} />
-                <span>Edit</span>
-              </button>
-            )
-          )}
+          <DocumentPdfButton path={doc.relPath} title={doc.title} content={editing ? draft : content} />
         </div>
-        {editing && saveError && <LibrarySaveRecovery key={`${identity}:${saveAttempt}`} doc={doc} message={saveError} draft={draft} saving={saving}
+        {saveError && <LibrarySaveRecovery key={`${identity}:${saveAttempt}`} doc={doc} message={saveError} draft={draft} saving={saving}
           onSaveMerged={saveEdit} onUseLatest={(text, nextRevision) => {
             setContent(text); setDraft(text); setRevision(nextRevision); setSaveError(undefined); setEditing(false);
+            rememberMarkdownDraft(identity, { content: text, draft: text });
           }} />}
-        {editing ? (
-          editSurface === 'rich' ? (
-            <LibraryMarkdownEditor value={draft} onChange={setDraft} autofocus />
-          ) : (
-            <div className="explorer-viewer-monaco">
-              <Editor
-                value={draft}
-                language="markdown"
-                theme={monacoTheme}
-                onChange={(v) => setDraft(v ?? '')}
-                onMount={registerEditor}
-                options={{
-                  minimap: { enabled: false },
-                  scrollBeyondLastLine: false,
-                  fontSize: 13,
-                  lineNumbers: 'on',
-                  wordWrap: 'on'
-                }}
-              />
-              {aiEnhanceModal}
-            </div>
-          )
-        ) : (
-          <div className="explorer-md-preview">
-            <div className="inbox-md">{renderMarkdownBody(content)}</div>
-          </div>
-        )}
+        <MarkdownDocument key={identity} value={editing ? draft : content} savedValue={content} documentPath={doc.relPath}
+          initialMode={autoEdit ? 'edit' : 'read'} saving={saving}
+          readOnlyReason={editable ? undefined : 'This untracked document is read only.'}
+          onChange={editable ? next => { setDraft(next); setEditing(true); rememberMarkdownDraft(identity, { content, draft: next, sha256: revision }); } : undefined}
+          onSave={() => void saveEdit()} onSourceMount={registerEditor} />
+        {aiEnhanceModal}
       </DocumentLinkBoundary>
     );
   }
@@ -316,29 +217,6 @@ export function DocPreview({ doc, autoEdit, onAutoEditConsumed, fragment, onOpen
     <div className="explorer-viewer-empty">
       <p>Preview not available for this file type</p>
     </div>
-  );
-}
-
-/**
- * Rendered markdown body for the read-only preview — strips the `---`…`---`
- * front-matter header (the manifest already shows title/summary/tags) and
- * renders mermaid fences as diagrams.
- */
-function renderMarkdownBody(text: string) {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      urlTransform={documentLinkUrlTransform}
-      components={{
-        pre: (props) => {
-          const mermaid = extractMermaid(props.children);
-          if (mermaid !== null) return <MermaidDiagram code={mermaid} exportable />;
-          return <CopyableFencedPre {...props} />;
-        }
-      }}
-    >
-      {parseFrontMatter(text)?.body ?? text}
-    </ReactMarkdown>
   );
 }
 

@@ -153,6 +153,16 @@ describe('Design Docs settings: Agent section', () => {
     expect(screen.getByTestId('harness-editor-value').textContent).toBe('null');
   });
 
+  it('shows descriptor loading failures instead of presenting no harnesses', async () => {
+    const harness = createHarness({
+      rpcOverrides: { harnessDescriptors: async () => { throw new Error('hostId is required when more than one host is connected'); } }
+    });
+    installEditorProbe();
+    await openAgentSettings(harness);
+    expect((await screen.findByRole('alert')).textContent).toContain('hostId is required when more than one host is connected');
+    expect(screen.getByTestId('harness-editor').getAttribute('data-loading')).toBe('false');
+  });
+
   it('keeps both of two quick edits: the second builds on the first and saves after it', async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });

@@ -6,7 +6,7 @@ import {
   type DesignDocFile,
   type DesignDocSummary
 } from '../shared/contract.js';
-import { errorMessage, useApi, type DocKind, type ListArgs, type ProjectInfo, type TemplateInfo, type ProjectMapping, type UnassignedProject } from './api.js';
+import { errorMessage, toast, useApi, type DocKind, type ListArgs, type ProjectInfo, type TemplateInfo, type ProjectMapping, type UnassignedProject } from './api.js';
 
 export interface Resource<T> {
   data: T | null;
@@ -18,9 +18,11 @@ export interface Resource<T> {
 /**
  * Load `key` with `load`, keeping the previous data while a reload is in
  * flight so live refreshes never flash an empty state. Stale responses from an
- * earlier key are dropped.
+ * earlier key are dropped. With `keepPrevious`, data from the previous key is
+ * also kept (and reported with `loading: true`) until the new key's response
+ * arrives, so a changing filter doesn't blank the view in between.
  */
-export function useResource<T>(key: string | null, load: () => Promise<T>): Resource<T> {
+export function useResource<T>(key: string | null, load: () => Promise<T>, keepPrevious = false): Resource<T> {
   const [state, setState] = useState<{ key: string | null; data: T | null; error: string | null; loading: boolean }>({
     key,
     data: null,
@@ -39,7 +41,7 @@ export function useResource<T>(key: string | null, load: () => Promise<T>): Reso
     let cancelled = false;
     setState((previous) => ({
       key,
-      data: previous.key === key ? previous.data : null,
+      data: previous.key === key || keepPrevious ? previous.data : null,
       error: null,
       loading: true
     }));
@@ -61,7 +63,7 @@ export function useResource<T>(key: string | null, load: () => Promise<T>): Reso
   const reload = useCallback(() => setVersion((value) => value + 1), []);
   const current = state.key === key;
   return {
-    data: current ? state.data : null,
+    data: current || (keepPrevious && key !== null) ? state.data : null,
     error: current ? state.error : null,
     loading: current ? state.loading : key !== null,
     reload
@@ -97,7 +99,7 @@ export function useDocChanges(onChange: (docId: string | null) => void, delayMs 
 
 export function useDocs(args: ListArgs): Resource<DesignDocSummary[]> {
   const api = useApi();
-  const resource = useResource(JSON.stringify(args), () => api.list(args));
+  const resource = useResource(JSON.stringify(args), () => api.list(args), true);
   useDocChanges(() => resource.reload());
   return resource;
 }
@@ -219,4 +221,17 @@ export function useNow(intervalMs = 60_000): number {
     return () => clearInterval(timer);
   }, [intervalMs]);
   return now;
+}
+
+/** Opens a doc file's standalone page in the system browser; failures show as a toast. */
+export function useOpenInBrowser(docId: string, path: string): () => Promise<void> {
+  const api = useApi();
+  return useCallback(async () => {
+    try {
+      const { url } = await api.pageLink(docId, path);
+      globalThis.open(url, '_blank', 'noopener,noreferrer');
+    } catch (failure) {
+      toast(errorMessage(failure), 'error');
+    }
+  }, [api, docId, path]);
 }

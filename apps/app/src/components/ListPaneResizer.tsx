@@ -30,7 +30,7 @@ export function ListPaneResizer({
     const onMove = (ev: MouseEvent) => {
       // Pane sits to the right of the nav column; its left edge equals --col-nav.
       const navW = parseFloat(
-        getComputedStyle(document.documentElement).getPropertyValue('--col-nav')
+        getComputedStyle(document.querySelector('.app-shell') ?? document.documentElement).getPropertyValue('--col-nav')
       );
       const next = ev.clientX - (Number.isFinite(navW) ? navW : 0);
       applyListPaneWidth(Math.max(minWidth, next));

@@ -41,7 +41,7 @@ export function createLibraryAutosave(
   };
 }
 
-export function parseDocumentPanelParams(params: unknown): {
+export function parseDocumentPanelParams(params: unknown, ownerProjectId?: string | null): {
   path: string;
   scope: 'project' | 'global';
   title: string;
@@ -57,7 +57,8 @@ export function parseDocumentPanelParams(params: unknown): {
       ? record.title.trim()
       : path.split('/').pop() || path;
   const projectId =
-    typeof record.projectId === 'string' && record.projectId.trim() ? record.projectId.trim() : undefined;
+    typeof record.projectId === 'string' && record.projectId.trim() ? record.projectId.trim()
+      : scope === 'project' ? ownerProjectId?.trim() || undefined : undefined;
   if (scope === 'project' && !projectId) return null;
   return { path, scope, title, ...(projectId ? { projectId } : {}) };
 }

@@ -5,8 +5,7 @@ import { getThreadModelCatalog } from '@/components/thread/pickers/thread-model-
 import { registerSettingsSearchProvider } from '../registry';
 import type { SettingsSearchEntry, SettingsSearchProvider, SettingsValueSnapshot } from '../types';
 
-// Runtime source for the AI Harness page: one row per harness family plus the
-// Modern provider list. The static page text lives in `entries/harness.ts`.
+// Runtime search targets for CLI controls and conversation models in the harness inventory. The static page text lives in `entries/harness.ts`.
 // This module must not import the view (lazy-load constraint); the view imports
 // the shared tables from here instead.
 
@@ -63,17 +62,11 @@ export type ThreadProviderListItem = {
   pluginId: string;
 };
 
-export const BUILTIN_THREAD_PROVIDERS: readonly ThreadProviderListItem[] = [
-  { id: 'claude-code', displayName: 'Claude Code', pluginId: 'provider-claude-code' },
-  { id: 'codex', displayName: 'Codex', pluginId: 'provider-codex' },
-  { id: 'pi', displayName: 'Pi', pluginId: 'provider-pi' },
-  { id: 'acp-cursor', displayName: 'Cursor', pluginId: 'provider-acp' },
-  { id: 'acp-opencode', displayName: 'OpenCode', pluginId: 'provider-acp' },
-  { id: 'acp-omp', displayName: 'OMP', pluginId: 'provider-acp' },
-  { id: 'acp-grok', displayName: 'Grok Build', pluginId: 'provider-acp' },
-  { id: 'acp-mastracode', displayName: 'Mastra Code', pluginId: 'provider-acp' },
-  { id: 'acp-hermes-agent', displayName: 'Hermes Agent', pluginId: 'provider-acp' }
-];
+let registeredProviders: readonly ThreadProviderListItem[] = [];
+
+export function rememberHarnessProviders(providers: readonly ThreadProviderListItem[]) {
+  registeredProviders = providers;
+}
 
 export const THREAD_PROVIDER_BLURB: Record<string, string> = {
   'claude-code': 'Anthropic’s coding agent',
@@ -125,7 +118,7 @@ function launchDefaultEntries(family: HarnessFamily, label: string): SettingsSea
   const hasProviders = descriptor ? !!descriptor.targets?.providers?.length : true;
   const hasModels = descriptor ? !!descriptor.targets?.models?.length : true;
   const hasExecution = descriptor ? !!descriptor.targets?.executionStateMapping : true;
-  const base = { section: 'harness', anchor: 'harness-legacy', kind: 'setting' } as const;
+  const base = { section: 'harness', anchor: 'harness-registered', kind: 'setting' } as const;
   const out: SettingsSearchEntry[] = [];
   if (hasProviders) {
     out.push({
@@ -185,7 +178,7 @@ export function harnessRowEntries(status: readonly HarnessVerifyResult[]): Setti
       out.push({
         id: `harness.${family}.enabled`,
         section: 'harness',
-        anchor: 'harness-status',
+        anchor: 'harness-registered',
         label: `Show ${h.label} in the New Agent modal`,
         keywords: ['enable', 'disable', 'toggle', family],
         kind: 'setting',
@@ -195,7 +188,7 @@ export function harnessRowEntries(status: readonly HarnessVerifyResult[]): Setti
     out.push({
       id: `harness.${family}.binary`,
       section: 'harness',
-      anchor: 'harness-legacy',
+      anchor: 'harness-registered',
       label: `${h.label} binary`,
       help: `Leave blank to use ${HARNESS_BINARY_PLACEHOLDER[family]} from your PATH. Set a command or full path to use another installation.`,
       keywords: ['path', 'executable', 'command', family],
@@ -207,12 +200,12 @@ export function harnessRowEntries(status: readonly HarnessVerifyResult[]): Setti
   return out;
 }
 
-/** Modern providers: name, blurb and (capped) discovered model names. */
+/** Index model names alongside each conversation provider. */
 export function threadProviderEntries(
   extra: readonly ThreadProviderListItem[],
   catalog: ReturnType<typeof getThreadModelCatalog>
 ): SettingsSearchEntry[] {
-  const byId = new Map<string, string>(BUILTIN_THREAD_PROVIDERS.map((p) => [p.id, p.displayName]));
+  const byId = new Map<string, string>();
   for (const p of extra) byId.set(p.id, p.displayName);
   for (const p of catalog.providers) byId.set(p.id, p.displayName);
   return [...byId].map(([id, displayName]) => {
@@ -220,7 +213,7 @@ export function threadProviderEntries(
     return {
       id: threadProviderSearchId(id),
       section: 'harness',
-      anchor: 'harness-thread',
+      anchor: 'harness-registered',
       label: displayName,
       help: threadProviderBlurb(id),
       keywords: [
@@ -237,7 +230,7 @@ export function threadProviderEntries(
 /** Reads live store state; `revision` keeps the corpus in step with it. */
 export const harnessSearchProvider: SettingsSearchProvider = () => [
   ...harnessRowEntries(useData.getState().harnessStatus),
-  ...threadProviderEntries([], getThreadModelCatalog())
+  ...threadProviderEntries(registeredProviders, getThreadModelCatalog())
 ];
 
 /**
@@ -247,7 +240,7 @@ export const harnessSearchProvider: SettingsSearchProvider = () => [
  * subscription: a catalogue listener would keep the catalogue's background
  * refresh loop running for the whole session.
  */
-harnessSearchProvider.revision = () => [useData.getState().harnessStatus, getThreadModelCatalog(), descriptorCache];
+harnessSearchProvider.revision = () => [useData.getState().harnessStatus, getThreadModelCatalog(), descriptorCache, registeredProviders];
 
 /** Register the provider; nothing to subscribe to (see `revision`). Release on shutdown (Rule 3). */
 export function registerHarnessSearchProvider(): () => void {

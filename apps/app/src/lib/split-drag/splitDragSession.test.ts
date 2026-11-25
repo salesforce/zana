@@ -92,6 +92,18 @@ describe('split drag lifecycle', () => {
     expect(document.querySelector('.split-drag-overlay')).toBeNull();
   });
 
+  it('keeps the drop preview and target in sync if its label is removed during the drag', () => {
+    const config = start();
+    move(300);
+    const overlay = document.querySelector<HTMLElement>('.split-drag-overlay')!;
+    overlay.querySelector('.split-drag-overlay-label')!.remove();
+    move(620);
+    expect(overlay.style.left).toBe('450px');
+    up(620);
+    expect(config.onDrop).toHaveBeenCalledExactlyOnceWith({ paneId: 'pane-2', zone: 'right' });
+    expect(overlay.isConnected).toBe(false);
+  });
+
   it('does not drop a stale target outside the workspace', () => {
     const config = start();
     move();

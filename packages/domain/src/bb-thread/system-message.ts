@@ -44,3 +44,19 @@ export const systemMessageSubjectSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 export type SystemMessageSubject = z.infer<typeof systemMessageSubjectSchema>;
+
+/**
+ * Who a plugin-delivered message shows as in the receiving thread. The plugin
+ * supplies the display fields; the host stamps `pluginId`, so a plugin cannot
+ * claim another plugin's messages. Display only: never an authorization input.
+ */
+export const messageSourceKindValues = ["bot", "thread", "user", "routine", "job"] as const;
+export const messageSourceSchema = z.object({
+  pluginId: z.string().min(1).max(200),
+  kind: z.enum(messageSourceKindValues),
+  label: z.string().min(1).max(80),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  threadId: z.string().min(1).max(200).optional(),
+  detail: z.string().min(1).max(80).optional(),
+});
+export type MessageSource = z.infer<typeof messageSourceSchema>;

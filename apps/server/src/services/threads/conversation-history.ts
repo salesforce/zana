@@ -16,20 +16,21 @@ function historyQuery(query: ThreadHistoryQuery) {
   const pattern = needle ? `%${needle.replace(/[\\%_]/g, '\\$&')}%` : '';
   const snippetSql = needle ? `(SELECT json_object('sequence', e.sequence, 'payload', json(e.payload)) FROM thread_events e
     WHERE e.thread_id = t.id AND length(CAST(e.payload AS BLOB)) <= 262144
-    AND (e.type = 'client/turn/requested' OR (e.type = 'item/completed'
+    AND (e.type IN ('client/turn/requested','system/plugin/message') OR (e.type = 'item/completed'
       AND COALESCE(json_extract(e.payload, '$.event.item.type'), json_extract(e.payload, '$.item.type')) IN ('userMessage','assistantMessage','agentMessage')))
     AND e.payload LIKE ? ESCAPE '\\' ORDER BY e.sequence DESC LIMIT 1) AS matchingPayload,` : '';
   if (needle) {
     const pattern = `%${needle.replace(/[\\%_]/g, '\\$&')}%`;
     clauses.push(`(t.title LIKE ? ESCAPE '\\' OR EXISTS (
       SELECT 1 FROM thread_events e WHERE e.thread_id = t.id
-      AND (e.type = 'client/turn/requested' OR (e.type = 'item/completed'
+      AND (e.type IN ('client/turn/requested','system/plugin/message') OR (e.type = 'item/completed'
         AND COALESCE(json_extract(e.payload, '$.event.item.type'), json_extract(e.payload, '$.item.type')) IN ('userMessage', 'assistantMessage', 'agentMessage')))
       AND e.payload LIKE ? ESCAPE '\\' LIMIT 1))`);
     params.push(pattern, pattern);
   }
   const sql = `SELECT ${snippetSql} t.id, t.project_id AS projectId, t.provider_id AS providerId,
     t.title, t.updated_at AS updatedAt, t.archived_at AS archivedAt,
+    t.host_id AS hostId, t.created_at AS createdAt, t.origin_plugin_id AS originPluginId,
     CASE WHEN env.id IS NULL OR env.status IN ('destroyed', 'destroying', 'failed') THEN 'The original environment is unavailable.'
       ELSE NULL END AS unavailableReason
     FROM threads t LEFT JOIN environments env ON env.id = t.environment_id
@@ -72,7 +73,7 @@ function matchedMessage(serialized: string, query: string): Pick<ThreadHistoryRo
       }
       return [];
     };
-    const text = texts(payload.input ?? payload.prompt ?? payload.event?.item ?? payload.item).join('\n');
+    const text = texts(payload.input ?? payload.prompt ?? payload.event?.item ?? payload.item ?? payload.text).join('\n');
     const at = text.toLowerCase().indexOf(query.toLowerCase());
     if (at < 0 || !Number.isSafeInteger(sequence)) return {};
     const start = Math.max(0, at - 80);

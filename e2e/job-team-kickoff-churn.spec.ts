@@ -93,3 +93,29 @@ test('Job Team self-heals kickoff churn: reassign to a fresh slot (WS1), then bl
     await teardownJobTeam(ctx);
   }
 });
+
+// #789: a role with ONE capable seat has nothing to reassign to. The engine re-dispatches that seat once before
+// it asks a person, and the human blocker names what was tried.
+test('Job Team retries a single worker seat once, then blocks a human naming the retry', async ({ app }) => {
+  const ctx = createJobTeamContext(app, { tmpPrefix: 'zcc-cli-churn-single-', scenario: 'kickoff-churn-single-seat' });
+  const { window } = ctx;
+
+  try {
+    const projectId = await launchJobTeamCliOwner(ctx, { workerQuantity: 1 });
+    const executionId = await findJobExecutionId(window, projectId, 'CLI Agent kickoff churn job');
+    const eventSeen = (needle: string) => async () => window.evaluate(async ({ projectId, executionId, needle }) => {
+      const snap = await window.cc.executionBoard.snapshot(projectId, executionId, 0);
+      return (snap?.events ?? []).some((event: { summary?: string }) =>
+        typeof event.summary === 'string' && event.summary.includes(needle));
+    }, { projectId, executionId, needle });
+
+    await expect.poll(eventSeen('retried on the same seat'), { timeout: 90_000, intervals: [500] }).toBe(true);
+    await expect.poll(eventSeen('blocked after repeated kickoff failure'), { timeout: 60_000, intervals: [500] }).toBe(true);
+    // The retry came first: no reassignment exists for a lone seat.
+    expect(await eventSeen('reassigned to fresh slot')()).toBe(false);
+  } catch (error) {
+    throw jobTeamFailure(ctx, error);
+  } finally {
+    await teardownJobTeam(ctx);
+  }
+});

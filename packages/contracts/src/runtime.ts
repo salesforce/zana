@@ -910,6 +910,7 @@ export const PluginAppSnapshotSchema = z.object({
   sourceKind: z.enum(['builtin', 'path', 'git', 'npm']).optional(),
   sourceRecovery: z.object({ canLocate: z.boolean(), canSwitchOfficial: z.boolean() }).strict().optional(),
   collection: z.literal('coding-agents').optional(),
+  experimental: z.literal(true).optional(),
   status: z.enum(['running', 'disabled', 'degraded', 'needs-configuration']),
   statusDetail: z.string().max(4096).nullable().optional(),
   appUrl: z.string().max(4096).nullable(),

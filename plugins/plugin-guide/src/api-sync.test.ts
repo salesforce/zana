@@ -43,6 +43,7 @@ const SLOT_SURFACE_IDS = [
   'experimental_threadList',
   'experimental_threadHeaderAction',
   'fileOpener',
+  'experimental_browserToolbarAction',
   'messageDirective',
   'messageAction',
   'experimental_agentCardAction',

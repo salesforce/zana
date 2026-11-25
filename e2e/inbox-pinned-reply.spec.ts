@@ -37,6 +37,7 @@ const height = (box: Locator) => box.evaluate((el) => el.getBoundingClientRect()
 test('reply bar stays pinned at every scroll position, width and theme', async ({ app }) => {
   const page = app.window;
   await page.getByTestId('nav-inbox').click();
+  await page.getByRole('button', { name: 'Split view', exact: true }).click();
   await openEntry(page, 'Long inbox report');
   const pane = page.locator('.inbox-view-detail');
   const dock = pane.locator('.inbox-detail-dock');
@@ -82,6 +83,7 @@ test('reply box grows to a cap, Esc/R round-trip, quote and the draft survives s
     main.setContentSize(1400, 800);
   });
   await page.getByTestId('nav-inbox').click();
+  await page.getByRole('button', { name: 'Split view', exact: true }).click();
   await openEntry(page, 'Long inbox report');
   const pane = page.locator('.inbox-view-detail');
   const input = pane.getByLabel('Reply to the originating agent');
@@ -129,6 +131,7 @@ test('reply box grows to a cap, Esc/R round-trip, quote and the draft survives s
 test('a short message keeps its dock right under the text, not at the pane bottom', async ({ app }) => {
   const page = app.window;
   await page.getByTestId('nav-inbox').click();
+  await page.getByRole('button', { name: 'Split view', exact: true }).click();
   await openEntry(page, 'Short inbox report');
   const pane = page.locator('.inbox-view-detail');
   const dock = pane.locator('.inbox-detail-dock');

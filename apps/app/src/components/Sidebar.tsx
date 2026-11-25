@@ -1,3 +1,4 @@
+import { fixedNavShortcutKey } from '../lib/keyboard-shortcut-settings.js';
 import { History } from 'lucide-react';
 import { useConversationHistory } from './history/history-store.js';
 import { navPanelListsInSidebar } from '@zana-ai/zcc-plugin-sdk';
@@ -79,12 +80,13 @@ const NON_SPLITTABLE_NAV_IDS = new Set<string>([
   'goals'
 ]);
 
-export function Sidebar() {
+export function Sidebar({ railVariant = 'expanded' }: { railVariant?: 'expanded' | 'rail' } = {}) {
   const route = useRouteState();
   const { nav, pluginPanelPath } = route;
   const savedCollapsed = useUi((s) => s.sidebarCollapsed);
   const mobile = !!useMobileNavDismiss();
   const collapsed = savedCollapsed && !mobile;
+  const rail = railVariant === 'rail' && !mobile;
   const unreadInbox = useUnreadInboxCount();
   const enabledSchedules = useEnabledSchedulerCount();
   const runningSchedules = useRunningSchedulerCount();
@@ -197,7 +199,9 @@ export function Sidebar() {
       running,
       badge,
       splitContent,
-      title: collapsed
+      command: item.id === 'home' ? 'thread.new' : undefined,
+      fixedShortcutKey: fixedNavShortcutKey(item.id),
+      title: collapsed || rail
         ? running
           ? `${item.label} — ${isAgents ? agentsTitle : scheduleTitle}`
           : item.label
@@ -231,7 +235,7 @@ export function Sidebar() {
         to: hrefForPluginNavPanel(panel.pluginId, path),
         testId: `nav-${id}`,
         active,
-        title: collapsed ? panel.title : undefined,
+        title: collapsed || rail ? panel.title : undefined,
         badge: Accessory ? (
           <PluginSlotBoundary pluginId={panel.pluginId} generation={panel.generation}>
             <Accessory />
@@ -264,6 +268,7 @@ export function Sidebar() {
       storageKey={GLOBAL_NAV_ORDER_KEY}
       pinnedIds={PINNED_SIDEBAR_NAV_IDS}
       items={items}
+      railVariant={railVariant}
     />
   );
 }

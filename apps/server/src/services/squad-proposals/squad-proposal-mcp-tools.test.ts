@@ -4,6 +4,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   SQUAD_LAUNCH_DESCRIPTION,
   SQUAD_LAUNCH_JSON_SCHEMA,
+  SQUAD_PLAN_CHECK_DESCRIPTION,
   SQUAD_PLAN_CHECK_JSON_SCHEMA,
   SQUAD_PROPOSE_JSON_SCHEMA,
   registerSquadProposalTools,
@@ -303,6 +304,13 @@ describe('registerSquadProposalTools', () => {
     expect(JSON.parse((await plain.tools.get('squad_plan_check')!({ text: 'x' })).content[0].text)).toEqual({ ok: true, steps });
     expect(SQUAD_PLAN_CHECK_JSON_SCHEMA.properties.teamId.maxLength).toBe(256);
     expect(squadPlanCheckInputSchema.teamId.safeParse('t1').success).toBe(true);
+  });
+
+  it('squad_plan_check passes the not-checked-against-a-Squad note through to the agent', async () => {
+    const note = "This plan was NOT checked against any Squad's roster, so a pass only means the plan is readable.";
+    const t = setup({ checkPlan: async () => ({ ok: true, value: { ok: true, steps: [], note } }) });
+    expect(JSON.parse((await t.tools.get('squad_plan_check')!({ text: 'x' })).content[0].text).note).toBe(note);
+    expect(SQUAD_PLAN_CHECK_DESCRIPTION).toMatch(/NOT checked against any Squad/);
   });
 
   it('squad_plan_check forwards path or text and formats dep errors', async () => {

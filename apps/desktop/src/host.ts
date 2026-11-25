@@ -1,4 +1,5 @@
 import { launchFailure } from './launch-pre-spawn.js';
+import { waitForSessionExit } from './session-exit-wait.js';
 import { MAX_MAIN_CEILING_MS } from '@zana-ai/zcc-domain/native-tool-policy-budget';
 import { startAgentSoundEvents } from './native/agent-sound-events.js';
 import { AgentSounds } from './native/agent-sounds.js';
@@ -54,6 +55,7 @@ import { SharedClient, allowsSharedNavigation } from './window/shared-client.js'
 import { createHistoryProviders, invalidateHarnessModelCatalog } from '@zana-ai/zcc-host-daemon/harness/registry';
 import { RendererReadiness } from './window/renderer-readiness.js';
 import { installAppPermissions } from './window/app-permissions.js';
+import { windowMenuTail } from './window/window-menu.js';
 import { runStartupDependencyDoctor } from './startup-dependency-doctor.js';
 /**
  * Compatibility IPC host. Window/tray/updater/preload live alongside this file
@@ -97,12 +99,15 @@ import { resolveIconPath } from './resolve-icon-path.js';
 import { createProductRouteSquadRuntime, startRuntimeSupervisor, type RuntimeSupervisor } from './runtime/runtime-supervisor.js';
 import { createRuntimeRecovery } from './runtime/runtime-recovery.js';
 import { createTeamProductOps } from './team-product-ops.js';
+import { judgeInferredPlan } from './plan-correction/findings.js';
 import { jobCoordinatorPrompt, rosterWithTiers, type RosterEntry } from './team-coordinator-prompt.js';
 import {
   createDesktopNativeRecovery, gateInvalidProvidedPlan, recoverSquadStateAtBoot, runSpawnLifecycle, slotRecoveryLaunch,
   sweepUnretainedSquadWorktrees, teamAdmissionRequirements, teamJobFailureResponse, withProposalLaunch, findProposalExecution, type ProposalLaunchDeps,
-  withRenewedSources, scopedSourceRenewal, splitProposedGoalSources
+  withRenewedSources, scopedSourceRenewal, splitProposedGoalSources,
+  allWorkersUnresolvedReasons, unknownPersonaMessage, UnknownPersonaError, admissionSlotRouteFacts
 } from './team-launch-support.js';
+import { warnUnknownPersonaModels } from './persona-model-check.js';
 import { modernRecoverySnapshot } from './team-native-recovery.js';
 import { openExecutionStorage } from './execution-storage.js';
 import { createPlanCorrectionHandoff, createPlanCorrectionHost } from './plan-correction/host.js';
@@ -112,7 +117,7 @@ import {
 } from './squad-session-lifecycle.js';
 import { createSquadWorktreeRuntime, trustedSquadWorktreeRoot, isWithinSquadWorktreeBase, SQUAD_WORKTREE_ACTION } from './squad-worktree-runtime.js';
 import { createTriggeredSquadLauncher, goalSquadTrigger, scheduledSquadTrigger } from './triggered-squad.js';
-import { MAX_HANDOFF_FILE_BYTES, TeamPlanHandoff, authoredPlanRelPath, correctedPlanRelPath, correctionProseRelPath, createPlanTraceSink, cleanupHandoffFiles, handoffPromptPath, readAuthoredPlan, writeSourceMirror } from './team-plan-handoff.js';
+import { MAX_HANDOFF_FILE_BYTES, TeamPlanHandoff, authoredPlanRelPath, correctedPlanRelPath, correctionProseRelPath, createPlanTraceSink, createStallNotice, observeOrchestratorEdge, planHandoffDiagnostics, warnLog, cleanupHandoffFiles, handoffPromptPath, readAuthoredPlan, writeSourceMirror } from './team-plan-handoff.js';
 import { PlanCorrectionService } from './plan-correction/service.js';
 import { planCorrectionSubmitter } from './plan-correction/wiring.js';
 import { onOrchestratorIdle } from './coordinator-idle.js';
@@ -148,7 +153,7 @@ import { resolveModernMcpAllowlist } from '@zana-ai/zcc-server/services/threads/
 import { narrowAutomatedSkillIds, providerSkillAllowlist, resolvePersonaSkillSelection } from '@zana-ai/zcc-server/services/threads/persona-skill-selection';
 import { resolveSkillSettings } from '@zana-ai/zcc-host-daemon/skill-allowlist-settings';
 import type { SkillSettings } from '@zana-ai/zcc-host-daemon/harness/registration';
-import { effectiveSkills, isOrchestratorSlotId } from '@zana-ai/zcc-domain/product';
+import { effectiveRoles, effectiveSkills, isOrchestratorSlotId, TEAM_PLAN_TEXT_MAX_CHARS } from '@zana-ai/zcc-domain/product';
 import { PtyManager } from '@zana-ai/zcc-host-daemon/pty';
 import { AgentLivenessCache } from '@zana-ai/zcc-host-daemon/harness/agent-liveness';
 import { resolveMaxLiveSessions } from '@zana-ai/zcc-host-daemon/capacity';
@@ -158,7 +163,9 @@ import { createLaunchCoordinator, LaunchSpawnError } from '@zana-ai/zcc-server/s
 import { createLaunchLedgerStore } from '@zana-ai/zcc-server/services/launch/ledger-store';
 import { collectTeamAdmissionInventory, evaluateTeamAdmission, finalizeLaunchPreflight, preflightLaunch, summarizePlanTierFit } from '@zana-ai/zcc-server/services/launch/preflight';
 import { planNormalizationNote, resolveSquadPlan } from './team-trigger-semantics.js';
-import { coldStartCanceled, createDeferredSeatHooks, createDeferredSeatRegistry, createSeatApprovals, createSeatRecycler, createSeatStarter, deferredSeatsOf, freshContextSeatsOf, lateSeatApprovalProblem, lifecycleRecycleOps, preissuedDeadlineMatches, respawnApproval, respawnLaunchShape, seatApprovalId, seatApprovalWindow, seatBindExtras, seatLaunchMode, seatLaunchProblem, seatRecovery, seatRosterEntry } from './on-demand-seat.js';
+import { renderCanonicalPlan } from '@zana-ai/zcc-server/services/execution/portable-plan-render';
+import type { PortablePlanWorkUnitInput } from '@zana-ai/zcc-server/services/execution/portable-plan';
+import { coldStartCanceled, createDeferredSeatHooks, createDeferredSeatRegistry, createSeatApprovals, createSeatRecycler, createSeatStarter, createWorkerRespawner, workerRespawnUnsupported, deferredSeatsOf, freshContextSeatsOf, lateSeatApprovalProblem, lifecycleRecycleOps, preissuedDeadlineMatches, respawnApproval, respawnLaunchShape, seatApprovalId, seatApprovalWindow, seatBindExtras, seatLaunchMode, seatLaunchProblem, seatRecovery, seatRosterEntry } from './on-demand-seat.js';
 import { createSquadSourceSnapshotter, launchSquad, type SquadLaunchDeps, type SquadSourceProvider } from './squad-launch-core.js';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
@@ -167,9 +174,10 @@ import { SQUAD_SEAT_MARKER, squadSeatRefusal } from './squad-seat-launch.js';
 import { createRestoreCapabilityStore, type RestoreCapability } from '@zana-ai/zcc-server/services/launch/restore-capability-store';
 import { createTeamLifecycleIntegration, createTeamLifecycleStore, type TeamLifecycleRecord, type TeamModernWorkerObservation } from '@zana-ai/zcc-server/services/launch/team-lifecycle-store';
 import { createRemoteReapLedger, remoteReapOrphans, type RemoteReapEntry } from '@zana-ai/zcc-server/services/launch/remote-reap-ledger';
-import { createExecutionStore, isUserOwnedSquadWorktree, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
+import { boundReason, SLOT_REASON_MAX, isTerminalExecutionState, createExecutionStore, isUserOwnedSquadWorktree, recordedLevelPolicy, WORK_CLAIM_LEASE_MS, type ExecutionRecord, type SquadWorktreeRecord } from '@zana-ai/zcc-server/services/execution/store';
 import { executionBoardProjection, projectExecutionProjection } from '@zana-ai/zcc-server/services/execution/projection';
 import { resolveExecutionMessageArgs } from '@zana-ai/zcc-server/services/execution/message-compat';
+import { squadConcurrentCap, withSquadLimits } from '@zana-ai/zcc-server/services/execution/squad-limits-policy';
 import { KeyedColdStartSemaphore, SquadExecutionService, type ExecutionRequestV1 } from '@zana-ai/zcc-server/services/execution/service';
 import type { ExecutionWorkUnitInput, ResolvedModelSnapshotV1 } from '@zana-ai/zcc-server/services/execution/store';
 import { verifyHarnesses } from '@zana-ai/zcc-host-daemon/harness/harness-verify';
@@ -182,6 +190,7 @@ import { createResumeGrantStore } from '@zana-ai/zcc-server/services/execution/r
 import { createResumeTokenStore } from '@zana-ai/zcc-server/services/execution/resume-token-store';
 import { createInboxActionRegistry } from './inbox-actions/registry.js';
 import { createSquadWorkerRestarter } from './squad-worker-restart.js';
+import { restartSquadWorkerForOwner } from './squad-worker-card-restart.js';
 import { lifecycleClaimOps } from './terminal-restore-launch.js';
 import { squadWorktreeHasActiveFollowUp, withSquadWorktreeLifecycleLock, type SquadWorktreeTerminalOutcome } from './squad-worktree-lifecycle.js';
 import { relaunchExecutionMonitor } from '@zana-ai/zcc-server/services/execution/relaunch-monitor';
@@ -190,12 +199,13 @@ import { expandTeamSlots } from '@zana-ai/zcc-server/services/agents/team-slot-e
 import { bindLaunchPrincipal, type LaunchAuthorizationBinding, type LaunchPrincipal, type LaunchPrincipalRef } from '@zana-ai/zcc-server/services/launch/types';
 import type { TerminalLaunchOptions } from '@zana-ai/zcc-server/services/launch/terminal-launcher';
 import * as testTap from './test-tap.js';
+import { testFaultActive, testNoTurnWarnWindowMs, testVisibilityWindowMs, workerSpawnFaultFor } from './test-faults.js';
 import { AgentStatusTracker } from '@zana-ai/zcc-server/services/agents/agent-status';
 import { OutputActivityMonitor } from '@zana-ai/zcc-host-daemon/output-activity';
 import { ScreenScanBlockedDetector } from '@zana-ai/zcc-server/services/agents/screen-scan-blocked-detector';
 import { HARNESS_REGISTRATIONS, providerFor, registrationFor, harnessAdapterDescriptorsFromVerify, refreshDynamicHarnessCatalogs } from '@zana-ai/zcc-host-daemon/harness/registry';
 import { liveScopedProviderFor, memoizedLiveScopedProviderFor, resolveSlotModel } from './team-model-routing.js';
-import { decideTeamRoutingEnforcement } from './team-routing-enforcement.js';
+import { resolveRoutingEnforcement, routingPolicyOf } from './team-routing-enforcement.js';
 import { extraArgsPinSession } from '@zana-ai/zcc-spawn-plan';
 import { createExecutionConsentStore } from '@zana-ai/zcc-host-daemon/harness/execution-consent-store';
 import { createExecutionConsentManagement } from '@zana-ai/zcc-host-daemon/harness/execution-consent-management';
@@ -319,7 +329,7 @@ import {
   writeThreadViewBounds
 } from './window/thread-view-windows.js';
 import { createThreadViewHost } from './window/thread-view-host.js';
-import { findUnscopedWindow, isUnscopedRegistration } from './window/main-window-registry.js';
+import { findUnscopedWindow, isUnscopedRegistration, leaveProjectWindow } from './window/main-window-registry.js';
 import { createWindowsTitleBarOverlays } from './window/titlebar-overlay.js';
 import { resolveThemeSetting, windowThemeOptions } from './window/window-theme.js';
 import { registerPluginViewIpc, registerThreadViewIpc } from './ipc/windows.js';
@@ -358,7 +368,8 @@ import { listCommands } from '@zana-ai/zcc-server/services/skills/commands';
 import { ScheduleGroupsStore } from '@zana-ai/zcc-server/services/scheduler/schedule-groups-store';
 import { watch as fsWatch, mkdirSync, type FSWatcher } from 'node:fs';
 import { lstat, open as openFile, realpath, rm } from 'node:fs/promises';
-import { canAuthorAndRegisterPlan, planAuthoringTransportOf, resolveLaunchApproval, type SquadProposalInput } from '@zana-ai/zcc-domain/squad-proposal';
+import { canAuthorAndRegisterPlan, planAuthoringTransportOf, resolveLaunchApproval, type SquadPlanBinding, type SquadPlanFinding, type SquadProposalInput } from '@zana-ai/zcc-domain/squad-proposal';
+import { buildPlanFindings, hardFindingCounts, planBindings } from '@zana-ai/zcc-server/services/launch/plan-findings';
 import { createSquadProposalStore } from './squad-proposals/store.js';
 import { createStagingStore, SQUAD_STAGING_DIR_NAME, SQUAD_STAGING_PARENT_DIR_NAME } from './squad-proposals/staging.js';
 import { createSquadProposalService, SQUAD_LAUNCH_PROPOSAL_ACTION, SquadPreviewAdmissionError, type SquadProposalServiceDeps } from './squad-proposals/service.js';
@@ -406,8 +417,9 @@ import { Overseer, type OverseerToolEvent } from '@zana-ai/zcc-server/services/f
 import { OverseerAuditRing } from '@zana-ai/zcc-server/services/followups/overseer-audit';
 import { ContentScreen, type ContentScreenEvent, buildWarningText } from './window/content-screen.js';
 import { HeartbeatService } from '@zana-ai/zcc-server/services/followups/heartbeat';
-import { createApiErrorResume } from './api-error-resume-wiring.js';
+import { apiErrorProducerLookup, createApiErrorDispatchCtx, createApiErrorResume } from './api-error-resume-wiring.js';
 import { createWorkerApiErrorRecovery, routeApiErrorStop, workerApiErrorRecoveryEnabled } from './worker-api-error-recovery-wiring.js';
+import { armOnBusyEdge, armQuietCheck, disarm, dispatchApiErrorStop, forgetSession as forgetApiErrorDispatch, touch as touchApiErrorDispatch, type DispatchCtx } from './api-error-dispatch.js';
 import { createWrapUpClose } from './wrap-up-close-wiring.js';
 import { LocalExtensionWatcher } from '@zana-ai/zcc-server/services/extensions/local-extension-watcher';
 import { AutonomousRunSupervisor, AUTONOMOUS_DEFAULTS } from '@zana-ai/zcc-server/services/agents/autonomous-run-supervisor';
@@ -951,8 +963,8 @@ function setActiveProjectSkillsWatcher(
 
 /**
  * Live app windows. Replaces the old single `win` so the app can open several
- * windows at once — a "main" window (no scoped project) plus any number of
- * per-project windows opened on demand (see `windows:openProject`). The optional
+ * windows at once — the primary window and independent windows that can start
+ * in the global shell or in a project. The optional
  * `projectId` is the project a window is locked to; `undefined` is the full,
  * unscoped shell. Entries are added in `createWindow` and removed on `closed`,
  * so the map only ever holds live, non-destroyed windows.
@@ -973,7 +985,7 @@ function setActiveProjectSkillsWatcher(
  * A thread view window (`threadView`) shows one thread and its side panel. A
  * thread may have no project, so it is never the unscoped main window either.
  */
-const windows = new Map<number, { win: BrowserWindow; projectId?: string; view?: PluginViewTarget; threadView?: ThreadViewTarget }>();
+const windows = new Map<number, { win: BrowserWindow; projectId?: string; view?: PluginViewTarget; threadView?: ThreadViewTarget; secondary: boolean }>();
 // Windows caption buttons (minimize / maximize / close) follow the effective
 // theme: new windows take `current()`, open ones are re-coloured on a Theme
 // setting change (ipc/config.ts) and on OS appearance changes (`bind()`).
@@ -1130,7 +1142,7 @@ function maybeRenewWorkerLease(sessionId: string): void {
     return;
   }
   workerLeaseRenewAt.set(sessionId, nowMs + WORKER_LEASE_RENEW_THROTTLE_MS);
-  void squadExecutionService.renewWorkerLease(cohort.executionId, cohort.slotId).catch((error) =>
+  void squadExecutionService.renewWorkerLease(cohort.executionId, cohort.slotId, sessionId).catch((error) =>
     logMainError(`execution worker lease renew ${sessionId}`, error)
   );
 }
@@ -1285,6 +1297,23 @@ async function terminateSession(sessionId: string, expected = true): Promise<boo
   return closed;
 }
 
+/**
+ * Closes sessions by id when a launch cannot be recorded. Each close is independent: one stuck
+ * session never leaves the others running. Returns the ids that could not be confirmed closed.
+ */
+export async function closeStartedSessionsById(sessionIds: readonly string[]): Promise<string[]> {
+  const survivors: string[] = [];
+  await Promise.all([...new Set(sessionIds)].map(async (sessionId) => {
+    try {
+      if (!await terminateSession(sessionId)) survivors.push(sessionId);
+    } catch (error) {
+      logMainError(`close started session ${sessionId}`, error);
+      survivors.push(sessionId);
+    }
+  }));
+  return survivors;
+}
+
 export function sanitizeRendererTerminalRequest(req: CreateTerminalRequest): CreateTerminalRequest {
   const {
     cohort: _cohort,
@@ -1328,6 +1357,17 @@ const seatRecycler = createSeatRecycler({
   clearRecovery: async (executionId, slotId) => { await executionStore.clearNativeRecoverySnapshot(executionId, slotId); },
   queuedFor: (sessionId) => workerInjector.pendingCount(sessionId),
   close: terminateSession,
+  log: (message, error) => logMainError(message, error)
+});
+/** Starts a new session for a worker slot whose session is over, on the coordinator's request. Commits through the deferred-seat spawn. */
+const workerRespawner = createWorkerRespawner({
+  lifecycle: teamLifecycle,
+  hasSpawner: (recordId) => deferredSeats.has(recordId),
+  unsupported: (seat) => workerRespawnUnsupported(seat, store.listProjects()),
+  closeSession: (sessionId) => terminateSession(sessionId),
+  sessionGone: async (sessionId) => !(await listLocalTmuxSessionIds()).includes(sessionId),
+  spawn: (recordId, slotId) => deferredSeats.spawn(recordId, slotId),
+  track: (record) => teamLifecycleIntegration.track(record),
   log: (message, error) => logMainError(message, error)
 });
 /** A run's spawners and recyclers are forgotten together when it ends, is stopped or is dismissed. */
@@ -1400,7 +1440,16 @@ const agentStatus = new AgentStatusTracker();
 const outputActivity = new OutputActivityMonitor({
   sink: agentStatus,
   setTimer: (fn, ms) => setTimeout(fn, ms),
-  clearTimer: (handle) => clearTimeout(handle)
+  clearTimer: (handle) => clearTimeout(handle),
+  // Harnesses with a body-less API-error producer and no turn-start hook are armed from the busy edge.
+  // Hook harnesses (Claude, Codex) keep arming from their own UserPromptSubmit callback.
+  onBusyEdge: (sessionId) => {
+    armOnBusyEdge(
+      apiErrorDispatchCtx, sessionId, ptys.getSession(sessionId),
+      (session) => providerFor(session.profile as LaunchProfileId).adapter.status,
+      transcriptRefForSession
+    );
+  }
 });
 /**
  * Screen-scan blocked detector (LAS-07 — the "needs-you" slice for non-Claude
@@ -1737,6 +1786,7 @@ function transcriptRefForSession(session: TerminalSession) {
     claudeSessionId: session.claudeSessionId,
     codexSessionId: session.codexSessionId,
     openCodeSessionId: session.openCodeSessionId,
+    nativeConversationId: session.nativeConversationId,
     createdAt: session.createdAt,
     ...(remote ? { remote } : {})
   };
@@ -2818,6 +2868,7 @@ const personaTeamRegistry = new PersonaTeamRegistry(() => extensionEntries);
 const sshHostProviderRegistry = new SshHostProviderRegistry();
 const personas = new PersonaStore(() => localMetadataStore.listProjects(), personaTeamRegistry, () => projectCatalogs.sources('personas'), () => store.listProjects().map(project => project.id));
 const teams = new TeamStore(() => localMetadataStore.listProjects(), personaTeamRegistry, () => projectCatalogs.sources('teams'), () => store.listProjects().map(project => project.id));
+teams.setPersonaRoleLookup((personaId) => personas.list().find((persona) => persona.id === personaId)?.roles);
 
 // --- microVM playground pool (Rule 3/7) ------------------------------------
 // A host-managed pool of persistent, isolated microVM guests a NATIVE agent
@@ -3388,6 +3439,7 @@ async function reconcileModernMembers(records?: readonly TeamLifecycleRecord[]):
           if (status.live) {
             if (worker.sessionId) executionDeliveryDrain.observe(worker.sessionId, status.status === 'idle' ? 'idle' : 'working');
             if (status.eventSequence > (previous?.eventSequence ?? 0) && status.status === 'active' && worker.modernContext?.executionId) {
+              // No PTY session id on the modern member path: unfenced by session (slot identity only).
               await squadExecutionService.renewWorkerLease(worker.modernContext.executionId, worker.slotId);
             }
           } else if (worker.sessionId) executionDeliveryDrain.remove(worker.sessionId);
@@ -3456,6 +3508,32 @@ export const nativeToolSettledHook = createNativeToolSettledHook({
   starts: nativeToolStarts,
   log: warnNativeToolPolicy
 });
+
+/**
+ * Per-claim signal: a cohort worker's own settled Write/Edit/MultiEdit/NotebookEdit call is recorded
+ * on its claim (confined to the Squad worktree; never a worktree watcher, since sibling units share it).
+ * Identity comes from the live PTY record, never the body (rule 1). Observational: errors are dropped.
+ */
+export function recordClaimWriteFromSettledEvent(
+  service: Pick<SquadExecutionService, 'recordWorkerToolEvent'>,
+  session: { projectId: string; cohort?: { executionId?: string; role?: string; slotId?: string } } | null | undefined,
+  projectId: string,
+  body: string,
+  sessionId?: string
+): Promise<void> {
+  const cohort = session?.cohort;
+  if (!session || session.projectId !== projectId || !cohort?.executionId || cohort.role !== 'worker' || !cohort.slotId) return Promise.resolve();
+  try {
+    const event: unknown = JSON.parse(body);
+    if (!event || typeof event !== 'object') return Promise.resolve();
+    const { tool_name: toolName, tool_input: input, hook_event_name: hookEvent } = event as Record<string, unknown>;
+    return Promise.resolve(service.recordWorkerToolEvent(cohort.executionId, cohort.slotId, { toolName, input, failed: hookEvent === 'PostToolUseFailure', ...(sessionId ? { sessionId } : {}) })).then(() => undefined, () => undefined);
+  } catch { return Promise.resolve(); }
+}
+const claimSignalSettledHook = async (projectId: string, sessionId: string, body: string): Promise<void> => {
+  await recordClaimWriteFromSettledEvent(squadExecutionService, ptys.getSession(sessionId), projectId, body, sessionId);
+  await nativeToolSettledHook(projectId, sessionId, body);
+};
 
 const productRouteNativeToolPolicyInventory = productRouteToolPolicyInventory({
   serverUrl: productServerUrl,
@@ -3736,7 +3814,7 @@ const composerPreviewTokens = new Map<string, { key: string; preview: SquadLaunc
 const COMPOSER_PREVIEW_TTL_MS = 5 * 60_000;
 const COMPOSER_PREVIEW_MAX = 200;
 function composerPreviewKey(input: Parameters<import('@zana-ai/zcc-desktop-contract').CcApi['teams']['preview']>[0], caller: { kind: 'window'; windowId: number } | { kind: 'shared-owner' }): string {
-  return JSON.stringify([caller, input.projectId, input.teamId, input.goal.trim(), input.coordinationMode ?? 'structured', input.sourceCapabilityIds ?? [],
+  return JSON.stringify([caller, input.projectId, input.teamId, input.goal.trim(), (input.planText ?? '').trim(), input.coordinationMode ?? 'structured', input.sourceCapabilityIds ?? [],
     launchOptionsSchema.parse({ worktree: input.worktree, onComplete: input.onComplete, push: input.push, checks: input.checks, failurePolicyDefault: input.failurePolicyDefault, target: input.target })]);
 }
 function pruneComposerPreviewTokens(): void {
@@ -3801,6 +3879,7 @@ export async function resolveSquadComposerPreview(input: Parameters<import('@zan
   if (!project) throw new Error('TARGET_UNAVAILABLE');
   if (teamHostProblem(project, localHostId())) throw new SquadPreviewAdmissionError('Project host is unavailable for this launch.');
   const launchOptions = launchOptionsSchema.parse({ worktree: input.worktree, onComplete: input.onComplete, push: input.push, checks: input.checks, failurePolicyDefault: input.failurePolicyDefault, target: input.target });
+  if (input.planText !== undefined && (typeof input.planText !== 'string' || input.planText.length > TEAM_PLAN_TEXT_MAX_CHARS)) throw new SquadPreviewAdmissionError(`planText must be a string of at most ${TEAM_PLAN_TEXT_MAX_CHARS} characters.`);
   const sourceIds = input.sourceCapabilityIds ?? [];
   if (sourceIds.length && caller.kind !== 'window') throw new Error('Execution source capabilities require a trusted window');
   const sourceBases = squadSourceBases();
@@ -3814,16 +3893,19 @@ export async function resolveSquadComposerPreview(input: Parameters<import('@zan
   const capabilityIds = [...new Set([...sourceIds, ...goalCapabilities.map(source => source.id)])];
   const inspected = capabilityIds.length && caller.kind === 'window'
     ? await executionSources.inspect({ windowId: caller.windowId, projectId: project.id, capabilityIds }) : undefined;
-  const texts = [...(inspected?.sources ?? []).map(source => source.extractedText), input.goal];
+  // planText is plan content only: it is never scanned for source paths above.
+  const texts = [...(inspected?.sources ?? []).map(source => source.extractedText), ...(input.planText ? [input.planText] : []), input.goal];
   const plan = resolveSquadPlan(input.coordinationMode === 'freeform' ? 'infer' : 'provided', texts);
   // Attended malformed DAGs retain the existing correction flow, but bad launch declarations never become defaults.
   if (plan.planError) {
     for (const text of texts) {
       const declarations = parseLaunchSection(text ?? '');
       if (!declarations.ok) throw new Error(declarations.reason);
-      if (Object.keys(declarations.launch).length) throw new Error('Correct the supplied plan before previewing its launch declarations');
+      // `Squad:` is advisory and never a launch default, so it alone must not trip the guard.
+      const { declaredSquad: _declaredSquad, ...defaulting } = declarations.launch;
+      if (Object.keys(defaulting).length) throw new Error('Correct the supplied plan before previewing its launch declarations');
     }
-    if (caller.kind !== 'window') throw new Error(plan.planError);
+    if (caller.kind !== 'window') throw new SquadPreviewAdmissionError(plan.planError);
   }
   const resolved = await resolveSquadLaunchOptions(project.id, { teamId: input.teamId, ...launchOptions, planLaunch: plan.launch });
   const preview = await resolveSquadLocationPreview(project, launchOptions, resolved);
@@ -4010,14 +4092,31 @@ function showMainWindow() {
   win.focus();
 }
 
-async function ensureMainWindowReady(): Promise<boolean> {
+async function readyMainWindow(): Promise<BrowserWindow | null> {
   let win = unscopedWindow();
   if (!win) {
     createWindow(undefined, startupState.mode === 'repair-required');
     win = unscopedWindow();
   }
-  if (!win || win.webContents.isDestroyed()) return false;
-  return rendererReadiness.wait(win.id, MAIN_RENDERER_READY_TIMEOUT_MS);
+  if (!win || win.webContents.isDestroyed()) return null;
+  const ready = await rendererReadiness.wait(win.id, MAIN_RENDERER_READY_TIMEOUT_MS);
+  return ready && !win.isDestroyed() && !win.webContents.isDestroyed() ? win : null;
+}
+
+async function ensureMainWindowReady(): Promise<boolean> {
+  return (await readyMainWindow()) !== null;
+}
+
+async function sendToMainWindow(channel: string, ...args: unknown[]): Promise<boolean> {
+  try {
+    const win = await readyMainWindow();
+    if (!win) return false;
+    win.webContents.send(channel, ...args);
+    return true;
+  } catch (error) {
+    logMainError(`sendToMainWindow ${channel}`, error);
+    return false;
+  }
 }
 
 /**
@@ -4046,13 +4145,19 @@ function openProjectWindow(projectId: string) {
   createWindow(projectId);
 }
 
+function openNewWindow(projectId?: unknown): boolean {
+  if (projectId !== undefined && (typeof projectId !== 'string' || !store.listProjects().some(p => p.id === projectId))) return false;
+  createWindow(projectId, false, { secondary: true });
+  return true;
+}
+
 /* v8 ignore next -- wiring to Electron windows; createPluginViewHost is unit-tested and the windows are covered by built-Electron E2E */
 const pluginViewCloseGuard = createPluginViewCloseGuard();
 const pluginViews = createPluginViewHost({
   windows,
   listApps: () => runtimeSupervisor ? runtimeSupervisor.listPluginApps() : listPluginAppsFromProductServer(),
   projectIds: () => store.listProjects().map((project) => project.id),
-  createWindow: (view) => createWindow(view.projectId, false, view),
+  createWindow: (view) => createWindow(view.projectId, false, { view }),
   ensureMainWindowReady,
   mainWindow: unscopedWindow,
   showMainWindow,
@@ -4065,18 +4170,10 @@ const pluginViews = createPluginViewHost({
 const threadViews = createThreadViewHost({
   windows,
   projectIds: () => store.listProjects().map((project) => project.id),
-  createWindow: (target) => createWindow(target.projectId, false, undefined, target),
+  createWindow: (target) => createWindow(target.projectId, false, { threadView: target }),
   sendToMainWindow: (channel, args) => {
-    void ensureMainWindowReady().then((ready) => {
-      const win = unscopedWindow();
-      if (!ready || !win || win.webContents.isDestroyed()) return;
-      try {
-        win.webContents.send(channel, ...args);
-      } catch (err) {
-        logMainError(`sendToMainWindow ${channel}`, err);
-        return;
-      }
-      showMainWindow();
+    void sendToMainWindow(channel, ...args).then(sent => {
+      if (sent) showMainWindow();
     });
   },
   broadcast: safeSend,
@@ -4122,7 +4219,7 @@ function handleLoudInboxEntry(entry: InboxEntry) {
     });
     notification.on('click', () => {
       showMainWindow();
-      safeSend('app:focusInboxEntry', entry.id, entry.projectId);
+      void sendToMainWindow('app:focusInboxEntry', entry.id, entry.projectId);
     });
     notification.show();
   } catch (err) {
@@ -5864,7 +5961,9 @@ async function resolveTeamModelSnapshots(
   const config = store.getConfig();
   const projectSettings = await getAuthoritativeProjectSettings(projectId);
   const personaSnapshot = personas.list();
-   const verified = await verifyHarnesses(config);
+  const missingPersonas = slots.filter((slot) => !personaSnapshot.some((candidate) => candidate.id === slot.personaId)).map((slot) => slot.personaId);
+  if (missingPersonas.length > 0) throw new UnknownPersonaError(missingPersonas);
+  const verified = await verifyHarnesses(config);
   const observedAt = Date.now();
   return Promise.all(slots.map(async (slot, index) => {
     const persona = personaSnapshot.find((candidate) => candidate.id === slot.personaId);
@@ -5886,6 +5985,7 @@ async function resolveTeamModelSnapshots(
       slotId: slots[index].slotId,
       personaId: slot.personaId,
       ...(slot.label !== undefined ? { label: slot.label } : {}),
+      ...(effectiveRoles(slot, persona) !== undefined ? { roles: effectiveRoles(slot, persona) } : {}),
       provider: team.transport === 'MODERN' ? canonicalThreadProviderId(harnessFamilyOf(profile) ?? profile) : provider.adapter.descriptor.id,
       ...(roleOwnedModel || !model.targetId ? {} : { model: model.targetId }),
       ...(model.level ? { level: model.level } : {}),
@@ -5970,7 +6070,7 @@ export function authorizeTeamLaunch(
   }
   const principalRef = { kind: 'team' as const, id: `team:${team.id}:${callerPrincipalId}:${launchRequestId}` };
   const maxLaunches = Math.min(policy.maxLaunches ?? 32, 32);
-  const maxConcurrent = Math.min(policy.maxConcurrent ?? maxLaunches, maxLaunches);
+  const maxConcurrent = squadConcurrentCap(Math.min(policy.maxConcurrent ?? maxLaunches, maxLaunches), team.limits);
   if (expectedSlots.length > maxLaunches) {
     return { ok: false, code: 'RESOURCE_LIMIT', message: `team launch requests ${expectedSlots.length} slots but limit is ${maxLaunches}` };
   }
@@ -6323,6 +6423,7 @@ export async function launchTeam(
   const roster: RosterEntry[] = [];
   const workers: TeamLaunchedWorker[] = [];
   const failedSlots: TeamFailedWorkerSlot[] = [];
+  const joinedSlotReasons = (fallback: string) => boundReason(failedSlots.map((slot) => `${slot.slotId}: ${slot.reason}`).join('; ') || fallback);
   const launchRequestId = structured?.launchRequestId ?? randomUUID();
   const callerPrincipalId = structured?.callerPrincipalId ?? opts?.callerPrincipalId ?? `legacy:${launchRequestId}`;
   const teamPrincipalRef = {
@@ -6495,14 +6596,14 @@ export async function launchTeam(
     }
   }
   const freshSlotIds = new Set(freshContextSeatsOf(team, expectedSlots).map((seat) => seat.slotId));
-  const seatApprovals = createSeatApprovals(freshSlotIds);
+  const seatApprovals = createSeatApprovals(new Set([...freshSlotIds, ...expectedSlots.filter((slot) => slot.role === 'worker').map((slot) => slot.slotId)]));
   const onDemandProblem = seatLaunchProblem(team, expectedSlots, { durable: durableCoordination, structured: !!structured }, structured?.requirePreauthorization === true);
   if (onDemandProblem) {
     revokeRequestAuthorizations();
     return { ok: false, code: 'UNSUPPORTED', message: onDemandProblem };
   }
   const runLimit = Math.min(structured?.policy?.maxLaunches ?? 32, 32);
-  const concurrentLimit = Math.min(structured?.policy?.maxConcurrent ?? runLimit, runLimit);
+  const concurrentLimit = squadConcurrentCap(Math.min(structured?.policy?.maxConcurrent ?? runLimit, runLimit), team.limits);
   if (expectedSlots.length > runLimit) {
     return { ok: false, code: 'RESOURCE_LIMIT', message: `team launch requests ${expectedSlots.length} slots but limit is ${runLimit}` };
   }
@@ -6569,6 +6670,20 @@ export async function launchTeam(
       return { ok: false, code: 'UNSUPPORTED', message: error instanceof Error ? error.message : String(error) };
     }
   }
+  if (team.transport !== 'MODERN') {
+    const unresolvedReasons = allWorkersUnresolvedReasons(expectedSlots, known, structured ? 'all' : 'any');
+    if (unresolvedReasons) {
+      revokeRequestAuthorizations();
+      return { ok: false, code: 'TEAM_LAUNCH_FAILED', message: boundReason(unresolvedReasons) };
+    }
+  }
+  // Advisory only: a persona model the harness catalog does not list is flagged, never blocks the launch.
+  if (team.transport !== 'MODERN') {
+    warnUnknownPersonaModels({
+      slots: expectedSlots, personas: personaSnapshot, providerFor: (personaId) => providerFor(profileFor(personaId)),
+      project, notify: (notice) => inboxStore.append(notice), onError: logMainError
+    });
+  }
   const refused = squadSeatRefusal({
     transport: team.transport, expectedSlots, personas: personaSnapshot, profileFor, personaName, coordinationMode, project,
     platform: process.platform, revoke: revokeRequestAuthorizations
@@ -6596,6 +6711,9 @@ export async function launchTeam(
   }
   if (claim.outcome === 'conflict') return { ok: false, code: 'CONFLICT', message: 'launch request id reused with changed payload' };
 
+  /** A seat the coordinator asked to respawn (its lifecycle row carries the marker until the new session binds). */
+  const isRespawnSeat = async (slotId: string): Promise<boolean> =>
+    (await teamLifecycle.get(claim.record.id))?.workers.find((worker) => worker.slotId === slotId)?.respawned !== undefined;
   const launchSlot = async (
     expectedSlot: { slotId: string; personaId: string; label?: string; role: 'worker' | 'orchestrator' },
     request: CreateTerminalRequest,
@@ -6805,7 +6923,12 @@ export async function launchTeam(
         return { ok: false, code: reservation ? 'UNCERTAIN' : 'DENIED', message: error instanceof Error ? error.message : String(error) };
       } finally { releaseColdStart(); }
     }
-    const result = await launchAuthorizedTerminal(
+    // A spawn that throws is one failed seat, not a failed launch: the rejection becomes a result so
+    // sibling seats keep launching and the seat's lifecycle row is marked spawn-failed below.
+    // Test-only (compiled out of production): the second seat of each row fails to spawn.
+    const result: Result<{ id: string }> = await (workerSpawnFaultFor(slotId)
+      ? Promise.reject(new Error('injected worker spawn fault'))
+      : launchAuthorizedTerminal(
       request,
        teamPrincipalRef,
        { autonomous, coordinationMode, suppressPersonaInitialPrompt: durableCoordination, tabNamerPrompt, ...SQUAD_SEAT_MARKER, ...spawnExtras },
@@ -6839,7 +6962,9 @@ export async function launchTeam(
           maySpawn: () => teamLifecycle.workerMaySpawn(claim.record.id, slotId),
           claimRunning: () => teamLifecycle.claimWorkerRunning(claim.record.id, slotId)
         }
-    ).finally(releaseColdStart);
+    )).catch((error: unknown): Result<{ id: string }> => ({
+      ok: false, code: 'SPAWN_FAILED', message: boundReason(error instanceof Error ? error.message : String(error), SLOT_REASON_MAX)
+    })).finally(releaseColdStart);
     if (durableIdentity) {
       try {
         if (result.ok) {
@@ -6863,14 +6988,15 @@ export async function launchTeam(
   };
 
   /** Open one worker seat's session. `lateSeat` is a seat that starts on demand, after the launch call has returned. */
-  const startWorkerSeat = (expectedSlot: { slotId: string; personaId: string; label?: string; role: 'worker' | 'orchestrator' }, lateSeat: boolean, respawnApprovalId?: string) => {
+  const startWorkerSeat = async (expectedSlot: { slotId: string; personaId: string; label?: string; role: 'worker' | 'orchestrator' }, lateSeat: boolean, respawnApprovalId?: string) => {
      const { slotId, personaId, label: slotLabel } = expectedSlot;
+     const coordinatorRespawn = await isRespawnSeat(slotId);
        // Job/Team identity belongs to ZCC, not whichever harness happens to
        // provide an OSC title or registration hook. Every worker gets a stable
        // host-owned label before the harness starts.
        const label = slotLabel || personaName(personaId) || slotId;
        // A new session of a seat is a new conversation: it never resumes the one before it.
-       const recovery = seatRecovery(recoveryFor(slotId, 'worker', personaId), respawnLaunchShape(seatLaunchMode(lateSeat, respawnApprovalId)).dropsRecovery);
+       const recovery = seatRecovery(recoveryFor(slotId, 'worker', personaId), respawnLaunchShape(coordinatorRespawn ? 'respawn' : seatLaunchMode(lateSeat, respawnApprovalId)).dropsRecovery);
        const workerTask = durableCoordination
          ? jobWorkerPrompt({ executionId: structured?.executionId, slotId, label, personaName: personaName(personaId), ...(recovery.recoveryResume ? { recoveryResume: true } : {}) })
           : taskFor(slotId);
@@ -6911,7 +7037,7 @@ export async function launchTeam(
      if (!known.has(personaId)) {
        const authorizationId = structured?.slots.find((slot) => slot.slotId === slotId)?.authorizationId;
        if (authorizationId) launchAuthorization.revoke(authorizationId);
-       failedSlots.push({ slotId, personaId, reason: 'unknown persona' });
+       failedSlots.push({ slotId, personaId, reason: boundReason(unknownPersonaMessage(personaId), SLOT_REASON_MAX) });
        continue;
      }
      const bindingFailure = taskBindingFailure(personaId);
@@ -6937,7 +7063,12 @@ export async function launchTeam(
          roster.push(seatRosterEntry({ slotId, label: quantity > 1 ? `${label} ${repeatIndex + 1}` : label }, { fresh: freshSlotIds.has(slotId) }));
          continue;
        }
-       const res = await startWorkerSeat(expectedSlot, false);
+       let res: Result<{ id: string }>;
+       try {
+         res = await startWorkerSeat(expectedSlot, false);
+       } catch (error) {
+         res = { ok: false, code: 'SPAWN_FAILED', message: error instanceof Error ? error.message : String(error) };
+       }
        if (res.ok) {
         launched += 1;
         // quantity>1 → suffix so two tabs of one slot are distinguishable in the
@@ -6951,16 +7082,16 @@ export async function launchTeam(
          const authorizationId = launchAuthorizationBySession.get(res.value.id)!;
          workers.push({ sessionId: res.value.id, cohortId, slotId, personaId, projectId: targetProjectId, authorizationId });
        } else {
-         failedSlots.push({ slotId, personaId, reason: res.message });
+         failedSlots.push({ slotId, personaId, reason: boundReason(res.message, SLOT_REASON_MAX) });
        }
   }
 
   const seatStarter = createSeatStarter({
-    hasStarted: (slotId) => seatLifecycle.hadSession(claim.record.id, slotId),
+    hasStarted: async (slotId) => (structured?.requirePreauthorization === true && await isRespawnSeat(slotId)) || seatLifecycle.hadSession(claim.record.id, slotId),
     mintApproval: async (slotId) => respawnApproval(launchAuthorization, await seatLifecycle.priorApprovalOf(claim.record.id, slotId), seatApprovals.expectedFor(slotId)),
     start: (slotId, approvalId) => startWorkerSeat(expectedSlots.find((candidate) => candidate.slotId === slotId)!, true, approvalId)
   });
-  deferredSeats.register(claim.record.id, [...deferredSlotIds, ...freshSlotIds], createDeferredSeatHooks({
+  deferredSeats.register(claim.record.id, [...deferredSlotIds, ...freshSlotIds, ...expectedSlots.filter((slot) => slot.role === 'worker').map((slot) => slot.slotId)], createDeferredSeatHooks({
     recordId: claim.record.id,
     lifecycle: teamLifecycle,
     startSeat: seatStarter,
@@ -6974,7 +7105,10 @@ export async function launchTeam(
   // Orchestrator LAST, carrying the team prompt + the worker roster. Whether it's
   // a declared slot or a standalone persona id, it opens exactly once here.
   if (orchestratorId && !hasOrchestrator) {
-    failedSlots.push({ slotId: `orchestrator:${orchestratorId}`, personaId: orchestratorId, reason: 'unknown persona' });
+    failedSlots.push({ slotId: `orchestrator:${orchestratorId}`, personaId: orchestratorId, reason: boundReason(unknownPersonaMessage(orchestratorId), SLOT_REASON_MAX) });
+  } else if (coordinationMode === 'structured' && failedSlots.length > 0) {
+    // A structured run cannot finish with a missing worker: do not start the coordinator or dispatch the
+    // seeded plan. With no orchestrator the launch fails below and every started worker is closed.
   } else if (hasOrchestrator && launched < MAX_TABS_PER_LAUNCH) {
     const orchestratorSlotId = `orchestrator:${orchestratorId}`;
     const orchestratorRecovery = recoveryFor(orchestratorSlotId, 'orchestrator', orchestratorId!);
@@ -7029,10 +7163,12 @@ export async function launchTeam(
           executionId: structured.executionId,
           job: structured.jobContext,
           roster: rosterWithTiers(roster, seededRecord?.resolvedModels),
+          personaById: (id) => personaSnapshot.find((candidate) => candidate.id === id),
            planReady,
             recoveryResume: orchestratorRecovery.recoveryResume,
           workUnits: seededWorkUnits,
           transport: planTransport,
+          ...(failedSlots.length ? { failedSlots: [...failedSlots] } : {}),
           ...(planFilePath ? { planFilePath } : {}),
           ...(sourceFilePath ? { sourceFilePath } : {}),
           ...(planCorrectionPending ? { planCorrectionPending } : {})
@@ -7089,27 +7225,49 @@ export async function launchTeam(
         });
       }
     } else {
-      failedSlots.push({ slotId: orchestratorSlotId, personaId: orchestratorId!, reason: res.message });
+      failedSlots.push({ slotId: orchestratorSlotId, personaId: orchestratorId!, reason: boundReason(res.message, SLOT_REASON_MAX) });
     }
     }
   }
 
   const result: LaunchTeamResult = { launchRequestId, launched, cohortId, workers, failedSlots, orchestratorSessionId, workerSessionIds };
-  if (durableCoordination && !orchestratorSessionId) {
-    releaseRunSeats(claim.record.id);
-    await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId);
+  let operationResult: Result<LaunchTeamResult>;
+  try {
+    if (durableCoordination && !orchestratorSessionId) {
+      releaseRunSeats(claim.record.id);
+      await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId);
+    }
+    operationResult = durableCoordination && !orchestratorSessionId
+      ? { ok: false, code: 'TEAM_LAUNCH_FAILED', message: joinedSlotReasons('Team coordinator failed to launch') }
+      : launched === 0 && structured
+      ? { ok: false, code: 'TEAM_LAUNCH_FAILED', message: joinedSlotReasons('team launched no workers') }
+      : { ok: true, value: result };
+    if (!operationResult.ok) {
+      revokeRequestAuthorizations();
+    }
+    if (testFaultActive('launch-complete-throw')) throw new Error('injected launch completion fault');
+    await teamLifecycle.complete(claim.record.id, operationResult, result);
+  } catch (error) {
+    // The launch record could not be finished: every seat this request started is closed by id so no
+    // live session outlives a launch that reports failure, then the original error surfaces.
+    try {
+      revokeRequestAuthorizations();
+      releaseRunSeats(claim.record.id);
+    } catch (releaseError) {
+      logMainError('team launch seat release after failed completion', releaseError);
+    }
+    const survivors = await closeStartedSessionsById([...workerSessionIds, ...(orchestratorSessionId ? [orchestratorSessionId] : [])]);
+    if (survivors.length > 0) logMainError('team launch sessions survived cleanup after failed completion', new Error(`launch ${launchRequestId}: could not confirm closed: ${survivors.join(', ')}`));
+    await teamLifecycleIntegration.cancelTeamLaunch(callerPrincipalId, launchRequestId).catch((cancelError) => logMainError('team launch cleanup after failed completion', cancelError));
+    throw error;
   }
-  const operationResult: Result<LaunchTeamResult> = durableCoordination && !orchestratorSessionId
-    ? { ok: false, code: 'TEAM_LAUNCH_FAILED', message: failedSlots.map((slot) => `${slot.slotId}: ${slot.reason}`).join('; ') || 'Team coordinator failed to launch' }
-    : launched === 0 && structured
-    ? { ok: false, code: 'TEAM_LAUNCH_FAILED', message: failedSlots.map((slot) => `${slot.slotId}: ${slot.reason}`).join('; ') || 'team launched no workers' }
-    : { ok: true, value: result };
-  if (!operationResult.ok) {
-    revokeRequestAuthorizations();
+  // The launch is recorded as complete: a failed read or notify below must not tear it down.
+  try {
+    const lifecycleRecord = await teamLifecycle.get(claim.record.id);
+    if (lifecycleRecord) teamLifecycleIntegration.track(lifecycleRecord);
+  } catch (trackError) {
+    logMainError('team launch tracking after completion', trackError);
   }
-  await teamLifecycle.complete(claim.record.id, operationResult, result);
-  const lifecycleRecord = await teamLifecycle.get(claim.record.id);
-  if (lifecycleRecord) teamLifecycleIntegration.track(lifecycleRecord);
   return operationResult;
 
   /** Withdraw the launch approvals still held by seats that never started (run released its spawner). */
@@ -7318,6 +7476,7 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
   store: squadProposalStore,
   staging: squadAttachmentStaging,
   enabled: teamExecutionEnabled,
+  designDocs: (method, args) => runtimeSupervisor ? runtimeSupervisor.callPluginRpc('design-docs', method, args) : Promise.reject(new Error('plugin host is unavailable')),
   lookupProposer,
   projects: { get: (id) => store.listProjects().find((project) => project.id === id) },
   teams: { get: (id) => teams.list().find((team) => team.id === id) },
@@ -7325,6 +7484,8 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
   teamHostProblem: (project) => teamHostProblem(project as Project, localHostId()),
   expandTeamSlots,
   resolveSquadPlan: (planSource, texts) => resolveSquadPlan(planSource, texts),
+  canonicalPlanText: (workUnits, options) => renderCanonicalPlan(workUnits as PortablePlanWorkUnitInput[], options),
+  planFindings: (projectId, teamId, plan) => judgePlanFindings(projectId, teamId, plan),
   fs: { realpath, lstat, open: (path, flags) => openFile(path, flags) },
   sourceBases: () => squadSourceBases(),
   inbox: { appendOnce: (input) => inboxStore.appendOnce(input) },
@@ -7358,7 +7519,9 @@ const squadProposalServiceDeps: SquadProposalServiceDeps = {
       if (!record) throw new Error('launched execution receipt unavailable');
       return { ...result, value: { ...result.value, ...await describeExecutionLocation(project, record) } };
     }
-  }
+  },
+  // Lazy: the notifier is created after this service.
+  sendToProposer: (proposer, projectId, text) => squadProposalNotifier.sendToConversation({ kind: proposer.kind, id: proposer.id }, projectId, text)
 };
 export const squadProposalService = createSquadProposalService(squadProposalServiceDeps);
 // squad_plan_check's route carries no session id: the MCP tool has already
@@ -7367,6 +7530,7 @@ const squadPlanCheckService = createSquadProposalService({
   ...squadProposalServiceDeps,
   lookupProposer: async () => ({ kind: 'pty' as const, id: 'mcp-route', squadMember: false }),
   // Advisory tier fit against the Squad's roster; planless runs keep their roster untouched.
+  planFindings: (projectId, teamId, plan) => judgePlanFindings(projectId, teamId, plan),
   planTierFit: async (projectId, teamId, workUnits) => {
     try {
       const team = teams.list().find((candidate) => candidate.id === teamId);
@@ -7450,7 +7614,39 @@ export function canInferPlanForTeam(team: { orchestratorPersonaId?: string; tran
 
 /** `list_teams` MCP output: the summary plus whether the orchestrator can write a plan. */
 export function listTeamSummariesForMcp() {
-  return teams.list().map((team) => ({ ...toTeamSummary(team), canInferPlan: canInferPlanForTeam(team) }));
+  const personaById = new Map(personas.list().map((persona) => [persona.id, persona]));
+  return teams.list().map((team) => ({ ...toTeamSummary(team, (id) => personaById.get(id)), canInferPlan: canInferPlanForTeam(team) }));
+}
+
+/**
+ * Judges a checked plan against a Squad's roster in the one finding shape (squad_plan_check and the composer card).
+ * Advisory display: launch re-runs the hard checks in main. Without a Squad only the parser's findings are returned.
+ */
+export async function judgePlanFindings(
+  projectId: string,
+  teamId: string | undefined,
+  plan: { workUnits: readonly unknown[]; findings?: readonly { severity: 'blocking' | 'warning' | 'repair'; requirement: SquadPlanFinding['requirement']; stepId?: string; message: string }[]; declaredSquad?: string }
+): Promise<{ findings: SquadPlanFinding[]; bindings: SquadPlanBinding[] }> {
+  const team = teamId ? teams.list().find((candidate) => candidate.id === teamId) : undefined;
+  const units = plan.workUnits as ExecutionWorkUnitInput[];
+  const titles = new Map(units.map((unit) => [unit.id, unit.title] as const));
+  const named = <T extends { stepId?: string }>(row: T): T & { stepTitle?: string } => {
+    const title = row.stepId ? titles.get(row.stepId) : undefined;
+    return title ? { ...row, stepTitle: title } : row;
+  };
+  if (!team) return { findings: buildPlanFindings({ units, slotRoutes: [], parserFindings: plan.findings, declaredSquad: plan.declaredSquad }).map(named), bindings: [] };
+  const slots = expandTeamSlots(team);
+  const models = await resolveTeamModelSnapshots(projectId, { teamId: team.id, slots: slots.map(() => ({ initialTask: '' })) });
+  const slotRoutes = models.map((model) => ({ ...model, personaId: model.personaId ?? '' }));
+  const workerIds = slotRoutes.filter((slot) => !isOrchestratorSlotId(slot.slotId)).map((slot) => slot.slotId);
+  const gate = resolveRoutingEnforcement(team, globalRoutingEnforcement(), slotRoutes, workerIds);
+  const findings = buildPlanFindings({
+    units, slotRoutes, parserFindings: plan.findings, declaredSquad: plan.declaredSquad,
+    launchSquad: { id: team.id, name: team.name }, degradedSlots: gate.degradedSlots
+  });
+  const counts = hardFindingCounts(findings);
+  if (Object.keys(counts).length) logMainInfo('plan findings', `Squad ${team.id} blocking findings by requirement ${JSON.stringify(counts)}`);
+  return { findings: findings.map(named), bindings: planBindings(units, slotRoutes, new Set(gate.degradedSlots.map((slot) => slot.slotId))).map(named) };
 }
 
 /** MCP deps for squad_propose / squad_plan_check; empty while Team jobs are off. */
@@ -7516,7 +7712,19 @@ export async function disposeSquadNamedChecks(): Promise<void> {
   await namedCheckRunner.dispose();
 }
 
+const teamRoutingFor = (teamId: string) => teams.list().find((candidate) => candidate.id === teamId);
+const globalRoutingEnforcement = () => store.getConfig().teamRoutingEnforcementEnabled === true;
+
 const squadExecutionService = new SquadExecutionService({
+  personaName: (personaId) => personas.list().find((persona) => persona.id === personaId)?.name,
+  noTurnWarnWindowMs: testNoTurnWarnWindowMs,
+  // 0 in config disables the reminder even under a test override; otherwise the build-gated override wins.
+  blockerReminderMs: () => {
+    const configured = store.getConfig().executionBlockerReminderMs;
+    return configured === 0 ? 0 : testVisibilityWindowMs('BLOCKER') ?? configured;
+  },
+  idleNoticeWindowMs: () => testVisibilityWindowMs('IDLE'),
+  heartbeatWarnWindowMs: () => testVisibilityWindowMs('HEARTBEAT'),
   resolveLaunchOptions: resolveSquadLaunchOptions,
   resolveNamedChecks: resolveSquadNamedChecks,
   runNamedCheck: runSquadNamedCheck,
@@ -7546,6 +7754,28 @@ const squadExecutionService = new SquadExecutionService({
     deliverToWorker: (sessionId, text) => ptys.getSession(sessionId)
       ? workerInjector.deliver(sessionId, text) : replyToSquadMember(sessionId, text),
    spawnDeferredWorker: (recordId, slotId) => deferredSeats.spawn(recordId, slotId),
+   respawnWorker: (recordId, slotId) => workerRespawner.respawn(recordId, slotId),
+   // Owner `execution_slot_restart`: the card Restart path (same fences, no respawn budget); the engine rate-limits it.
+   restartWorker: (recordId, slotId) => restartSquadWorkerForOwner({
+     getSession: (id) => ptys.getSession(id),
+     listLifecycleRecords: () => teamLifecycle.list(),
+     launchIsClosing: (id) => teamLifecycle.launchIsClosing(id),
+     getExecution: async (projectId, executionId) => {
+       const found = await executionStore.getInProject(projectId, executionId);
+       return found && { state: found.state, callerPrincipalId: found.callerPrincipalId, teamLaunchRequestId: found.teamLaunchRequestId };
+     },
+     isTerminalExecutionState: (state) => isTerminalExecutionState(state as ExecutionRecord['state']),
+     respawnExited: async (id, slot) => {
+       const result = await workerRespawner.respawn(id, slot);
+       return result.ok ? { ok: true as const } : { ok: false as const, message: result.message };
+     },
+     restart: (id, opts) => squadWorkerRestarter.restart(id, opts),
+     getWorker: async (id, slot) => (await teamLifecycle.get(id))?.workers.find((worker) => worker.slotId === slot),
+     respawnSeat: async (id, slot) => {
+       const result = await workerRespawner.respawn(id, slot);
+       return result.ok ? result : { ok: false as const, message: result.message };
+     }
+   }, recordId, slotId),
    recycleSeat: (recordId, slotId) => seatRecycler.recycle(recordId, slotId),
    recordUnitDelivered: seatLifecycle.recordDelivered,
    // Keeps a worker parked on an open blocker out of the idle thread-session sweep (self-expiring timestamp).
@@ -7629,6 +7859,7 @@ const squadExecutionService = new SquadExecutionService({
     await handleSquadTerminalWithReport(record);
   },
   onHumanBlocker: (record, blocker) => squadProposalNotifier.onHumanBlocker(record, blocker),
+  onRunWarning: (record, warning) => squadProposalNotifier.onRunWarning(record, warning),
   clearResumeToken: (projectId, executionId) => executionResumeTokens.clear(projectId, executionId),
   cacheResumeToken: (projectId, executionId, token, expiresAt) => executionResumeTokens.set({ projectId, executionId, token, expiresAt }),
   preflightWorkflow: (teamId, workflow) => {
@@ -7653,29 +7884,35 @@ const squadExecutionService = new SquadExecutionService({
         };
       })()
     : undefined
+  // One gate (team-routing-enforcement.ts). A run launched with a recorded `routingPolicy` reads that record, never the live Squad;
+  // only a run from before the policy existed re-derives it, with the old all-levels-known rule.
+  , resolveRoutingPolicy: (_projectId, request, resolvedModels) => {
+    const team = teamRoutingFor(request.teamId);
+    const slotIds = team ? expandTeamSlots(team).map((slot) => slot.slotId) : resolvedModels.map((model) => model.slotId);
+    const workerSlotIds = slotIds.filter((slotId) => !isOrchestratorSlotId(slotId));
+    return routingPolicyOf(resolveRoutingEnforcement(team, globalRoutingEnforcement(), resolvedModels, workerSlotIds));
+  }
   , routingEnforcementEnabled: (record) => {
+    const recorded = recordedLevelPolicy(record);
+    if (recorded) return recorded.levelEnforced;
     const workerSlotIds = (record.authorizationContext?.slots ?? [])
       .map((slot) => slot.slotId)
       .filter((slotId) => !isOrchestratorSlotId(slotId));
     // Startup dispatch can run before launch authorization records its worker
     // roster. Do not freeze advisory routing before route facts exist.
     if (workerSlotIds.length === 0) return false;
-    const team = teams.list().find((candidate) => candidate.id === record.teamId);
-    const decision = decideTeamRoutingEnforcement(
-      team,
-      store.getConfig().teamRoutingEnforcementEnabled === true,
-      record.resolvedModels,
-      workerSlotIds
-    );
-    return decision.enforced;
+    const gate = resolveRoutingEnforcement(teamRoutingFor(record.teamId), globalRoutingEnforcement(), record.resolvedModels, workerSlotIds);
+    return gate.levelEnforced && gate.degradedSlots.length === 0;
   }
   , routingEnforcementRequested: (record) => {
-    const team = teams.list().find((candidate) => candidate.id === record.teamId);
-    return team?.routingEnforced ?? store.getConfig().teamRoutingEnforcementEnabled === true;
+    const recorded = recordedLevelPolicy(record);
+    if (recorded) return recorded.requested;
+    return resolveRoutingEnforcement(teamRoutingFor(record.teamId), globalRoutingEnforcement(), [], []).requested;
   }
   , claimRecoveryObserveEnabled: () => store.getConfig().executionClaimRecoveryObserveEnabled === true
   , claimRecoveryEnforceEnabled: () => store.getConfig().executionClaimRecoveryEnforceEnabled === true
   , planStartupGraceMs: () => store.getConfig().executionPlanStartupGraceMs ?? 0
+  , unitCheckpointsEnabled: () => store.getConfig().squadUnitCheckpointsEnabled !== false
   , isPlanCorrectionOpen: (executionId) => planCorrection.isPending(executionId)
    , getAgentState: (sessionId) => modernMemberStatus.has(sessionId)
      ? modernMemberStatus.get(sessionId)?.status === 'idle' ? 'idle' : 'working' : agentStatus.get(sessionId)
@@ -7687,6 +7924,7 @@ const squadExecutionService = new SquadExecutionService({
   // dead-agent zombie (the captured-PID reap targets the exited inner agent's
   // pid, not the wrapper's). Fire-and-forget; the pty layer owns the teardown.
   , closeWorkerSession: (sessionId) => { ptys.closeExpected(sessionId); }
+  , waitForWorkerSessionExit: (sessionId, timeoutMs) => waitForSessionExit(ptys, (id) => ptys.getSession(id) !== undefined, sessionId, timeoutMs)
   , routeFitObserveEnabled: () => store.getConfig().executionRouteFitObserveEnabled === true
   , readSessionStats: async (sessionId, options) => {
     const session = ptys.getSession(sessionId);
@@ -7773,21 +8011,24 @@ const squadExecutionService = new SquadExecutionService({
       },
       onError: (source, error) => logMainError(`Team admission ${source} inventory failed`, error)
     });
+    const configuredSlots = team ? expandTeamSlots(team) : [];
     const slotRoutes = (request.resolvedModels ?? []).map((model) => ({
-      slotId: model.slotId, personaId: model.personaId ?? '', provider: model.provider, model: model.model,
-      label: team ? expandTeamSlots(team).find(slot => slot.slotId === model.slotId)?.label : undefined,
-      level: model.level, roleOwnedModel: model.roleOwnedModel, capabilities: model.capabilities,
-      modalities: model.modalities, maxContextBytes: model.maxContextBytes, health: model.health,
-      observedAt: model.observedAt, maxAgeMs: model.maxAgeMs,
+      ...admissionSlotRouteFacts(model, (() => {
+        const slot = configuredSlots.find((candidate) => candidate.slotId === model.slotId);
+        if (!slot) return undefined;
+        const roles = effectiveRoles(slot, personaSnapshot.find((candidate) => candidate.id === slot.personaId));
+        return { ...(slot.label !== undefined ? { label: slot.label } : {}), ...(roles !== undefined ? { roles } : {}) };
+      })()),
       ...slotSkillAllowlistFact(team, personaSnapshot, model.personaId, model.slotId),
       ...slotMcpAllowlistFact(team, personaSnapshot, model.personaId, model.slotId,
         { provider: model.provider, remoteCli: team?.transport !== 'MODERN' && !!project?.remote })
     }));
     const workerRoutes = slotRoutes.filter((slot) => !isOrchestratorSlotId(slot.slotId));
-    const routingRequested = team?.routingEnforced ?? config.teamRoutingEnforcementEnabled === true;
     // Advisory mode passes an explicit false so ROUTE_ELIGIBILITY stays non-required;
-    // tier-fit findings are warnings and never change `ready`.
-    const enforceRouting: boolean = routingRequested && workerRoutes.length > 0 && workerRoutes.every((slot) => !!slot.level);
+    // tier-fit findings are warnings and never change `ready`. Degraded slots are surfaced by findings-preflight.
+    const gate = resolveRoutingEnforcement(team, config.teamRoutingEnforcementEnabled === true, slotRoutes, workerRoutes.map((slot) => slot.slotId));
+    // Per-slot admission: a degraded slot skips only its own level check; role, tag, skill, MCP and anti-affinity stay on.
+    const enforceRouting: boolean = gate.levelEnforced;
     return {
       workUnits: request.workUnits,
       requireCompletePlan: isDurableCoordination(request.coordinationMode),
@@ -7796,7 +8037,8 @@ const squadExecutionService = new SquadExecutionService({
       initialTasks: request.slots.map((slot) => slot.initialTask),
       sourceBytes: request.sourceBundle?.sources.reduce((sum, source) => sum + source.byteSize, 0),
       requiredMcpServers, requiredModels, requiredProviders, inventory, slotRoutes,
-      enforceRouting
+      enforceRouting,
+      ...(gate.degradedSlots.length ? { levelExemptSlotIds: gate.degradedSlots.map((slot) => slot.slotId) } : {})
     };
   }
   , authorizePlanRegistration: (record, workUnits, submitter) => {
@@ -7838,6 +8080,16 @@ teamPlanHandoff = new TeamPlanHandoff({
     return (record?.workUnits?.length ?? 0) === 0;
   },
   ...planCorrectionHandoffHooks,
+  // One automatic correction round for a coordinator-authored plan the shared Squad check rejects.
+  judgeAuthored: (ctx, units) => judgeInferredPlan({
+    execution: async (projectId, executionId) => await executionStore.getInProject(projectId, executionId),
+    judge: async (projectId, teamId, planUnits) => {
+      const team = teams.list().find((candidate) => candidate.id === teamId);
+      if (!team) return undefined;
+      const personaById = new Map(personas.list().map((persona) => [persona.id, persona]));
+      return { findings: (await judgePlanFindings(projectId, teamId, { workUnits: planUnits })).findings, summary: toTeamSummary(team, (id) => personaById.get(id)) };
+    }
+  }, ctx, units),
   register: async (ctx, units) => {
     const result = await squadExecutionService.registerPlan(
       { role: 'orchestrator', slotId: ctx.slotId, executionId: ctx.executionId, projectId: ctx.projectId, principalId: ctx.sessionId },
@@ -7846,6 +8098,7 @@ teamPlanHandoff = new TeamPlanHandoff({
     return result.ok ? { ok: true } : { ok: false, message: result.message };
   },
   nudge: (sessionId, text) => ptys.reply(sessionId, text),
+  reportStalled: createStallNotice(inboxStore.append.bind(inboxStore), logMainError),
   cleanup: (projectRoot, executionId) => cleanupHandoffFiles(projectRoot, executionId),
   logError: (message, error) => logMainError(message, error),
   logInfo: logMainInfo,
@@ -7854,9 +8107,24 @@ teamPlanHandoff = new TeamPlanHandoff({
       const record = await executionStore.getInProject(projectId, executionId);
       return record ? { attempt: record.attempt, stateVersion: record.stateVersion } : undefined;
     },
-    log: logMainInfo
-  })
+    // DIAGNOSTIC: warn level so the read/register/nudge trace lands in desktop.log.
+    log: warnLog
+  }),
+  diagnose: planHandoffDiagnostics(warnLog),
+  requireTurnStart: true,
+  timedRecheck: { intervalMs: 15_000, windowMs: 270_000 }
 });
+const apiErrorDispatchCtx: DispatchCtx = createApiErrorDispatchCtx({
+  ptys,
+  onTurnFailed: (id) => wrapUpClose.onTurnFailed(id),
+  logError: logMainError,
+  routeStop: (id, s, event) => routeApiErrorStop({ service: apiErrorResume, recovery: workerApiErrorRecovery, enabled: () => workerApiErrorRecoveryEnabled(store.getConfig()), agentStatus, logMainError }, id, s, event)
+});
+const apiErrorProducerFor = apiErrorProducerLookup({
+  ptys,
+  producerForProfile: (profile) => providerFor(profile as LaunchProfileId).adapter.status?.apiErrorProducer
+});
+
 const squadSessionExit = {
   executionStore,
   handleSquadWorktreeTerminal: handleSquadTerminalWithReport,
@@ -7895,6 +8163,11 @@ function teamExecutionEnabled(): boolean {
   return config.teamJobLaunchEnabled !== false || config.composerShowAutonomousTeam !== false;
 }
 
+/** Agent-driven `execution.start` names a saved Squad; its saved run limits cap whatever policy the agent asked for. */
+function limitedExecutionService() {
+  return withSquadLimits(squadExecutionService, (teamId) => teams.list().find((candidate) => candidate.id === teamId)?.limits);
+}
+
 const startTriggeredSquad = createTriggeredSquadLauncher({
   projects: store,
   teams,
@@ -7918,6 +8191,10 @@ export async function startTeamJobFromUi(
   const teamId = typeof input.teamId === 'string' ? input.teamId.trim() : '';
   const projectId = typeof input.projectId === 'string' ? input.projectId.trim() : '';
   const originalGoal = typeof input.goal === 'string' ? input.goal.trim() : '';
+  if (input.planText !== undefined && (typeof input.planText !== 'string' || input.planText.length > TEAM_PLAN_TEXT_MAX_CHARS)) {
+    return { ok: false, code: 'INVALID', message: `planText must be a string of at most ${TEAM_PLAN_TEXT_MAX_CHARS} characters` };
+  }
+  const planText = input.planText?.trim() || undefined;
   const coordinationMode = input.coordinationMode ?? 'structured';
   if (coordinationMode !== 'structured' && coordinationMode !== 'freeform') {
     return { ok: false, code: 'INVALID', message: 'invalid Team coordination mode' };
@@ -7984,7 +8261,7 @@ export async function startTeamJobFromUi(
   if (input.previewToken !== undefined) {
     try {
       const caller = sourceContext ? { kind: 'window' as const, windowId: sourceContext.windowId } : { kind: 'shared-owner' as const };
-      const previewInput = { teamId, projectId, goal: originalGoal, coordinationMode, sourceCapabilityIds, ...parsedOptions.data };
+      const previewInput = { teamId, projectId, goal: originalGoal, ...(planText ? { planText } : {}), coordinationMode, sourceCapabilityIds, ...parsedOptions.data };
       composerPreview = await claimSquadComposerPreview(previewInput, input.previewToken, caller);
     } catch (error) {
       if (error instanceof SquadPreviewAdmissionError) return { ok: false, code: 'LAUNCH_CHANGED', message: error.message };
@@ -8001,7 +8278,7 @@ export async function startTeamJobFromUi(
   const renewal = scopedSourceRenewal(executionSources, sourceContext?.windowId, projectId);
   const sources: SquadSourceProvider | undefined = sourceContext ? { kind: 'window', windowId: sourceContext.windowId } : undefined;
   return withRenewedSources(() => withProposalLaunch(proposalLaunchDeps, proposalId, projectId, (proposal, reviewedSourcePaths) => launchSquad(squadLaunchDeps, {
-    teamId, project, slots, goal: originalGoal, coordinationMode, title: originalJobTitle, summary: originalSummary,
+    teamId, project, slots, goal: originalGoal, ...(planText ? { planText } : {}), coordinationMode, title: originalJobTitle, summary: originalSummary,
     completionInboxNotice: true,
     sourceCapabilityIds, goalSources: discoveredGoalSources, reviewedSourcePaths,
     launchOptions: proposal?.launchOptions ?? parsedOptions.data,
@@ -8040,6 +8317,12 @@ const squadLaunchDeps: SquadLaunchDeps = {
   newLaunchRequestId: () => `ui:${randomUUID()}`,
   inboxStore,
   planCorrectionLaunchBinding,
+  canInferPlanForTeam: (teamId) => { const team = teams.list().find((candidate) => candidate.id === teamId); return !!team && canInferPlanForTeam(team); },
+  teamLimits: (teamId) => teams.list().find((candidate) => candidate.id === teamId)?.limits,
+  planFindings: async (projectId, teamId, workUnits) => ({
+    findings: (await judgePlanFindings(projectId, teamId, { workUnits })).findings,
+    squadName: teams.list().find((candidate) => candidate.id === teamId)?.name ?? teamId
+  }),
   nameTeamExecution: (launchId, objective, explicitTitle, sourceTexts) => nameTeamExecution(launchId, objective, explicitTitle, sourceTexts),
   autonomousTimeoutMs: () => store.getConfig().autonomousTimeoutMs,
   autonomousBlockedWaitMs: () => store.getConfig().autonomousBlockedWaitMs,
@@ -8187,21 +8470,25 @@ export async function runReviewedScheduledTeamNow(scheduleId: string, previewTok
  * out across.
  */
 /* v8 ignore next -- window construction runs only at the built-Electron boundary */
-function createWindow(projectId?: string, repairOnly = false, view?: PluginViewTarget, threadView?: ThreadViewTarget) {
+function createWindow(projectId?: string, repairOnly = false, options: {
+  view?: PluginViewTarget; threadView?: ThreadViewTarget; secondary?: boolean
+} = {}) {
+  const { view, threadView } = options;
+  const secondary = options.secondary ?? Boolean(projectId || threadView);
   // Capture the window the user invoked from BEFORE creating the new one, so a
   // scoped window cascades off its actual opener (not whatever `mainWindow()`
   // would pick, and never off itself once it's in the map).
   const opener = BrowserWindow.getFocusedWindow();
-  // Only the unscoped main window restores/persists saved bounds. Scoped
+  // Only the primary window restores/persists saved bounds. Additional
   // windows open at the default size, cascaded so stacked ones don't perfectly
   // overlap — per-project bounds persistence is a deliberate later step.
   const config = store.getConfig();
   // A thread view window may have no project, so it is checked on its own.
-  const scoped = !!projectId || repairOnly || !!threadView;
-  const saved = scoped ? undefined : config.windowBounds;
+  const useMainBounds = !secondary && !repairOnly;
+  const saved = useMainBounds ? config.windowBounds : undefined;
   const restored = restoreWindowState(
     saved,
-    scoped ? undefined : config.windowMaximized,
+    useMainBounds ? config.windowMaximized : undefined,
     screen.getAllDisplays(),
     screen.getPrimaryDisplay()
   );
@@ -8235,13 +8522,13 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
     ...(viewGeometry
       ? viewGeometry.options
       : {
-          width: scoped ? 1400 : restored.bounds.width,
-          height: scoped ? 900 : restored.bounds.height,
-          x: scoped ? undefined : restored.bounds.x,
-          y: scoped ? undefined : restored.bounds.y,
-          minWidth: scoped ? 900 : restored.minWidth,
+          width: useMainBounds ? restored.bounds.width : 1400,
+          height: useMainBounds ? restored.bounds.height : 900,
+          x: useMainBounds ? restored.bounds.x : undefined,
+          y: useMainBounds ? restored.bounds.y : undefined,
+          minWidth: useMainBounds ? restored.minWidth : 900,
           /* v8 ignore next -- window geometry is covered by built-Electron E2E */
-          minHeight: scoped ? 600 : restored.minHeight
+          minHeight: useMainBounds ? restored.minHeight : 600
         }),
     title: 'Zana',
     icon: productIconImage(),
@@ -8279,11 +8566,11 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
       // tokens it CAN read (process.argv): the theme it seeds before first
       // paint, and the e2e flag. The e2e flag is only present when the tap is
       // enabled; it gates the window.__zccTest bridge in preload.
-      additionalArguments: [windowTheme.themeArg, ...(E2E_TAP_ENABLED ? ['--zcc-e2e'] : [])]
+      additionalArguments: [windowTheme.themeArg, ...(secondary ? ['--zcc-secondary-window'] : []), ...(E2E_TAP_ENABLED ? ['--zcc-e2e'] : [])]
     }
   });
 
-  windows.set(win.id, { win, projectId, view, threadView });
+  windows.set(win.id, { win, projectId, view, threadView, secondary });
   if (view) {
     bindPluginViewCloseLifecycle(win, pluginViewCloseGuard, () => windowShutdownStarted);
     pluginViews.broadcast();
@@ -8346,7 +8633,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
 
   // A scoped window opens slightly offset from its opener so a freshly-opened
   // project window isn't hidden exactly behind the window it was opened from.
-  if (projectId && !view && !threadView && opener && opener !== win && !opener.isDestroyed()) {
+  if (secondary && !view && !threadView && opener && opener !== win && !opener.isDestroyed()) {
     const b = opener.getBounds();
     win.setBounds({ x: b.x + 36, y: b.y + 36, width: b.width, height: b.height });
   }
@@ -8373,7 +8660,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
   // The unscoped main window owns the saved bounds; a plugin view window keeps
   // its own entry in a capped record, and thread view windows share one entry.
   // Project windows open at the default size.
-  if (!scoped || viewKey || threadView) {
+  if (useMainBounds || viewKey || threadView) {
     const controller = threadView
       ? createBoundsStateController({
           win,
@@ -8466,7 +8753,7 @@ function createWindow(projectId?: string, repairOnly = false, view?: PluginViewT
     });
   }
 
-  if (!scoped) {
+  if (useMainBounds) {
     // macOS can reapply native zoom state after BrowserWindow construction on a
     // process relaunch, overriding explicit constructor bounds. Reassert normal
     // state once native window restoration has finished.
@@ -8508,6 +8795,7 @@ function wireBridgeListeners() {
     // Feed the raw PTY stream through the OSC-title detector. Cheap and
     // off the render path — only emits when the agent state actually changes.
     agentStatus.observeData(sessionId, data);
+    touchApiErrorDispatch(apiErrorDispatchCtx, sessionId);
     // The registration chooses a primary visual source. Lifecycle hooks remain
     // an additive AgentStatusTracker overlay, never a mutually exclusive mode.
     const session = ptys.getSession(sessionId);
@@ -8526,6 +8814,7 @@ function wireBridgeListeners() {
     safeSend(IPC.terminals.onExit, sessionId, code);
     ptyLifecycle.exited(sessionId, code, signal);
     squadProposalNotifier.forget(sessionId);
+    teamPlanHandoff.forgetSession(sessionId);
     const ledgerEntryId = launchLedgerEntriesBySession.get(sessionId);
     launchLedgerEntriesBySession.delete(sessionId);
     const authorizationId = launchAuthorizationBySession.get(sessionId);
@@ -8613,6 +8902,7 @@ function wireBridgeListeners() {
     // Same release for the OpenCode session-id resolver's cache (Rule 5).
     heartbeat.remove(sessionId);
     apiErrorResume.forget(sessionId);
+    forgetApiErrorDispatch(apiErrorDispatchCtx, sessionId, apiErrorProducerFor(sessionId));
     workerApiErrorRecovery.forget(sessionId);
     wrapUpClose.forget(sessionId);
     // Drop a session that exits while working so a dead pty can't pin the Mac
@@ -8775,6 +9065,8 @@ function wireBridgeListeners() {
       agentSounds.observe(`cli:${sessionId}`, displayAgentState(sessionId, state));
     } else agentSounds.remove(`cli:${sessionId}`);
     if (session) captureNativeRecoverySnapshot(session);
+    // DIAGNOSTIC: one warn line per orchestrator status edge, so a missing idle edge is visible in desktop.log.
+    observeOrchestratorEdge(teamPlanHandoff, warnLog, sessionId, state, seq, session?.cohort);
     if (state === 'idle' && session) {
       onOrchestratorIdle({
         drainCoordinatorWake: (projectId, executionId, id) => squadExecutionService.drainCoordinatorWake(projectId, executionId, id),
@@ -9144,9 +9436,12 @@ function registerIpc() {
     get offLoudInboxAppended() { return offLoudInboxAppended; },
     set offLoudInboxAppended(value) { offLoudInboxAppended = value; },
     get openProjectWindow() { return openProjectWindow; },
+    get openNewWindow() { return openNewWindow; },
+    leaveProjectWindow: (win, destination) => leaveProjectWindow(windows.get(win.id), destination, rendererUrl()),
     get overseerAudit() { return overseerAudit; },
     get apiErrorResume() { return apiErrorResume; },
     get squadWorkerRestarter() { return squadWorkerRestarter; },
+    get squadWorkerRespawner() { return workerRespawner; },
     get workerApiErrorRecovery() { return workerApiErrorRecovery; },
     get packAndInstallLocal() { return packAndInstallLocal; },
     get pendingWhatsNew() { return pendingWhatsNew; },
@@ -9169,6 +9464,7 @@ function registerIpc() {
     get restoreSquadWorktreeFollowUpClaim() { return squadFollowUpClaims.restoreClaim; },
     get restorePrincipal() { return restorePrincipal; },
     get runDiskSync() { return runDiskSync; },
+    productServerCredential: ensureProductServerCredential,
     get runtimeSupervisor() { return runtimeSupervisor; },
     ensureMainWindowReady,
     get safeHandle() { return safeHandle; },
@@ -9180,6 +9476,7 @@ function registerIpc() {
     get scheduler() { return scheduler; },
     get setActiveProjectSkillsWatcher() { return setActiveProjectSkillsWatcher; },
     get showMainWindow() { return showMainWindow; },
+    sendToMainWindow,
     get skillBundles() { return skillBundles; },
     get squadExecutionService() { return squadExecutionService; },
     get squadWorktreeAction() { return squadWorktreeRuntime.squadWorktreeAction; },
@@ -9240,7 +9537,11 @@ function buildAppMenu() {
       label: 'File',
       submenu: [
         {
-          label: 'New Claude Tab',
+          label: 'New Window',
+          click: () => openNewWindow()
+        },
+        {
+          label: 'New Tab',
           accelerator: 'CmdOrCtrl+T',
           // Hint only; shortcuts.ts owns the keystroke (see Settings… above).
           registerAccelerator: false,
@@ -9306,19 +9607,14 @@ function buildAppMenu() {
       ]
     },
     {
+      // role 'window' makes this the macOS windows menu, which lists open windows.
       label: 'Window',
+      role: 'window',
       submenu: [
         { role: 'minimize' },
         companionHost.menuItem(),
         { role: 'zoom' },
-        ...(isMac
-          ? ([
-              { type: 'separator' as const },
-              { role: 'front' as const },
-              { type: 'separator' as const },
-              { role: 'window' as const }
-            ] satisfies Electron.MenuItemConstructorOptions[])
-          : ([{ role: 'close' as const }] satisfies Electron.MenuItemConstructorOptions[]))
+        ...windowMenuTail(isMac)
       ]
     },
     {
@@ -9805,7 +10101,7 @@ async function bootstrapNormal() {
       isEnabled: companionEnabled,
       showMainWindow,
       e2e: E2E_LAUNCH,
-      sendToApp: safeSend,
+      sendToApp: sendToMainWindow,
       preloadPath: join(__dirname, '../preload/index.js'),
       logger: logMainError
     });
@@ -9819,9 +10115,9 @@ async function bootstrapNormal() {
       showWindow: showMainWindow,
       focusSession: (sessionId, projectId) => {
         showMainWindow();
-        safeSend('app:focusSession', sessionId, projectId);
+        void sendToMainWindow('app:focusSession', sessionId, projectId);
       },
-      openScheduler: (taskId) => safeSend('app:openScheduler', taskId),
+      openScheduler: (taskId) => void sendToMainWindow('app:openScheduler', taskId),
       popover: menubar,
       popoverEnabled: menubarPopoverEnabled,
       commandCenter: { enabled: companionEnabled, enter: companionHost.enter },
@@ -10025,8 +10321,11 @@ async function bootstrapNormal() {
        // A lifecycle Stop is the authoritative end of an interactive turn. The
        // tracker keeps fallback behaviour for harnesses that never send one.
        agentStatus.turnFinished(sessionId);
+       const turnCohort = ptys.getSession(sessionId)?.cohort;
+       if (turnCohort?.executionId && turnCohort.role === 'worker' && turnCohort.slotId) void squadExecutionService.recordWorkerTurn(turnCohort.executionId, turnCohort.slotId, sessionId).catch((error) => logMainError(`execution worker turn ${sessionId}`, error));
        wrapUpClose.onTurnFinished(sessionId);
        apiErrorResume.cancel(sessionId);
+       disarm(apiErrorDispatchCtx, sessionId);
        void scheduler.onAgentFinished(sessionId).catch(error => logMainError('scheduler Stop', error));
       // A goal worker finishing its turn is the trigger to evaluate + branch
       // (achieved / re-spawn / escalate). No-op for non-goal sessions.
@@ -10049,11 +10348,10 @@ async function bootstrapNormal() {
         const event = providerFor(session.profile as LaunchProfileId).adapter.status?.interactionHook?.(body);
         if (event?.kind === 'requested') agentStatus.inputRequested(sessionId, event.key);
         else if (event?.kind === 'resolved') agentStatus.inputResolved(sessionId, event.keys);
-        else if (event?.kind === 'interrupted') agentStatus.turnFinished(sessionId);
+        else if (event?.kind === 'interrupted') { disarm(apiErrorDispatchCtx, sessionId); agentStatus.turnFinished(sessionId); }
         else if (event?.kind === 'api-error-stop') {
           // A wrap-up turn that an API error ended is not finished: it stays open, with an inbox note.
-          wrapUpClose.onTurnFailed(sessionId);
-          routeApiErrorStop({ service: apiErrorResume, recovery: workerApiErrorRecovery, enabled: () => workerApiErrorRecoveryEnabled(store.getConfig()), agentStatus, logMainError }, sessionId, session, event);
+          dispatchApiErrorStop(apiErrorDispatchCtx, sessionId, event);
         }
         return;
       }
@@ -10075,6 +10373,8 @@ async function bootstrapNormal() {
       } else {
         ptyLifecycle.turnStarted(sessionId, projectId);
         apiErrorResume.cancel(sessionId);
+        disarm(apiErrorDispatchCtx, sessionId);
+        { const producer = apiErrorProducerFor(sessionId); if (producer) armQuietCheck(apiErrorDispatchCtx, sessionId, producer, transcriptRefForSession(session)); }
         workerApiErrorRecovery.onTurnStarted(sessionId, agentStatus.get(sessionId));
         agentStatus.turnStarted(sessionId);
         wrapUpClose.onTurnStarted(sessionId);
@@ -10184,7 +10484,7 @@ async function bootstrapNormal() {
     // server's signed native-tool-policy route instead.
     onNativeToolPolicyHook: nativeToolPolicyHook,
     ptyPluginTools,
-    onNativeToolSettledHook: nativeToolSettledHook,
+    onNativeToolSettledHook: claimSignalSettledHook,
     // Upper bound on the whole exchange; mcp-server.ts fails CLOSED (deny) if
     // this elapses, the inverse of overseerDecisionTimeoutMs's fail-open guard.
     nativeToolPolicyDecisionTimeoutMs: NATIVE_TOOL_POLICY_DECISION_TIMEOUT_MS,
@@ -10509,7 +10809,7 @@ async function bootstrapNormal() {
     cancelTeamLaunch: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? cancelTeamLaunch : undefined,
     getTeamLaunch: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? getTeamLaunch : undefined,
     reportTeamTask: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? reportTeamTask : undefined,
-    executionService: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? squadExecutionService : undefined,
+    executionService: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? limitedExecutionService() : undefined,
     executionHandoffs: (store.getConfig().teamLaunchEnabled || teamExecutionEnabled()) ? executionHandoffs : undefined,
     resolveExecutionLaunchApproval: resolveTeamLaunchApproval,
     resolveExecutionCohortBinding: async (sessionId, projectId, fence) => {
@@ -10847,6 +11147,7 @@ async function bootstrapNormal() {
       executionClaimReconcileTimer ??= setInterval(() => {
         void reconcileModernMembers().then(() => squadExecutionService.reconcileActive()).catch((err) => logMainError('execution.reconcileActive', err));
         void squadExecutionService.redispatchStalled().catch((err) => logMainError('execution.redispatchStalled', err));
+        void squadExecutionService.sweepVisibility().catch((err) => logMainError('execution.sweepVisibility', err));
         // Deliver a queued coordinator wake BEFORE escalating its blocker: a remote
         // coordinator never emits a raw idle edge, so this poll is the only path that
         // gets the self-heal ask in front of it. Escalation is the fallback if it
@@ -11072,7 +11373,10 @@ async function bootstrapNormal() {
     // reader can't see.
     listPersonas: () => personas.list().map(toPersonaSummary),
     // Team catalogue → non-sensitive metadata; the `team.list` control-plane op.
-    listTeams: () => teams.list().map(toTeamSummary),
+    listTeams: () => {
+      const personaById = new Map(personas.list().map((persona) => [persona.id, persona]));
+      return teams.list().map((team) => toTeamSummary(team, (id) => personaById.get(id)));
+    },
     // Mirror the agent_send MCP tool: resolve handle (any project) → session id,
     // inject if the target is at rest (any harness), always audit to the message log.
     sendToAgent: (to, message) => {

@@ -187,6 +187,23 @@ describe('threadOpenListener', () => {
     expect(latest).toHaveBeenCalledWith(expect.stringContaining('t-1'));
   });
 
+  it('honors the menu bar’s main-window destination', () => {
+    const event = { type: 'thread-open', targetWindow: 'main', threadId: 't1', projectId: 'p1' };
+    const listener = threadOpenListener({ current: vi.fn() });
+    try {
+      for (const surface of [{}, { cc: { windows: { secondary: true } } }]) {
+        vi.stubGlobal('window', surface);
+        listener(event);
+        expect(h.enterProjectFocus).not.toHaveBeenCalled();
+      }
+      vi.stubGlobal('window', { cc: { windows: { secondary: false } } });
+      listener(event);
+      expect(h.enterProjectFocus).toHaveBeenCalledExactlyOnceWith('p1');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('ignores file, terminal, malformed and foreign payloads', () => {
     const listener = threadOpenListener({ current: vi.fn() });
     for (const payload of [null, 'x', { type: 'other', threadId: 't', projectId: 'p' }, { type: 'thread-open', threadId: 't', projectId: 'p', file: 'a.ts' },
@@ -208,13 +225,24 @@ describe('desktop thread tabs inspection', () => {
     h.openThreadModal.mockReset();
     h.openAgentModal.mockReset();
   });
-  it('opens a thread page while keeping CLI agents in their inspector', () => {
+  it('opens thread and CLI agent pages on a wide viewport', () => {
     const navigate = vi.fn();
     inspectThread('tabbed', 'p', navigate);
     expect(navigate).toHaveBeenCalledWith('/threads/tabbed');
     expect(h.openThreadModal).not.toHaveBeenCalled();
     inspectAgentSession('cli', 'p', navigate);
+    expect(navigate).toHaveBeenCalledWith('/sessions/cli');
+    expect(h.openAgentModal).not.toHaveBeenCalled();
+  });
+  it('keeps CLI agents in the inspector on compact viewports or with tabs off', () => {
+    const navigate = vi.fn();
+    h.compact = true;
+    inspectAgentSession('cli', 'p', navigate);
+    h.compact = false; h.threadTabsEnabled = false;
+    inspectAgentSession('cli2', 'p', navigate);
+    expect(navigate).not.toHaveBeenCalled();
     expect(h.openAgentModal).toHaveBeenCalledWith('cli', 'p');
+    expect(h.openAgentModal).toHaveBeenCalledWith('cli2', 'p');
   });
   it('keeps the project rail when opening a tab from project view', () => {
     h.nav = 'projects'; h.focusedProjectId = 'p';

@@ -39,7 +39,7 @@ describe('docs plugin contract', () => {
     expect(app.__zccPluginApp).toBe(true);
     expect(set.navPanels).toHaveLength(0);
     expect(set.threadPanelActions).toHaveLength(1);
-    expect(set.threadPanelActions[0]?.id).toBe('document');
+    expect(set.threadPanelActions[0]).toMatchObject({ id: 'document', title: 'Library', projectTabShortcut: true });
     expect(set.newThreadPanelActions).toHaveLength(0);
     expect(set.fileOpeners[0]?.extensions).toEqual(['md', 'mdx']);
     expect(set.messageDirectives[0]?.id).toBe('doc');

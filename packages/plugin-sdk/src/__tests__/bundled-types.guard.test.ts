@@ -71,6 +71,28 @@ const SURFACES: Array<[interfaceName: string, prefix: string]> = [
 ];
 
 describe('bundled SDK types and reference doc cover the public API', () => {
+  it('typechecks scoped thread interactions from standalone plugin declarations', () => {
+    expect(pageContextTypeDiagnostics(`
+      import { PluginThreadInteractionError } from '@zana-ai/zcc-plugin-sdk';
+      import type { PluginThreadInteraction, PluginRelayedHumanActor } from '@zana-ai/zcc-plugin-sdk';
+      import type { ZccPluginApi, PluginThreadInteractions } from '@zana-ai/zcc-plugin-sdk/server';
+      declare const zcc: ZccPluginApi;
+      const api: PluginThreadInteractions = zcc.sdk.threads.interactions;
+      const actor: PluginRelayedHumanActor = { kind: 'plugin-relayed-human', pluginId: zcc.pluginId, externalUser: 'tenant/user' };
+      async function answer(threadId: string): Promise<PluginThreadInteraction | null> {
+        const capabilities = await zcc.sdk.capabilities.forThread({ threadId });
+        if (!capabilities.capabilities.some(c => c.id === 'thread-interactions' && c.available)) return null;
+        const [request] = await api.list({ threadId });
+        if (!request || request.refusalReason) return null;
+        return api.resolve({ threadId, interactionId: request.id, resolution: { decision: 'deny' }, actor });
+      }
+      new PluginThreadInteractionError('conflict', 'Already answered', 409);
+      // @ts-expect-error Native proof is not relay authority.
+      const native: PluginRelayedHumanActor = 'human';
+      // @ts-expect-error A decision cannot be answered without an external actor.
+      api.resolve({ threadId: 't1', interactionId: 'i1', resolution: { decision: 'deny' } });
+    `)).toEqual([]);
+  });
   it('finds members to check', () => {
     expect(interfaceMembers(serverSource, 'ZccPluginApi')).toEqual(expect.arrayContaining(['hooks', 'ui', 'agents', 'host']));
   });

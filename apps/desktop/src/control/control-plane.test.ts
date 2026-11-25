@@ -635,6 +635,27 @@ describe('dispatchOp', () => {
     expect(preview).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects a non-string planText instead of dropping it', async () => {
+    const deps = makeDeps();
+    for (const op of ['team.preview', 'team.launch'] as const) {
+      expect(await dispatchOp(op, { teamId: 't1', projectId: 'p1', goal: 'ship', mode: 'structured', planText: 5 }, deps))
+        .toMatchObject({ ok: false, code: 'BAD_ARGS' });
+    }
+  });
+
+  it('forwards planText to preview and launch and rejects an over-cap one', async () => {
+    const deps = makeDeps();
+    const preview = vi.fn(async () => ({ ok: true as const, value: { previewToken: 'opaque' } } as never));
+    deps.teamOps!.preview = preview;
+    const input = { teamId: 't1', projectId: 'p1', goal: 'ship', planText: 'plan body', mode: 'structured' };
+    expect(await dispatchOp('team.preview', input, deps)).toMatchObject({ ok: true });
+    expect(preview).toHaveBeenCalledWith(input);
+    expect(await dispatchOp('team.launch', input, deps)).toMatchObject({ ok: true });
+    expect(deps.teamOps!.launch).toHaveBeenCalledWith(input);
+    await expect(dispatchOp('team.launch', { ...input, planText: 'x'.repeat(64_001) }, deps)).resolves.toMatchObject({ ok: false, code: 'BAD_ARGS' });
+    expect(deps.teamOps!.launch).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects malformed team operations before invoking Team services', async () => {
     const deps = makeDeps();
     await expect(dispatchOp('team.launch', {

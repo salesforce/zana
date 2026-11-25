@@ -3,6 +3,7 @@ import { DelayedStencilList } from '../../components/ui/Skeleton.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { Bot, ChevronRight, Copy, FolderOpen, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import type { Persona } from '@zana-ai/zcc-domain/product';
+import { PERSONA_DROP_REASON_TEXT, PERSONA_LOAD_WARNINGS_MAX, type PersonaLoadWarning } from '@zana-ai/zcc-domain/persona-validation';
 import { usePersonas, useUi } from '@/store';
 import { personaIcon } from '@/lib/profileIcon';
 import { getScopedProjectId } from '@/lib/windowScope';
@@ -70,6 +71,18 @@ export function PersonasView() {
   // Inbox & Scheduler lists.
   const [rowMenu, setRowMenu] = useState<{ persona: Persona; x: number; y: number; trigger: HTMLElement } | null>(null);
   const pushToast = useUi((s) => s.pushToast);
+  const [warnings, setWarnings] = useState<PersonaLoadWarning[]>([]);
+
+  // Dropped persona files. Re-read whenever the persona list changes (the
+  // store refreshes both together); a failed read just hides the notice.
+  useEffect(() => {
+    let live = true;
+    void Promise.resolve()
+      .then(() => product.personas.loadWarnings())
+      .then((w) => { if (live) setWarnings(Array.isArray(w) ? w : []); })
+      .catch(() => { if (live) setWarnings([]); });
+    return () => { live = false; };
+  }, [allPersonas]);
 
   const openRowMenu = (e: ReactMouseEvent, persona: Persona) => {
     e.preventDefault();
@@ -139,6 +152,8 @@ export function PersonasView() {
             </button>
             <RevealPersonasButton />
         </div>
+
+        <PersonaLoadWarnings warnings={warnings} />
 
         <div className="skills-layout">
           <section className="skills-left">
@@ -243,6 +258,27 @@ export function PersonasView() {
     }
     pushToast(`Created persona “${result.value.name}”`, 'info');
   }
+}
+
+/** Persona files the loader ignored: file name and a fixed reason, never contents. */
+export function PersonaLoadWarnings({ warnings }: { warnings: PersonaLoadWarning[] }) {
+  if (warnings.length === 0) return null;
+  const capped = warnings.length >= PERSONA_LOAD_WARNINGS_MAX;
+  return (
+    <div className="settings-note persona-load-warnings" role="status" data-testid="persona-load-warnings">
+      <strong>
+        {warnings.length} persona file{warnings.length === 1 ? ' was' : 's were'} ignored
+      </strong>
+      <ul>
+        {warnings.map((w) => (
+          <li key={`${w.source}:${w.file}`}>
+            <code>{w.file}</code> ({w.source === 'project' ? 'Project' : 'User'}): {PERSONA_DROP_REASON_TEXT[w.reason] ?? 'Invalid persona file'}
+          </li>
+        ))}
+      </ul>
+      {capped && <div>Showing the first {PERSONA_LOAD_WARNINGS_MAX}; more files may be ignored.</div>}
+    </div>
+  );
 }
 
 /**

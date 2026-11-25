@@ -61,6 +61,15 @@ function expand(name: string, id: string) {
   }));
 }
 
+describe('SquadsView unresolved persona badge', () => {
+  it('badges a squad that references an unknown persona and not one that resolves', () => {
+    const { container } = render(<SquadsView />);
+    const badge = (id: string) => container.querySelector(`li[data-settings-target="squads.squad.${id}"] [data-testid="team-unresolved-persona-badge"]`);
+    expect(badge('user:labeled')?.getAttribute('title')).toBe('Unknown persona: ghost');
+    expect(badge('user:plain-orch')).toBeNull();
+  });
+});
+
 describe('SquadsView member label + persona', () => {
   it('leads with the label and shows the persona as a chip (orchestrator label from its slot)', () => {
     const rows = expand('Labeled squad', 'user:labeled');

@@ -23,6 +23,13 @@ describe('parseDocumentPanelParams', () => {
     });
   });
 
+  it('resolves a late owning project without overriding an explicit document scope', () => {
+    expect(parseDocumentPanelParams({ path: 'note.md' }, ' owner ')).toEqual({ path: 'note.md', title: 'note.md', scope: 'project', projectId: 'owner' });
+    expect(parseDocumentPanelParams({ path: 'note.md', projectId: 'explicit' }, 'owner')?.projectId).toBe('explicit');
+    expect(parseDocumentPanelParams({ path: 'note.md' }, ' ')).toBeNull();
+    expect(parseDocumentPanelParams({ path: 'note.md', scope: 'global' }, 'owner')).not.toHaveProperty('projectId');
+  });
+
   it('allows global docs without a project id', () => {
     expect(parseDocumentPanelParams({ path: 'ideas/note.html', scope: 'global' })).toEqual({
       path: 'ideas/note.html',

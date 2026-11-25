@@ -27,7 +27,9 @@ import {
   activePinnedView,
   applySecondaryPanelOpenWidth,
   secondaryPanelOpenWidthPx,
-  secondaryPanelShowsInspectorFooter
+  secondaryPanelShowsInspectorFooter,
+  setClosableTabState,
+  MAX_TAB_STATE_BYTES
 } from './threadSecondaryPanelState.js';
 
 describe('thread secondary panel state', () => {
@@ -526,4 +528,66 @@ describe('openPluginTool', () => {
     // Another plugin's action with the same id is its own tab.
     expect(openPluginTool(patched, { pluginId: 'gus', actionId: 'graph', title: 'Graph' }).tabs).toHaveLength(3);
   });
+});
+
+describe('plugin tab state', () => {
+  const open = () => addClosableTab(emptySecondaryPanelState(), {
+    kind: 'plugin', title: 'Docs', moduleId: 'm', actionId: 'a', params: { docId: 'd1' }
+  });
+
+  it('stores state without changing tab identity', () => {
+    const state = open();
+    const id = state.tabs[0]!.id;
+    const saved = setClosableTabState(state, id, { docId: 'd2' });
+    expect(saved.tabs[0]!.tabState).toEqual({ docId: 'd2' });
+    expect(saved.tabs[0]!.params).toEqual({ docId: 'd1' });
+    // Re-opening with the original params still focuses the same tab.
+    const reopened = addClosableTab({ ...saved, activeId: 'info' }, { kind: 'plugin', title: 'Docs', moduleId: 'm', actionId: 'a', params: { docId: 'd1' } });
+    expect(reopened.tabs).toHaveLength(1);
+    expect(reopened.activeId).toBe(id);
+  });
+
+  it('ignores equal, unknown, non-plugin and oversized writes', () => {
+    const state = open();
+    const id = state.tabs[0]!.id;
+    const saved = setClosableTabState(state, id, { a: 1 });
+    expect(setClosableTabState(saved, id, { a: 1 })).toBe(saved);
+    expect(setClosableTabState(state, 'missing', { a: 1 })).toBe(state);
+    const withTerminal = addClosableTab(state, { kind: 'terminal', title: 'T', sessionId: 's' });
+    expect(setClosableTabState(withTerminal, withTerminal.activeId, { a: 1 })).toBe(withTerminal);
+    expect(setClosableTabState(saved, id, 'x'.repeat(MAX_TAB_STATE_BYTES + 1))).toBe(saved);
+    expect(setClosableTabState(saved, id, null).tabs[0]!.tabState).toBeNull();
+    // The cap counts UTF-8 bytes: 3-byte characters pass by length but not by size.
+    expect(setClosableTabState(saved, id, '€'.repeat(MAX_TAB_STATE_BYTES / 3 + 1))).toBe(saved);
+  });
+
+  it('clears state when params change and keeps it otherwise', () => {
+    const state = open();
+    const id = state.tabs[0]!.id;
+    const saved = setClosableTabState(state, id, { a: 1 });
+    expect(patchClosableTab(saved, id, { title: 'Renamed' }).tabs[0]!.tabState).toEqual({ a: 1 });
+    expect(patchClosableTab(saved, id, { params: { docId: 'd1' } })).toBe(saved);
+    const changed = patchClosableTab(saved, id, { params: { docId: 'd9' } });
+    expect(changed.tabs[0]!.tabState).toBeUndefined();
+    expect(changed.tabs[0]!.params).toEqual({ docId: 'd9' });
+  });
+
+  it('persists valid state and drops invalid or oversized stored state', () => {
+    const raw = (tabState: unknown) => ({
+      version: 1, isOpen: true, isMaximized: false, widthPx: 400, activeId: 'p',
+      tabs: [{ id: 'p', kind: 'plugin', title: 'Docs', moduleId: 'm', tabState }]
+    });
+    expect(parseSecondaryPanelState(raw({ docId: 'd' })).tabs[0]!.tabState).toEqual({ docId: 'd' });
+    expect(parseSecondaryPanelState(raw('x'.repeat(MAX_TAB_STATE_BYTES + 1))).tabs[0]!.tabState).toBeUndefined();
+    expect(parseSecondaryPanelState(raw(null)).tabs[0]!.tabState).toBeUndefined();
+    const notPlugin = { ...raw({ a: 1 }), tabs: [{ id: 't', kind: 'terminal', title: 'T', tabState: { a: 1 } }], activeId: 't' };
+    expect(parseSecondaryPanelState(notPlugin).tabs[0]!.tabState).toBeUndefined();
+  });
+});
+it('retains a local preview refresh revision through restoration and ignores malformed revisions', () => {
+  const state = { ...emptySecondaryPanelState(), tabs: [{ id: 'html', kind: 'file-preview', title: 'Result', path: 'result.html', previewRevision: 2 }] };
+  expect(parseSecondaryPanelState(JSON.parse(JSON.stringify(state))).tabs[0]?.previewRevision).toBe(2);
+  for (const previewRevision of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1, '2', null]) {
+    expect(parseSecondaryPanelState({ ...state, tabs: [{ ...state.tabs[0], previewRevision }] }).tabs[0]?.previewRevision).toBeUndefined();
+  }
 });

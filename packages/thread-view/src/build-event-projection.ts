@@ -52,7 +52,7 @@ import {
   parseAcceptedSteersFromClientRequest,
   parseRejectedUsersFromClientRequest,
   parseUsersFromClientRequest,
-  parseLegacyUserMessage,
+  parseStandaloneMessage,
 } from "./user-message-parsing.js";
 import { isTerminalBufferedTextFlushEvent } from "./assistant-buffering.js";
 import {
@@ -814,10 +814,10 @@ function buildFlatProjectionData(
       continue;
     }
 
-    const legacyUserMessage = parseLegacyUserMessage(decoded, meta);
-    if (legacyUserMessage) {
+    const standaloneMessage = parseStandaloneMessage(decoded, meta);
+    if (standaloneMessage) {
       flushToolActivityBeforeNonToolMessage(state);
-      state.messages.push(legacyUserMessage);
+      state.messages.push(standaloneMessage);
       continue;
     }
 

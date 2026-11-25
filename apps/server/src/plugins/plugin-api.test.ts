@@ -44,6 +44,18 @@ it('reports declaration metadata without touching saved values', async () => {
   } finally { await handle.dispose(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+it('lets an earlier settings handle read its stored value after the plugin redefines to nothing', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'plugin-settings-legacy-'));
+  writeFileSync(join(dir, 'settings.json'), JSON.stringify({ legacy: true }));
+  const handle = createPluginApi('sample', dir);
+  try {
+    const legacy = handle.api.settings.define({ legacy: { type: 'boolean', label: 'Legacy', default: false } });
+    handle.api.settings.define({});
+    expect(handle.hasSettings).toBe(false);
+    await expect(legacy.get()).resolves.toEqual({ legacy: true });
+  } finally { await handle.dispose(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 it('serializes concurrent field saves and recovers after a failed atomic write', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'plugin-settings-writes-'));
   const handle = createPluginApi('sample', dir);
@@ -403,6 +415,21 @@ describe('plugin realtime', () => {
 });
 
 describe('plugin storage and settings', () => {
+  it('only asks for the active plugin’s device key', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-device-key-'));
+    try {
+      const key = new Uint8Array(32);
+      const pluginDeviceKey = vi.fn(async () => key);
+      const handle = createPluginApi('demo',dir,{ productContext:{pluginDeviceKey} as never });
+      expect(await handle.api.storage.deviceKey()).toBe(key);
+      expect(pluginDeviceKey).toHaveBeenCalledWith('demo');
+      await handle.dispose();
+      await expect(handle.api.storage.deviceKey()).rejects.toThrow();
+      const other = createPluginApi('other',dir);
+      await expect(other.api.storage.deviceKey()).rejects.toThrow('secure storage');
+      await other.dispose();
+    } finally { rmSync(dir,{recursive:true,force:true}); }
+  });
   it('persists kv across api instances', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zcc-plugin-kv-'));
     try {
@@ -510,6 +537,10 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
         id: 'thr-spawned'
       });
       expect(spawnThread).toHaveBeenCalledWith({ pluginId: 'demo', projectId: 'p', prompt: 'hi' });
+      await handle.api.sdk.threads.spawn({ projectId: 'p', deferFirstTurn: true });
+      expect(spawnThread).toHaveBeenLastCalledWith({ pluginId: 'demo', projectId: 'p', deferFirstTurn: true });
+      await expect(handle.api.sdk.threads.spawn({ projectId: 'p' })).rejects.toThrow('prompt is required');
+      await expect(handle.api.sdk.threads.spawn({ projectId: 'p', prompt: 'hi', deferFirstTurn: true })).rejects.toThrow('omit prompt');
       await expect(handle.api.sdk.threads.spawn({
         projectId: 'p',
         prompt: 'seeded',
@@ -687,6 +718,8 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
         id: 'inb-1'
       });
       expect(pushInbox).toHaveBeenCalledWith({ pluginId: 'demo', projectId: 'p1', comments: 'hello' });
+      await handle.api.sdk.inbox.push({ projectId: 'p1', comments: 'Checks failed', offerAgentFix: true });
+      expect(pushInbox).toHaveBeenLastCalledWith({ pluginId: 'demo', projectId: 'p1', comments: 'Checks failed', offerAgentFix: true });
       await expect(handle.api.sdk.projects.list()).resolves.toEqual([
         { id: 'p1', name: 'Alpha', path: '/tmp/a' }
       ]);
@@ -806,6 +839,7 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
         status: 'idle'
       }));
       const listThreadEvents = vi.fn(async () => [{ seq: 1, type: 'turn/started', payload: {} }]);
+      const postThreadMessage = vi.fn();
       const sendThread = vi.fn(async () => ({ id: 'thr-1' }));
       const archiveThread = vi.fn(async () => ({ id: 'thr-1' }));
       const forkThread = vi.fn(async () => ({ id: 'thr-2' }));
@@ -813,7 +847,7 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
       const handle = createPluginApi('demo', dir, {
         getThread,
         listThreadEvents,
-        sendThread,
+        sendThread, postThreadMessage,
         archiveThread,
         forkThread,
         unarchiveThread
@@ -828,10 +862,24 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
       await expect(handle.api.sdk.threads.send({ threadId: 'thr-1', prompt: 'continue' })).resolves.toEqual({
         id: 'thr-1'
       });
+      await handle.api.sdk.threads.postMessage!({ threadId: ' thr-1 ', text: ' hello ' });
+      expect(postThreadMessage).toHaveBeenCalledWith({ threadId: 'thr-1', pluginId: 'demo', text: 'hello' });
+      for (const args of [{ threadId: '', text: 'hi' }, { threadId: 'thr-1', text: ' ' }, { threadId: 'thr-1', text: 'x'.repeat(8001) }]) {
+        await expect(handle.api.sdk.threads.postMessage!(args)).rejects.toThrow();
+      }
       expect(sendThread).toHaveBeenCalledWith({
         pluginId: 'demo',
         threadId: 'thr-1',
         prompt: 'continue'
+      });
+      expect(handle.api.sdk.threads.messageSources).toBe(true);
+      await handle.api.sdk.threads.send({
+        threadId: 'thr-1', prompt: 'green', mode: 'steer-if-active', agentContext: '[Reply from bot Scout]',
+        source: { kind: 'bot', label: 'Scout', color: '#3b82f6', threadId: 'bot-main', detail: 'replied', pluginId: 'forged' } as never
+      });
+      expect(sendThread).toHaveBeenLastCalledWith({
+        pluginId: 'demo', threadId: 'thr-1', prompt: 'green', mode: 'steer-if-active', agentContext: '[Reply from bot Scout]',
+        messageSource: { pluginId: 'demo', kind: 'bot', label: 'Scout', color: '#3b82f6', threadId: 'bot-main', detail: 'replied' }
       });
       await expect(handle.api.sdk.threads.archive({ threadId: 'thr-1' })).resolves.toEqual({ id: 'thr-1' });
       await expect(handle.api.sdk.threads.fork({ threadId: 'thr-1' })).resolves.toEqual({ id: 'thr-2' });
@@ -853,6 +901,7 @@ describe('plugin CLI, HTTP, events, and sdk', () => {
         agentContextSeed: [{ type: 'text', text: 'seed', mentions: [], visibility: 'agent-only' }]
       });
       const bare = createPluginApi('bare', dir);
+      await expect(bare.api.sdk.threads.postMessage!({ threadId: 't', text: 'hi' })).rejects.toThrow('unavailable');
       await expect(bare.api.sdk.threads.get({ threadId: 'thr-1' })).rejects.toThrow(/not available/);
       await handle.dispose();
       await bare.dispose();

@@ -105,6 +105,13 @@ describe('project row new agent', () => {
   });
 });
 
+it('hides Open in new window in the browser project menu', () => {
+  renderList('sidebar');
+  openMenu('First');
+  expect(document.querySelector('.project-menu')).not.toBeNull();
+  expect(screen.queryByRole('button', { name: 'Open in new window' })).toBeNull();
+});
+
 describe('project plugin action titles', () => {
   it.each(['sidebar', 'pane'] as const)('closes the project menu and prevents duplicate reloads in the %s until refresh finishes', async placement => {
     const pending = deferred<void>();
@@ -251,9 +258,9 @@ describe('machine project context menu', () => {
       { id: 'p1', name: 'First', path: '/tmp/first', createdAt: 1, lastActiveAt: 1, hostId: 'remote' }
     ] as Project[];
     renderList();
-    fireEvent.change(screen.getByPlaceholderText('Filter machines or projects'), { target: { value: 'missing' } });
+    fireEvent.change(screen.getByPlaceholderText('Filter machines, projects or chats'), { target: { value: 'missing' } });
 
-    expect(screen.getByRole('status').textContent).toContain('No machines or projects match');
+    expect(screen.getByRole('status').textContent).toContain('No machines, projects or chats match');
   });
 
   it('keeps ordinary project menu fallback in pane placement', () => {

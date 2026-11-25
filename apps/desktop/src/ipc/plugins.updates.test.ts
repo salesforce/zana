@@ -16,6 +16,7 @@ const supervisor = { updateAllPlugins: vi.fn(), outdatedPlugins: vi.fn() };
 const value = { updated: ['fixture'], failed: [{ id: 'offline', message: 'source unavailable' }] };
 function bind(attached: boolean) {
   bindIpcCtx({
+    safeHandleFromWindow: vi.fn(),
     safeHandle: (channel: string, handler: (...args: any[]) => any, failure: (error: unknown) => unknown) => {
       handlers.set(channel, handler); failures.set(channel, failure);
     }, runtimeSupervisor: attached ? supervisor : undefined

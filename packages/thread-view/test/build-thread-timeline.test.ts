@@ -2992,3 +2992,23 @@ it.each([false, true])('retains copied context metadata in timeline messages and
   ]), steer ? 'active' : 'idle');
   expect(rows.find(row => row.kind === 'conversation' && row.role === 'user')).toMatchObject({text, references});
 });
+
+it.each([false, true])('carries a plugin message source onto the user row (steer=%s)', (steer) => {
+  const messageSource = {pluginId: 'bots', kind: 'bot' as const, label: 'Demo Tester', color: '#7c5cff', detail: 'replied'};
+  const event = createTimelineEventFactory({threadId: 'thread-1'});
+  const rows = buildTimelineRows(fromRows([
+    ...(steer ? [event.turnStarted({turnId: 'turn-1'})] : []),
+    event.clientTurnRequested({
+      target: steer ? {kind: 'steer', expectedTurnId: 'turn-1'} : {kind: 'new-turn'},
+      text: 'Hi from the bot',
+      messageSource,
+      input: [
+        {type: 'text', text: '[Reply from bot Demo Tester]', mentions: [], visibility: 'agent-only'},
+        {type: 'text', text: 'Hi from the bot', mentions: []},
+      ],
+    }),
+  ]), steer ? 'active' : 'idle');
+  const row = rows.find(r => r.kind === 'conversation' && r.role === 'user');
+  expect(row).toMatchObject({text: 'Hi from the bot', messageSource});
+  expect(JSON.stringify(row)).not.toContain('[Reply from bot');
+});

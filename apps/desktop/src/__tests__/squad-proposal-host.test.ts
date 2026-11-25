@@ -20,7 +20,8 @@ const h = vi.hoisted(() => ({
   reviewIds: new Set<string>(),
   executionStores: [] as any[],
   executionDeps: null as any,
-  remoteLocalIo: [] as string[]
+  remoteLocalIo: [] as string[],
+  restartProbe: null as any
 }));
 
 vi.mock('node:fs/promises', async original => {
@@ -48,10 +49,11 @@ vi.mock('@zana-ai/zcc-host-daemon/pty', () => ({
     setMcpBaseUrl() {}
     setProjectRoots() {}
     setRulesResolver() {}
-    getSession(id: string) { return h.sessions.get(id) ?? null; }
+    getSession(id: string) { return h.sessions.get(id); }
     reply(id: string, text: string) { if (h.replyThrows) throw new Error('pty gone'); h.replies.push([id, text]); return true; }
     list() { return [...h.sessions.values()]; }
     on() { return this; }
+    off() { return this; }
   },
   isClaudeProfile: () => false
 }));
@@ -105,6 +107,23 @@ vi.mock('electron', () => ({
   ipcMain: { handle: () => {}, on: () => {} }, dialog: {}, shell: {}, screen: {},
   Menu: { setApplicationMenu: () => {}, buildFromTemplate: () => ({}) },
   nativeImage: { createFromPath: () => ({}) }, powerMonitor: { on: () => {} }
+}));
+vi.mock('../squad-worker-card-restart.js', () => ({
+  // Probe: walk every dependency the host wires, so the wiring itself is exercised without a live worker.
+  restartSquadWorkerForOwner: async (deps: any, recordId: string, slotId: string) => {
+    h.restartProbe = {
+      session: deps.getSession('probe'),
+      records: await deps.listLifecycleRecords(),
+      closing: await deps.launchIsClosing(recordId),
+      execution: await deps.getExecution('p1', 'e-probe'),
+      terminal: [deps.isTerminalExecutionState('COMPLETED'), deps.isTerminalExecutionState('RUNNING')],
+      respawnExited: await deps.respawnExited(recordId, slotId),
+      restart: await deps.restart('probe', { maySpawn: async () => true }).catch((error: Error) => ({ threw: error.message })),
+      worker: await deps.getWorker?.(recordId, slotId),
+      respawnSeat: await deps.respawnSeat?.(recordId, slotId)
+    };
+    return { ok: true };
+  }
 }));
 vi.mock('../updater.js', () => ({ createUpdater: () => ({}) }));
 vi.mock('../test-tap.js', () => ({ record: () => {}, recordLog: () => {}, isEnabled: () => false, enable: () => {}, drain: () => ({ entries: [], cursor: 0 }), snapshot: () => ({ entries: [] }), reset: () => {} }));
@@ -263,6 +282,17 @@ describe('squadProposalMcpDeps', () => {
     expect(admission.slotRoutes[0]).toMatchObject({ slotId: '0:w:0', label: 'Exact QA' });
   });
 
+  it('admission takes slot roles from the configured slot and persona, not caller-supplied snapshots', async () => {
+    h.projects = [{ id: 'p1', path: h.root, name: 'Repo' }];
+    h.personas = [{ id: 'orch', name: 'Orch', baseProfile: 'shell' }, { id: 'w', name: 'Worker', baseProfile: 'shell', roles: ['engineer'] }];
+    h.teams = [{ id: 'team1', name: 'T', orchestratorPersonaId: 'orch', slots: [{ personaId: 'w', quantity: 1 }] }];
+    const models = await h.executionDeps.resolveTeamModelSnapshots('p1', { teamId: 'team1', slots: [{ initialTask: '' }, { initialTask: '' }] });
+    const forged = await h.executionDeps.admissionInput('p1', { teamId: 'team1', slots: [{ initialTask: '' }, { initialTask: '' }], resolvedModels: models.map((model: any) => ({ ...model, roles: ['reviewer'] })) });
+    expect(forged.slotRoutes.find((slot: any) => slot.slotId === '0:w:0')).toMatchObject({ roles: ['engineer'] });
+    const stripped = await h.executionDeps.admissionInput('p1', { teamId: 'team1', slots: [{ initialTask: '' }, { initialTask: '' }], resolvedModels: models.map(({ roles: _r, ...model }: any) => model) });
+    expect(stripped.slotRoutes.find((slot: any) => slot.slotId === '0:w:0')).toMatchObject({ roles: ['engineer'] });
+  });
+
   it('expires preview tokens, denies settings drift and replay', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'token-retention-'));
     try {
@@ -284,18 +314,20 @@ describe('squadProposalMcpDeps', () => {
       expect(await host.startTeamJobFromUi({ ...input, previewToken: fresh.previewToken }, { windowId: 7 })).toMatchObject({ ok: false, code: 'LAUNCH_CHANGED' });
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
+  // A plan with steps that do not parse still gets the card; step-less prose on an inferable Squad infers instead.
+  const BROKEN_PLAN_GOAL = '### a: Step A <!-- executable-step -->\n\n- **Mode:** Mutating';
   it.each(['nonGit', 'quick', 'detached'])('previews no-declaration %s launches without inventing a branch', async kind => {
     const dir = mkdtempSync(join(tmpdir(), 'legacy-preview-'));
     try {
       if (kind !== 'nonGit') initializeRepo(dir);
       if (kind === 'detached') execFileSync('git', ['-C', dir, 'checkout', '--detach']);
       h.projects = [{ id: 'p1', path: dir, name: 'Repo', ...(kind === 'quick' ? { quickAgent: true } : {}) }];
-      const preview = await host.resolveSquadComposerPreview({ teamId: 'team1', projectId: 'p1', goal: 'Needs attended plan correction', coordinationMode: 'structured' }, { kind: 'window', windowId: 7 });
+      const preview = await host.resolveSquadComposerPreview({ teamId: 'team1', projectId: 'p1', goal: BROKEN_PLAN_GOAL, coordinationMode: 'structured' }, { kind: 'window', windowId: 7 });
       expect(preview).toMatchObject({ location: { kind: 'project-root' }, path: realpathSync(dir), previewToken: expect.any(String) });
       if (kind !== 'quick') expect(preview.branch).toBeUndefined();
       const start = vi.spyOn(SquadExecutionService.prototype, 'start').mockResolvedValue({ ok: true, value: { id: 'correction', state: 'RUNNING' } } as never);
-      expect(await host.startTeamJobFromUi({ teamId: 'team1', projectId: 'p1', goal: 'Needs attended plan correction', coordinationMode: 'structured', previewToken: preview.previewToken }, { windowId: 7 })).toMatchObject({ ok: true });
-      expect(start.mock.calls[0]?.[2]).toMatchObject({ coordinationMode: 'structured', slots: [expect.objectContaining({ initialTask: expect.stringContaining('no executable steps found') })] });
+      expect(await host.startTeamJobFromUi({ teamId: 'team1', projectId: 'p1', goal: BROKEN_PLAN_GOAL, coordinationMode: 'structured', previewToken: preview.previewToken }, { windowId: 7 })).toMatchObject({ ok: true });
+      expect(start.mock.calls[0]?.[2]).toMatchObject({ coordinationMode: 'structured', slots: [expect.objectContaining({ initialTask: expect.stringContaining('Provided structured plan is invalid') })] });
       expect(start.mock.calls[0]?.[2]).not.toHaveProperty('workUnits');
       await expect(host.resolveSquadComposerPreview({ teamId: 'team1', projectId: 'p1', goal: 'go', worktree: true }, { kind: 'window', windowId: 7 })).rejects.toThrow();
     } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -509,6 +541,47 @@ describe('squad_plan_check tier fit (host planTierFit)', () => {
     knownTeam('opus');
     const result = await checkPlan()({ projectId: 'p1' }, { text: PLAN, teamId: 'team1' });
     expect(result).toMatchObject({ ok: true, value: { ok: true, tierFit: { findings: [{ unitId: 'only-step', kind: 'over-tiered' }] } } });
+  });
+});
+
+describe('judgePlanFindings (shared Squad check)', () => {
+  const dirs: string[] = [];
+  afterAll(() => dirs.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
+  const unit = (id: string, requiredRole?: string) => ({ id, title: id, task: 't', dependencies: [], ...(requiredRole ? { routing: { requiredRole } } : {}) });
+  function squad() {
+    const dir = mkdtempSync(join(tmpdir(), 'squad-host-judge-'));
+    dirs.push(dir);
+    initializeRepo(dir);
+    h.projects = [{ id: 'p1', name: 'Proj', path: dir }];
+    h.teams = [{ id: 'team1', name: 'Team', orchestratorPersonaId: 'orch', slots: [{ personaId: 'worker', quantity: 1, label: 'Builder' }] }];
+    h.personas = [{ id: 'orch', name: 'Orch', baseProfile: 'claude' }, { id: 'worker', name: 'Worker', baseProfile: 'claude', roles: ['builder'] }];
+  }
+
+  it('without a Squad returns only parser findings and no bindings', async () => {
+    const result = await host.judgePlanFindings('p1', undefined, {
+      workUnits: [unit('a')], findings: [{ severity: 'warning', requirement: 'format', stepId: 'a', message: 'odd heading' }]
+    });
+    expect(result.bindings).toEqual([]);
+    expect(result.findings).toEqual([expect.objectContaining({ stepId: 'a', severity: 'warning', requirement: 'format' })]);
+  });
+
+  it('an unknown team id behaves like no Squad', async () => {
+    squad();
+    expect((await host.judgePlanFindings('p1', 'ghost', { workUnits: [unit('a')] })).bindings).toEqual([]);
+  });
+
+  it('a required role the Squad lacks is blocking and names the Squad roles', async () => {
+    squad();
+    const result = await host.judgePlanFindings('p1', 'team1', { workUnits: [unit('a', 'wizard')] });
+    expect(result.findings).toEqual([expect.objectContaining({ stepId: 'a', requirement: 'required-role', severity: 'blocking' })]);
+    expect(result.findings[0]!.suggestion).toContain('builder');
+  });
+
+  it('a matching required role has no blocking finding and binds the step to its slot', async () => {
+    squad();
+    const result = await host.judgePlanFindings('p1', 'team1', { workUnits: [unit('a', 'builder')] });
+    expect(result.findings.filter((finding) => finding.severity === 'blocking')).toEqual([]);
+    expect(result.bindings).toEqual([expect.objectContaining({ stepId: 'a' })]);
   });
 });
 
@@ -1010,5 +1083,117 @@ describe('named-check host shutdown', () => {
       expect(await pending).toMatchObject({ status: 'cancelled' });
       await expect(host.runSquadNamedCheck(record, 'check:slow')).rejects.toThrow('closed');
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('recordClaimWriteFromSettledEvent', () => {
+  const worker = { projectId: 'p1', cohort: { executionId: 'e1', role: 'worker', slotId: 'w1' } };
+  const body = (extra: Record<string, unknown> = {}) => JSON.stringify({ tool_name: 'Write', tool_input: { file_path: 'a.txt' }, hook_event_name: 'PostToolUse', ...extra });
+  const service = () => ({ recordWorkerToolEvent: vi.fn().mockResolvedValue(undefined) });
+
+  it('records the settled write on the live worker claim, keyed by its session', async () => {
+    const svc = service();
+    await host.recordClaimWriteFromSettledEvent(svc as never, worker, 'p1', body(), 's1');
+    expect(svc.recordWorkerToolEvent).toHaveBeenCalledWith('e1', 'w1', { toolName: 'Write', input: { file_path: 'a.txt' }, failed: false, sessionId: 's1' });
+  });
+
+  it('marks a failed tool and omits the session when none is given', async () => {
+    const svc = service();
+    await host.recordClaimWriteFromSettledEvent(svc as never, worker, 'p1', body({ hook_event_name: 'PostToolUseFailure' }));
+    expect(svc.recordWorkerToolEvent).toHaveBeenCalledWith('e1', 'w1', { toolName: 'Write', input: { file_path: 'a.txt' }, failed: true });
+  });
+
+  it.each([
+    ['no session', null, 'p1'],
+    ['another project', worker, 'other'],
+    ['no cohort', { projectId: 'p1' }, 'p1'],
+    ['a non-worker role', { projectId: 'p1', cohort: { executionId: 'e1', role: 'orchestrator', slotId: 'o' } }, 'p1'],
+    ['no slot', { projectId: 'p1', cohort: { executionId: 'e1', role: 'worker' } }, 'p1']
+  ])('ignores %s', async (_name, session, projectId) => {
+    const svc = service();
+    await host.recordClaimWriteFromSettledEvent(svc as never, session as never, projectId, body(), 's1');
+    expect(svc.recordWorkerToolEvent).not.toHaveBeenCalled();
+  });
+
+  it('ignores a body that is not a JSON object', async () => {
+    const svc = service();
+    await host.recordClaimWriteFromSettledEvent(svc as never, worker, 'p1', 'not json');
+    await host.recordClaimWriteFromSettledEvent(svc as never, worker, 'p1', 'null');
+    expect(svc.recordWorkerToolEvent).not.toHaveBeenCalled();
+  });
+
+  it('never rejects when recording fails, asynchronously or synchronously', async () => {
+    const rejecting = { recordWorkerToolEvent: vi.fn().mockRejectedValue(new Error('store down')) };
+    await expect(host.recordClaimWriteFromSettledEvent(rejecting as never, worker, 'p1', body())).resolves.toBeUndefined();
+    const throwing = { recordWorkerToolEvent: vi.fn(() => { throw new Error('boom'); }) };
+    await expect(host.recordClaimWriteFromSettledEvent(throwing as never, worker, 'p1', body())).resolves.toBeUndefined();
+  });
+});
+
+describe('judgePlanFindings step titles', () => {
+  const plan = { workUnits: [{ id: 'write', title: 'Write output', prompt: 'x' }], findings: [{ severity: 'warning' as const, requirement: 'roster' as never, stepId: 'write', message: 'm' }, { severity: 'warning' as const, requirement: 'roster' as never, message: 'no step' }] };
+
+  it('names a finding by its step title without a Squad, and leaves step-less findings alone', async () => {
+    const { findings } = await host.judgePlanFindings('p1', undefined, plan);
+    expect(findings.find((finding) => finding.stepId === 'write')).toMatchObject({ stepTitle: 'Write output' });
+    expect(findings.find((finding) => !finding.stepId)).not.toHaveProperty('stepTitle');
+  });
+
+  it('names findings and bindings by step title against a Squad roster', async () => {
+    h.projects = [{ id: 'p1', path: h.root, name: 'Repo' }];
+    h.teams = [{ id: 'team1', name: 'Team', orchestratorPersonaId: 'orch', slots: [{ personaId: 'orch', initialTask: '' }] }];
+    const blocking = { ...plan, findings: plan.findings.map((finding) => ({ ...finding, severity: 'blocking' as const })) };
+    const { findings, bindings } = await host.judgePlanFindings('p1', 'team1', blocking);
+    expect(findings.filter((finding) => finding.stepId === 'write').every((finding) => finding.stepTitle === 'Write output')).toBe(true);
+    expect(bindings.every((binding: { stepId?: string; stepTitle?: string }) => !binding.stepId || binding.stepTitle === 'Write output')).toBe(true);
+  });
+});
+
+describe('Squad execution service wiring', () => {
+  it('names a persona for notices, and has no name for an unknown one', () => {
+    expect(h.executionDeps.personaName('orch')).toBe('Orch');
+    expect(h.executionDeps.personaName('ghost')).toBeUndefined();
+  });
+
+  it('reads the blocker reminder window from config; 0 disables, unset leaves the default', () => {
+    expect(h.executionDeps.blockerReminderMs()).toBeUndefined();
+    h.config = { executionBlockerReminderMs: 120_000 };
+    expect(h.executionDeps.blockerReminderMs()).toBe(120_000);
+    h.config = { executionBlockerReminderMs: 0 };
+    expect(h.executionDeps.blockerReminderMs()).toBe(0);
+  });
+
+  it('leaves the idle and heartbeat windows at the service default outside a fault build', () => {
+    expect(h.executionDeps.idleNoticeWindowMs()).toBeUndefined();
+    expect(h.executionDeps.heartbeatWarnWindowMs()).toBeUndefined();
+  });
+
+  it('checkpoints units unless the setting is explicitly off', () => {
+    expect(h.executionDeps.unitCheckpointsEnabled()).toBe(true);
+    h.config = { squadUnitCheckpointsEnabled: false };
+    expect(h.executionDeps.unitCheckpointsEnabled()).toBe(false);
+  });
+
+  it('waits for a worker session to leave the pty table, and times out for one that stays', async () => {
+    expect(await h.executionDeps.waitForWorkerSessionExit('gone', 50)).toBe(true);
+    h.sessions.set('stuck', pty({ id: 'stuck' }));
+    expect(await h.executionDeps.waitForWorkerSessionExit('stuck', 30)).toBe(false);
+  });
+
+  it('wires the owner restart through the card-restart path with real fences', async () => {
+    h.restartProbe = null;
+    await expect(h.executionDeps.restartWorker('no-such-launch', 'w1')).resolves.toEqual({ ok: true });
+    expect(h.restartProbe).toMatchObject({ terminal: [true, false], respawnExited: { ok: false } });
+    expect(h.restartProbe.session ?? null).toBeNull();
+    expect(h.restartProbe.execution).toBeUndefined();
+    expect(h.restartProbe.worker).toBeUndefined();
+    expect(h.restartProbe.respawnSeat).toMatchObject({ ok: false });
+  });
+
+  it('hands the launch identity of a known execution to the restart fences', async () => {
+    for (const created of h.executionStores) vi.spyOn(created, 'getInProject').mockResolvedValue({ state: 'RUNNING', callerPrincipalId: 'caller', teamLaunchRequestId: 'req' } as never);
+    h.restartProbe = null;
+    await h.executionDeps.restartWorker('no-such-launch', 'w1');
+    expect(h.restartProbe.execution).toEqual({ state: 'RUNNING', callerPrincipalId: 'caller', teamLaunchRequestId: 'req' });
   });
 });

@@ -16,3 +16,11 @@ describe('jobCoordinatorPrompt — human blockers go to the owner Inbox card (#6
     expect(prompt).toContain('named in the denial');
   });
 });
+
+describe('jobCoordinatorPrompt — parallelism guidance', () => {
+  it.each([true, false])('tells the coordinator to give independent units disjoint narrow file scopes (planReady=%s)', (planReady) => {
+    const prompt = jobCoordinatorPrompt({ team, executionId: 'exec-1', job: { objective: 'Ship' }, roster, planReady });
+    expect(prompt).toContain('Give independent units disjoint, narrow `files` scopes');
+    expect(prompt).toContain('Units with overlapping scopes run one at a time.');
+  });
+});

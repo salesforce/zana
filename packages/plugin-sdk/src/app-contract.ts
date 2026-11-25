@@ -30,6 +30,15 @@ export function navPanelListsInExtensionsHub(placement?: PluginNavPanelPlacement
   return placement === 'extensions';
 }
 
+export interface BasicSidebarSectionProps {
+  searchQuery: string;
+  activeThreadId: string | null;
+  projectIds: readonly string[];
+  openThread(threadId: string): void;
+  /** Omit these threads from ordinary history while the section represents them. */
+  registerThreads(threadIds: readonly string[]): () => void;
+}
+
 export interface PluginNavPanelRegistration extends PluginSlotBase {
   title: string;
   icon: string;
@@ -43,6 +52,7 @@ export interface PluginNavPanelRegistration extends PluginSlotBase {
   placement?: PluginNavPanelPlacement;
   component: ComponentType<PluginNavPanelProps>;
   experimental_sidebarAccessory?: ComponentType;
+  experimental_basicSidebarSection?: ComponentType<BasicSidebarSectionProps>;
   headerContent?: ComponentType<PluginNavPanelProps>;
 }
 
@@ -282,6 +292,25 @@ export interface PluginThreadPanelProps {
    * Absent on older hosts.
    */
   tabId?: string;
+  /**
+   * False while the tab is mounted but hidden behind another tab: pause
+   * polling and timers. Absent on older hosts; treat that as `true`. The host
+   * keeps a bounded number of hidden tabs mounted, so a hidden tab can still be
+   * unmounted and remounted: persist what matters with `onTabStateChange`.
+   */
+  active?: boolean;
+  /**
+   * The last value passed to `onTabStateChange` for this tab, or `null`. It is
+   * restored after a reload or after the host unmounts a hidden tab, and is
+   * cleared when the tab is reopened with different `params`. Absent on older
+   * hosts.
+   */
+  tabState?: JsonValue | null;
+  /**
+   * Save small view state (at most 8 KiB as JSON) with this tab. An oversized
+   * value is ignored and the previous one kept. Absent on older hosts.
+   */
+  onTabStateChange?: (state: JsonValue | null) => void;
 }
 
 export interface PluginThreadPanelActionContext {
@@ -290,7 +319,28 @@ export interface PluginThreadPanelActionContext {
   openPanel(options?: { title?: string; params?: JsonValue }): boolean;
 }
 
+/** A panel can provide a clickable title in conversations created by its plugin. */
+export interface PluginOwnedThreadTitleProps {
+  threadId: string;
+  title: string;
+  openPanel(): void;
+}
+
+export interface PluginOwnedThreadIconProps {
+  threadId: string;
+  size: number;
+  /** The provider icon to show when the thread has no custom identity. */
+  fallback: ReactNode;
+}
+
 export interface PluginThreadPanelActionRegistration extends PluginSlotBase {
+  /** Offer the plugin’s project tab in the dock Add menu. Opens without params browse
+   * that tab, while parameterized links still render the action component. */
+  projectTabShortcut?: boolean;
+  /** Decorative icon for threads owned by this plugin in the project tree and on Kanban cards. */
+  experimental_ownedThreadIcon?: ComponentType<PluginOwnedThreadIconProps>;
+  /** Open from the owning thread's heading instead of the general New Tab catalogue. */
+  experimental_ownedThreadTitle?: ComponentType<PluginOwnedThreadTitleProps>;
   title: string;
   /** New Tab category. Defaults to the installed plugin's name. */
   category?: string;
@@ -470,6 +520,16 @@ export interface PluginAgentsBoardActionRegistration extends PluginSlotBase {
   title: string;
   icon?: string;
   run(context: PluginAgentsBoardActionContext): void | Promise<void>;
+}
+
+/**
+ * Toolbar toggle on the Agents board that shows or hides the threads this
+ * plugin created (`originPluginId` = the plugin). Owned threads stay off the
+ * board until the user turns the toggle on; the choice is remembered.
+ */
+export interface PluginAgentsBoardThreadToggleRegistration extends PluginSlotBase {
+  title: string;
+  icon?: string;
 }
 
 /** Read-only fleet projection shared with the built-in Agents views. */
@@ -832,6 +892,9 @@ export interface PluginAppSlots {
   experimental_agentsBoardAction(
     registration: Omit<PluginAgentsBoardActionRegistration, 'generation' | 'pluginId'>
   ): void;
+  experimental_agentsBoardThreadToggle(
+    registration: Omit<PluginAgentsBoardThreadToggleRegistration, 'generation' | 'pluginId'>
+  ): void;
   experimental_timelineRenderer(
     registration: Omit<PluginTimelineRendererRegistration, 'generation' | 'pluginId' | 'id'>
   ): void;
@@ -878,6 +941,7 @@ export interface PluginRegistrationSet {
   agentCardActions: PluginAgentCardActionRegistration[];
   threadCardActions: PluginThreadCardActionRegistration[];
   agentsBoardActions: PluginAgentsBoardActionRegistration[];
+  agentsBoardThreadToggles: PluginAgentsBoardThreadToggleRegistration[];
   agentsViews: PluginAgentsViewRegistration[];
   timelineRenderers: PluginTimelineRendererRegistration[];
   commandPaletteActions: PluginCommandPaletteActionRegistration[];
@@ -1151,6 +1215,13 @@ export interface ThreadChatProps {
 export interface MarkdownProps {
   content: string;
   className?: string;
+  /** Show the Library's formatted editor. Changes are returned as Markdown for the caller to save. */
+  editor?: {
+    label: string;
+    onChange: (markdown: string) => void;
+    disabled?: boolean;
+    placeholder?: string;
+  };
 }
 
 export interface NewThreadComposerProps {
@@ -1318,6 +1389,7 @@ export function emptyRegistrationSet(pluginId: string, generation: number): Plug
     agentCardActions: [],
     threadCardActions: [],
     agentsBoardActions: [],
+    agentsBoardThreadToggles: [],
     agentsViews: [],
     timelineRenderers: [],
     commandPaletteActions: [],
@@ -1439,6 +1511,7 @@ export function collectPluginApp(
     agentCardAction: new Set<string>(),
     threadCardAction: new Set<string>(),
     agentsBoardAction: new Set<string>(),
+    agentsBoardThreadToggle: new Set<string>(),
     agentsView: new Set<string>(),
     timelineRenderer: new Set<string>(),
     commandPaletteAction: new Set<string>(),
@@ -1508,6 +1581,12 @@ export function collectPluginApp(
           throw new Error(`${kind}: "experimental_sidebarAccessory" must be a React component function when set`);
         }
         if (
+          registration.experimental_basicSidebarSection !== undefined &&
+          typeof registration.experimental_basicSidebarSection !== 'function'
+        ) {
+          throw new Error(`${kind}: "experimental_basicSidebarSection" must be a React component function when set`);
+        }
+        if (
           registration.placement !== undefined &&
           !PLUGIN_NAV_PANEL_PLACEMENTS.includes(registration.placement)
         ) {
@@ -1521,6 +1600,7 @@ export function collectPluginApp(
             path,
             ...(registration.placement ? { placement: registration.placement } : {}),
             component: requireComponent(kind, 'component', registration.component),
+            ...(registration.experimental_basicSidebarSection ? { experimental_basicSidebarSection: registration.experimental_basicSidebarSection } : {}),
             ...(registration.experimental_sidebarAccessory
               ? { experimental_sidebarAccessory: registration.experimental_sidebarAccessory }
               : {}),
@@ -1668,6 +1748,7 @@ export function collectPluginApp(
         set.threadPanelActions.push(
           stamp({
             id,
+            ...(registration.projectTabShortcut === true ? { projectTabShortcut: true } : {}),
             title: requireNonEmptyString(kind, 'title', registration.title),
             ...(category ? { category } : {}),
             ...(registration.icon !== undefined
@@ -1677,6 +1758,14 @@ export function collectPluginApp(
             ...(requireLayout(kind, registration.layout)
               ? { layout: registration.layout }
               : {}),
+            ...(registration.experimental_ownedThreadIcon !== undefined ? {
+              experimental_ownedThreadIcon: requireComponent<NonNullable<PluginThreadPanelActionRegistration['experimental_ownedThreadIcon']>>(
+                kind, 'experimental_ownedThreadIcon', registration.experimental_ownedThreadIcon)
+            } : {}),
+            ...(registration.experimental_ownedThreadTitle !== undefined ? {
+              experimental_ownedThreadTitle: requireComponent<NonNullable<PluginThreadPanelActionRegistration['experimental_ownedThreadTitle']>>(
+                kind, 'experimental_ownedThreadTitle', registration.experimental_ownedThreadTitle)
+            } : {}),
             ...(scopes !== undefined ? { scopes } : {}),
             ...(pages !== undefined ? { pages } : {}),
             ...(registration.run !== undefined ? { run: registration.run } : {})
@@ -1873,6 +1962,20 @@ export function collectPluginApp(
               ? { icon: requireNonEmptyString(kind, 'icon', registration.icon) }
               : {}),
             run: registration.run
+          })
+        );
+      },
+      experimental_agentsBoardThreadToggle: (registration) => {
+        const kind = 'slots.experimental_agentsBoardThreadToggle';
+        const id = requireSlotId(kind, registration.id);
+        requireUniqueId(kind, seen.agentsBoardThreadToggle, id);
+        set.agentsBoardThreadToggles.push(
+          stamp({
+            id,
+            title: requireNonEmptyString(kind, 'title', registration.title),
+            ...(registration.icon !== undefined
+              ? { icon: requireNonEmptyString(kind, 'icon', registration.icon) }
+              : {})
           })
         );
       },

@@ -51,11 +51,13 @@ import {
   inboxSecondaryLine,
   inboxPreview,
   inboxContextLine,
+  inboxOffersAgentFix,
   isPinnedBlockingQuestion,
   isUnansweredQuestion
 } from '../lib/inboxPresentation.js';
 import { isReport } from '@zana-ai/zcc-domain/feed-categories';
 import { DelayedStencilList } from './ui/Skeleton.js';
+import { InboxFeedCards } from './InboxFeedCards.js';
 
 /**
  * Map a registry icon NAME (from `feedCategories.ts`) to a lucide component.
@@ -100,6 +102,9 @@ export function InboxSidebar({
   query = '',
   unreadOnly = false,
   reportsOnly = false,
+  needsActionOnly = false,
+  fullWidth = false,
+  hideEmpty = false,
   scopeProjectId = null,
   grouping = 'project',
   selectedId: selectedIdProp,
@@ -111,6 +116,9 @@ export function InboxSidebar({
   /** When set, show ONLY entries explicitly flagged `report: true` (the Reports
    *  filter). Narrows the feed to deliverables. */
   reportsOnly?: boolean;
+  needsActionOnly?: boolean;
+  fullWidth?: boolean;
+  hideEmpty?: boolean;
   /** When set, show only this project's entries (focused/scoped view). */
   scopeProjectId?: string | null;
   /** How to group rows within each day bucket: per-project subgroups
@@ -142,6 +150,7 @@ export function InboxSidebar({
   const markRead = useInboxRead((s) => s.markRead);
   const markUnread = useInboxRead((s) => s.markUnread);
   const projects = useData((s) => s.projects);
+  const projectsById = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects]);
 
   // Open right-click menu: which entry + the cursor anchor (viewport coords).
   // Rendered `position: fixed` so it escapes the list's scroll/clip container —
@@ -174,24 +183,31 @@ export function InboxSidebar({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q && !unreadOnly && !reportsOnly && !scopeProjectId) return entries;
+    if (!q && !unreadOnly && !reportsOnly && !needsActionOnly && !scopeProjectId) return entries;
     return entries.filter((e) => {
       if (scopeProjectId && e.projectId !== scopeProjectId) return false;
       if (reportsOnly && !isReport(e)) return false;
       if (unreadOnly && readIds[e.id]) return false;
+      if (needsActionOnly && !isUnansweredQuestion(e, answeredIds)
+        && !(inboxOffersAgentFix(e) && !readIds[e.id] && projectsById.has(e.projectId))) return false;
       if (!q) return true;
       const hay = `${e.projectLabel ?? e.projectId} ${e.subject ?? ''} ${e.intent ?? ''} ${e.origin?.title ?? ''} ${e.comments ?? ''} ${
         e.docs?.map((d) => d.path).join(' ') ?? ''
       }`.toLowerCase();
       return hay.includes(q);
     });
-  }, [entries, query, unreadOnly, reportsOnly, readIds, scopeProjectId]);
+  }, [entries, query, unreadOnly, reportsOnly, needsActionOnly, readIds, answeredIds, scopeProjectId, projectsById]);
+
+  const fullWidthEntries = useMemo(
+    () => fullWidth ? [...filtered].sort((a, b) => b.ts - a.ts) : [],
+    [fullWidth, filtered]
+  );
 
   // View-driven, throttled refresh of the routine overlay for the current scope.
   // No-op when the flag is off; internally rate-limited by inbox-content signature.
   useEffect(() => {
-    maybeRefreshFeedNoise(scopeProjectId ?? null, filtered, feedNoiseEnabled);
-  }, [filtered, scopeProjectId, feedNoiseEnabled]);
+    maybeRefreshFeedNoise(scopeProjectId ?? null, filtered, feedNoiseEnabled && !fullWidth && !needsActionOnly);
+  }, [filtered, scopeProjectId, feedNoiseEnabled, fullWidth, needsActionOnly]);
 
   // Entries the pinned "NEEDS YOUR ANSWER" band owns — newest first. A row earns
   // the band only when it carries an unanswered, still-fresh, BLOCKING question
@@ -203,14 +219,12 @@ export function InboxSidebar({
   // home, not a duplicate surface). Stale questions (> 3 days) drop off the band
   // and are excluded here too, so they fall back to rendering inline.
   const pendingQuestionEntries = useMemo(() => {
-    return filtered
+    return fullWidth ? [] : filtered
       .filter((e) => isPinnedBlockingQuestion(e, answeredIds))
       .sort((a, b) => b.ts - a.ts);
-  }, [filtered, answeredIds]);
+  }, [filtered, answeredIds, fullWidth]);
 
-  // Ids the pinned band owns — excluded from the bucket layout so they don't
-  // render twice. In scoped/time-view the band isn't rendered, but excluding is
-  // still harmless (the band set is just the fresh pending questions).
+  // Ids the pinned band owns in either split grouping.
   const pinnedExcludeIds = useMemo(
     () => new Set(pendingQuestionEntries.map((e) => e.id)),
     [pendingQuestionEntries]
@@ -218,21 +232,25 @@ export function InboxSidebar({
 
   const groups = useMemo(
     () =>
-      groupByBucketThenProject(
+      fullWidth ? [] : groupByBucketThenProject(
         filtered,
         undefined,
-        feedNoiseEnabled ? routineIds : undefined,
+        feedNoiseEnabled && !needsActionOnly ? routineIds : undefined,
         pinnedExcludeIds
       ),
-    [filtered, feedNoiseEnabled, routineIds, pinnedExcludeIds]
+    [filtered, feedNoiseEnabled, routineIds, pinnedExcludeIds, fullWidth, needsActionOnly]
   );
 
   // TIME view: flat, newest-first stream per day bucket (signal only). Computed
   // regardless of mode (cheap) so a mode flip is instant; only rendered when
   // `grouping === 'time'`.
   const timeGroups = useMemo(
-    () => groupByBucketFlat(filtered, undefined, feedNoiseEnabled ? routineIds : undefined),
-    [filtered, feedNoiseEnabled, routineIds]
+    () => fullWidth ? [] : groupByBucketFlat(
+      filtered.filter((entry) => !pinnedExcludeIds.has(entry.id)),
+      undefined,
+      feedNoiseEnabled && !needsActionOnly ? routineIds : undefined
+    ),
+    [filtered, feedNoiseEnabled, routineIds, pinnedExcludeIds, fullWidth, needsActionOnly]
   );
   const timeMode = grouping === 'time';
 
@@ -256,7 +274,7 @@ export function InboxSidebar({
     allRead: boolean,
     hasSelected = false
   ): boolean => {
-    if (scoped) return false;
+    if (scoped || needsActionOnly) return false;
     const explicit = collapsedByProject[subGroupKey(bucket, projectId)];
     if (explicit !== undefined) return explicit;
     if (hasSelected) return false;
@@ -302,6 +320,7 @@ export function InboxSidebar({
   const hiddenQuestionCount = pendingQuestionEntries.length - shownQuestionEntries.length;
 
   const visibleIds = useMemo(() => {
+    if (fullWidth) return fullWidthEntries.map((entry) => entry.id);
     const bucketIds = timeMode
       ? flattenVisibleFlat(timeGroups)
       : flattenVisible(groups, expandedSectionKeys, (sg, bucket) =>
@@ -321,11 +340,7 @@ export function InboxSidebar({
     // `isCollapsed`/`subgroupAllRead`/`subgroupHasSelected` close over
     // collapsedByProject + readIds + selectedId + scoped.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [groups, timeMode, timeGroups, expandedSectionKeys, collapsedByProject, readIds, selectedId, scoped, shownQuestionEntries]
-  );
-  const projectsById = useMemo(
-    () => new Map(projects.map((p) => [p.id, p])),
-    [projects]
+    [groups, timeMode, timeGroups, expandedSectionKeys, collapsedByProject, readIds, selectedId, scoped, shownQuestionEntries, fullWidth, fullWidthEntries, needsActionOnly]
   );
 
   // Default is no auto-select so the main Inbox detail column can land on the
@@ -385,6 +400,12 @@ export function InboxSidebar({
     return <DelayedStencilList label="Loading inbox" className="zcc-stencil-padded" />;
   }
 
+  if (hideEmpty && filtered.length === 0) return null;
+
+  if (needsActionOnly && filtered.length === 0 && !query.trim() && !unreadOnly && !reportsOnly) {
+    return <div className="inbox-sidebar-empty">Nothing needs your action.</div>;
+  }
+
   if (entries.length === 0) {
     return (
       <div className="inbox-sidebar-empty">
@@ -407,7 +428,19 @@ export function InboxSidebar({
   }
 
   return (
-    <div className="inbox-sidebar-list">
+    <div className={fullWidth ? 'inbox-feed-list' : 'inbox-sidebar-list'}>
+      {fullWidth && (
+        <InboxFeedCards
+          entries={fullWidthEntries}
+          projects={projectsById}
+          readIds={readIds}
+          keptIds={keptIds}
+          answeredIds={answeredIds}
+          onOpen={selectAndRead}
+          onContextMenu={openRowMenu}
+          formatTime={formatRelative}
+        />
+      )}
       {/* Pinned "Needs your answer" — every unanswered question across the
           current scope, above the date buckets so it can't be buried. Each row
           carries its context line (author intent → session title). */}

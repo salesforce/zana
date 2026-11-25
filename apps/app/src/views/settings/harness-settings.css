@@ -504,3 +504,5 @@
 .harness-settings .thread-provider-model-actions > button {
   flex: none;
 }
+
+.harness-default-card > .settings-field { margin: 0; }

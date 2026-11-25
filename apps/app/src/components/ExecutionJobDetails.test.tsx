@@ -4,7 +4,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExecutionBoardSnapshot } from '@zana-ai/zcc-domain/product';
-import { buildJobDetailsText, ExecutionJobDetails } from './ExecutionJobDetails.js';
+import { buildJobDetailsText, chosenRouteText, ExecutionJobDetails } from './ExecutionJobDetails.js';
 import { useUi } from '../store';
 
 const baseSnapshot: ExecutionBoardSnapshot = {
@@ -71,6 +71,28 @@ describe('ExecutionJobDetails phase 5 projection', () => {
     fireEvent.click(recover);
     await waitFor(() => expect(window.cc.executionBoard.recoverTimedOut).toHaveBeenCalledWith('project-1', 'execution-1', 2, expect.any(String)));
     expect(screen.queryByRole('button', { name: 'Respond' })).toBeNull();
+  });
+
+  it('scrolls an open blocker into view once, and never for a closed run', async () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+    const open: ExecutionBoardSnapshot = structuredClone(baseSnapshot);
+    open.execution.currentBlocker = { id: 'blocker-open', workUnitId: 'unit-1', slotId: 'slot-1', question: 'Which color?', waitingSince: Date.now() - 360_000 };
+    (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(open);
+    const { unmount } = render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+    await screen.findByText('Which color?');
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('execution-blocker-wait').textContent).toMatch(/^Waiting 6m/);
+    unmount();
+
+    scrollIntoView.mockClear();
+    const closed: ExecutionBoardSnapshot = structuredClone(open);
+    closed.execution.state = 'STOPPED';
+    (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(closed);
+    render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+    await screen.findByText('Which color?');
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
   });
 
   const timedOut = (timeoutRecovery?: { available: boolean; reason?: string }): ExecutionBoardSnapshot => {
@@ -437,5 +459,22 @@ describe('execution polling and artifact lifetimes', () => {
     details.open = true; fireEvent(details, new Event('toggle')); view.unmount();
     await act(async () => { if (rejected) pending.reject(Error('late')); else pending.resolve({ ok: true, value: { content: 'stale' } }); });
     expect(useUi.getState().toasts).toEqual([]);
+  });
+});
+
+describe('chosen route display', () => {
+  it('formats slot and reason, slot only, and nothing', () => {
+    expect(chosenRouteText({ chosenSlotId: 'eng-1', chosenReason: 'matches role reviewer; cheapest' })).toBe('Chosen worker: eng-1 (matches role reviewer; cheapest)');
+    expect(chosenRouteText({ chosenSlotId: 'eng-1' })).toBe('Chosen worker: eng-1');
+    expect(chosenRouteText({ chosenSlotId: '  ' })).toBeUndefined();
+    expect(chosenRouteText({})).toBeUndefined();
+  });
+
+  it('shows the chosen route in Squad details', async () => {
+    const snapshot = structuredClone(baseSnapshot) as ExecutionBoardSnapshot;
+    Object.assign(snapshot.execution.work!.assignments[0]!, { chosenSlotId: 'eng-2', chosenReason: 'most preferred roles' });
+    (window.cc.executionBoard.snapshot as ReturnType<typeof vi.fn>).mockResolvedValue(snapshot);
+    render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+    expect(await screen.findByText('Chosen worker: eng-2 (most preferred roles)')).toBeTruthy();
   });
 });

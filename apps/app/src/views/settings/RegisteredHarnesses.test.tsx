@@ -10,9 +10,9 @@ vi.mock('../../hooks/useRegisteredThreadProviders.js', () => ({ useRegisteredThr
 vi.mock('../../components/thread/pickers/ProviderIcon.js', () => ({ ProviderIcon: () => <span>icon</span> }));
 vi.mock('../../components/thread/pickers/thread-model-catalog.js', () => ({ threadModelCatalogForHost: () => state.catalog ?? ({ subscribe: () => () => {}, getSnapshot: () => state.snapshot, ensure: state.ensure, ensureProvider: state.ensureProvider, reload: state.reload, refresh: state.refresh }) }));
 const provider = { id: 'codex', displayName: 'Codex', pluginId: 'owner' };
-const model = (i: number) => ({ id: `m-${i}`, model: `m-${i}`, displayName: `Model ${i}`, isDefault: i === 0 });
+const model = (i: number) => ({ id: `m-${i}`, model: `m-${i}`, displayName: `Model ${i}`, supportedReasoningEfforts: [], defaultReasoningEffort: 'medium', isDefault: i === 0 });
 const entry = () => ({ models: [model(0)], modelLoadError: null });
-const probe = { family: 'codex', installed: true, version: '1.2.3' } as HarnessVerifyResult;
+const probe = { family: 'codex', label: 'Codex', installed: true, version: '1.2.3' } as HarnessVerifyResult;
 function View({ config = {}, status = [probe], hostId = 'local', update = vi.fn(async () => {}) }: { config?: Partial<AppConfig>; status?: HarnessVerifyResult[]; hostId?: string; update?: (patch: Partial<AppConfig>) => Promise<void> } = {}) {
   return <MemoryRouter><RegisteredHarnesses config={config as AppConfig} status={status} hostId={hostId || undefined} hostName={hostId ? 'Actual Mac' : undefined} onUpdate={update} onRefreshStatus={state.refreshStatus} checkingStatus={false} /></MemoryRouter>;
 }
@@ -29,6 +29,7 @@ describe('RegisteredHarnesses', () => {
     state.snapshot.byProvider['plugin-custom'] = entry();
     const update = vi.fn(async () => {});
     render(<View config={{ defaultHarness: 'claude' }} update={update} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Configure Custom' }));
     fireEvent.click(screen.getByRole('button', { name: 'Set as thread default' }));
     await waitFor(() => expect(update).toHaveBeenCalledWith({ defaultThreadProviderId: 'plugin-custom' }, { throwOnError: true }));
     fireEvent.click(screen.getByRole('button', { name: 'Default for threads' }));
@@ -46,8 +47,8 @@ describe('RegisteredHarnesses', () => {
 
   it('shows registered providers and links to their actual plugin without seeded rows', () => {
     render(<View config={{ defaultThreadProviderId: 'codex' }} />);
-    expect(screen.getByText('Actual Mac · 1 registered')).toBeTruthy();
-    expect(screen.getByText('Agent 1.2.3')).toBeTruthy();
+    expect(screen.getByText('Actual Mac')).toBeTruthy();
+    expect(screen.getByText('1.2.3')).toBeTruthy();
     expect(screen.getByText('Thread default')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'From Provider owner' }).getAttribute('href')).toBe('/extensions/plugins/owner?view=installed');
     expect(screen.getByRole('link', { name: 'Add harness' }).getAttribute('href')).toBe('/extensions/plugins/browse');
@@ -64,10 +65,29 @@ describe('RegisteredHarnesses', () => {
     fireEvent.change(input, { target: { value: 'absent' } });
     expect(screen.getByText('No harnesses match your search.')).toBeTruthy();
   });
+  it('joins a registered provider, a runtime provider, and the local CLI by stable ID', () => {
+    state.inventory.providers = [provider, { id: 'acp-hermes-agent', displayName: 'Hermes Agent', pluginId: 'owner' }];
+    state.snapshot.providers = [{ id: 'codex', displayName: 'Runtime Codex' }, { id: 'pi', displayName: 'Pi' }];
+    const cliOnly = { ...probe, family: 'afcode', label: 'Agentforce Code' } as HarnessVerifyResult;
+    const { container } = render(<View status={[probe, cliOnly]} />);
+    const rows = [...container.querySelectorAll('.registered-harness')];
+    expect(rows.map(row => row.querySelector('h4')?.textContent)).toEqual(['Agentforce Code', 'Codex', 'Hermes Agent', 'Pi']);
+    expect(rows[0].getAttribute('data-provider-id')).toBeNull();
+    expect(rows[1].getAttribute('data-harness-family')).toBe('codex');
+    expect(rows[2].getAttribute('data-harness-family')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Configure Agentforce Code' }));
+    expect(screen.queryByRole('button', { name: 'Reload models' })).toBeNull();
+    expect(state.ensureProvider).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Configure Pi' }));
+    expect(screen.getByRole('button', { name: 'Reload models' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Set as thread default' })).toBeNull();
+    expect(state.ensureProvider).toHaveBeenCalledWith('pi');
+  });
   it('shows recovery for an unavailable registration and a missing CLI', () => {
     state.inventory.providers = [{ ...provider, available: false, unavailableReason: 'Runtime damaged' }];
     const view = render(<View />);
     expect(screen.getByText('Runtime damaged')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Configure Codex' }));
     expect(screen.getByRole('link', { name: 'Set up' }).getAttribute('href')).toContain('/owner?');
     state.inventory.providers = [provider];
     view.rerender(<View status={[{ ...probe, installed: false }]} />);
@@ -77,6 +97,7 @@ describe('RegisteredHarnesses', () => {
     let reject!: (reason: Error) => void;
     const update = vi.fn(() => new Promise<void>((_, fail) => { reject = fail; }));
     render(<View update={update} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Configure Codex' }));
     const button = screen.getByRole('button', { name: 'Set as thread default' });
     fireEvent.click(button);
     expect(update).toHaveBeenCalledWith({ defaultThreadProviderId: 'codex' }, { throwOnError: true });
@@ -89,6 +110,7 @@ describe('RegisteredHarnesses', () => {
   it('retains persisted badges and allows a thread default when its CLI agent is disabled', async () => {
     const update = vi.fn(async () => {});
     const view = render(<View update={update} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Configure Codex' }));
     fireEvent.click(screen.getByRole('button', { name: 'Set as thread default' }));
     await waitFor(() => expect(update).toHaveBeenCalledOnce());
     view.rerender(<View update={update} config={{ defaultThreadProviderId: 'codex' }} />);
@@ -104,10 +126,10 @@ describe('RegisteredHarnesses', () => {
   it('browses bounded models, expands on request, reloads the same provider, and closes', () => {
     state.snapshot.byProvider.codex.models = Array.from({ length: 51 }, (_, i) => model(i));
     render(<View />);
-    const toggle = screen.getByRole('button', { name: 'Browse Codex models' });
+    const toggle = screen.getByRole('button', { name: 'Configure Codex' });
     fireEvent.click(toggle);
-    expect(screen.getByText('Model 0')).toBeTruthy(); expect(screen.queryByText('Model 50')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Show more models (50 of 51)' }));
+    expect(screen.getAllByText('Model 0').length).toBeGreaterThan(0); expect(screen.queryByText('Model 50')).toBeNull();
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search Codex models' }), { target: { value: 'm-50' } });
     expect(screen.getByText('Model 50')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Reload models' }));
     expect(state.refresh).toHaveBeenCalledWith('codex');
@@ -117,7 +139,7 @@ describe('RegisteredHarnesses', () => {
   it('requests unloaded models and keeps stale catalogue errors visible', () => {
     state.snapshot.byProvider = {};
     const view = render(<View />);
-    fireEvent.click(screen.getByRole('button', { name: 'Browse Codex models' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Configure Codex' }));
     expect(state.ensureProvider).toHaveBeenCalledWith('codex');
     state.snapshot = { ...state.snapshot, byProvider: { codex: { ...entry(), modelLoadError: 'timeout', modelLoadErrorDetail: 'Actual timeout detail' } } };
     view.rerender(<View />);
@@ -126,16 +148,16 @@ describe('RegisteredHarnesses', () => {
   });
   it('refreshes the registry and the same machine catalogue', () => {
     render(<View />);
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh harnesses' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Check status' }));
     expect(state.inventory.refresh).toHaveBeenCalledOnce(); expect(state.reload).toHaveBeenCalledOnce(); expect(state.refreshStatus).toHaveBeenCalledOnce();
   });
   it('keeps disconnected data honest and does not request model discovery', () => {
     render(<View hostId="" />);
-    expect(screen.getByText('No connected machine · 1 registered')).toBeTruthy();
+    expect(screen.getByText('No connected machine')).toBeTruthy();
     expect(screen.getByText(/Machine disconnected/)).toBeTruthy(); expect(state.ensure).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Browse Codex models' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Configure Codex' }));
     expect((screen.getByRole('button', { name: 'Reload models' }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh harnesses' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Check status' }));
     expect(state.reload).not.toHaveBeenCalled();
   });
   it.each([
@@ -144,7 +166,7 @@ describe('RegisteredHarnesses', () => {
     [{}, 'No provider plugins registered. Add a provider from Plugins to get started.']
   ])('explains an empty registry (%j)', (override, message) => {
     state.inventory = { ...state.inventory, providers: [], ...override };
-    render(<View />);
+    render(<View status={[]} />);
     expect(screen.getByText(message)).toBeTruthy();
   });
 });
@@ -161,17 +183,18 @@ it('marks retained models stale when the real catalog roster refresh fails', asy
   try {
     await screen.findByText('1 model available');
     failRoster = true;
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh harnesses' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Check status' }));
     await screen.findByText('Previously loaded models · Could not check provider availability: Host offline');
     expect(screen.queryByText('1 model available')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Set as thread default' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Browse Codex models' }));
-    expect(screen.getByText('Model 0')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Configure Codex' }));
+    expect(screen.getAllByText('Model 0').length).toBeGreaterThan(0);
   } finally { view.unmount(); catalogModule.resetThreadModelCatalog(); }
 });
 
 it('refreshes the selected machine provider catalogue when native sign-in becomes ready', () => {
   render(<View />);
+  fireEvent.click(screen.getByRole('button', { name: 'Configure Codex' }));
   fireEvent.click(screen.getByRole('button', { name: 'Finish Codex sign-in' }));
   expect(state.refresh).toHaveBeenCalledWith('codex');
 });

@@ -1,5 +1,15 @@
 const UI_PROPOSAL_GUIDANCE = 'When building or substantially changing user-facing features in Zana Command Center or any Zana plugin, proactively show a realistic, clickable UI proposal early, with meaningful alternatives or a Current / Proposed comparison where useful. Use the `zana-ui-proposals` skill when available; do not wait for an explicit mockup request. Keep trivial fixes lightweight, honor explicit requests to implement directly, and continue within existing authorization without adding an automatic approval gate.';
 
+/**
+ * Where generated deliverables go and how they reach the user. Thread storage is
+ * per-thread, outside the checkout, and browsable from the thread side panel;
+ * absolute links into it resolve to a side-panel preview.
+ */
+export const THREAD_ARTIFACT_GUIDANCE = [
+  'When `ZCC_THREAD_STORAGE` is set, save generated deliverables the user should see (reports, HTML mockups, screenshots, recordings, exports) under that directory rather than in the repository, unless the user asked for them in the project.',
+  'Use Markdown links for files, artifacts, and URLs you want the user to open; for thread-storage files, link the absolute path. Zana renders them as clickable links that open in the thread side panel.'
+].join(' ');
+
 /** Shared by Modern session tooling and CLI Agent launch guidance. */
 export const IN_APP_PREVIEW_GUIDANCE = [
   'These desktop presentation instructions apply only when the user is interacting in Zana. If this conversation is controlled through a remote chat, do not open or reveal desktop panels; return results through that conversation. Background browsing and execution remain available. Never treat a localhost URL or a local file path as a remotely viewable result.',
@@ -12,6 +22,7 @@ export const IN_APP_PREVIEW_GUIDANCE = [
   'Do not launch Chrome, Edge, the OS default browser, or `open` / `xdg-open` / `start` for a preview unless the user explicitly requests an external browser.',
   'Start dev servers with automatic browser opening disabled (omit --open; use BROWSER=none when supported).',
   'If in-app browsing is unavailable, explain the limitation and provide the URL instead of silently opening an external browser.',
+  THREAD_ARTIFACT_GUIDANCE,
   UI_PROPOSAL_GUIDANCE
 ].join(' ');
 

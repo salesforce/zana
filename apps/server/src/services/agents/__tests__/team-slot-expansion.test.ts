@@ -12,6 +12,13 @@ describe('expandTeamSlots', () => {
     expect(expandTeamSlots({ id: 't', name: 'T', orchestratorPersonaId: 'o', slots: [{ personaId: 'w', quantity: 2, label: 'QA exact' }] }).slice(0, 2))
       .toEqual([0, 1].map(index => ({ slotId: `0:w:${index}`, personaId: 'w', role: 'worker', label: 'QA exact' })));
   });
+  it('copies slot roles onto every expanded tab without sharing the array', () => {
+    const roles = ['qa'];
+    const slots = expandTeamSlots({ id: 't', name: 'T', slots: [{ personaId: 'w', quantity: 2, roles }] });
+    expect(slots.map(slot => slot.roles)).toEqual([['qa'], ['qa']]);
+    expect(slots[0].roles).not.toBe(roles);
+    expect(slots[0].roles).not.toBe(slots[1].roles);
+  });
   it('uses stable host slot ids and reserves orchestrator capacity', () => {
     const slots = expandTeamSlots({
       id: 'team-1', name: 'Team', orchestratorPersonaId: 'controller',

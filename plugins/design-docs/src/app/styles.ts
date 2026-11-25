@@ -192,9 +192,16 @@ export const DESIGN_DOCS_STYLES = `
 .dd-peers-guide ol { margin: 6px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; line-height: 1.5; }
 .dd-peers-heading { margin: 0; font-size: 12.5px; font-weight: 650; }
 .dd-peers-block { display: flex; flex-direction: column; gap: 4px; }
+.dd-peers-behavior { gap: 6px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-elevated); }
+.dd-peers-behavior > h4 { margin: 0 0 4px; color: var(--text-muted); font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.dd-peers-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.dd-peers-toggle > input { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--accent-blue, #2563eb); }
+.dd-peers-behavior > .dd-peers-hint { padding-left: 24px; line-height: 1.5; }
+.dd-peers-core-link { align-self: flex-start; font-size: 12px; color: var(--text-muted); text-decoration: none; }
+.dd-peers-core-link:hover { color: var(--text-primary); text-decoration: underline; }
 .dd-peers-connect { align-self: flex-start; }
-.dd-diag { gap: 10px; }
-.dd-diag > h4 { margin: 0 0 2px; }
+.dd-diag { gap: 10px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-elevated); }
+.dd-diag > h4 { margin: 0 0 2px; color: var(--text-muted); font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .dd-diag p { margin: 0; line-height: 1.5; }
 .dd-peers-diag { display: flex; flex-direction: column; gap: 4px; padding-top: 10px; border-top: 1px solid var(--border); }
 .dd-peers-diag .dd-peers-list { margin-top: 2px; line-height: 1.5; }
@@ -611,6 +618,7 @@ export const DESIGN_DOCS_STYLES = `
 .dd-template-files { margin-top: 2px; color: var(--text-dim); font-family: var(--font-mono, ui-monospace, monospace); font-size: 10.5px; }
 
 /* ── Doc ────────────────────────────────────────────────────────────── */
+.dd-doc:focus { outline: none; }
 .dd-doc { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; }
 .dd-doc-header { flex: 0 0 auto; padding: 12px 16px 10px 20px; border-bottom: 1px solid var(--border); }
 .dd-doc-header-compact { padding: 8px 8px 8px 12px; }
@@ -805,6 +813,9 @@ textarea.dd-doc-summary { display: block; }
 
 /* Preview */
 .dd-preview { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; }
+.dd-preview { outline: none; }
+.dd-preview > .dom-find-bar { position: sticky; top: 8px; float: right; margin-right: 20px; }
+.dd-md-toolbar { position: sticky; top: 0; z-index: 2; }
 .dd-prose { max-width: 860px; margin: 0 auto; padding: 28px 40px 96px; }
 .dd-doc-compact .dd-prose { padding: 16px 16px 64px; }
 .dd-prose .inbox-md { font-size: 14px; line-height: 1.7; }
@@ -832,7 +843,8 @@ textarea.dd-doc-summary { display: block; }
   background-position: 0 0, 8px 8px;
 }
 .dd-image-stage img { max-width: 100%; max-height: 100%; border-radius: 4px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2); }
-.dd-html-stage { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.dd-html-stage { position: relative; outline: none; display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.dd-html-stage .dom-find-bar { top: 40px; }
 .dd-html-toolbar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid var(--border); background: var(--bg-base); }
 .dd-html-status { display: inline-flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; }
 .dd-html-widths { display: inline-flex; gap: 2px; }
@@ -880,7 +892,22 @@ textarea.dd-doc-summary { display: block; }
 
 /* Editor */
 .dd-editor { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
-.dd-editor-body { display: flex; flex: 1 1 auto; min-height: 0; }
+.dd-editor-body { position: relative; display: flex; flex: 1 1 auto; min-height: 0; }
+.dd-editor-find { display: contents; }
+.dd-editor-field { position: relative; display: flex; flex: 1 1 0; min-width: 0; }
+/* While find is open the matches are painted on a backdrop behind the transparent textarea (a blurred textarea draws no selection). */
+.dd-editor-field-find { background: var(--bg-panel); }
+.dd-editor-split .dd-editor-field-find { background: var(--bg-base); }
+.dd-editor-field-find .dd-editor-input { position: relative; background: transparent; overflow-y: scroll; }
+.dd-editor-backdrop {
+  position: absolute; inset: 0; overflow-y: scroll; overflow-x: hidden; pointer-events: none; scrollbar-color: transparent transparent;
+  padding: 20px 24px 64px; color: transparent; white-space: pre-wrap; overflow-wrap: break-word;
+  font-family: var(--font-mono, ui-monospace, monospace); font-size: 13px; line-height: 1.65; tab-size: 2;
+}
+.dd-find-hit { background: rgba(255, 200, 0, 0.35); color: transparent; border-radius: 2px; }
+.dd-find-current { background: rgba(255, 140, 0, 0.7); }
+/* In split mode the bar sits over the text pane, not the preview. */
+.dd-editor-split .dd-editor-find .dom-find-bar { right: calc(50% + 20px); }
 .dd-editor-input {
   flex: 1 1 0;
   min-width: 0;
@@ -896,6 +923,9 @@ textarea.dd-doc-summary { display: block; }
   tab-size: 2;
 }
 .dd-editor-split .dd-editor-input { border-right: 1px solid var(--border); background: var(--bg-base); }
+/* Must follow the rule above: with find open the split textarea stays transparent so the backdrop shows, and the backdrop takes the same border so both wrap at one width. */
+.dd-editor-split .dd-editor-field-find .dd-editor-input { background: transparent; }
+.dd-editor-split .dd-editor-backdrop { border-right: 1px solid transparent; }
 .dd-editor-preview { display: flex; flex: 1 1 0; min-width: 0; min-height: 0; }
 .dd-editor-preview .dd-prose { padding: 20px 28px 64px; }
 .dd-editor-footer { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; height: 40px; padding: 0 10px 0 14px; border-top: 1px solid var(--border); }
@@ -904,7 +934,7 @@ textarea.dd-doc-summary { display: block; }
 .dd-editor-footer .btn { height: 26px; }
 
 /* Revision view + diff */
-.dd-revision { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.dd-revision { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .dd-revision-banner { flex: 0 0 auto; }
 .dd-revision-note { color: var(--text-muted); }
 .dd-revision-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: auto; }
@@ -942,6 +972,7 @@ textarea.dd-doc-summary { display: block; }
 }
 .dd-rail-tab:hover { color: var(--text-primary); }
 .dd-rail-tab.on { background: var(--bg-elevated); color: var(--text-primary); box-shadow: 0 0 0 1px var(--border); }
+.dd-comments { position: relative; }
 .dd-rail-pane { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .dd-rail-toolbar { display: flex; align-items: center; padding: 8px 10px 4px; }
 .dd-rail-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 6px 10px 12px; }

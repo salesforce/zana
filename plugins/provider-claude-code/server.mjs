@@ -7,6 +7,13 @@ export default function plugin(zcc) {
       description: 'Let Claude Code read and write auto-memory between sessions.',
       default: true
     },
+    sandboxEnabled: {
+      type: 'boolean',
+      label: 'Claude Code sandbox',
+      description:
+        "Run Bash commands in Claude Code's sandbox in Accept Edits and Approve for me modes. Turn off to use Claude Code's own command approvals and sandbox settings instead. Applies on the next turn.",
+      default: true
+    },
     subagentsDisabled: {
       type: 'boolean',
       label: 'Disable subagents',
@@ -73,6 +80,7 @@ export default function plugin(zcc) {
       const flag = (value, fallback) => (typeof value === 'boolean' ? value : fallback);
       return {
         memoryEnabled: flag(context.settings.memoryEnabled, true),
+        sandboxEnabled: flag(context.settings.sandboxEnabled, true),
         providerSubagentsEnabled: !flag(context.settings.subagentsDisabled, false),
         workflowsEnabled: !flag(context.settings.workflowsDisabled, false),
         idleQueryReleaseEnabled: flag(context.settings.idleQueryReleaseEnabled, false),

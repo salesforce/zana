@@ -5,7 +5,7 @@ export const DEFAULT_RESULT_LIMIT = 20;
 export const MAX_RESULT_LIMIT = 100;
 export const MEMORY_KINDS = ['fact', 'preference', 'decision', 'procedure', 'episode', 'reference'];
 export const NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/;
-export const TAG_PATTERN = /^[a-z0-9][a-z0-9._-]{0,39}$/;
+export const TAG_PATTERN = /^[a-z0-9][a-z0-9._-]{0,39}(?::[a-z0-9][a-z0-9._-]{0,39})?$/;
 
 export const MEMORY_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS memories (
@@ -118,7 +118,7 @@ export function validateTags(values) {
   if (tags.length > 20) throw new CliError('at most 20 tags are allowed');
   for (const tag of tags) {
     if (!TAG_PATTERN.test(tag)) {
-      throw new CliError(`invalid tag "${tag}"; use lowercase letters, digits, dots, underscores, or hyphens`);
+      throw new CliError(`invalid tag "${tag}"; use lowercase letters, digits, dots, underscores, or hyphens with an optional namespace prefix`);
     }
   }
   return tags;
@@ -390,6 +390,17 @@ export class MemoryStore {
       throw error;
     }
     return record;
+  }
+
+  listTagged(tag, projectId, offset) {
+    const scope = scopeSql('all', projectId);
+    const rows = this.db.prepare(
+      `SELECT m.id, m.name, m.summary, m.details FROM memories m
+       WHERE m.deleted_at IS NULL AND ${scope.sql}
+       AND EXISTS (SELECT 1 FROM json_each(m.tags_json) WHERE value = ?)
+       ORDER BY m.updated_at DESC, m.id LIMIT 21 OFFSET ?`
+    ).all(...scope.params, tag, offset);
+    return { memories: rows.slice(0, 20), hasMore: rows.length > 20 };
   }
 
   listAll() {

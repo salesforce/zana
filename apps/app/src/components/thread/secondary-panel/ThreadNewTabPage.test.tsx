@@ -10,7 +10,10 @@ vi.mock('../../../lib/app-surface.js', () => ({
   hasDesktopBridge: () => false
 }));
 vi.mock('../../../lib/product-client.js', () => ({
-  product: { fs: { walkFiles: vi.fn().mockResolvedValue([]) } }
+  product: {
+    fs: { walkFiles: vi.fn().mockResolvedValue([]) },
+    threads: { storageFiles: vi.fn().mockResolvedValue({ files: [], truncated: false, storageRootPath: '/s' }) }
+  }
 }));
 vi.mock('../../../store.js', () => ({
   useData: (selector: (s: { projects: unknown[] }) => unknown) => selector({ projects: [] })
@@ -68,6 +71,42 @@ describe('ThreadNewTabPage', () => {
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'report' } });
     expect(product.fs.walkFiles).toHaveBeenCalledOnce();
+  });
+
+  it('searches thread storage only when the host can open storage files', async () => {
+    vi.mocked(product.threads.storageFiles).mockResolvedValueOnce({
+      files: [{ path: 'out/report.html', name: 'report.html' }, { path: 'shot.png', name: 'shot.png' }],
+      truncated: false,
+      storageRootPath: '/s'
+    });
+    const onOpenStorageFile = vi.fn();
+    const view = render(<ThreadNewTabPage projectId="p1" cwd="/project" threadId="t1" onOpenFile={vi.fn()}
+      onOpenStorageFile={onOpenStorageFile} onOpenBrowser={vi.fn()} onOpenPlugin={vi.fn()} />);
+    expect(product.threads.storageFiles).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'report' } });
+    const group = await screen.findByRole('region', { name: 'Thread storage' });
+    expect(within(group).queryByText('shot.png')).toBeNull();
+    fireEvent.click(within(group).getByRole('button', { name: 'out/report.html' }));
+    expect(onOpenStorageFile).toHaveBeenCalledWith('out/report.html', 'report.html');
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'reports' } });
+    expect(product.threads.storageFiles).toHaveBeenCalledOnce();
+    expect(product.threads.storageFiles).toHaveBeenCalledWith('t1');
+    view.unmount();
+
+    render(<ThreadNewTabPage projectId="p1" cwd="/project" threadId="t1" onOpenFile={vi.fn()}
+      onOpenBrowser={vi.fn()} onOpenPlugin={vi.fn()} />);
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'report' } });
+    await waitFor(() => expect(product.fs.walkFiles).toHaveBeenCalled());
+    expect(product.threads.storageFiles).toHaveBeenCalledOnce();
+  });
+
+  it('treats an unavailable thread storage as empty', async () => {
+    vi.mocked(product.threads.storageFiles).mockRejectedValueOnce(new Error('thread not found'));
+    render(<ThreadNewTabPage projectId={null} cwd={null} threadId="t1" onOpenFile={vi.fn()}
+      onOpenStorageFile={vi.fn()} onOpenBrowser={vi.fn()} onOpenPlugin={vi.fn()} />);
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'zzz-nothing' } });
+    await waitFor(() => expect(product.threads.storageFiles).toHaveBeenCalledOnce());
+    expect(screen.queryByRole('region', { name: 'Thread storage' })).toBeNull();
   });
 
   it('lists New agent only for hosts that can open one', () => {
