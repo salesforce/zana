@@ -29,10 +29,11 @@ import { shortRunId, teamRunLabel } from '@/lib/executionIdentity';
 import { childRowCounts, edgeRoute, layout, NODE_W, nodeNotice, simplify } from './squadFlowLayout';
 import { SquadMemberDetails, SquadRoster } from './SquadRoster';
 import {
-  mainSquadFilters, matchesSquadMemberSearch, matchesSquadSearch,
+  isClosedSquadRun, mainSquadFilters, matchesSquadMemberSearch, matchesSquadSearch,
   nodeActivity, runStates, sliceSquadGraph, squadMemberStatus, squadQuestion, squadRunStatus, squadStatusCounts,
   squadStatuses, type SquadStatusFilter
 } from './squadFlowPresentation';
+import { readDismissedSquadRuns, saveSquadRunDismissal, subscribeToSquadRunDismissals } from './squadRunDismissals';
 
 export { nodeActivity, STREAMING_FRESH_MS } from './squadFlowPresentation';
 
@@ -820,6 +821,7 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
       compact={compact}
       view={view}
       setView={setView}
+      projectId={selected}
       projectName={selectedProject?.name}
       projectPicker={projectId ? undefined : { selected, projects, onSelect: setSelectedId }}
       mergedGraph={mergedGraph}
@@ -848,6 +850,7 @@ interface SquadSurfaceProps {
   compact: boolean;
   view: 'overview' | 'map';
   setView: (view: 'overview' | 'map') => void;
+  projectId?: string;
   projectName?: string;
   projectPicker?: {
     selected?: string;
@@ -861,17 +864,28 @@ interface SquadSurfaceProps {
   onOpenMember: (node: SquadFlowNode) => void;
 }
 
-function SquadSurface({ compact, view, setView, projectName, projectPicker, mergedGraph, runs, splitMap, onInspectExecution, onOpenMember }: SquadSurfaceProps) {
+function SquadSurface({ compact, view, setView, projectId, projectName, projectPicker, mergedGraph, runs, splitMap, onInspectExecution, onOpenMember }: SquadSurfaceProps) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<SquadStatusFilter>('all');
   const [selectedRun, setSelectedRun] = useState(ALL_SQUADS);
   const [selectedMember, setSelectedMember] = useState<string>();
+  const [dismissedRuns, setDismissedRuns] = useState(() => readDismissedSquadRuns(projectId));
+  const [lastDismissed, setLastDismissed] = useState<{ executionId: string; title: string }>();
   const trigger = useRef<HTMLButtonElement>(null);
+  const undoButton = useRef<HTMLButtonElement>(null);
+  const activeFilter = useRef<HTMLButtonElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
+  useEffect(() => subscribeToSquadRunDismissals(() => setDismissedRuns(readDismissedSquadRuns(projectId))), [projectId]);
+  useLayoutEffect(() => {
+    if (lastDismissed) undoButton.current?.focus();
+  }, [lastDismissed]);
   const now = mergedGraph?.builtAt ?? Date.now();
   const query = search.trim().toLowerCase();
   const memberQuery = matchesSquadSearch(query, projectName) ? '' : query;
   const mapOnly = view === 'map';
-  const matchingRuns = runs.flatMap((run) => {
+  const isDismissed = ({ execution }: SquadRun) => execution && isClosedSquadRun(execution) && dismissedRuns.has(execution.executionId);
+  const hiddenRuns = runs.filter(isDismissed);
+  const matchingRuns = runs.filter((run) => !isDismissed(run)).flatMap((run) => {
     const question = squadQuestion(run.execution);
     const state = run.execution?.state;
     const runMatches = matchesSquadSearch(memberQuery, run.title, run.teamName, question, run.execution?.executionId, state && runStates[state]);
@@ -899,6 +913,27 @@ function SquadSurface({ compact, view, setView, projectName, projectPicker, merg
   }
 
   const clearMember = () => setSelectedMember(undefined);
+  const updateDismissal = (executionId: string, dismissed: boolean) => {
+    if (!projectId) return;
+    saveSquadRunDismissal(projectId, executionId, dismissed);
+    setDismissedRuns((current) => {
+      const next = new Set(current);
+      if (dismissed) next.add(executionId);
+      else next.delete(executionId);
+      return next;
+    });
+  };
+  const dismissRun = (run: SquadRun) => {
+    if (!run.execution || !isClosedSquadRun(run.execution)) return;
+    updateDismissal(run.execution.executionId, true);
+    setLastDismissed({ executionId: run.execution.executionId, title: run.title });
+    clearMember();
+  };
+  const restoreRun = (executionId: string) => {
+    updateDismissal(executionId, false);
+    setLastDismissed((current) => current?.executionId === executionId ? undefined : current);
+    (activeFilter.current ?? searchInput.current)?.focus();
+  };
   const closeMember = () => {
     clearMember();
     trigger.current?.focus();
@@ -951,7 +986,7 @@ function SquadSurface({ compact, view, setView, projectName, projectPicker, merg
         </div>
         <label className="squad-search">
           <Search size={15} aria-hidden="true" />
-          <input type="search" aria-label="Search Squad runs and members" placeholder="Search Squad runs and members…" value={search} onChange={(event) => {
+          <input type="search" ref={searchInput} aria-label="Search Squad runs and members" placeholder="Search Squad runs and members…" value={search} onChange={(event) => {
             setSearch(event.target.value);
             clearMember();
           }} />
@@ -960,7 +995,7 @@ function SquadSurface({ compact, view, setView, projectName, projectPicker, merg
       {hasContent && (
         <div className="squad-status-filters" role="group" aria-label="Filter Squad runs">
           {mainSquadFilters.map((status) => (
-            <button type="button" key={status} className="squad-filter-tile" aria-pressed={filter === status} data-status={status} onClick={() => changeFilter(status)}>
+            <button type="button" key={status} ref={filter === status ? activeFilter : undefined} className="squad-filter-tile" aria-pressed={filter === status} data-status={status} onClick={() => changeFilter(status)}>
               <strong>{counts[status]}</strong><span>{squadStatuses[status]}</span>
             </button>
           ))}
@@ -972,6 +1007,12 @@ function SquadSurface({ compact, view, setView, projectName, projectPicker, merg
               </select>
             </label>
           )}
+        </div>
+      )}
+      {lastDismissed && (
+        <div className="squad-surface squad-dismissal">
+          <span role="status">{lastDismissed.title} dismissed</span>
+          <button type="button" className="btn" ref={undoButton} onClick={() => restoreRun(lastDismissed.executionId)}>Undo</button>
         </div>
       )}
       <div className={detail ? 'squad-content squad-content--inspecting' : 'squad-content'}>
@@ -993,10 +1034,17 @@ function SquadSurface({ compact, view, setView, projectName, projectPicker, merg
                     {run.execution && !run.question && (
                       <span className="squad-status" data-status={run.execution.state === 'COMPLETED' ? 'done' : undefined}>{runStates[run.execution.state]}</span>
                     )}
-                    {run.execution && onInspectExecution && (
-                      <button className="btn squad-run-open" type="button" aria-label={`Open Squad details for ${run.title}`} onClick={() => onInspectExecution(run.execution!.executionId)}>
-                        Details <ChevronRight size={14} aria-hidden="true" />
-                      </button>
+                    {run.execution && (
+                      <div className="squad-run-actions">
+                        {onInspectExecution && (
+                          <button className="btn squad-run-open" type="button" aria-label={`Open Squad details for ${run.title}`} onClick={() => onInspectExecution(run.execution!.executionId)}>
+                            Details <ChevronRight size={14} aria-hidden="true" />
+                          </button>
+                        )}
+                        {projectId && isClosedSquadRun(run.execution) && (
+                          <button className="btn" type="button" aria-label={`Dismiss ${run.title}`} title="Dismiss from Squads on this device" onClick={() => dismissRun(run)}>Dismiss</button>
+                        )}
+                      </div>
                     )}
                   </div>
                   {questionButton(run, false)}
@@ -1011,9 +1059,24 @@ function SquadSurface({ compact, view, setView, projectName, projectPicker, merg
           )}
           {!hasMatches && (
             <div className="squad-surface squad-empty" role="status">
-              <strong>{hasContent ? 'No matching Squad runs' : 'No Squad runs in this project'}</strong>
+              <strong>{hasContent
+                ? filter === 'done' && !query ? 'No completed Squad runs' : 'No matching Squad runs'
+                : 'No Squad runs in this project'}</strong>
               {hasContent && <button type="button" className="btn" onClick={() => { setSearch(''); changeFilter('all'); }}>Clear filters</button>}
             </div>
+          )}
+          {!mapOnly && hiddenRuns.length > 0 && (
+            <details className="squad-surface squad-dismissed-runs">
+              <summary>Dismissed runs ({hiddenRuns.length})</summary>
+              <ul>
+                {hiddenRuns.map((run) => (
+                  <li key={run.id} className="squad-dismissal">
+                    <span>{run.title} <small>· {shortRunId(run.execution!.executionId)}</small></span>
+                    <button type="button" className="btn" aria-label={`Restore ${run.title}`} onClick={() => restoreRun(run.execution!.executionId)}>Restore</button>
+                  </li>
+                ))}
+              </ul>
+            </details>
           )}
         </div>
         {detail && (

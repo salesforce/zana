@@ -311,6 +311,37 @@
   gap: 2px;
 }
 
+.squad-run-actions,
+.squad-dismissal {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.squad-dismissed-runs > summary {
+  padding: 8px 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.squad-dismissed-runs ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.squad-dismissed-runs .squad-dismissal { border-top: 1px solid var(--border); }
+.squad-dismissed-runs small { color: var(--text-muted); }
+
+.squad-run-actions:empty { display: none; }
+
+.squad-dismissal {
+  justify-content: space-between;
+  padding: 7px 12px;
+  overflow-wrap: anywhere;
+}
+
 .squad-status {
   justify-self: start;
   padding: 3px 7px;
@@ -524,7 +555,7 @@
     hyphens: auto;
   }
 
-  .squad-run-open {
+  .squad-run-actions {
     grid-column: 2 / -1;
     justify-self: start;
   }

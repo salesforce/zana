@@ -6,7 +6,7 @@ import { createDemoVideo, parseRecordSize } from './sdk/demo-video.js';
 import { createJobTeamContext, launchJobTeamCliOwner, readCoordinatorLog, teardownJobTeam } from './sdk/job-team-scenario.js';
 
 const recording = Boolean(process.env.ZCC_E2E_RECORD_VIDEO);
-const runTitle = 'CLI Agent durable job';
+const runTitle = 'Atlas website navigation';
 const question = 'Which label should result.txt use?';
 
 test.use({
@@ -54,6 +54,7 @@ test('Squads shows Squad runs only, filters both views and opens the real blocke
     }
     const projectId = await launchJobTeamCliOwner(ctx, {
       workerQuantity: 2,
+      prompt: 'E2E start Job Team for Squad overview',
       orchestratorExtra: { name: 'Atlas Coordinator' },
       workerExtra: { name: 'Atlas Researcher' },
       teamExtra: { name: 'Atlas Research' }
@@ -74,9 +75,11 @@ test('Squads shows Squad runs only, filters both views and opens the real blocke
     await project.selectOption(projectId);
     const attention = squads.getByRole('button', { name: /Needs you Which label/ });
     const runCard = squads.getByRole('region', { name: runTitle, exact: true });
+    const release = squads.getByRole('region', { name: 'Review release notes', exact: true });
     await expect(runCard.getByRole('button', { name: /Needs you Which label/ })).toBeVisible({ timeout: 45_000 });
+    await expect(release.getByRole('button', { name: /Needs you Which heading/ })).toBeVisible({ timeout: 45_000 });
     await expect(squads.getByRole('heading', { name: runTitle })).toBeVisible();
-    await expect(squads.getByRole('button', { name: '1 All', exact: true })).toBeVisible();
+    await expect(squads.getByRole('button', { name: '2 All', exact: true })).toBeVisible();
     await expect(squads.getByText('Draft release checklist', { exact: true })).toBeHidden();
     if (!recording) await page.screenshot({ path: testInfo.outputPath('squad-overview.png') });
 
@@ -98,12 +101,13 @@ test('Squads shows Squad runs only, filters both views and opens the real blocke
       await demo.caption(text);
       await page.waitForTimeout(ms);
     };
-    await caption('Squads opens on Overview. The question appears inside the run that needs an answer.');
+    await caption('Two Squad runs need input. Each question appears inside the run it belongs to.');
 
-    await click(page, squads.getByRole('button', { name: '1 Needs you', exact: true }));
+    await click(page, squads.getByRole('button', { name: '2 Needs you', exact: true }));
     await expect(attention).toBeVisible();
-    await caption('Select Needs you to see Squad runs waiting for you.');
-    await click(page, squads.getByRole('button', { name: '1 All', exact: true }));
+    await expect(release.getByRole('button', { name: /Needs you Which heading/ })).toBeVisible();
+    await caption('Needs you counts the two runs. Each question opens its own reply form.');
+    await click(page, squads.getByRole('button', { name: '2 All', exact: true }));
 
     const search = squads.getByRole('searchbox', { name: 'Search Squad runs and members' });
     await search.fill('release checklist');
@@ -210,11 +214,38 @@ test('Squads shows Squad runs only, filters both views and opens the real blocke
     await expect(squads.getByRole('button', { name: 'Map', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await click(page, squads.getByRole('button', { name: 'Overview', exact: true }));
     await expect(attention).toBeHidden({ timeout: 20_000 });
-    await caption('The run receives the response. Overview clears the question once it is answered.', 4000);
+    await expect(squads.getByRole('button', { name: '1 Needs you', exact: true })).toBeVisible();
+    await caption('Overview clears the answered question. The release notes run still needs a reply.', 3700);
     await expect(squads.getByRole('button', { name: '1 Completed', exact: true })).toBeVisible({ timeout: 20_000 });
     await click(page, squads.getByRole('button', { name: '1 Completed', exact: true }));
     await expect(runCard.getByText('Completed', { exact: true })).toBeVisible();
     await caption('Completed keeps finished runs easy to find, even after the workers exit.', 3500);
+    const dismiss = runCard.getByRole('button', { name: `Dismiss ${runTitle}`, exact: true });
+    await click(page, dismiss);
+    const undo = squads.getByRole('button', { name: 'Undo', exact: true });
+    await expect(undo).toBeFocused();
+    await expect(runCard).toBeHidden();
+    await expect(squads.getByRole('button', { name: '0 Completed', exact: true })).toBeVisible();
+    await caption('Dismiss hides the finished run and updates the count. The execution record stays available.', 3500);
+    await click(page, undo);
+    await expect(runCard).toBeVisible();
+    await expect(undo).toBeHidden();
+    await expect(squads.getByRole('button', { name: '1 Completed', exact: true })).toBeFocused();
+    await caption('Undo restores the run to Completed immediately.', 3500);
+    await click(page, dismiss);
+    await project.selectOption(second.value.id);
+    await project.selectOption(projectId);
+    await expect(runCard).toBeHidden();
+    await expect(release.getByRole('button', { name: /Needs you Which heading/ })).toBeVisible();
+    await expect.poll(() => page.evaluate(async ({ projectId, runTitle }) => {
+      const { executions } = await window.cc.executionBoard.listProject(projectId);
+      return executions.find((run) => run.jobTitle === runTitle)?.state;
+    }, { projectId, runTitle })).toBe('COMPLETED');
+    await click(page, squads.getByText('Dismissed runs (1)', { exact: true }));
+    await caption('Dismissal is remembered for this project. You can restore the run from Dismissed runs later.');
+    await click(page, squads.getByRole('button', { name: `Restore ${runTitle}`, exact: true }));
+    await expect(runCard).toBeVisible();
+    await caption('The restored run is back in Overview.', 2500);
     await demo?.finish();
     if (demo) await demo.flash();
   } catch (error) {

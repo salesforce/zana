@@ -44,6 +44,7 @@ vi.mock('@/lib/inspect-session', () => ({
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  localStorage.clear();
   stores.data.flowAllOrganization = 'merged';
   mobile.compact = false;
   mobile.inspectAgent.mockClear();
@@ -805,6 +806,42 @@ describe('Squads Overview and Map', () => {
     expect(screen.queryByText('Build Atlas')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Open Squad details for Audit docs' }));
     expect(inspect).toHaveBeenLastCalledWith('p1', 'docs');
+  });
+
+  it('dismisses a finished run and restores it immediately or after returning to its project', async () => {
+    stores.data.projects = [{ id: 'p1', name: 'Release project' }, { id: 'p2', name: 'Other project' }];
+    mockRuns([
+      exampleRun({ executionId: 'finished', jobTitle: 'Publish notes', state: 'COMPLETED' }),
+      exampleRun({ executionId: 'active', jobTitle: 'Write draft', state: 'RUNNING' })
+    ]);
+    const { unmount } = render(<SquadFlowView projectId="p1" />);
+    const completed = await screen.findByRole('button', { name: '1 Completed' });
+    expect(screen.queryByRole('button', { name: 'Dismiss Write draft' })).toBeNull();
+    fireEvent.click(completed);
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss Publish notes' }));
+    expect(screen.queryByRole('heading', { name: 'Publish notes' })).toBeNull();
+    expect(screen.getByText('No completed Squad runs')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '0 Completed' }).getAttribute('aria-pressed')).toBe('true');
+    const undo = screen.getByRole('button', { name: 'Undo' });
+    expect(document.activeElement).toBe(undo);
+    fireEvent.click(undo);
+    expect(screen.getByRole('heading', { name: 'Publish notes' })).toBeTruthy();
+    expect(document.activeElement).toBe(completed);
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss Publish notes' }));
+    unmount();
+
+    mockRuns([exampleRun({ projectId: 'p2', executionId: 'finished', jobTitle: 'Other notes', state: 'COMPLETED' })]);
+    const otherProject = render(<SquadFlowView projectId="p2" />);
+    expect(await screen.findByRole('heading', { name: 'Other notes' })).toBeTruthy();
+    otherProject.unmount();
+
+    mockRuns([exampleRun({ executionId: 'finished', jobTitle: 'Publish notes', state: 'COMPLETED' })]);
+    render(<SquadFlowView projectId="p1" />);
+    const dismissed = await screen.findByText('Dismissed runs (1)', { selector: 'summary' });
+    expect(screen.queryByRole('heading', { name: 'Publish notes' })).toBeNull();
+    fireEvent.click(dismissed);
+    fireEvent.click(screen.getByRole('button', { name: 'Restore Publish notes' }));
+    expect(screen.getByRole('heading', { name: 'Publish notes' })).toBeTruthy();
   });
 
   it('switches the map between runs and removes edges when filtering away an endpoint', () => {
