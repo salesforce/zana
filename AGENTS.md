@@ -20,6 +20,7 @@ If one is explicitly requested, put it under `.worktrees/<branch-name>` so repo 
 7. **Promotion to a built-in is deliberate and bounded** — only when the broker can't grant the capability even scoped, and the trusted version (`builtinExec`/`builtinFetch`) is no weaker than its broker-gated twin (redirects, body cap, timeout).
 8. **New or modified code needs at least 80% test coverage**, covering meaningful branches and failure paths. For Electron main/renderer seams, also add or update the built-Electron E2E test. Before completion, run the focused tests plus any matching command in the Verification triggers section (`docs/live-zana-verification.md`).
 9. **PR monitoring means diagnose and repair.** Watch checks until complete. On failure, use `gh run view <run-id> --job <job-id> --log-failed`; for external checks, `gh api repos/<owner>/<repo>/commits/<sha>/check-runs` then `gh api repos/<owner>/<repo>/check-runs/<id>/annotations` for file, line, rule, and remediation. Fix, verify locally, push, repeat until every required check passes.
+10. **Update user documentation in the same PR as a user-facing change.** Link the updated guide, plugin overview, release note, or help video in the PR. For a covered change with no docs impact, explain why in the PR's `Docs exception reason` field and request the `no-docs-needed` label from a maintainer.
 
 ## Native runtime and test isolation
 

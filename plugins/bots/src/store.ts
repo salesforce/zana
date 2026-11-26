@@ -1,4 +1,5 @@
 import type { PluginKvStorage } from '@zana-ai/zcc-plugin-sdk/server';
+import { HELPER_ID } from './helper/shared.js';
 import {
   BotValidationError,
   MAX_BOTS,
@@ -20,6 +21,7 @@ import {
 
 const BOTS_KEY = 'bots:v1';
 const JOBS_KEY = 'jobs:v1';
+const HELPER_PROVISIONED_KEY = 'bots:helper-provisioned';
 /** Retention cap for finished-job records kept for the Jobs tab. */
 export const MAX_JOB_RECORDS_PER_BOT = 50;
 
@@ -43,6 +45,7 @@ export class BotStore {
   private chain: Promise<unknown> = Promise.resolve();
   private cache: Bot[] | null = null;
   private jobsCache: BotJob[] | null = null;
+  private helperProvisioned = false;
 
   constructor(
     private readonly kv: PluginKvStorage,
@@ -127,6 +130,26 @@ export class BotStore {
     });
   }
 
+  /** Seed once. If saving the marker fails, the existing bot is detected on retry. */
+  async provisionHelper(input: () => Promise<BotInput | null>): Promise<void> {
+    if (this.helperProvisioned) return;
+    await this.serialize(async () => {
+      if (this.helperProvisioned || await this.kv.get(HELPER_PROVISIONED_KEY) === true) {
+        this.helperProvisioned = true;
+        return;
+      }
+      const bots = await this.loadBots();
+      if (!bots.some(bot => bot.isHelper)) {
+        if (findBot(bots, HELPER_ID) || bots.length >= MAX_BOTS) return;
+        const draft = await input();
+        if (!draft) return; // A project can become available after the plugin starts.
+        await this.saveBots([{ ...newBot(draft, HELPER_ID, this.now()), isHelper: true }, ...bots]);
+      }
+      await this.kv.set(HELPER_PROVISIONED_KEY, true);
+      this.helperProvisioned = true;
+    });
+  }
+
   private async mutate(ref: string, change: (bot: Bot) => Bot): Promise<Bot> {
     return this.serialize(async () => {
       const bots = await this.loadBots();
@@ -172,6 +195,10 @@ export class BotStore {
       const bots = await this.loadBots();
       const bot = findBot(bots, ref);
       if (!bot) throw new BotValidationError(`unknown bot "${ref}"`);
+      if (bot.isHelper && !this.helperProvisioned) {
+        await this.kv.set(HELPER_PROVISIONED_KEY, true);
+        this.helperProvisioned = true;
+      }
       // Jobs first: if the second write fails the bot still exists and can be deleted again.
       await this.saveJobs((await this.loadJobs()).filter((job) => job.botId !== bot.id));
       await this.saveBots(bots.filter((row) => row.id !== bot.id));

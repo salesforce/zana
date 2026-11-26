@@ -4,6 +4,10 @@ import { CLI_COMMANDS, runCli } from './src/cli.js';
 import { BotValidationError } from './src/model.js';
 import { BotService, errorMessage } from './src/service.js';
 import { registerVault } from './src/vault/register.js';
+import { HelperCatalog } from './src/helper/catalog-refresh.js';
+import { browseGuides, guideMarkdown, HELPER_GUIDES_CHANGED } from './src/helper/catalog.js';
+import { toolInstructions } from './src/instructions.js';
+import { HELPER_NAME, HELPER_PERSONALITY, LEGACY_HELPER_KEY, type LegacyHelper } from './src/helper/shared.js';
 import { BotStore } from './src/store.js';
 import { registerBotTools, toolsFor } from './src/tools.js';
 
@@ -19,8 +23,11 @@ function ref(args: Record<string, unknown>, field = 'bot'): string {
   return value;
 }
 
-export function registerRpc(zcc: Pick<ZccPluginApi, 'rpc' | 'sdk'>, service: BotService): void {
-  zcc.rpc.method('list', () => service.listViews());
+export function registerRpc(zcc: Pick<ZccPluginApi, 'rpc' | 'sdk'>, service: BotService, provisionHelper: () => Promise<void>): void {
+  zcc.rpc.method('list', async () => {
+    await provisionHelper();
+    return service.listViews();
+  });
   zcc.rpc.method('threadBot', async raw => {
     const args = record(raw);
     const role = service.roleOf(ref(args, 'threadId'));
@@ -105,19 +112,76 @@ export default async function plugin(zcc: ZccPluginApi): Promise<void> {
   const service = new BotService(zcc, store, cronMatches, () => Date.now(), zcc.storage.kv);
   await store.warm();
 
+  const catalog = new HelperCatalog(
+    zcc.storage.kv,
+    fetch,
+    () => zcc.realtime.publish(HELPER_GUIDES_CHANGED, {}),
+    message => zcc.log.debug(message)
+  );
+  const settings = zcc.settings.define({
+    downloadGuideUpdates: {
+      type: 'boolean',
+      label: 'Download Zana guide updates',
+      description: 'Check raw.githubusercontent.com for updates to the guides. Bundled and previously downloaded guides are available offline.',
+      default: true
+    }
+  });
+  let refreshSettingChanged = false;
+  settings.onChange(values => {
+    refreshSettingChanged = true;
+    catalog.setRefreshEnabled(values.downloadGuideUpdates === true);
+  });
+  zcc.onDispose(() => catalog.setRefreshEnabled(false));
+  const initialSettings = await settings.get().catch((error: unknown) => {
+    zcc.log.warn(`could not load Bots settings: ${errorMessage(error)}`);
+    return undefined;
+  });
+  if (!refreshSettingChanged) catalog.setRefreshEnabled(initialSettings?.downloadGuideUpdates === true);
+
+  const legacyHelper = () => zcc.storage.kv.get<LegacyHelper>(LEGACY_HELPER_KEY);
+  const provisionHelper = () => store.provisionHelper(async () => {
+    const projects = await zcc.sdk.projects.list();
+    const project = projects.find(row => row.quickAgent);
+    if (!project) return null;
+    const settings = (await legacyHelper())?.settings;
+    const providerId = settings?.providerId;
+    return {
+      name: HELPER_NAME, personality: HELPER_PERSONALITY, projectId: project.id,
+      providerId, model: providerId ? settings?.model : undefined
+    };
+  }).catch((error: unknown) => zcc.log.warn(`could not provision Zana Helper: ${errorMessage(error)}`));
+  await provisionHelper();
+
   // configure (not contributeInstructions) so the first turn of a freshly
   // spawned bot thread is recognised from its spawn metadata.
   zcc.agents.configure((ctx) => {
-    const metadata = ctx.pluginMetadata ?? {};
-    const instructions = service.instructionsFor(ctx.threadId, metadata);
-    const role = metadata.botRole === 'main' || metadata.botRole === 'job' || metadata.botRole === 'routine'
-      ? metadata.botRole
-      : ctx.threadId ? service.roleOf(ctx.threadId).kind : 'thread';
+    const role = service.roleFor(ctx.threadId, ctx.pluginMetadata ?? {});
+    const instructions = service.instructionsFor(role);
     return { tools: toolsFor(role), ...(instructions ? { instructions } : {}) };
   });
   registerBotTools(zcc, service);
   registerVault(zcc, service);
-  registerRpc(zcc, service);
+  registerRpc(zcc, service, provisionHelper);
+  zcc.rpc.method('helperGuides', () => catalog.entries());
+  zcc.rpc.method('helperHistory', async () => (await legacyHelper())?.turns ?? []);
+  zcc.agents.registerTool({
+    name: 'bot_search_zana_guides',
+    description: toolInstructions.bot_search_zana_guides,
+    parameters: {
+      type: 'object', properties: { query: { type: 'string', description: 'A Zana feature name or question.' } },
+      required: ['query'], additionalProperties: false
+    },
+    presentation: { label: { pending: 'Searching Zana guides', completed: 'Searched Zana guides' }, icon: { glyph: 'Search' } },
+    execute: async (raw, ctx) => {
+      if (!service.botForMainThread(ctx.threadId)?.isHelper) {
+        throw new BotValidationError('Open Zana Helper chat to search Zana guides.');
+      }
+      const query = ref(record(raw), 'query');
+      if (query.length > 2_000) throw new BotValidationError('Use a search query of up to 2,000 characters.');
+      return browseGuides(await catalog.entries(), query).slice(0, 4)
+        .map(({ title, text, url }) => ({ title, text: guideMarkdown(text, url).slice(0, 6_000), url }));
+    }
+  });
 
   zcc.cli.register({
     name: 'bots',

@@ -3,6 +3,7 @@ import { ChevronDown, Pin, Plus } from 'lucide-react';
 import { VaultPanel } from './src/vault/VaultPanel.js';
 import { Section, botSectionCss } from './src/BotSection.js';
 import { BotMemory } from './src/BotMemory.js';
+import { HelperLibrary } from './src/helper/HelperLibrary.js';
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { definePluginApp, Markdown, useRealtime, useRpc, useZccNavigate, type BasicSidebarSectionProps, type PluginOwnedThreadIconProps, type PluginOwnedThreadTitleProps, type PluginThreadPanelProps } from '@zana-ai/zcc-plugin-sdk/app';
 import { BOT_COLORS, DIRECT_INTERVAL_MINUTES, MIN_ROUTINE_INTERVAL_MINUTES, ROUTINE_KINDS, type RoutineKind, botMemoryTag, defaultBotColor, defaultBotShape, describeCron, type BotRoutine, type BotShape } from './src/model.js';
@@ -627,12 +628,32 @@ function BotPage({ bot, onDeleted, profile = false, active = true }: {
   const tabsId = useId();
   const [tab, setTab] = useState<Tab>('details');
   const openChat = useOpenChat();
+  const rpc = useRpc();
+  const [opening, setOpening] = useState(false);
+  const [openError, setOpenError] = useState('');
   const wake = useAction(bot.id);
   const catalog = useCatalog(bot.providerId ?? '');
   const jobs = useJobs(bot.id, active);
   const state = botState(bot);
   const hasThread = Boolean(bot.mainThreadId) && (state === 'working' || state === 'asleep');
   const projectName = catalog.data?.projects.find((row) => row.id === bot.projectId)?.name ?? (catalog.data || catalog.error ? bot.projectId : '…');
+
+  async function chat() {
+    if (hasThread) {
+      openChat(bot, bot.mainThreadId!);
+      return;
+    }
+    setOpening(true);
+    setOpenError('');
+    try {
+      const { threadId } = await rpc.call('openThread', { bot: bot.id }) as { threadId: string };
+      openChat(bot, threadId);
+    } catch (error) {
+      setOpenError(message(error));
+    } finally {
+      setOpening(false);
+    }
+  }
 
   return (
     <div className="bt-page">
@@ -647,9 +668,8 @@ function BotPage({ bot, onDeleted, profile = false, active = true }: {
           <span className="bt-meta">{projectName} · <span className="bt-chip is-warn" title="Bots run without asking for approval">Full access</span></span>
         </div>
         {!profile && <div className="bt-actions">
-          {hasThread && (
-            <button type="button" className="bt-btn is-primary" onClick={() => openChat(bot, bot.mainThreadId!)}>Chat</button>
-          )}
+          <button type="button" className="bt-btn is-primary" disabled={opening || state === 'unknown'}
+            onClick={() => void chat()}>{opening ? 'Opening…' : 'Chat'}</button>
           {state === 'asleep' && (
             <button type="button" className="bt-btn" disabled={wake.busy}
               onClick={() => void wake.run('send', { message: WAKE_MESSAGE }, `${bot.name} is waking up`)}>Wake</button>
@@ -657,6 +677,7 @@ function BotPage({ bot, onDeleted, profile = false, active = true }: {
         </div>}
       </header>
       {wake.feedback}
+      {openError && <p role="alert" className="bt-alert">{openError}</p>}
       <div role="tablist" aria-label={`${bot.name} sections`} className="bt-tabs">
         {TABS.map(([id, label], index) => (
           <button key={id} id={`${tabsId}-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`${tabsId}-panel-${id}`}
@@ -1174,6 +1195,7 @@ function Library({ bot, visible, jobsState }: { bot: BotView; visible: boolean; 
       <Section label="Memory">
         {visible && <BotMemory key={bot.projectId} tag={tag} projectId={bot.projectId} />}
       </Section>
+      {visible && bot.isHelper && <HelperLibrary />}
     </>
   );
 }

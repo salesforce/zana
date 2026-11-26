@@ -32,3 +32,15 @@ Save a login, card or contact and choose the bots that may use it. Select **All 
 Bots are global. The project you set only decides where the bot's threads run. If you don't set one, the Default Project is used. Each bot runs with **full** permissions, including its background jobs.
 
 Click a bot in the Basic sidebar to open its main thread. The first click creates an empty chat. Sending a message or running a routine can also create the thread. Opening or messaging a bot restores its archived thread, or creates a new one if its thread was deleted. A bot can run at most 3 background jobs at once, and keeps the last 50 job records.
+
+## Zana Helper
+
+Zana Helper comes with Bots. Open **Bots → Zana Helper → Chat** to open its main conversation for answers about Zana or feedback on a prompt. Use the chat composer to paste a screenshot or choose **Attach files**. Open **Library → Browse Zana guides** to search guides offline. The app keeps the earlier Helper panel’s saved conversations as a read-only archive under **Library → Earlier Helper conversations**. This archive receives no new messages or scheduled cleanup.
+
+Guide updates load in the background from `raw.githubusercontent.com` when you browse or search the guides. Downloaded guides may describe features added after your installed version. The request fetches a public catalog and sends no conversation text or project data. To stop these checks, turn off **Download Zana guide updates** in **Settings → Plugins → Bots → Configuration**. Bundled and previously downloaded guides remain available offline. Use **Read** to open a guide's source in your browser.
+
+Zana Helper is provisioned once the Default Project is available and starts with that project’s provider settings. Chat sends the messages you submit, including pasted prompts and attachments, to the provider and model selected for the conversation. Manage **Provider and model**, **Project and access**, and **Danger zone** in the bot’s **Settings**. Like other bots, it runs with full access in its selected project. Deleting it from **Danger zone** stops its routines and lets you choose whether to archive or keep its threads.
+
+## Choose a bot provider
+
+For a bot you created, open **Bots**, select the bot, and go to **Settings → Provider and model**. An explicit provider takes effect when a new conversation starts. **Project default** follows the CLI agent default for the bot’s project. Without a project override, find it under **Settings → Configuration → AI Harness → Defaults → Default for CLI agents**.

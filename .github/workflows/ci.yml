@@ -161,6 +161,18 @@ jobs:
       - name: Build plugin SDK runtime
         run: pnpm --filter @zana-ai/zcc-plugin-sdk build
 
+      - name: Check committed Bots bundle
+        run: |
+          pnpm --dir plugins/bots build
+          if [[ -e plugins/bots/app.js.map ]] || grep -q 'sourceMappingURL=' plugins/bots/app.js; then
+            echo "::error::The production Bots bundle should not include a development source map."
+            exit 1
+          fi
+          if [[ -n "$(git status --porcelain --untracked-files=all -- plugins/bots/app.js plugins/bots/app.meta.json)" ]]; then
+            echo "::error::Bots bundle is stale. Run pnpm --dir plugins/bots build and commit app.js and app.meta.json."
+            exit 1
+          fi
+
       - name: Release package coverage
         run: pnpm exec vitest run --config vitest.release-coverage.config.ts --coverage --coverage.reportOnFailure --coverage.reporter=json --coverage.reportsDirectory=coverage/release
 

@@ -42,7 +42,7 @@ export type Sender = { kind: 'user'; via: string } | { kind: 'agent'; threadId: 
 export type ThreadRole =
   | { kind: 'main'; bot: Bot }
   | { kind: 'job'; bot: Bot }
-  | { kind: 'routine'; bot: Bot; routineId: string }
+  | { kind: 'routine'; bot: Bot }
   | { kind: 'thread' };
 
 /** Hidden threads a bot runs for itself: they act for the bot but cannot reach other bots or change any. */
@@ -87,18 +87,19 @@ export class BotService {
   }
 
   /**
-   * Instructions for a thread that belongs to a bot, or null for any other
-   * thread. The spawn metadata covers the first turn, which starts before the
-   * new thread id is recorded on the bot or its job list.
+   * The spawn metadata covers the first turn, which starts before the new
+   * thread id is recorded on the bot or its job list.
    */
-  instructionsFor(threadId: string | undefined, metadata: Record<string, unknown> = {}): string | null {
+  roleFor(threadId: string | undefined, metadata: Record<string, unknown>): ThreadRole {
     const bots = this.store.snapshot();
     const tagged = typeof metadata.botId === 'string' ? bots.find((bot) => bot.id === metadata.botId) : undefined;
-    if (tagged && metadata.botRole === 'main') return mainThreadInstructions(tagged);
-    if (tagged && metadata.botRole === 'job') return jobThreadInstructions(tagged);
-    if (tagged && metadata.botRole === 'routine') return routineThreadInstructions(tagged);
-    if (!threadId) return null;
-    const role = this.roleOf(threadId);
+    if (tagged && metadata.botRole === 'main') return { kind: 'main', bot: tagged };
+    if (tagged && metadata.botRole === 'job') return { kind: 'job', bot: tagged };
+    if (tagged && metadata.botRole === 'routine') return { kind: 'routine', bot: tagged };
+    return threadId ? this.roleOf(threadId) : { kind: 'thread' };
+  }
+
+  instructionsFor(role: ThreadRole): string | null {
     if (role.kind === 'main') return mainThreadInstructions(role.bot);
     if (role.kind === 'job') return jobThreadInstructions(role.bot);
     if (role.kind === 'routine') return routineThreadInstructions(role.bot);
@@ -117,7 +118,7 @@ export class BotService {
     const job = this.store.jobsSnapshot().find((row) => row.threadId === threadId);
     const owner = job ? this.store.snapshot().find((bot) => bot.id === job.botId) : undefined;
     if (!owner) return { kind: 'thread' };
-    return job!.routineId ? { kind: 'routine', bot: owner, routineId: job!.routineId } : { kind: 'job', bot: owner };
+    return job!.routineId ? { kind: 'routine', bot: owner } : { kind: 'job', bot: owner };
   }
 
   /** The bot a thread acts as: its main thread or one of its routine runs. */

@@ -1,0 +1,322 @@
+{
+  "schemaVersion": 1,
+  "version": "2.7.0",
+  "entries": [
+    {
+      "id": "getting-started-getting-started",
+      "guide": "Getting started",
+      "title": "Getting started",
+      "text": "Install Zana, open a folder, and give your agent a task.\nWatch the short **How To** videos on the [Getting started page](https://zana-ide.com/docs/getting-started/#how-to-heading)\nor find the same videos inside Zana.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/getting-started.md"
+    },
+    {
+      "id": "getting-started-1-install-zana",
+      "guide": "Getting started",
+      "title": "1. Install Zana",
+      "text": "[Download Zana](https://zana-ide.com/download/) for macOS or Windows and open the app.\n\nYou need **Node.js 20 or newer** (22+ recommended), **Git**, and at least one\nsupported agent CLI: Claude Code, Cursor, OpenCode, Codex, or Pi. If the CLI\nruns in your terminal, you can use it in Zana.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/getting-started.md#1-install-zana"
+    },
+    {
+      "id": "getting-started-2-add-a-project",
+      "guide": "Getting started",
+      "title": "2. Add a project",
+      "text": "Click **Add project** in the sidebar and choose your folder. Each project\nkeeps its threads, terminals, and files together.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/getting-started.md#2-add-a-project"
+    },
+    {
+      "id": "getting-started-3-start-a-thread",
+      "guide": "Getting started",
+      "title": "3. Start a thread",
+      "text": "Open **New Chat**, choose your project and agent, and describe what you want\ndone. Follow the conversation in the thread and check the **Inbox** for\nreports and questions.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/getting-started.md#3-start-a-thread"
+    },
+    {
+      "id": "getting-started-keep-exploring",
+      "guide": "Getting started",
+      "title": "Keep exploring",
+      "text": "- [Watch the How To videos](https://zana-ide.com/docs/getting-started/#how-to-heading) — your first project, Squads, mobile access, and Agentforce.\n- [Using Zana](/docs/using-zana/) — the full guide to projects, agents, and the Inbox.\n- [Connect another computer](/docs/multiple-devices/) — remote hosts need Node.js 22+.\n- [Browse plugins](/extensions/) — add tools for the way you work.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/getting-started.md#keep-exploring"
+    },
+    {
+      "id": "using-zana-using-zana",
+      "guide": "Using Zana",
+      "title": "Using Zana",
+      "text": "Once you've [installed the app and spawned your first\nagent](/docs/getting-started/), this guide covers the day-to-day surfaces — the\nones you'll live in as you scale from one session to a fleet.\n\nZCC uses a **three-column layout**: the **sidebar** (projects and global\nsurfaces) → a **list pane** (what's inside the selected surface) → the\n**main pane** (threads, terminals, and panels). Everything below is reachable\nfrom the sidebar.\n\n---",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/using-zana.md"
+    },
+    {
+      "id": "using-zana-new-chat",
+      "guide": "Using Zana",
+      "title": "New Chat",
+      "text": "**New Chat** is the home composer. Pick a launch mode, then describe the work:\n\n- **Thread** *(default)* — a conversation with the selected harness in the\n  project you pick. This is the usual path for day-to-day work.\n- **CLI Agent** — a real PTY running the native CLI, with the same tools and\n  permissions as a standalone terminal.\n- **Squad** — launch a saved Squad of Personas against the project when\n  the work benefits from parallel roles. See [Start using Squads](/docs/squads-start/).\n\nThe composer also picks the environment (Work locally, a new or existing\nworktree, or personal scratch). See [Environments](#environments).\n\n---",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/using-zana.md#new-chat"
+    },
+    {
+      "id": "using-zana-agents",
+      "guide": "Using Zana",
+      "title": "Agents",
+      "text": "The **Agents board** is the home base for orchestration: every running session\nacross every project, grouped by status — *needs you*, *working*, *idle*,\n*done*. It's the answer to \"which of my agents is stuck?\" without tabbing\nthrough terminals.\n\nFrom the board you can:\n\n- **Jump to** any session's terminal in one click.\n- **Star** an agent to pin it — starred agents are never reclaimed by\n  auto-close-idle.\n- **Close** a session when its work is done.\n\nA **CLI Agent** tab is a real harness PTY, so the native Claude Code, Cursor,\nOpenCode, Codex, or Pi workflow remains available inside Zana. **Threads** are\nthe default conversation surface from New Chat.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/using-zana.md#agents"
+    },
+    {
+      "id": "using-zana-environments",
+      "guide": "Using Zana",
+      "title": "Environments",
+      "text": "A launch picks an **environment** — the directory the agent actually writes in.\nThe composer picker on a local git project offers:\n\n- **Work locally** — the registered project folder. Palette, Inbox, shell, and\n  remote launches use this default. Squad launches have their own launch policy:\n  they can use the Project checkout, an existing worktree, or a generated shared\n  worktree.\n- **New worktree** — a managed git worktree on `zcc/<name>-<id>`, created under\n  `~/.zcc/worktrees/<environmentId>/<repoName>`. Optional **Base branch**\n  defaults to the server's policy (usually `main`/`master`). The main checkout\n  is left untouched.\n- **Existing worktree** — attach another agent to an existing ready worktree.\n- **Personal scratch** — a non-git folder under\n  `~/.zcc/personal-workspaces/<environmentId>`.\n\nRemote SSH projects can only use **Work locally**. This slice does not create\nmanaged worktrees over SSH.\n\nThread environments and Squad launch policy are separate. A thread's environment\nis its working directory. A Squad chooses its location through effective launch\nsettings, shown with their sources in its launch preview.\n\nLeftover folders under `~/zcc-worktrees` (the previous desktop mint path) stay\non disk as unmanaged checkouts. New worktrees are not created there.\n\nTwo optional files in the source repo customize a new worktree:\n\n- **`.worktreeinclude`** — gitignore syntax. Matching untracked files (for\n  example `.env`) are copied into the new worktree. Symlinks are not followed\n  and tracked files are never overwritten.\n- **`.zcc-env-setup.sh`** — runs after the worktree is created. A non-zero exit\n  rolls the worktree back and the thread does not start.\n\nFrom the agent detail panel you can commit, squash into the local default\nbranch, and open a PR against `gh` on the host.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/using-zana.md#environments"
+    },
+    {
+      "id": "using-zana-keeping-the-fleet-tidy",
+      "guide": "Using Zana",
+      "title": "Keeping the fleet tidy",
+      "text": "Two optional automations (both **off by default**, toggled under the Agents\nrail and in Settings) help a large fleet manage itself:\n\n- **Auto-close-idle** — closes a non-background agent after it has sat idle for\n  a configurable number of minutes. Starred agents and the foreground session\n  are always spared. A parked question is preserved as a follow-up before the\n  close, so nothing is lost.\n- **Overseer** — a lightweight supervisor mode. Start with *dry-run* to see\n  what it would do before letting it act.\n\n---",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/using-zana.md#keeping-the-fleet-tidy"
+    },
+    {
+      "id": "using-zana-inbox",
+      "guide": "Using Zana",
+      "title": "Inbox",
+      "text": "The **Inbox** is the single place agents talk to *you*. Rather than scrolling\neach terminal, agents push here when they:\n\n- finish an analysis or a multi-step task (often linking a report doc),\n- hit a decision only you can make,\n- get blocked on an error, or\n- want to summarize an outcome.\n\n**Reply inline.** When an entry is a question, your answer routes straight back\nto the waiting agent as if typed at its prompt — you never have to find the\nright terminal. Unanswered questions sit on the landing page and in a pinned\nband at the top of the Feed.\n\n**Feed and Saved.** The list has two tabs: the live **Feed**, and **Saved**\n(durable snapshots you bookmark from a report). Flagged deliverables\n(`report: true`) stay in the Feed with a Report badge; turn on the **Reports**\nfilter to see only those. Ideas live in the Library, not here.\n\n**Signal vs. noise.** The feed keeps high-value items (reports, questions, goals)\ninline as solo rows, and folds high-volume routine events (scheduled runs,\nauto-closed agents, heartbeats) into collapsible per-project sections so they\ncan't bury what matters.\n\n**AI Summary.** A card on the landing page digests recent activity into a few\nlines. Open Inbox with nothing selected to generate or refresh it; it also\nregenerates on a throttle while that landing is open and the inbox has changed.\n\n---",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/using-zana.md#inbox"
+    },
+    {
+      "id": "using-zana-squads",
+      "guide": "Using Zana",
+      "title": "Squads",
+      "text": "A **Squad** is a saved group of agents, led by an **Orchestrator**, that works\non one goal together. Each member is a **Persona**: a reusable role with its\nown model, prompt, and tools. Instead of spawning and briefing several agents\nby hand, you describe the goal, pick a Squad and a Project, and launch it.\n\nZana ships five built-in Squads: Research, Design, Debug, Delivery, and Review.\nYou can edit them, copy them, or build your own from the **Squads** page in\nSettings.\n\n- [Start using Squads](/docs/squads-start/) — your first Research Squad run.\n- [Choose a Squad](/docs/squads-catalogue/) — what each built-in Squad is for.\n- [Ways to start a Squad](/docs/squads-launch/) — composer, conversations, Goals, Schedules, and the CLI.\n- [Watching a Squad](/docs/squads-watch/) — progress, questions, and recovery.\n- [Personas and custom Squads](/docs/squads-customize/) — edit or build your own.\n\n---",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/using-zana.md#squads"
+    },
+    {
+      "id": "using-zana-goals--follow-ups",
+      "guide": "Using Zana",
+      "title": "Goals & Follow-ups",
+      "text": "These two surfaces capture work that outlives a single session:\n\n- **Goals** — autonomous objectives. You state an outcome; the app pursues it\n  across multiple agent turns, surfacing progress and decisions to the Inbox.\n- **Follow-ups** — durable parked questions. When an agent genuinely needs a\n  human and the session might end first, the question is parked here and\n  **survives restarts**. You answer when you're ready; it doesn't get lost in\n  scrollback.\n\n---",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/using-zana.md#goals--follow-ups"
+    },
+    {
+      "id": "using-zana-plugins-for-tickets-and-more",
+      "guide": "Using Zana",
+      "title": "Plugins for tickets and more",
+      "text": "Core does not ship a project ticket board. The Agents board is about *session\nstate*, not sprints. Install workflow plugins from the **Plugins** hub (for\nexample **tasks**, or a GUS/Tickets plugin) when you want a persistent work\nlist that agents can claim. Browse official and community catalogs from\n**Plugins → Browse**. See the [Plugins overview](/docs/extensions/).\n\n---",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/using-zana.md#plugins-for-tickets-and-more"
+    },
+    {
+      "id": "using-zana-scheduler",
+      "guide": "Using Zana",
+      "title": "Scheduler",
+      "text": "The **Scheduler** runs recurring tasks — a nightly review, a periodic\ndependency audit, a morning digest. Scheduled runs report into the Inbox\n(folded as routine so they don't crowd the feed) and can notify you when they\nfind something worth surfacing.\n\n---",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/using-zana.md#scheduler"
+    },
+    {
+      "id": "using-zana-settings-worth-knowing",
+      "guide": "Using Zana",
+      "title": "Settings worth knowing",
+      "text": "- **Theme** — light and dark are both first-class; the toggle lives in the nav.\n- **Automations** — the auto-close-idle and Overseer switches, plus their\n  thresholds.\n- **Feed-noise classifier** *(optional)* — a small background helper that\n  demotes ambiguous routine reports into the folded \"Routine\" section. Off by\n  default.\n- **Machines** — pair another computer so projects and threads can run there.\n  See [Using Zana on multiple machines](/docs/multiple-devices/). SSH remotes\n  stay a separate path.\n- **Plugins** — the top-level **Plugins** hub (not a Settings page) installs\n  from the marketplace and manages what's installed. This is ZCC's catalogue,\n  not Claude Code's `~/.claude/plugins`. See the\n  [Plugins overview](/docs/extensions/).",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/using-zana.md#settings-worth-knowing"
+    },
+    {
+      "id": "using-zana-settings-search",
+      "guide": "Using Zana",
+      "title": "Settings search",
+      "text": "The search box at the top of Settings finds every control on every Settings\npage, not just page names: it matches labels, help text, option names, curated\nsynonyms (\"dark\" finds Theme) and the current value of a setting (search part of\na path you set and the field comes up, shown as \"Current: …\"). Plugin-defined\nsettings, keyboard shortcuts, paired machines and harness catalogues are\nincluded. Results are ranked, so an exact name comes before a loose match, and\nsmall typos still work (`tmxu` finds tmux). Pick a result to jump straight to\nthat row: it scrolls into view, pulses briefly and takes focus, opening a\ncollapsed Advanced block or the right Harness tab on the way. In the command\npalette (Cmd/Ctrl+P), the **Settings** scope searches the same index; in\n**All** it adds a short Settings section. Secrets are never indexed: tokens,\npasswords, API keys, connect codes and any plugin setting marked secret can't be\nfound by their value, and values never leave the app.\n\n---",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/using-zana.md#settings-search"
+    },
+    {
+      "id": "using-zana-where-to-go-next",
+      "guide": "Using Zana",
+      "title": "Where to go next",
+      "text": "- **[Getting started](/docs/getting-started/)** — if you skipped the five-minute\n  setup.\n- **[Using Zana on multiple machines](/docs/multiple-devices/)** — enroll a\n  host daemon on another computer.\n- **[The `zcc` CLI](/docs/cli/)** — drive ZCC from the command line.\n- **[Build your first plugin](/docs/extensions-quickstart/)** — extend the\n  cockpit in TypeScript.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/using-zana.md#where-to-go-next"
+    },
+    {
+      "id": "history-conversation-history",
+      "guide": "Conversation history",
+      "title": "Conversation history",
+      "text": "Open **History** in the sidebar, either across projects or inside one project.\n\nBoth tabs use the same list-and-preview layout. Select an entry to read saved messages without leaving history or starting a process. Every entry shows the harness icon and name alongside a folder icon and project name beneath its title, with the date on a separate line. Both transcript previews repeat that context above their actions, which stay visible while messages scroll. Hover for **Harness** and **Project** labels, or use the **Project** filter to narrow the list. Project and search filters carry across tabs; Refresh stays in the same position.\n\n- **Threads** includes archived and unarchived conversations. Search titles and saved messages, preview a conversation, then **Open conversation** for its full timeline or **Restore conversation** to continue an archived thread. A destroyed environment remains readable but cannot be restored. Previews use the latest 20 timeline segments, omit tool payloads and delegated threads, and label shortened history.\n- **CLI Agents** lists local Claude, Codex and OpenCode conversations belonging to registered projects. Search titles, read a text preview, then resume the exact saved provider session in its original project. Other providers and remote CLI history are not supported yet.\n- The CLI launcher keeps eight recent conversations and links to **Browse all history**.\n\nClosing a tab does not erase its native transcript. History is reconstructed from the thread database and provider stores, so it survives application restarts. The application does not invent a fresh conversation when a selected native session is missing: it reports the problem.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/conversation-history.md"
+    },
+    {
+      "id": "history-persistence-and-scope",
+      "guide": "Conversation history",
+      "title": "Persistence and scope",
+      "text": "Thread history reads `threads` and `thread_events` from the product database through `GET /api/v1/threads/history`. Hidden automation threads are excluded. Pages contain 40 rows; title/message search is parameterized and treats SQL wildcard characters literally. Restore uses the existing unarchive endpoint and rejects destroyed environments.\n\nDesktop CLI history uses window-owned, expiring snapshots. Rows expose opaque handles. Main resolves the original registered project and canonical path again before preview or launch. Provider-native IDs and filesystem paths are never accepted from the renderer. Preview/resume revalidates the native transcript's project membership.\n\nClaude JSONL files and Codex rollout JSONL files remain the source of truth. `conversation-index.json` in the app data directory is a metadata-only cache, written atomically and serialized; it contains no transcript bodies. It is capped at 10,000 entries, scans use bounded reads and concurrency, and a corrupt cache can be rebuilt. Codex human-input events avoid using injected context as conversation titles. OpenCode uses its native SQLite database read-only through the runtime-specific SQLite binding.\n\nEach snapshot expires after ten minutes. Global scans cover up to 64 registered local projects and retain the newest 10,000 collected rows; selecting a project scopes the scan directly. An unreadable project does not hide the results from other projects. Previews are limited to 500 text messages, 64,000 characters per message and roughly one million characters total; JSONL reads additionally stop at 4 MiB. The UI labels shortened previews. Tool payloads and system messages are omitted.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/conversation-history.md#persistence-and-scope"
+    },
+    {
+      "id": "history-verification",
+      "guide": "Conversation history",
+      "title": "Verification",
+      "text": "Focused tests cover filters, pagination, stale responses, restored navigation, transcript parsing, missing/cross-project sessions, native-store symlinks, cache reconstruction, reader failures, and exact resume validation. `e2e/conversation-history.spec.ts` runs against built Electron with an isolated HOME. It checks archived-thread search/read/restore/follow-up, large native previews, app restart and exact Codex resume arguments. The fixture disables bundled skill injection so it exercises history independently of skill catalog changes.\n\nRun the live mode/reasoning suite followed by live Memory retrieval for changes affecting launch/resume, as required by `AGENTS.md`. OpenCode launch changes also require its deterministic launch-boundary spec and live agent-picker check. These attach checks require the appropriate running app, plugins and native harness configuration; a preflight return is not successful verification.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/conversation-history.md#verification"
+    },
+    {
+      "id": "bots-bots",
+      "guide": "Bots",
+      "title": "Bots",
+      "text": "Give an agent a name, a personality and a schedule. A bot is one persistent thread that anyone can talk to: you, other threads, or the CLI.\n\nTurn on **Bots** in **Settings → Experimental** to get started. New installations start with Bots off. You can turn it off again and return to your bots and routines later.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/plugins/bots/PLUGIN_OVERVIEW.md"
+    },
+    {
+      "id": "bots-what-you-get",
+      "guide": "Bots",
+      "title": "What you get",
+      "text": "- A **Bots** panel. Create a bot, chat with it in its main thread, edit its routines, see its background jobs, and change its personality. Click the bot’s name at the top of its thread to open its profile, routines, library and settings beside the chat.\n- **Routines.** Price checks and fixed messages post a result directly in the main chat. They can run every ten minutes and use zero model calls. Choose an AI prompt for tasks that need reasoning. These run at most every fifteen minutes and queue while the bot is busy. All schedules use five-field cron in host local time and run while the host is running. Expand **Recent runs** on a routine to check delivery or see a failure.\n- **Background jobs.** For heavy work, the bot starts a hidden thread with `bot_job_start`. When the job finishes, its final answer is posted back to the bot, so the bot's thread stays readable.\n- **Memory.** Each bot saves and searches `zcc memory` with its own tag (`bot:<id>`).\n- **Agent tools** in every thread: `bot_list`, `bot_send`, `bot_create` and `bot_routines`. Bots also get `bot_reply` and `bot_job_start`.\n- **CLI:** `zcc bots list | show | create | update | delete | send | routine`.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/plugins/bots/PLUGIN_OVERVIEW.md#what-you-get"
+    },
+    {
+      "id": "bots-a-ten-minute-bitcoin-update",
+      "guide": "Bots",
+      "title": "A ten-minute Bitcoin update",
+      "text": "Ask your bot “Every ten minutes, post Bitcoin in USD and CHF.” The bot can set up one **Price check**. Each run fetches Coinbase exchange rates and posts one line. Percentages compare with the last successfully delivered price for each currency. The first update establishes the baseline.\n\nIn the profile, choose **Add routine → Action → Price check** and **When → Every 10 minutes**. To convert an existing AI prompt, open its **More actions → Edit routine** and change its action and schedule. The CLI equivalent for a new routine is:\n\n```sh\nzcc bots routine add scout --name \"Bitcoin price\" --kind price --asset BTC --currencies USD,CHF --cron \"*/10 * * * *\"\n```",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/plugins/bots/PLUGIN_OVERVIEW.md#a-ten-minute-bitcoin-update"
+    },
+    {
+      "id": "bots-vault",
+      "guide": "Bots",
+      "title": "Vault",
+      "text": "Open **Settings → Plugins → Bots → Vault** to manage the whole Vault, or open **Vault** in a bot’s profile to see items shared with that bot. Zana uses this device’s protected key storage. If you created a Vault with a passphrase, enter it once in the desktop app to migrate your existing items.\n\nSave a login, card or contact and choose the bots that may use it. Select **All current and future bots** to share an item with every bot. Editing a saved login or card lets you replace its secret fields. A bot’s main thread can use `bot_vault_list` to read its shared contacts and identify masked logins and cards. Passwords, card numbers, expiry dates and security codes are write-only.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/plugins/bots/PLUGIN_OVERVIEW.md#vault"
+    },
+    {
+      "id": "bots-how-it-works",
+      "guide": "Bots",
+      "title": "How it works",
+      "text": "Bots are global. The project you set only decides where the bot's threads run. If you don't set one, the Default Project is used. Each bot runs with **full** permissions, including its background jobs.\n\nClick a bot in the Basic sidebar to open its main thread. The first click creates an empty chat. Sending a message or running a routine can also create the thread. Opening or messaging a bot restores its archived thread, or creates a new one if its thread was deleted. A bot can run at most 3 background jobs at once, and keeps the last 50 job records.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/plugins/bots/PLUGIN_OVERVIEW.md#how-it-works"
+    },
+    {
+      "id": "bots-zana-helper",
+      "guide": "Bots",
+      "title": "Zana Helper",
+      "text": "Zana Helper comes with Bots. Open **Bots → Zana Helper → Chat** to open its main conversation for answers about Zana or feedback on a prompt. Use the chat composer to paste a screenshot or choose **Attach files**. Open **Library → Browse Zana guides** to search guides offline. The app keeps the earlier Helper panel’s saved conversations as a read-only archive under **Library → Earlier Helper conversations**. This archive receives no new messages or scheduled cleanup.\n\nGuide updates load in the background from `raw.githubusercontent.com` when you browse or search the guides. Downloaded guides may describe features added after your installed version. The request fetches a public catalog and sends no conversation text or project data. To stop these checks, turn off **Download Zana guide updates** in **Settings → Plugins → Bots → Configuration**. Bundled and previously downloaded guides remain available offline. Use **Read** to open a guide's source in your browser.\n\nZana Helper is provisioned once the Default Project is available and starts with that project’s provider settings. Chat sends the messages you submit, including pasted prompts and attachments, to the provider and model selected for the conversation. Manage **Provider and model**, **Project and access**, and **Danger zone** in the bot’s **Settings**. Like other bots, it runs with full access in its selected project. Deleting it from **Danger zone** stops its routines and lets you choose whether to archive or keep its threads.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/plugins/bots/PLUGIN_OVERVIEW.md#zana-helper"
+    },
+    {
+      "id": "bots-choose-a-bot-provider",
+      "guide": "Bots",
+      "title": "Choose a bot provider",
+      "text": "For a bot you created, open **Bots**, select the bot, and go to **Settings → Provider and model**. An explicit provider takes effect when a new conversation starts. **Project default** follows the CLI agent default for the bot’s project. Without a project override, find it under **Settings → Configuration → AI Harness → Defaults → Default for CLI agents**.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/plugins/bots/PLUGIN_OVERVIEW.md#choose-a-bot-provider"
+    },
+    {
+      "id": "slack-using-zana-in-slack",
+      "guide": "Using Zana in Slack",
+      "title": "Using Zana in Slack",
+      "text": "Practical guide · Zana for Slack 0.14.4 · Updated 4 October 2026\n\nZana lets you start work on your connected computer from Slack, follow its progress, and continue the conversation where the task began. Use **Slackbot** for natural-language requests, **@Zana** in an internal channel where the app is invited, **/zana** for shortcuts, or **Zana Home** for buttons and a dashboard.\n\nThe Slack app is called **Zana**. Its settings in the Zana desktop app are under **Plugins → Zana for Slack → Configuration**.\n\nFor the shared Zana app, you do **not** enter a Zana API token, Slack app ID, app-level token, or bot token. Setup uses your connected account and a one-time activation code. Once linked, that code disappears. The service address is under **Advanced connection settings** and normally stays at its default. **Advanced: use your own Slack app** is only for a separately managed Socket Mode app; those credentials remain available for that setup.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/slack-user-guide.md",
+      "plugin": "slack-bridge-2ff2"
+    },
+    {
+      "id": "slack-choose-how-to-start",
+      "guide": "Using Zana in Slack",
+      "title": "Choose how to start",
+      "text": "| Where you are | Use this | Example |\n| --- | --- | --- |\n| Talking to Slackbot | Ask it to use the Zana app | “Use Zana to review the tests in My Website.” |\n| In a connected Project channel | Mention Zana | `@Zana Review the tests and share a short summary.` |\n| You want to choose a Project in a form | Run the slash command | `/zana` |\n| You want an overview of your tasks | Open Zana → Home | Choose **New agent** or **Open conversation**. |\n| Continuing existing work | Reply in its Slack thread | `@Zana Now add a test for the edge case.` |\n\n**A new task creates a Zana agent conversation. A follow-up in its Slack thread continues that same conversation.** The Project connection determines the execution machine and sharing policy. The launch form prefills its harness and model, and lets you choose another available harness/model for that task. Follow-ups keep the same Project, machine, harness, model, and Slack thread.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/slack-user-guide.md#choose-how-to-start",
+      "plugin": "slack-bridge-2ff2"
+    },
+    {
+      "id": "slack-use-zana-without-opening-a-project-channel",
+      "guide": "Using Zana in Slack",
+      "title": "Use Zana without opening a Project channel",
+      "text": "You can start from another place in Slack today:\n\n| Starting point | What to do | Where the job conversation goes |\n| --- | --- | --- |\n| **Slackbot** | Ask “Use Zana to review the tests in My Website.” Ask Slackbot for the job's status afterward. | The Project's selected connected channel; Slackbot can retrieve progress and the confirmed shared answer. |\n| **Another internal channel** | Invite Zana, then use `/zana` or mention `@Zana <task>`. A task mention starts immediately using your mention default, including inside an ordinary existing Slack thread. Use `/zana` to select another Project, harness or model. | **Here — the conversation you called Zana from** is selected by default; you can choose a connected Project channel instead. |\n| **Zana → Home** | Choose **New agent**, then a Project, destination, harness and model. | The selected connected channel. |\n| **A DM with the Zana app** | After the app has DM permissions, use `/zana` or send a task and choose **Start with Zana**. | The owner’s verified DM; follow-ups can be plain replies in its task thread. |\n\nThe Project selects the code/context and execution machine. The destination selects where the task and enabled answers are shared. A connected Project still supplies authority and sharing consent; the caller channel itself does not need a saved Project mapping. You and Zana must both be members of an internal destination channel. If Zana is absent, accept Slack’s invitation prompt when mentioning it; Slack does not deliver the mention until the app is invited. Shared/external channels and group DMs are excluded.\n\nIn a connected channel, a direct mention uses its saved defaults immediately. Use `/zana` when you want to choose the harness or model. In an unconnected channel, a task uses **Default Project for mentions** from the plugin settings, or the connected built-in Default Project. If no default is connected, it offers the Project/profile picker. A bare `@Zana` offers the task form; a bare mention in an existing Zana task shows status. Status messages are plain text; Stop, Mute and Open in Zana controls stay in Home. Starting another job creates a separate conversation. Slackbot can also honor a requested harness/model: it discovers available IDs with `zana_launch_options`, then includes them in `zana_launch_job`. Its destination remains an approved Project channel.\n\n**Private Slack agent:** activated in Internal-Sandbox on 4 October 2026. Zana now displays the **AGENT** badge and an editable Messages tab. In the desktop plugin, enable **Private agent chat** after Slack scope approval/reinstallation. Describe a task in Zana's Messages tab. The conversational integration infers a connected Project and asks one clarification when needed; saved agent settings apply, and plain threaded replies continue that agent. Mentions are optional. Launch and follow-up were verified against the connected computer. The conversational upgrade and native Stop have production-boundary tests; live deployment requires the updated Zana core. Until then, use `@Zana stop` in the task thread or Stop in Zana Home. Keep the connected Zana computer online. See [the configuration guide](slack-configuration/README.md).",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/slack-user-guide.md#use-zana-without-opening-a-project-channel",
+      "plugin": "slack-bridge-2ff2"
+    },
+    {
+      "id": "slack-use-zana-in-an-existing-channel-with-default-project",
+      "guide": "Using Zana in Slack",
+      "title": "Use @Zana in an existing channel with Default Project",
+      "text": "An existing internal channel can keep its normal name and purpose and use **Default Project** behind the scenes. Configure it once:\n\n1. Add the Zana app to that channel. You must also be a member, using your linked Slack identity.\n2. In Zana, open **Plugins → Zana for Slack → Configuration → Connected Projects → Connect another Project**.\n3. Choose that Slack channel and **Default Project**, then select the execution machine, provider, and model. Enable agent answers if you want replies shared in Slack, and save the connection.\n4. In the channel, send `@Zana <your task>`. Zana uses Default Project and replies in the same Slack thread. Mention it in that thread for follow-ups.\n\nThis does not create or rename a channel. You can connect more than one existing channel to Default Project. Channel members can see its posted answers, while only your linked identity controls your jobs. Shared/external channels remain excluded. Unconnected internal channels offer a Project picker instead of silently selecting Default Project.\n\n**Live verified on 30 September 2026:** [#test-channel-by-gui](https://internal-sbx.slack.com/archives/C0C6M1UARDW/p1790800521518869?thread_ts=1790800521.518869&cid=C0C6M1UARDW) was connected to Default Project through this settings form. A mention returned `DEFAULT-PROJECT-OK-27`; a follow-up asking to add 15 to the remembered number returned `42`. Both used the same Zana session and replied in the original channel thread. The mapping remains configured for the linked owner.\n\n**Harness/model choices were live-verified on 2 October 2026:** a task selected Cursor → grok-4.6 and returned “Harness selection works” in Slack, while the Project default remained Codex → gpt-6-astra.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/slack-user-guide.md#use-zana-in-an-existing-channel-with-default-project",
+      "plugin": "slack-bridge-2ff2"
+    },
+    {
+      "id": "slack-1-connect-your-own-zana-account-and-computer",
+      "guide": "Using Zana in Slack",
+      "title": "1. Connect your own Zana account and computer",
+      "text": "If your connection already says **Connected**, skip to importing Projects.\n\n1. Connect your computer to Zana Connect and set up your personal address, such as `my-domain.zana-ide.com`. In current Zana builds, start in **Settings → Remote access**; older instructions may call this **Phone → Zana Connect**. Keep remote access enabled.\n2. In Slackbot, enable/select **Zana** under **Apps**, then ask:\n\n   > Connect Zana to my-domain.zana-ide.com.\n\n3. Open the private connection link. Sign in with the account that owns your domain and check the displayed Slack identity and computer.\n4. Follow the handoff to **Plugins → Zana for Slack → Configuration → Connection settings → Connect your Slack account**. Paste the short-lived activation code and choose **Approve Slack access on this computer**.\n5. Confirm the bridge is connected. Keep Zana running and the selected computer awake.\n\nYou can also start linking from **Slack → Zana → Home → Connect my computer**, or use `/zana connect my-domain.zana-ide.com` with the hosted integration. `/zana connect` opens setup without choosing a domain first.\n\nEach person connects their own account and computer. Installing the shared Slack app does not give everyone access to your machine. If you change the linked computer, start a fresh task: existing conversations stay associated with their original connection.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/slack-user-guide.md#1-connect-your-own-zana-account-and-computer",
+      "plugin": "slack-bridge-2ff2"
+    },
+    {
+      "id": "slack-2-import-the-projects-you-want-in-slack",
+      "guide": "Using Zana in Slack",
+      "title": "2. Import the Projects you want in Slack",
+      "text": "Connecting your computer does **not** import all Projects. You choose which ones get a Slack channel.\n\nIn Zana, open **Plugins → Zana for Slack → Configuration**:\n\n1. Set and save **Import defaults**: machine, provider, model, answer sharing, and an optional channel prefix.\n2. Select the Projects you want.\n3. Choose **Import selected**.\n\nImporting creates a private channel for each selected Project and adds you and the Zana app. It does not start a job. Repeat imports reuse the managed channel.\n\n| Your settings | Example channel |\n| --- | --- |\n| Project `My Website`, no prefix | `#zana-my-website` |\n| Same Project, prefix `demo` | `#demo-zana-my-website` |\n| Name already taken | A suffix is added to resolve the collision. |\n\nTo import from Slack, first enable **Allow imports from Slack** in the import settings. Then ask Slackbot:\n\n> Show my Zana Projects and which ones are imported.\n\n> Import My Website into Slack using Zana.\n\nOr use:\n\n```text\n/zana import\n/zana import \"My Website\"\n```\n\nThe first lists available Projects; the second imports the named Project. Exact Project IDs also work when names are ambiguous. Browse/import controls must be enabled under **What Slack can do**.\n\nYou may also use an existing approved channel through **Manage connected channels**. Each mapping selects its Project, machine, provider/model, and answer-sharing policy.\n\nSlack's custom sidebar sections are personal. You can manually create a **Zana** section and move your Project channels into it; the bridge creates the channels, not that sidebar section.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/slack-user-guide.md#2-import-the-projects-you-want-in-slack",
+      "plugin": "slack-bridge-2ff2"
+    },
+    {
+      "id": "slack-3-ask-slackbot-to-use-zana",
+      "guide": "Using Zana in Slack",
+      "title": "3. Ask Slackbot to use Zana",
+      "text": "Open Slackbot and make sure the Zana app is available under **Apps**. Be explicit about the Project and task:\n\n> Use Zana to list my connected Projects.\n\n> Use Zana to review the tests in My Website. Do not modify files. Post the findings in its connected channel.\n\n> Use Zana to fix the failing tests in My Website and summarize the changes in its connected channel.\n\n> Check the status of that Zana job.\n\nSlackbot uses your available Project/channel connections. If it asks you to choose a destination or approve using a tool, review that choice. The task then appears in the selected Project channel as a Slack thread.\n\n“Accepted” or “queued” means the request was received. Follow its status card or ask Slackbot to check the job to find out whether it is running, needs attention, or has finished.\n\nFor follow-up instructions, open the job's channel conversation and reply with `@Zana`. That is the supported way to continue the same agent session.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/slack-user-guide.md#3-ask-slackbot-to-use-zana",
+      "plugin": "slack-bridge-2ff2"
+    },
+    {
+      "id": "slack-4-talk-directly-to-zana-in-a-project-channel",
+      "guide": "Using Zana in Slack",
+      "title": "4. Talk directly to @Zana in a Project channel",
+      "text": "Open a connected channel, type `@Zana`, and select the actual app from Slack's mention suggestions. Then describe the task:\n\n```text\n@Zana Review the authentication tests. Identify gaps and share a concise summary. Do not change files.\n```\n\nZana creates a session and replies in a Slack thread. Continue inside that thread:\n\n```text\nFocus on expired sessions and suggest two test cases.\n```\n\nUse these controls in the same thread:\n\n| Message | What happens |\n| --- | --- |\n| `status` | Show the conversation's current status. |\n| `stop` | Stop the agent and cancel queued follow-ups for that conversation. |\n| `mute` | Silence updates while the agent continues working. |\n| `unmute` | Restore new updates. |\n| `help` | Show usage guidance. |\n\nA new top-level task with `@Zana` starts a separate conversation. Once the agent is linked, its original launcher can reply in that Slack thread without another mention; other people's messages are ignored. If a turn is still running, a follow-up waits for it to finish. `@Zana` also works for follow-ups and controls.\n\nPlain replies require Slack's `message.channels` / `message.groups` events and `channels:history` / `groups:history` scopes. These were activated and verified in Internal-Sandbox on 3 October 2026. Other installations must activate them and reinstall the app. A deleted or archived agent cannot continue through a plain reply: launch again with `@Zana`. Replies missed before activation must be sent again.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/slack-user-guide.md#4-talk-directly-to-zana-in-a-project-channel",
+      "plugin": "slack-bridge-2ff2"
+    },
+    {
+      "id": "slack-5-use-zana-shortcuts",
+      "guide": "Using Zana in Slack",
+      "title": "5. Use /zana shortcuts",
+      "text": "Type slash commands in the channel's **main message composer**, not inside a Slack thread.\n\n| Command | What it does |\n| --- | --- |\n| `/zana` | Open the Project/destination/harness/model/task form. |\n| `/zana run . Review the tests` | Prefill a task for the current channel's Project. |\n| `/zana run \"My Website\" Review the tests` | Prefill a task for a named connected Project. |\n| `/zana projects` | List imported/connected Projects and their channels. |\n| `/zana import` | List Projects available to import. |\n| `/zana import \"My Website\"` | Import that Project when Slack imports are enabled. |\n| `/zana status` | Show activity across your connections. |\n| `/zana status .` | Show activity for the current channel's Project. |\n| `/zana status \"My Website\"` | Show activity for a named Project. |\n| `/zana connect` | Open connection setup. |\n| `/zana help` | Show the supported shortcuts. |\n\nFor a launch, check the Project and destination in the form, then choose **Start agent**. Opening the form alone does not launch anything. Quote names containing spaces; use exact IDs when multiple Projects have the same name.\n\nCommand replies are visible only to you. Once you submit a task, its prompt and enabled updates appear in the destination channel. To continue or stop that task, use mentions in its thread or the Home controls.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/slack-user-guide.md#5-use-zana-shortcuts",
+      "plugin": "slack-bridge-2ff2"
+    },
+    {
+      "id": "slack-6-use-the-zana-home-dashboard",
+      "guide": "Using Zana in Slack",
+      "title": "6. Use the Zana Home dashboard",
+      "text": "In Slack, open the **Zana** app and select **Home**.\n\n- Choose **New agent**, select a connected Project, destination, harness and model, enter the task, and choose **Start agent**.\n- Review running tasks, tasks needing attention, and recent conversations.\n- Choose **Open conversation** to return to a task's Slack thread.\n- Use **Stop**, **Mute updates**, or **Unmute** for a particular task.\n- With Zana Connect, see your account’s **Machines**, their online/offline status, and which computer is **Linked to Slack**. **Manage machines** opens the account dashboard; **Refresh** updates this private Home view without posting channel messages.\n\nTask controls depend on your current capability settings and an online connection. Machine status uses the same recent connection heartbeat as the account dashboard and includes a checked timestamp. If the linked computer is offline, opening Home or choosing Refresh still shows your account’s machines. A previously loaded Home view is a saved snapshot until refreshed.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/slack-user-guide.md#6-use-the-zana-home-dashboard",
+      "plugin": "slack-bridge-2ff2"
+    },
+    {
+      "id": "slack-7-decide-what-slack-is-allowed-to-do",
+      "guide": "Using Zana in Slack",
+      "title": "7. Decide what Slack is allowed to do",
+      "text": "Open **Plugins → Zana for Slack → Configuration → What Slack can do** in Zana. Use search or the **All / Enabled / Disabled** filter to find a functionality.\n\n| Switch | Controls |\n| --- | --- |\n| **Browse Projects** | Listing registered Project names and approved Slack destinations. Required for imports and new launches. |\n| **Import Projects** | Creating or reusing a channel for a requested Project, using saved defaults. |\n| **Start new jobs** | Starting agents from Slackbot, slash commands, Home, or a new mention conversation. |\n| **Continue conversations** | Sending follow-up tasks to existing conversations. |\n| **View job progress** | Status, activity updates, and task previews. |\n| **Share answers** | Sending new answers and exposing answer previews. Agent answers also require the channel's sharing setting. |\n| **Use plugin tools** | Discovering and using individually enabled read-only plugin capabilities. |\n\nConnection, help, stop, and mute/unmute controls remain available. Disabling a functionality does not erase messages already posted or stop an agent already running; use **Stop** when you want to end active work.\n\nAdditional plugin tools appear under **Individual plugin tools** only when an installed plugin contributes them. Enable each one deliberately, then ask Slackbot:\n\n> What additional Zana plugin capabilities can I use?\n\nInstalling a plugin alone does not expose all of its tools to Slack. The current extension interface exposes approved read-only capabilities scoped to imported Projects.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/slack-user-guide.md#7-decide-what-slack-is-allowed-to-do",
+      "plugin": "slack-bridge-2ff2"
+    },
+    {
+      "id": "slack-open-the-custom-task-panel",
+      "guide": "Using Zana in Slack",
+      "title": "Open the custom task panel",
+      "text": "In **Plugins → Zana for Slack → Configuration → Custom task panel in Slack**, enable **Enable custom web panels**. With Zana Connect, this uses your existing account connection; there is no extra domain or local port to configure.\n\nClick the **Agent task** card attached to a Zana status message in Slack, or choose **Open in side panel**, to open the custom panel. Cards are added to new task status messages and to existing ones when their status next updates. The panel displays the task title, channel, live state, and latest answer already confirmed as delivered to Slack. Fenced code blocks have a separate language label and preserve the code as plain, selectable text. It refreshes every ten seconds while your computer is connected.\n\n**Disconnect versus unlink:** Disconnect pauses access and keeps your selected Projects. Unlink clears Project imports, mappings, import defaults and plugin tool permissions. Existing agents and local history remain in Zana, but their old Slack task cards cannot control or preview them after relinking. Choose Projects and permissions again, then start a new Slack conversation.\n\nIf the computer loses its connection, the panel marks its last snapshot as disconnected and retries. Access still expires after five minutes, including when the panel is suspended; reopen the card after reconnecting. Shared answers and code examples are limited to 2,000 characters; oversized submissions are rejected, not silently cut off.\n\nOnly the linked task owner can request a private panel. Its access lasts five minutes; reopen the card to continue. Muting the conversation, disabling the panel or status sharing, changing the relevant sharing policy, or disconnecting Zana ends existing access. Agent permission requests remain in Zana. The panel does not expose files, tool output, or the complete transcript.\n\nFor app maintainers: enable Work Object Previews with the `slack#/entities/file` type, allow the exact hostname `zana-ide.com`, and subscribe to `entity_details_requested`. Keep `allow-same-origin` off. This event requires no additional OAuth scope. See [Slack's embed documentation](https://docs.slack.dev/messaging/work-objects-embeds/).",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/slack-user-guide.md#open-the-custom-task-panel",
+      "plugin": "slack-bridge-2ff2"
+    },
+    {
+      "id": "slack-8-understand-answers-code-and-access",
+      "guide": "Using Zana in Slack",
+      "title": "8. Understand answers, code, and access",
+      "text": "**Answers:** Slack receives a status card and, when enabled and supplied by the agent, a concise answer. It is not a live copy of the entire terminal or conversation transcript. Published agent answers currently have a 2,000-character limit. Ask for a short summary and open Zana for longer results or files.\n\n**Progress:** Working, thinking and attention updates revise one temporary message in place. Zana checks the current thread before treating an idle event as completion, and restores the same status if an unanswered turn resumes. After the turn ends and an answer is confirmed delivered, the temporary status is removed. A turn that really ends without sharing an answer has an attention notice instead of a success checkmark.\n\n**Formatting:** Shared answer text and rich-report text accept standard Markdown. Headings, emphasis, lists, inline code and fenced code are converted to native Slack rich text. Mentions, links and image references remain literal. Markdown files are not uploaded automatically. Mermaid fences can render as images in the same reply when diagram uploads are activated (`files:write` and the gateway update). Up to two diagrams are rendered locally; answer revisions reuse the uploads. Rendering or upload failures retain labelled source. Ask for a readable text overview alongside diagrams. Optional Canvas export reuses the image.\n\nSlack may take a few seconds to process a new diagram. Zana keeps the working notice while waiting and delivers the formatted answer and image together. If Slack rejects the richer layout, Zana preserves readable text and the diagram where possible, with a diagram link as the final fallback.\n\n**Desktop panels:** Slack-controlled agents are told that you cannot see Zana's side panels. Builds with [remote presentation support](remote-conversation-presentation.md) also block agent calls that open file previews, presentation terminals or browser panels. Background browsing and execution remain available. The current Slack task panel shows shared answers; it does not display arbitrary project files. Requested web previews may use an authenticated, reachable preview link. Simply viewing the conversation in Zana does not transfer control away from Slack.\n\n**Code:** You can ask for a short code example and have it shared in the thread:\n\n```text\n@Zana Show a tiny JavaScript add function in a code block and share it here. Do not modify files or run commands.\n```\n\nA live test in BT Internal Sandbox confirmed a code block with a Copy button, preserved indentation, and an inline example. The bridge now removes language fences when producing Slack's native code blocks, so `typescript` or `python` no longer appears as a stray first code line. The custom task panel separates fence language labels from the code. Syntax highlighting and downloadable code attachments are not implemented.\n\n**Visibility:** Channel members can see posted task prompts and shared answers. Only the linked owner can control their bridge conversations. Permissions and agent questions stay in Zana; open Zana when a task needs your input.\n\n**Scope:** These entry points launch individual agent conversations. They do not launch saved Job Teams or automatically mirror every pre-existing desktop session into Slack.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/slack-user-guide.md#8-understand-answers-code-and-access",
+      "plugin": "slack-bridge-2ff2"
+    },
+    {
+      "id": "slack-if-something-does-not-work",
+      "guide": "Using Zana in Slack",
+      "title": "If something does not work",
+      "text": "| Symptom | What to check |\n| --- | --- |\n| No response to a mention | Select the actual Zana app mention; invite it to the internal channel; confirm you are the linked owner and the computer is awake. |\n| The model picker is empty | Wait for the selected harness’s model list to load and search again. Maintainers must configure Options Load URL to the same Slack events endpoint. |\n| A Project is missing from the launch picker | Import/connect it first and check **Browse Projects** and **Start new jobs**. |\n| Import is disabled | Save import defaults, enable **Browse Projects**, and enable **Allow imports from Slack** / **Import Projects**. |\n| A functionality is disabled | Check its switch under **What Slack can do**. |\n| A task needs permission or clarification | Open the conversation in Zana and respond there. |\n| The task finished but no answer appeared | Check **Share answers**, the channel's answer setting, mute state, and whether the agent supplied an answer. |\n| Delivery or launch is “unconfirmed” or “needs review” | Inspect the Slack thread and Zana before retrying, to avoid duplicating work. |\n| Slackbot cannot find the Zana app or its latest tools | Check **Slackbot → Apps**. Workspace app/tool configuration may need refreshing by its maintainer. |\n\nFor detailed status, open **Plugins → Zana for Slack → Configuration → Diagnostics**. **Incoming requests** tracks what Zana received; **Outgoing delivery** tracks Slack messages. **Sent** means Slack accepted a message, not that the task succeeded or someone read it.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/slack-user-guide.md#if-something-does-not-work",
+      "plugin": "slack-bridge-2ff2"
+    },
+    {
+      "id": "slack-check-a-second-persons-connection",
+      "guide": "Using Zana in Slack",
+      "title": "Check a second person's connection",
+      "text": "A colleague needs their own Zana installation, account, and enrolled computer. They link the shared Zana app from Slack, approve their own activation code locally, and import one harmless test Project. They should not copy another person's credentials or activation code.\n\n1. Each person sends `@Zana Reply with my test number: 27. Do not read files or run commands.` in their own connected channel, using a different number for the second person.\n2. Confirm each job appears on its owner's Zana computer and in that person's selected Project.\n3. Each person opens their own task panel and checks its answer. A different Slack identity must not be able to request that private panel or control the task.\n4. Pause one person's bridge. The other person's connection and jobs should keep working. Reconnect and reopen the paused person's task card.\n\nAutomated two-owner routing and access tests pass. A trial with two real people and separate computers remains to be completed.",
+      "url": "https://github.com/salesforce/zana/blob/v2.7.0/docs/slack-user-guide.md#check-a-second-persons-connection",
+      "plugin": "slack-bridge-2ff2"
+    }
+  ]
+}
