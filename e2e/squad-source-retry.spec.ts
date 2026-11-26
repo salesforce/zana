@@ -24,7 +24,7 @@ const GOAL = 'coordinate smoke check and report back';
 async function setup(window: import('@playwright/test').Page, agentPath: string, projectDir: string) {
   await window.evaluate(({ bin }) => window.cc.config.set({
     teamJobLaunchEnabled: true, sponsorPromptDismissed: true, claudeBinary: bin, codexBinary: bin,
-    trustZccToolsEnabled: false, tmuxScope: 'off', defaultHarness: 'claude'
+    trustZccToolsEnabled: false, tmuxScope: 'off', defaultHarness: 'claude', squadDefaultTransport: 'CLI'
   }), { bin: agentPath });
   for (const [id, name] of [['e2e-orchestrator', 'E2E Orchestrator'], ['e2e-worker', 'E2E Worker']]) {
     await window.evaluate(({ id, name }) => window.cc.personas.save({
