@@ -7,7 +7,7 @@ import { buildMcpCatalogueWithNotes } from './mcp-catalogue.js';
 import type { CliTerminalStartCommand } from '@zana-ai/zcc-contracts/cli-terminal';
 import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { realpath, stat as asyncStat, opendir, open } from 'node:fs/promises';
-import { extname, join, relative, sep } from 'node:path';
+import { extname, isAbsolute, join, relative, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { resolveZccDataDir } from './host-config.js';
 import { isWithin, resolveContainedReal } from '@zana-ai/zcc-path-confine';
@@ -114,7 +114,7 @@ const LIST_DIR_DENY = new Set([
 
 export type ThreadStartFields = z.infer<typeof ThreadStartCommandSchema>;
 
-export type ThreadWorkInput = Omit<ThreadStartFields, 'type' | 'cwd'> & {
+export type ThreadWorkInput = Omit<ThreadStartFields, 'type' | 'cwd' | 'existingEnvironment'> & {
   cwd: string;
   acpMode?: string;
 };
@@ -524,6 +524,29 @@ function requireEnvironment(
   return environment;
 }
 
+async function restoreThreadStartEnvironment(
+  runtime: CommandRuntime,
+  environmentId: string,
+  workspace: NonNullable<ThreadStartFields['existingEnvironment']>
+): Promise<void> {
+  await withEnvironmentLane(runtime, environmentId, async () => {
+    if (runtime.environments.has(environmentId)) return;
+    let path: string;
+    try {
+      if (!isAbsolute(workspace.path)) throw new Error('not absolute');
+      path = await realpath(workspace.path);
+      // Provisioning stored the canonical host path. A replacement symlink
+      // must not redirect a resumed fork into a different checkout.
+      if (relative(workspace.path, path) !== '' || !(await asyncStat(path)).isDirectory()) {
+        throw new Error('not the original directory');
+      }
+    } catch {
+      throw new HostCommandError('environment_not_ready', 'The conversation workspace is unavailable on this machine');
+    }
+    runtime.environments.set(environmentId, { path, workspaceProvisionType: workspace.workspaceProvisionType });
+  });
+}
+
 function requireThread(runtime: CommandRuntime, threadId: string): { environmentId: string; providerId: string } {
   const thread = runtime.threads.get(threadId);
   if (!thread) {
@@ -762,10 +785,11 @@ export async function dispatchHostCommand(
       });
     }
     case 'thread.start': {
-      const environment = runtime.environments.get(command.environmentId);
-      if (!environment) {
-        throw new HostCommandError('environment_not_ready', 'environment is not provisioned');
+      const { existingEnvironment } = command;
+      if (existingEnvironment && !runtime.environments.has(command.environmentId)) {
+        await restoreThreadStartEnvironment(runtime, command.environmentId, existingEnvironment);
       }
+      const environment = requireEnvironment(runtime, command.environmentId);
       if (!command.bridgeLaunch && !providerAvailable(await runtime.verifyProviders(), command.providerId)) {
         throw new HostCommandError('provider_unavailable', `provider CLI is not available: ${command.providerId}`);
       }
@@ -773,7 +797,7 @@ export async function dispatchHostCommand(
       let providerThreadId: string | undefined;
       let sessionRestorable: boolean | undefined;
       if (runtime.startWork) {
-        const { type: _type, cwd: _cwd, ...rest } = command;
+        const { type: _type, cwd: _cwd, existingEnvironment: _existingEnvironment, ...rest } = command;
         const started = await runtime.startWork({ ...rest, cwd });
         providerThreadId = started?.providerThreadId;
         sessionRestorable = started?.sessionRestorable;

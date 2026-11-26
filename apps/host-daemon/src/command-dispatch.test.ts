@@ -1,10 +1,10 @@
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import { createCommandRuntime, dispatchHostCommand } from './command-dispatch.js';
+import { createCommandRuntime, dispatchHostCommand, type ThreadWorkInput } from './command-dispatch.js';
 import { HostCommandError } from './host-command-error.js';
 import { MachineEnvironment } from './machine-environment.js';
 import { handleHostRpcRequest } from './command-router.js';
@@ -98,6 +98,53 @@ describe('host command dispatch', () => {
       workspaceProvisionType: 'unmanaged',
       path: join(tmpdir(), 'zcc-missing-env', randomUUID())
     })).rejects.toMatchObject({ code: 'path_not_found' });
+    expect(runtime.lanes.size).toBe(0);
+  });
+
+  it('restores a workspace for concurrent fork starts on a fresh host runtime', async () => {
+    const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'zcc-fork-restore-')));
+    onTestFinished(() => rmSync(cwd, { recursive: true, force: true }));
+    const startWork = vi.fn(async (_input: ThreadWorkInput) => ({ providerThreadId: 'new-session' }));
+    const runtime = createCommandRuntime({ startWork, verifyProviders: async () => installedClaude });
+    const environmentId = randomUUID();
+    const start = {
+      type: 'thread.start' as const, threadId: randomUUID(), environmentId,
+      projectId: 'proj-1', providerId: 'claude', providerThreadId: 'source-session', cwd, input: prompt('continue')
+    };
+    await expect(dispatchHostCommand(runtime, start)).rejects.toMatchObject({ code: 'environment_not_ready' });
+    const existingEnvironment = { path: cwd, workspaceProvisionType: 'managed-worktree' as const };
+    const restored = { ...start, existingEnvironment };
+    const sibling = { ...restored, threadId: randomUUID() };
+    await expect(Promise.all([dispatchHostCommand(runtime, restored), dispatchHostCommand(runtime, sibling)]))
+      .resolves.toEqual([expect.objectContaining({ threadId: start.threadId, providerThreadId: 'new-session' }),
+        expect.objectContaining({ threadId: sibling.threadId, providerThreadId: 'new-session' })]);
+    expect(runtime.environments.get(environmentId)).toEqual(existingEnvironment);
+    expect(runtime.lanes.size).toBe(0);
+    expect(startWork).toHaveBeenCalledTimes(2);
+    expect(startWork).toHaveBeenCalledWith(expect.objectContaining({ cwd, providerThreadId: 'source-session' }));
+    expect(startWork.mock.calls[0][0]).not.toHaveProperty('existingEnvironment');
+    await expect(dispatchHostCommand(runtime, { ...restored, threadId: randomUUID(), cwd: tmpdir() }))
+      .rejects.toMatchObject({ code: 'cwd-escape' });
+  });
+
+  it('rejects a missing, redirected, or non-directory persisted workspace', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'zcc-fork-missing-')));
+    onTestFinished(() => rmSync(root, { recursive: true, force: true }));
+    const link = join(root, 'redirected');
+    symlinkSync(root, link, 'junction');
+    const file = join(root, 'file');
+    writeFileSync(file, '');
+    const startWork = vi.fn();
+    const runtime = createCommandRuntime({ startWork, verifyProviders: async () => installedClaude });
+    const environmentId = randomUUID();
+    for (const path of [join(root, 'missing'), link, file, '.']) {
+      await expect(dispatchHostCommand(runtime, {
+        type: 'thread.start', threadId: randomUUID(), environmentId, projectId: 'proj-1', providerId: 'claude',
+        input: prompt('continue'), existingEnvironment: { path, workspaceProvisionType: 'unmanaged' }
+      })).rejects.toMatchObject({ code: 'environment_not_ready' });
+    }
+    expect(startWork).not.toHaveBeenCalled();
+    expect(runtime.environments.has(environmentId)).toBe(false);
     expect(runtime.lanes.size).toBe(0);
   });
 
