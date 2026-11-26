@@ -231,6 +231,7 @@ test('review Launch revalidates branch checkout and rejects changed target witho
     await ctx.window.getByRole('button', { name: 'Review Squad launch' }).click();
     const modal = ctx.window.getByTestId('launch-modal');
     await expect(modal).toBeVisible();
+    await modal.getByRole('button', { name: 'Launch settings', exact: true }).click();
     const preview = modal.getByLabel('Effective launch settings');
     await expect(preview).toContainText('feature/review-owned');
     await expect(modal.getByTestId('team-command-send')).toBeEnabled();
