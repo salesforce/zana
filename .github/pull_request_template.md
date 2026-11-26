@@ -6,6 +6,12 @@
 
 <!-- The problem or motivation. Link issues/tickets if any. -->
 
+## Documentation
+
+<!-- Link the user guide, plugin overview, release note, or help video updated for this change. For a covered change with no docs impact, ask a maintainer for the no-docs-needed label and give a one-line reason below. -->
+
+Docs exception reason: <!-- Fill in only when requesting the label. -->
+
 ## How verified
 
 - [ ] `npm run typecheck` passes

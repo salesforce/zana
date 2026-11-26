@@ -1,0 +1,60 @@
+name: Pull request documentation
+
+# Initially advisory. Make "Docs coverage" required in the main ruleset after
+# reviewing the path scope on real PRs. Keep the status context stable.
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, edited, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-coverage-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  docs-coverage:
+    name: Evaluate documentation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+    env:
+      PR_HEAD: ${{ github.event.pull_request.head.sha }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      # pull_request_target runs against the base commit. Publish the result
+      # on the PR head so its status can be required for merging.
+      - name: Mark docs coverage pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$PR_HEAD" \
+            -f context='Docs coverage' -f state=pending -f target_url="$RUN_URL"
+      - uses: actions/checkout@v7
+        with:
+          # Execute only the policy in the trusted target branch. The
+          # contribution is fetched for Git reads and is never checked out.
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Evaluate the PR using the base branch policy
+        id: coverage
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          git fetch --no-tags origin "refs/pull/$PR_NUMBER/head"
+          node scripts/check-pr-docs.mjs
+      - name: Report docs coverage
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DOCS_RESULT: ${{ steps.coverage.outcome == 'success' && 'success' || 'failure' }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$PR_HEAD" \
+            -f context='Docs coverage' -f state="$DOCS_RESULT" -f target_url="$RUN_URL"
