@@ -1,0 +1,123 @@
+/* Reveal the native window material once the full desktop shell is mounted.
+   The loading screen, repair flow, and standalone views have their own backing. */
+:is(html, body, #root):has(.app-shell.shell-inset[data-glass-mode='true']) {
+  background: transparent;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] {
+  /* Keep enough tint in the shell for text to remain readable over any desktop. */
+  --macos-glass-opaque: #202737;
+  --macos-glass-window:
+    radial-gradient(ellipse at 9% 0%, rgb(47 74 108 / 0.66), transparent 48%),
+    radial-gradient(ellipse at 86% -14%, rgb(87 62 113 / 0.6), transparent 55%),
+    linear-gradient(140deg, rgb(32 39 59 / 0.9), rgb(27 39 57 / 0.82));
+  --macos-glass-titlebar: rgb(35 41 62 / 0.34);
+  --macos-glass-rail: rgb(35 54 75 / 0.5);
+  --macos-glass-control: rgb(66 82 110 / 0.55);
+  --macos-glass-muted: #c2cee0;
+  --macos-glass-accent: #bedcff;
+  --macos-glass-edge: rgb(208 225 255 / 0.21);
+  --macos-glass-line: rgb(208 225 255 / 0.13);
+  --macos-glass-shadow: rgb(7 12 25 / 0.28);
+  --sidebar-active: rgb(118 160 227 / 0.23);
+  --sidebar-hover: rgb(180 204 246 / 0.13);
+  --sidebar-border: var(--macos-glass-line);
+  background: var(--macos-glass-window);
+}
+
+:where(:root[data-theme='light']) .app-shell.shell-inset[data-glass-mode='true'] {
+  --macos-glass-opaque: #e8edf5;
+  --macos-glass-window:
+    radial-gradient(ellipse at 5% 0%, rgb(198 235 250 / 0.78), transparent 49%),
+    radial-gradient(ellipse at 87% -17%, rgb(227 203 247 / 0.72), transparent 56%),
+    linear-gradient(142deg, rgb(227 239 249 / 0.91), rgb(213 226 244 / 0.8));
+  --macos-glass-titlebar: rgb(244 248 255 / 0.26);
+  --macos-glass-rail: rgb(244 251 255 / 0.45);
+  --macos-glass-control: rgb(255 255 255 / 0.67);
+  --macos-glass-muted: #394a5e;
+  --macos-glass-accent: #0d4788;
+  --macos-glass-edge: rgb(255 255 255 / 0.76);
+  --macos-glass-line: rgb(64 87 119 / 0.2);
+  --macos-glass-shadow: rgb(35 62 96 / 0.15);
+  --sidebar-active: rgb(78 139 226 / 0.16);
+  --sidebar-hover: rgb(74 106 157 / 0.09);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] > .titlebar {
+  /* Let Electron deliver the backdrop. Filtering this element in CSS would
+     change the containing block of its fixed-position popovers. */
+  background: var(--macos-glass-titlebar);
+  color: var(--macos-glass-muted);
+  box-shadow: inset 0 -1px 0 var(--macos-glass-line);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] > .statusbar {
+  background: var(--macos-glass-titlebar);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] > .sidebar {
+  --text-muted: var(--macos-glass-muted);
+  --text-dim: var(--macos-glass-muted);
+  border-radius: 14px;
+  background: var(--macos-glass-rail);
+  box-shadow: inset 0 0 0 1px var(--macos-glass-edge), 0 2px 8px var(--macos-glass-shadow);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] > .sidebar .nav-item.active {
+  background: var(--sidebar-active);
+  color: var(--macos-glass-accent);
+  border-color: var(--macos-glass-line);
+  border-radius: 9px;
+  box-shadow: inset 0 1px 0 var(--macos-glass-edge);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] > .sidebar .nav-item.active .nav-item-icon {
+  color: inherit;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .titlebar-thread {
+  border-radius: 11px;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .titlebar-thread:hover {
+  background: var(--sidebar-hover);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] :is(
+  .titlebar-thread.is-active,
+  .instance-menu > summary,
+  .basic-ui-mode-switch
+) {
+  background: var(--macos-glass-control);
+  border-color: var(--macos-glass-line);
+  box-shadow: inset 0 1px 0 var(--macos-glass-edge), 0 2px 5px var(--macos-glass-shadow);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] :is(.instance-menu > summary, .basic-ui-mode-switch) {
+  border-radius: 999px;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .basic-ui-mode-switch button {
+  border-radius: 999px;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] :is(
+  .titlebar-thread-context,
+  .titlebar-thread > button[role='tab']:not([aria-selected='true'])
+) {
+  color: var(--macos-glass-muted);
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
+  .app-shell.shell-inset[data-glass-mode='true'] {
+    --macos-glass-window: var(--macos-glass-opaque);
+    --macos-glass-titlebar: var(--macos-glass-opaque);
+    --macos-glass-rail: var(--bg-panel);
+    --macos-glass-control: var(--bg-elevated);
+    --macos-glass-edge: var(--border-strong);
+    --macos-glass-line: var(--border-strong);
+    --macos-glass-shadow: transparent;
+    --sidebar-active: var(--bg-hover);
+    --sidebar-hover: var(--bg-hover);
+  }
+}

@@ -3,6 +3,8 @@ import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { Section, Field, CheckboxField } from '@/components/settings/FormFields';
 import { ExperimentalPluginToggles } from './ExperimentalPluginToggles';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
+import { getAppSurface } from '@/lib/app-surface';
+import { shellPlatform } from '@/lib/shellChrome';
 
 /**
  * Experimental settings — features still under evaluation. Each declares its
@@ -32,6 +34,14 @@ export function ExperimentalView({
         help="Features under active evaluation. Defaults vary by feature; you can switch any experiment off. They may change or be removed."
       >
         <ExperimentalPluginToggles />
+        <CheckboxField
+          searchId="experimental.glass-mode"
+          label="Glass Mode"
+          help="Use translucent window chrome and floating panes in the macOS desktop app."
+          checked={config.glassModeEnabled === true}
+          disabled={getAppSurface() !== 'desktop' || shellPlatform() !== 'macos'}
+          onChange={(v) => onUpdate({ glassModeEnabled: v })}
+        />
         <CheckboxField
           searchId="experimental.dockable-thread-tools"
           label="Dockable thread tools"

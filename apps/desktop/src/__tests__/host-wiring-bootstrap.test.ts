@@ -328,6 +328,7 @@ describe('host bootstrap wiring', () => {
       expect(h.controlPlaneDeps.pluginCommands.cliContributions).toBeTypeOf('function');
       // The window paints the light --bg-base and its preload seeds data-theme=light.
       expect(h.winOptions[0].backgroundColor).toBe('#f6f8fa');
+      expect(h.winOptions[0].vibrancy).toBeUndefined();
       expect(h.winOptions[0].webPreferences.additionalArguments).toContain('--zcc-theme=light');
       expect(h.controlPlaneDeps.pluginCommands.runCliCommand).toBeTypeOf('function');
       for (const action of ['enable', 'disable', 'remove', 'reload', 'update', 'updateAll']) {

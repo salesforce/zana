@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   safeSend: vi.fn(),
   refreshAgentSounds: vi.fn(),
   refreshTitleBarOverlays: vi.fn(),
+  refreshWorkspaceVibrancy: vi.fn(),
   invalidateLlmReuse: vi.fn(),
   verifyState: { cache: undefined as unknown }
 }));
@@ -15,7 +16,7 @@ vi.mock('./shared-product-registration.js', () => ({
   productHandle: (channel: string, handler: (...args: unknown[]) => unknown) => h.handlers.set(channel, handler),
   safeProductHandle: (channel: string, handler: (...args: unknown[]) => unknown) => h.handlers.set(channel, handler)
 }));
-vi.mock('./ctx.js', () => ({ ctx: { safeHandle: vi.fn(), agentSounds: { refresh: h.refreshAgentSounds }, safeSend: h.safeSend, refreshTitleBarOverlays: h.refreshTitleBarOverlays, invalidateLlmReuse: h.invalidateLlmReuse } }));
+vi.mock('./ctx.js', () => ({ ctx: { safeHandle: vi.fn(), agentSounds: { refresh: h.refreshAgentSounds }, safeSend: h.safeSend, refreshTitleBarOverlays: h.refreshTitleBarOverlays, refreshWorkspaceVibrancy: h.refreshWorkspaceVibrancy, invalidateLlmReuse: h.invalidateLlmReuse } }));
 vi.mock('./shared.js', () => ({ harnessVerifyState: h.verifyState }));
 vi.mock('@zana-ai/zcc-server/http/public-app-url', () => ({ presentAppConfig: (config: unknown) => config }));
 vi.mock('@zana-ai/zcc-server/services/projects/store', () => ({
@@ -28,6 +29,7 @@ beforeEach(() => {
   h.safeSend.mockClear();
   h.refreshAgentSounds.mockClear();
   h.refreshTitleBarOverlays.mockClear();
+  h.refreshWorkspaceVibrancy.mockClear();
   h.invalidateLlmReuse.mockClear();
   h.verifyState.cache = undefined;
   registerConfigIpc();
@@ -62,6 +64,14 @@ describe('config.set window state', () => {
 });
 
 describe('config.set theme', () => {
+  it('refreshes workspace material after a persisted Glass Mode change', () => {
+    const set = h.handlers.get(IPC.config.set)!;
+    set({ glassModeEnabled: false });
+    expect(h.refreshWorkspaceVibrancy).not.toHaveBeenCalled();
+    const next = set({ glassModeEnabled: true });
+    expect(h.refreshWorkspaceVibrancy).toHaveBeenCalledOnce();
+    expect(h.safeSend).toHaveBeenLastCalledWith(IPC.config.onChanged, next);
+  });
   it('re-colours the Windows caption buttons of every window when the theme changes', () => {
     h.handlers.get(IPC.config.set)!({ theme: 'system' });
     expect(h.refreshTitleBarOverlays).toHaveBeenCalledTimes(1);

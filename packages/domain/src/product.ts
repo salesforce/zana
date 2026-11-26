@@ -2565,6 +2565,8 @@ export interface AppConfig {
   threadTabsEnabled?: boolean;
   /** Drag thread tools between right and bottom panels. Defaults on. */
   dockableThreadToolsEnabled?: boolean;
+  /** Opt in to the Floating glass workspace on macOS desktop. */
+  glassModeEnabled?: boolean;
   /**
    * Idle / blocked dwell (seconds) before the catch-up-summary add-on fires its
    * micro-call. On the working/blocked → idle edge (or entering 'blocked'), the

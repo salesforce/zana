@@ -107,6 +107,9 @@ export function registerConfigIpc(namedChecks?: NamedChecksSettingsService): voi
         ctx.menubar?.refresh();
         ctx.refreshTitleBarOverlays();
       }
+      if ((previous.glassModeEnabled === true) !== (next.glassModeEnabled === true)) {
+        ctx.refreshWorkspaceVibrancy();
+      }
       // Command Center: turning it off closes an open rail (the app comes back)
       // and hides the "Minimize to Command Center" entry points; a theme change
       // re-themes the rail on its next push.

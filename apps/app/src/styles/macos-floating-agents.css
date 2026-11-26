@@ -1,0 +1,208 @@
+/* The toolbar shares the window's glass. The lanes and cards use opaque
+   surfaces so status, text and focus stay readable over any desktop. */
+.app-shell.shell-inset[data-glass-mode='true'] {
+  --floating-agents-canvas: color-mix(in srgb, var(--bg-base) 95%, var(--accent-blue));
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-board {
+  --floating-agents-lane: color-mix(in srgb, var(--bg-base) 55%, var(--bg-panel));
+  --floating-agents-card: var(--bg-panel);
+  --floating-agents-edge: color-mix(in srgb, var(--border) 88%, var(--text-primary));
+  --floating-agents-primary: #0964cf;
+  --floating-agents-sheen: inset 0 1px 0 var(--macos-glass-edge);
+  background: var(--floating-agents-canvas);
+}
+
+:root:not([data-theme='light']) .app-shell.shell-inset[data-glass-mode='true'] .agents-board {
+  --floating-agents-card: color-mix(in srgb, var(--bg-elevated) 91%, var(--accent-blue));
+  --floating-agents-edge: color-mix(in srgb, var(--border) 82%, var(--text-primary));
+}
+
+/* The global board can be the shell's content sheet or fill a single-pane
+   workspace. In both cases the outer sheet owns the translucent canvas. */
+.app-shell.shell-inset[data-glass-mode='true'] .shell-main > :is(
+  .agents-board--global,
+  .split-workspace:has(> .split-pane-slot > .split-pane-host > .split-pane > .agents-board--global)
+) {
+  background: var(--floating-agents-sheet, color-mix(in srgb, var(--floating-agents-canvas) 84%, transparent));
+  border: 0;
+  border-radius: 16px;
+  box-shadow:
+    0 0 0 1px var(--macos-glass-edge),
+    0 4px 14px var(--macos-glass-shadow);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .shell-main > .split-workspace > .split-pane-slot > .split-pane-host > .split-pane > .agents-board--global {
+  background: transparent;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-board-toolbar > :is(
+  .agents-view-toggle, .agents-board-filter, .agents-board-new, .agents-board-close-idle, .agents-board-plugin-action
+) {
+  border-radius: 999px;
+  min-height: 30px;
+  background: var(--macos-glass-control, var(--bg-elevated));
+  box-shadow: var(--floating-agents-sheen), 0 2px 5px var(--macos-glass-shadow);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-board-toolbar .agents-view-toggle-btn {
+  width: 28px;
+  height: 26px;
+  border-radius: 999px;
+  color: var(--text-muted);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-board-toolbar .agents-view-toggle-btn.active {
+  background: color-mix(in srgb, var(--accent-blue) 15%, var(--bg-panel));
+  color: var(--text-primary);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-board-toolbar .agents-board-filter input::placeholder {
+  color: var(--text-muted);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-board-toolbar .agents-board-new {
+  border-color: var(--floating-agents-primary);
+  background: linear-gradient(
+    color-mix(in srgb, var(--floating-agents-primary) 92%, white),
+    var(--floating-agents-primary)
+  );
+  color: #fff;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-board-toolbar .agents-board-new:hover {
+  background: color-mix(in srgb, var(--floating-agents-primary) 87%, black);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-board-toolbar > :is(
+  .agents-board-close-idle, .agents-board-plugin-action
+):hover {
+  background: var(--bg-hover);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-board-toolbar :is(
+  .agents-view-toggle-btn, .agents-board-new, .agents-board-close-idle, .agents-board-plugin-action, .agents-board-filter-clear
+):focus-visible,
+.app-shell.shell-inset[data-glass-mode='true'] .agents-board-toolbar > .agents-board-filter:focus-within {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-board-content > .zcc-kanban {
+  gap: 12px;
+  padding: 4px 12px 12px;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-board .zcc-kanban-col.agents-lane {
+  border-color: var(--floating-agents-edge);
+  border-radius: 14px;
+  background: var(--floating-agents-lane);
+  box-shadow: 0 2px 6px var(--macos-glass-shadow);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-lane .zcc-kanban-col-header {
+  border-bottom-color: var(--floating-agents-edge);
+  color: var(--text-primary);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-lane .zcc-kanban-col-title {
+  font-size: 12px;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-lane :is(
+  .zcc-kanban-col-count, .agents-lane-group-count
+) {
+  background: color-mix(in srgb, var(--text-primary) 8%, var(--floating-agents-lane));
+  color: var(--text-muted);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-lane .agents-lane-group {
+  padding: 0 0 4px;
+  background: transparent;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-lane .agents-lane-group-head {
+  padding: 1px 3px 2px;
+  color: var(--text-muted);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-lane .agent-card {
+  border-radius: 11px;
+  background: var(--floating-agents-card);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-lane .agent-card.is-thread:not(.is-modern) {
+  border-style: solid;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-lane .agent-card[data-kind='thread'] {
+  --floating-card-inset: 10px;
+  --floating-thread-chip-space: 54px;
+  padding: var(--floating-card-inset);
+  gap: 5px;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-lane .agent-card[data-kind='thread'] .agent-card-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-lane .agent-card[data-kind='thread'] .fleet-kind-thread {
+  position: absolute;
+  inset-inline-end: var(--floating-card-inset);
+  inset-block-end: var(--floating-card-inset);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-lane .agent-card[data-kind='thread'] .agent-card-meta {
+  min-height: 16px;
+  padding-inline-end: var(--floating-thread-chip-space);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-lane .agent-card:hover {
+  background: color-mix(in srgb, var(--accent-blue) 6%, var(--floating-agents-card));
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-lane .agent-card:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .agents-lane .agent-card :is(
+  .agent-card-sub, .agent-card-branch:not(.agent-card-branch-warn)
+) {
+  color: var(--text-muted);
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .app-shell.shell-inset[data-glass-mode='true'] {
+    --floating-agents-sheet: var(--floating-agents-canvas);
+  }
+
+  .app-shell.shell-inset[data-glass-mode='true'] .agents-board {
+    --floating-agents-sheen: inset 0 1px 0 transparent;
+  }
+
+  .app-shell.shell-inset[data-glass-mode='true'] .agents-board-toolbar .agents-board-new {
+    background: var(--floating-agents-primary);
+  }
+}
+
+@media (prefers-contrast: more) {
+  .app-shell.shell-inset[data-glass-mode='true'] .agents-board {
+    --floating-agents-edge: color-mix(in srgb, var(--text-primary) 62%, var(--bg-panel));
+  }
+
+  .app-shell.shell-inset[data-glass-mode='true'] .agents-board-toolbar > :is(
+    .agents-view-toggle, .agents-board-filter, .agents-board-close-idle, .agents-board-plugin-action
+  ),
+  .app-shell.shell-inset[data-glass-mode='true'] .agents-lane .agent-card:not(.active, .bad, .lane-working, .lane-blocked) {
+    border-color: var(--floating-agents-edge);
+  }
+}

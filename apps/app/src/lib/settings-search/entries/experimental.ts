@@ -46,6 +46,16 @@ export const entries: readonly SettingsSearchEntry[] = [
     kind: 'subsection'
   },
   {
+    id: 'experimental.glass-mode',
+    section: 'experimental',
+    anchor: 'experimental-features',
+    label: 'Glass Mode',
+    help: 'Use translucent window chrome and floating panes in the macOS desktop app.',
+    keywords: ['macOS', 'vibrancy', 'transparency', 'sidebar', 'floating', 'appearance'],
+    kind: 'setting',
+    value: onOff((c) => c.glassModeEnabled)
+  },
+  {
     id: 'experimental.dockable-thread-tools',
     section: 'experimental',
     anchor: 'experimental-features',

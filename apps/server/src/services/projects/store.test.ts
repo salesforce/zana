@@ -120,6 +120,7 @@ describe('config — boolean feature flags round-trip through setConfig', () => 
     'classicSessionViewEnabled',
     'threadTabsEnabled',
     'dockableThreadToolsEnabled',
+    'glassModeEnabled',
     'inAppAgentTerminalsEnabled',
     'nativeAgentDiscoveryEnabled'
   ] as const)('persists %s', (flag) => {

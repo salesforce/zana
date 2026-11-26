@@ -10,6 +10,9 @@ import {
 import { ConversationHistoryDialog } from './components/history/ConversationHistoryDialog.js';
 import '@/lib/monaco-loader';
 import './styles/shell-inset.css';
+import './styles/macos-floating-chrome.css';
+import './styles/macos-floating-agents.css';
+import './styles/macos-floating-panes.css';
 import { useEffect, useRef, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Bell, PlayCircle, Star } from 'lucide-react';
@@ -259,6 +262,7 @@ function AppShell() {
   const hasPluginTabs = useApplicationTabs(s => s.open.some(tab => tab.kind === 'plugin' && (!getScopedProjectId() || tab.projectId === getScopedProjectId())));
   const onboardingActive = useOnboarding(s => !s.loaded || s.open);
   const threadTabsEnabled = useData((s) => s.threadTabsEnabled);
+  const glassModeEnabled = useData((s) => s.glassModeEnabled);
   useRouteSync();
   useEffect(installAgentBoardMoves, []);
   const init = useData((s) => s.init);
@@ -805,6 +809,8 @@ function AppShell() {
       data-ui-mode={basicUi ? 'basic' : 'advanced'}
       data-mobile={mobileNavigation.isCompact}
       data-platform={shellChrome.platform}
+      data-surface={shellChrome.surface}
+      data-glass-mode={glassModeEnabled && shellChrome.surface === 'desktop' && shellChrome.platform === 'macos'}
       data-fullscreen={shellChrome.isFullScreen}
       data-traffic-lights={shellChrome.reserveMacosTrafficLights}
       data-windows-caption={shellChrome.reserveWindowsCaptionButtons}

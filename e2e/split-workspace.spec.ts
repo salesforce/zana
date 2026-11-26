@@ -16,7 +16,7 @@ async function beginDrag(page: Page, source: Locator, target: Locator, x = 0.9, 
 
 const nav = (page: Page, title: string) => page.getByTestId(`nav-${title.toLowerCase()}`);
 
-test.use({ e2e: true, initialConfig: { sponsorPromptDismissed: true } });
+test.use({ e2e: true, initialConfig: { sponsorPromptDismissed: true, glassModeEnabled: true } });
 // Each 12-step drag takes seconds on CI runners; both flows outlast the default budget there.
 test.setTimeout(180_000);
 
@@ -99,6 +99,15 @@ test('shell splits: drag, cancel, resize, move, maximize and reload', async ({ a
   const { window: page } = app;
   await nav(page, 'Home').click();
   const workspace = page.getByTestId('split-workspace');
+  const expectFloatingGap = async (direction: 'row' | 'col') => {
+    if (process.platform !== 'darwin') return;
+    const panes = workspace.locator('.split-pane');
+    const first = (await panes.first().boundingBox())!;
+    const second = (await panes.last().boundingBox())!;
+    const gap = direction === 'row' ? second.x - first.x - first.width : second.y - first.y - first.height;
+    expect(gap).toBeCloseTo(8, 1);
+    await expect(panes.first()).toHaveCSS('border-top-left-radius', '10px');
+  };
   await expect(workspace).toHaveAttribute('data-split', 'false');
 
   await beginDrag(page, nav(page, 'Inbox'), workspace);
@@ -119,6 +128,7 @@ test('shell splits: drag, cancel, resize, move, maximize and reload', async ({ a
   await page.mouse.up();
   await expect(workspace).toHaveAttribute('data-split', 'true');
   await expect(workspace.locator('.split-pane')).toHaveCount(2);
+  await expectFloatingGap('row');
   await expect(workspace.locator('.split-pane-bar-title')).toHaveText(['Home', 'Inbox']);
   await expect(page.locator('[contenteditable="true"]').first()).toHaveText('Draft survives split changes');
   const divider = workspace.getByRole('separator', { name: 'Resize panes left and right' });
@@ -154,17 +164,28 @@ test('shell splits: drag, cancel, resize, move, maximize and reload', async ({ a
   await inbox.getByRole('button', { name: 'Move pane', exact: true }).click();
   await page.getByRole('option', { name: 'Move pane below', exact: true }).click();
   await expect(workspace.locator('.split-tree').first()).toHaveClass(/split-tree--col/);
+  await expectFloatingGap('col');
   const maximize = inbox.getByRole('button', { name: 'Maximize pane', exact: true });
   await maximize.click();
   await expect(inbox).toHaveAttribute('data-maximized', 'true');
-  const full = await workspace.boundingBox();
+  const full = await workspace.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return {
+      x: bounds.left + parseFloat(style.borderLeftWidth),
+      y: bounds.top + parseFloat(style.borderTopWidth),
+      width: bounds.width - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth),
+      height: bounds.height - parseFloat(style.borderTopWidth) - parseFloat(style.borderBottomWidth),
+    };
+  });
   const maximized = await inbox.boundingBox();
-  expect(maximized!.x).toBeCloseTo(full!.x, 0);
-  expect(maximized!.y).toBeCloseTo(full!.y, 0);
-  expect(maximized!.width).toBeCloseTo(full!.width, 0);
-  expect(maximized!.height).toBeCloseTo(full!.height, 0);
+  expect(maximized!.x).toBeCloseTo(full.x, 0);
+  expect(maximized!.y).toBeCloseTo(full.y, 0);
+  expect(maximized!.width).toBeCloseTo(full.width, 0);
+  expect(maximized!.height).toBeCloseTo(full.height, 0);
   await expect(nav(page, 'Home')).toBeVisible();
   await inbox.getByRole('button', { name: 'Restore pane' }).click();
+  await expectFloatingGap('col');
 
   // Center-drag swaps views; an edge-drag moves the view into a new split.
   const homeTitle = workspace.locator('.split-pane-bar-title', { hasText: 'Home' });

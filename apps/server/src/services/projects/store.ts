@@ -1175,6 +1175,7 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.dockableThreadToolsEnabled === 'boolean') {
     normalized.dockableThreadToolsEnabled = input.dockableThreadToolsEnabled;
   }
+  if (typeof input.glassModeEnabled === 'boolean') normalized.glassModeEnabled = input.glassModeEnabled;
   if (typeof input.classicSessionViewEnabled === 'boolean') {
     normalized.classicSessionViewEnabled = input.classicSessionViewEnabled;
   }

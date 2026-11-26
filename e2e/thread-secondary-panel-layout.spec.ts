@@ -5,10 +5,10 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // The sponsor prompt can appear mid-test and take the context menu's focus, so dismiss it for every test here.
-test.use({ initialConfig: { sponsorPromptDismissed: true } });
+test.use({ initialConfig: { sponsorPromptDismissed: true, glassModeEnabled: true } });
 
 test.describe('document panel resizing', () => {
-  test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { dockableThreadToolsEnabled: true, sponsorPromptDismissed: true } });
+  test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { dockableThreadToolsEnabled: true, sponsorPromptDismissed: true, glassModeEnabled: true } });
 
   for (const [mode, width] of [['Advanced', 1440], ['Advanced', 1000], ['Basic', 1440]] as const) {
     test(`document preview follows the divider at ${width}px in ${mode}`, async ({ app }, testInfo) => {
@@ -102,6 +102,20 @@ test('panel menus close tab groups without affecting the other dock or pinned vi
   const right = page.getByTestId('thread-secondary-panel'), bottom = page.getByTestId('thread-bottom-panel');
   const tools = (panel: typeof right) => panel.locator('.thread-secondary-tab:not(.is-pinned)');
   await expect(tools(right)).toHaveCount(3); await expect(tools(bottom)).toHaveCount(2);
+  if (process.platform === 'darwin') {
+    const thread = page.getByTestId('thread-detail');
+    const conversation = thread.locator('.thread-detail-main');
+    const chatBox = (await conversation.boundingBox())!;
+    const rightBox = (await right.boundingBox())!;
+    const bottomBox = (await bottom.boundingBox())!;
+    expect(rightBox.x - chatBox.x - chatBox.width).toBeCloseTo(8, 1);
+    expect(bottomBox.y - chatBox.y - chatBox.height).toBeCloseTo(8, 1);
+    await expect(right).toHaveCSS('border-top-left-radius', '10px');
+    await expect(bottom).toHaveCSS('border-top-left-radius', '10px');
+    for (const layer of [page.getByTestId('split-workspace'), thread.locator('.thread-detail-split'), thread.locator('.thread-tool-main')]) {
+      await expect(layer).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    }
+  }
   const middle = right.getByRole('button', { name: 'middle', exact: true });
   const closeRight = page.getByRole('menuitem', { name: 'Close tabs to the right', exact: true });
   // The panel can still be settling when the first right-click lands, which dismisses the menu; retry until it stays open.

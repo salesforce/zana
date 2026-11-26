@@ -144,6 +144,7 @@ export function SettingsView() {
     try {
       const next = await product.config.set(patch);
       setConfig(next);
+      if ('glassModeEnabled' in patch) useData.setState({ glassModeEnabled: next.glassModeEnabled === true });
       if ('defaultThreadProviderId' in patch) useData.setState({ defaultThreadProviderId: next.defaultThreadProviderId ?? null });
       if ('defaultThreadPermissionMode' in patch) useData.setState({ defaultThreadPermissionMode: next.defaultThreadPermissionMode ?? null });
       if (typeof patch.fontSize === 'number') useData.getState().setFontSize(patch.fontSize);

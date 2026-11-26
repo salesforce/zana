@@ -66,6 +66,19 @@ it.each([undefined, true, false])('hydrates dockable thread tools with default e
   useData.getState().setDockableThreadToolsEnabled(false);
   expect(useData.getState().dockableThreadToolsEnabled).toBe(false);
 });
+
+it('defaults Glass Mode to off and mirrors config changes from other windows', async () => {
+  config.value = { walkthroughCompleted: true, setupDismissed: true };
+  await useData.getState().init();
+  expect(useData.getState().glassModeEnabled).toBe(false);
+  config.changed?.({ ...config.value, glassModeEnabled: true });
+  expect(useData.getState().glassModeEnabled).toBe(true);
+  config.changed?.({ ...config.value, glassModeEnabled: false });
+  expect(useData.getState().glassModeEnabled).toBe(false);
+  config.value = { ...config.value, glassModeEnabled: true };
+  await useData.getState().init();
+  expect(useData.getState().glassModeEnabled).toBe(true);
+});
 it('hydrates and live-syncs projectExpanded and collapsedSections from config', async () => {
   config.value = {
     collapsedSections: { 'sidebar:machine:local': true },
