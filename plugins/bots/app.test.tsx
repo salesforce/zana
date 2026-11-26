@@ -21,7 +21,7 @@ vi.mock('@zana-ai/zcc-plugin-sdk/app', () => ({
   useRealtime: (_channel: string, handler: (payload?: unknown) => void) => { state.realtime.push(handler); }
 }));
 
-import { BasicBots, BotAvatar, BotsPanel, BotThreadIcon, BotThreadProfile, BotThreadTitle, botState, cronFor } from './app.tsx';
+import { AdvancedBots, BasicBots, BotAvatar, BotsPanel, BotThreadIcon, BotThreadProfile, BotThreadTitle, botState, cronFor } from './app.tsx';
 
 const memoryRpc = vi.fn<(...args: unknown[]) => Promise<unknown>>();
 const scout = {
@@ -46,10 +46,98 @@ afterEach(() => { cleanup(); state.rpc.call.mockReset(); state.navigate.toThread
 
 it('registers the Bots nav panel', () => {
   expect(state.registered).toEqual(expect.arrayContaining([
-    expect.objectContaining({ id: 'bots', title: 'Bots', icon: 'Bot' }),
+    expect.objectContaining({ id: 'bots', title: 'Bots', icon: 'Bot', experimental_sidebarSection: AdvancedBots }),
     { id: 'threads', title: 'Bots', icon: 'Bot' },
     expect.objectContaining({ id: 'profile', experimental_ownedThreadTitle: BotThreadTitle, experimental_ownedThreadIcon: BotThreadIcon, component: BotThreadProfile })
   ]));
+});
+
+it('shows five bots at a time in the Advanced sidebar and preserves the thread and panel destinations', async () => {
+  const bots = Array.from({ length: 12 }, (_, index) => ({ ...scout, id: `bot-${index}`, name: `Bot ${index + 1}`,
+    mainThreadId: `thread-${index}`, pinnedAt: index === 11 ? 10 : undefined }));
+  route({ list: () => bots, openThread: () => ({ threadId: 'thread-4' }) });
+  const openThread = vi.fn();
+  render(<AdvancedBots activeThreadId="thread-11" openThread={openThread} panelLink={<a href="/plugins/bots/bots">Open Bots panel</a>} />);
+  const section = within(screen.getByRole('region', { name: 'Bots' }));
+  const pinned = await section.findByRole('button', { name: 'Bot 12 Idle · Thread' });
+  expect(pinned.getAttribute('aria-current')).toBe('true');
+  const organize = section.getByRole('button', { name: 'Organize bots' });
+  fireEvent.click(organize);
+  const menu = section.getByRole('dialog', { name: 'Organize bots' });
+  expect(within(menu).getByRole('link', { name: 'Open Bots panel' }).getAttribute('href')).toBe('/plugins/bots/bots');
+  fireEvent.keyDown(menu, { key: 'Escape' });
+  expect(section.queryByRole('dialog')).toBeNull();
+  expect(document.activeElement).toBe(organize);
+  expect(section.getAllByRole('button', { name: /^Bot \d+ Idle/ })).toHaveLength(5);
+  fireEvent.click(section.getByRole('button', { name: 'Show more 7 left' }));
+  expect(section.getAllByRole('button', { name: /^Bot \d+ Idle/ })).toHaveLength(10);
+  const firstNew = section.getByRole('button', { name: 'Bot 5 Idle · Thread' });
+  expect(document.activeElement).toBe(firstNew);
+  fireEvent.click(firstNew);
+  await waitFor(() => expect(openThread).toHaveBeenCalledWith('thread-4'));
+  fireEvent.click(section.getByRole('button', { name: 'Show more 2 left' }));
+  expect(section.getAllByRole('button', { name: /^Bot \d+ Idle/ })).toHaveLength(12);
+  expect(section.queryByRole('button', { name: /Show more/ })).toBeNull();
+  fireEvent.click(section.getByRole('button', { name: 'Show fewer' }));
+  expect(section.getAllByRole('button', { name: /^Bot \d+ Idle/ })).toHaveLength(5);
+  expect(document.activeElement).toBe(section.getByRole('button', { name: 'Show more 7 left' }));
+  const heading = section.getByRole('button', { name: 'Bots', exact: true });
+  fireEvent.click(heading);
+  expect(heading.getAttribute('aria-expanded')).toBe('false');
+  expect(section.queryByRole('button', { name: 'Show more 7 left' })).toBeNull();
+  fireEvent.click(heading);
+  expect(section.getAllByRole('button', { name: /^Bot \d+ Idle/ })).toHaveLength(5);
+});
+
+it('organizes the bot roster, reloads it and creates a bot from the sidebar', async () => {
+  const pinned = { ...scout, pinnedAt: 10 };
+  let rows = [fresh, pinned];
+  const openThread = vi.fn();
+  route({ list: () => rows, create: args => {
+    rows = [...rows, { ...fresh, id: 'new', name: args.name }];
+    return { id: 'new' };
+  } });
+  render(<AdvancedBots activeThreadId={null} openThread={openThread} panelLink={null} />);
+  const section = within(screen.getByRole('region', { name: 'Bots' }));
+  await section.findByRole('button', { name: 'Fresh Not started · Thread' });
+  const option = (name: string) => {
+    fireEvent.click(section.getByRole('button', { name: 'Organize bots' }));
+    fireEvent.click(within(section.getByRole('dialog', { name: 'Organize bots' })).getByRole('button', { name }));
+  };
+  option('Pinned only');
+  expect(section.queryByRole('button', { name: 'Fresh Not started · Thread' })).toBeNull();
+  expect(section.getByRole('button', { name: 'Scout Idle · Thread' })).toBeTruthy();
+  option('All bots');
+  option('Alphabetical');
+  expect(section.getAllByRole('button', { name: /· Thread/ })[0].textContent).toContain('Fresh');
+  rows = [{ ...fresh, id: 'added', name: 'Analyst' }, ...rows];
+  fireEvent.click(section.getByRole('button', { name: 'Reload bot list' }));
+  await section.findByRole('button', { name: 'Analyst Not started · Thread' });
+  const add = section.getByRole('button', { name: 'New bot' });
+  add.focus();
+  fireEvent.click(add);
+  fireEvent.click(within(section.getByRole('dialog', { name: 'New bot' })).getByRole('button', { name: 'Cancel' }));
+  expect(document.activeElement).toBe(add);
+  fireEvent.click(add);
+  const form = within(section.getByRole('dialog', { name: 'New bot' }));
+  fireEvent.change(form.getByRole('textbox', { name: 'Name' }), { target: { value: 'New analyst' } });
+  fireEvent.click(form.getByRole('button', { name: 'Create bot' }));
+  await section.findByRole('button', { name: 'New analyst Not started · Thread' });
+  expect(openThread).not.toHaveBeenCalled();
+});
+
+it('recovers from a sidebar list failure and reports a failed open', async () => {
+  let retry = false;
+  route({ list: () => { if (!retry) throw new Error('offline'); return [fresh]; },
+    openThread: () => { throw new Error('Thread unavailable'); } });
+  const openThread = vi.fn();
+  render(<AdvancedBots activeThreadId={null} openThread={openThread} panelLink={null} />);
+  await screen.findByRole('alert');
+  retry = true;
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Fresh Not started · Thread' }));
+  expect((await screen.findByRole('alert')).textContent).toBe('Thread unavailable');
+  expect(openThread).not.toHaveBeenCalled();
 });
 
 it('derives bot state and routine crons', () => {

@@ -597,14 +597,14 @@ describe.each([
 describe.each([
   ['host', (definition: ReturnType<typeof definePluginApp>) => collectPluginApp('test', 1, definition)],
   ['test harness', collectPluginAppRegistrations]
-] as const)('%s Basic sidebar registration', (_name, collect) => {
+] as const)('%s sidebar registration', (_name, collect) => {
   const registration = { id: 'sample', path: 'sample', title: 'Sample', icon: 'List', component: () => null };
-  it('retains the optional component and rejects a malformed contribution', () => {
+  it.each(['experimental_basicSidebarSection', 'experimental_sidebarSection'] as const)('validates %s', (key) => {
     const section = () => null;
     const appWith = (value: unknown) => definePluginApp(app => app.slots.navPanel({
-      ...registration, experimental_basicSidebarSection: value as typeof section
+      ...registration, [key]: value as typeof section
     }));
-    expect(collect(appWith(section)).navPanels[0]?.experimental_basicSidebarSection).toBe(section);
-    expect(() => collect(appWith(42))).toThrow(/experimental_basicSidebarSection/);
+    expect(collect(appWith(section)).navPanels[0]?.[key]).toBe(section);
+    expect(() => collect(appWith(42))).toThrow(key);
   });
 });

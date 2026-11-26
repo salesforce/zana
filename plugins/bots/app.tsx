@@ -1,10 +1,10 @@
-import { PopoverPicklist } from '@zana-ai/zcc-ui/popover-picklist';
-import { ChevronDown, Pin, Plus } from 'lucide-react';
+import { placePopoverMenu, PopoverPicklist, useExclusivePopover } from '@zana-ai/zcc-ui/popover-picklist';
+import { Check, ChevronDown, ChevronRight, ListFilter, Pin, Plus, RefreshCw } from 'lucide-react';
 import { VaultPanel } from './src/vault/VaultPanel.js';
 import { Section, botSectionCss } from './src/BotSection.js';
 import { BotMemory } from './src/BotMemory.js';
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { definePluginApp, Markdown, useRealtime, useRpc, useZccNavigate, type BasicSidebarSectionProps, type PluginOwnedThreadIconProps, type PluginOwnedThreadTitleProps, type PluginThreadPanelProps } from '@zana-ai/zcc-plugin-sdk/app';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { definePluginApp, Markdown, useRealtime, useRpc, useZccNavigate, type BasicSidebarSectionProps, type PluginOwnedThreadIconProps, type PluginOwnedThreadTitleProps, type PluginSidebarSectionProps, type PluginThreadPanelProps } from '@zana-ai/zcc-plugin-sdk/app';
 import { BOT_COLORS, DIRECT_INTERVAL_MINUTES, MIN_ROUTINE_INTERVAL_MINUTES, ROUTINE_KINDS, type RoutineKind, botMemoryTag, defaultBotColor, defaultBotShape, describeCron, type BotRoutine, type BotShape } from './src/model.js';
 import type { BotJobView, BotView } from './src/service.js';
 
@@ -319,11 +319,7 @@ function BasicBotRow({ bot, activeThreadId, opening, onOpen }: {
   </>;
 }
 
-export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread, registerThreads }: BasicSidebarSectionProps) {
-  const { bots, loaded, error, refresh } = useBotList();
-  const [creating, setCreating] = useState(false);
-  const [showAll, setShowAll] = useState(false);
-  const listId = useId();
+function useOpenBotThread(activeThreadId: string | null, openThread: (threadId: string) => void) {
   const rpc = useRpc();
   const [opening, setOpening] = useState<string | null>(null);
   const [openError, setOpenError] = useState('');
@@ -346,6 +342,15 @@ export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread,
       if (current === attempt.current) setOpening(null);
     }
   }
+  return { openBot, opening, openError };
+}
+
+export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread, registerThreads }: BasicSidebarSectionProps) {
+  const { bots, loaded, error, refresh } = useBotList();
+  const [creating, setCreating] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const listId = useId();
+  const { openBot, opening, openError } = useOpenBotThread(activeThreadId, openThread);
   const eligible = useMemo(() => bots.filter(bot => projectIds.includes(bot.projectId)), [bots, projectIds]);
   useEffect(() => {
     const ids = eligible.flatMap(bot => bot.mainThreadId ? [bot.mainThreadId] : []);
@@ -380,6 +385,190 @@ export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread,
       aria-expanded={showAll} aria-controls={listId} onClick={() => setShowAll(!showAll)}>
       {showAll ? 'Show less' : 'Show more'}
     </button>}
+  </section>;
+}
+
+const railListCss = `
+.bt-rail { padding-bottom: 4px; }
+.bt-rail .list-header-actions .icon-btn { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 7px; }
+.bt-rail .list-header-actions .icon-btn:is(:hover, .on) { background: var(--sidebar-hover); color: var(--text-primary); }
+.bt-rail .bt-rail-organize { inset: auto; overflow-y: auto; overscroll-behavior: contain; }
+.bt-rail-organize-link a { display: flex; align-items: center; min-height: 29px; padding: 5px 7px;
+  border-radius: 6px; color: var(--text-muted); font-size: 12px; text-decoration: none; }
+.bt-rail-organize-link a:hover { background: var(--sidebar-hover); color: var(--text-primary); }
+.bt-rail .bt-rail-count { color: var(--text-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.bt-rail .project-terminals { margin: 0 5px 0 11px; padding-left: 6px; border-left: 1px solid color-mix(in srgb, var(--border) 75%, transparent); }
+.bt-rail .project-terminals[hidden] { display: none; }
+.bt-rail-list { display: grid; gap: 2px; max-height: min(45vh, 440px); overflow: auto; scrollbar-width: thin; }
+.bt-rail .bt-rail-more { min-height: 26px; padding: 3px 8px; border-radius: 4px; text-align: left; cursor: pointer; touch-action: manipulation; }
+.bt-rail .bt-rail-more:hover { background: var(--bg-elevated); }
+.bt-rail-more .bt-rail-count { margin-left: auto; }
+.bt-rail-note { padding: 4px 8px; margin: 0; color: var(--text-muted); font-size: 11px; }
+`;
+
+const botSorts = [
+  ['pinned', 'Pinned first'], ['updated', 'Recently updated'], ['name', 'Alphabetical']
+] as const;
+type BotRailSort = typeof botSorts[number][0];
+
+function BotRailOrganize({ pinnedOnly, sort, onShow, onSort, panelLink }: {
+  pinnedOnly: boolean; sort: BotRailSort;
+  onShow(value: boolean): void; onSort(value: BotRailSort): void; panelLink: ReactNode;
+}) {
+  const [open, setOpen] = useExclusivePopover();
+  const menuId = useId();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => { setOpen(false); trigger.current?.focus(); }, [setOpen]);
+  useLayoutEffect(() => {
+    const element = menu.current;
+    const button = trigger.current;
+    if (!open || !element || !button) return;
+    const position = () => {
+      const { left, width, maxHeight, top, bottom } = placePopoverMenu(button.getBoundingClientRect(),
+        { width: window.innerWidth, height: window.innerHeight }, 180);
+      Object.assign(element.style, { left: left + 'px', width: width + 'px', maxHeight: maxHeight + 'px',
+        top: top === undefined ? 'auto' : top + 'px', bottom: bottom === undefined ? 'auto' : bottom + 'px' });
+    };
+    position();
+    element.querySelector<HTMLElement>('button[aria-pressed="true"]')?.focus();
+    const outside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !element.contains(event.target) && !button.contains(event.target)) setOpen(false);
+    };
+    window.addEventListener('resize', position);
+    window.addEventListener('scroll', position, true);
+    document.addEventListener('pointerdown', outside);
+    return () => {
+      window.removeEventListener('resize', position);
+      window.removeEventListener('scroll', position, true);
+      document.removeEventListener('pointerdown', outside);
+    };
+  }, [open, setOpen]);
+
+  return <>
+    <button ref={trigger} type="button" className={`icon-btn${pinnedOnly || sort !== 'pinned' ? ' on' : ''}`}
+      aria-label="Organize bots" title="Organize bots" aria-haspopup="dialog" aria-expanded={open}
+      aria-controls={open ? menuId : undefined} onClick={() => setOpen(current => !current)}>
+      <ListFilter size={14} aria-hidden="true" />
+    </button>
+    {open && <div id={menuId} ref={menu} className="sidebar-projects-organize-menu bt-rail-organize"
+      role="dialog" aria-label="Organize bots" onKeyDown={event => {
+        if (event.key === 'Escape') { event.stopPropagation(); close(); }
+      }}>
+      <span className="sidebar-projects-menu-label">Show</span>
+      {([false, true] as const).map(pinned => <button key={String(pinned)} type="button" aria-pressed={pinnedOnly === pinned}
+        onClick={() => { onShow(pinned); close(); }}>
+        {pinned ? 'Pinned only' : 'All bots'}{pinnedOnly === pinned && <Check size={14} aria-hidden="true" />}
+      </button>)}
+      <span className="sidebar-projects-menu-label">Sort by</span>
+      {botSorts.map(([value, label]) => <button key={value} type="button" aria-pressed={sort === value}
+        onClick={() => { onSort(value); close(); }}>
+        {label}{sort === value && <Check size={14} aria-hidden="true" />}
+      </button>)}
+      {panelLink && <div className="bt-rail-organize-link" onClick={() => setOpen(false)}>{panelLink}</div>}
+    </div>}
+  </>;
+}
+
+export function AdvancedBots({ activeThreadId, openThread, panelLink, dragHandle, onNavigate }: PluginSidebarSectionProps) {
+  const { bots, loaded, error, refresh } = useBotList();
+  const { openBot, opening, openError } = useOpenBotThread(activeThreadId, openThread);
+  const [expanded, setExpanded] = useState(true);
+  const [pinnedOnly, setPinnedOnly] = useState(false);
+  const [sort, setSort] = useState<BotRailSort>('pinned');
+  const [refreshing, setRefreshing] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [limit, setLimit] = useState(BASIC_BOT_LIMIT);
+  const branchId = useId();
+  const listId = useId();
+  const listRef = useRef<HTMLDivElement>(null);
+  const moreRef = useRef<HTMLButtonElement>(null);
+  const pendingFocus = useRef<number | 'more' | null>(null);
+  const matches = bots.filter(bot => !pinnedOnly || bot.pinnedAt != null).sort((a, b) => {
+    if (sort === 'name') return a.name.localeCompare(b.name);
+    if (sort === 'updated') return b.updatedAt - a.updatedAt;
+    return (b.pinnedAt ?? -1) - (a.pinnedAt ?? -1);
+  });
+  const visible = matches.slice(0, limit);
+  const remaining = matches.length - visible.length;
+
+  async function reload() {
+    setRefreshing(true);
+    try { await refresh(); }
+    finally { setRefreshing(false); }
+  }
+
+  useEffect(() => {
+    const target = pendingFocus.current;
+    pendingFocus.current = null;
+    if (target === 'more') moreRef.current?.focus();
+    else if (target !== null) listRef.current?.querySelectorAll('button')[target]?.focus();
+  }, [limit]);
+
+  return <section className="bt-rail" aria-label="Bots">
+    <style>{CSS + basicListCss + railListCss}</style>
+    <header className="sidebar-projects-header">
+      <button {...dragHandle} type="button" className="sidebar-projects-heading" aria-controls={branchId}
+        aria-expanded={expanded} onClick={event => {
+          onNavigate?.(event);
+          if (!event.defaultPrevented) setExpanded(value => !value);
+        }}>
+        Bots<ChevronRight className={`sidebar-projects-chevron${expanded ? ' open' : ''}`} size={14} aria-hidden="true" />
+      </button>
+      <div className="list-header-actions">
+        <BotRailOrganize pinnedOnly={pinnedOnly} sort={sort} panelLink={panelLink}
+          onShow={value => { setPinnedOnly(value); setLimit(BASIC_BOT_LIMIT); setExpanded(true); }}
+          onSort={value => { setSort(value); setLimit(BASIC_BOT_LIMIT); setExpanded(true); }} />
+        <button type="button" className="icon-btn" aria-label="Reload bot list" title="Refresh bots"
+          disabled={refreshing} onClick={() => void reload()}>
+          <RefreshCw size={14} className={refreshing ? 'spin' : undefined} aria-hidden="true" />
+        </button>
+        <button type="button" className="icon-btn" aria-label="New bot" title="New bot" aria-haspopup="dialog"
+          onClick={() => setCreating(true)}>
+          <Plus size={14} aria-hidden="true" />
+        </button>
+      </div>
+    </header>
+    {creating && <CreateBotDialog onCancel={() => setCreating(false)} onCreated={() => {
+      setCreating(false);
+      setExpanded(true);
+      setPinnedOnly(false);
+      void refresh();
+    }} />}
+    <div id={branchId} className="project-terminals" hidden={!expanded}>
+      {error && <p className="bt-rail-note" role="alert">Couldn’t load bots. <button type="button" onClick={() => void refresh()}>Retry</button></p>}
+      {openError && <p className="bt-rail-note" role="alert">{openError}</p>}
+      {!error && !matches.length && <p className="bt-rail-note">{!loaded ? 'Loading bots…' : pinnedOnly ? 'No pinned bots.' : 'No bots yet.'}</p>}
+      <div id={listId} className="bt-rail-list" ref={listRef}>
+        {visible.map(bot => {
+          const state = botState(bot);
+          const current = !!activeThreadId && activeThreadId === bot.mainThreadId;
+          return <button key={bot.id} type="button" className={`project-terminal-row is-thread${current ? ' active' : ''}`}
+            aria-current={current ? 'true' : undefined} title={bot.name} disabled={opening === bot.id}
+            onClick={() => void openBot(bot.id)}>
+            <span className="tab-profile-icon" aria-hidden="true"><BotAvatar bot={bot} size={14} live={current} /></span>
+            <span className="project-terminal-text">
+              <span className="project-terminal-name">{bot.name}</span>
+              <span className="project-terminal-detail">{state === 'asleep' ? 'Idle' : STATE_LABEL[state]} · Thread</span>
+            </span>
+          </button>;
+        })}
+      </div>
+      {remaining > 0 && <button ref={moreRef} type="button" className="sidebar-projects-heading bt-rail-more"
+        aria-controls={listId} onClick={() => {
+          pendingFocus.current = visible.length;
+          setLimit(limit + BASIC_BOT_LIMIT);
+        }}>
+        Show more<ChevronDown size={14} aria-hidden="true" /><span className="bt-rail-count">{remaining} left</span>
+      </button>}
+      {visible.length > BASIC_BOT_LIMIT && <button type="button" className="sidebar-projects-heading bt-rail-more"
+        aria-controls={listId} onClick={() => {
+          pendingFocus.current = 'more';
+          setLimit(BASIC_BOT_LIMIT);
+        }}>
+        Show fewer<ChevronDown size={14} aria-hidden="true" style={{ transform: 'rotate(180deg)' }} />
+      </button>}
+    </div>
   </section>;
 }
 
@@ -1185,5 +1374,5 @@ export default definePluginApp((app) => {
     experimental_ownedThreadTitle: BotThreadTitle, experimental_ownedThreadIcon: BotThreadIcon, component: BotThreadProfile
   });
   app.slots.experimental_agentsBoardThreadToggle({ id: 'threads', title: 'Bots', icon: 'Bot' });
-  app.slots.navPanel({ id: 'bots', title: 'Bots', icon: 'Bot', component: BotsPanel, experimental_basicSidebarSection: BasicBots });
+  app.slots.navPanel({ id: 'bots', title: 'Bots', icon: 'Bot', component: BotsPanel, experimental_basicSidebarSection: BasicBots, experimental_sidebarSection: AdvancedBots });
 });

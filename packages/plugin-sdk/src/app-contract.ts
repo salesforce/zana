@@ -39,6 +39,15 @@ export interface BasicSidebarSectionProps {
   registerThreads(threadIds: readonly string[]): () => void;
 }
 
+export interface PluginSidebarSectionProps {
+  activeThreadId: string | null;
+  openThread(threadId: string): void;
+  /** Opens the plugin’s full panel from its expanded sidebar section. */
+  panelLink: ReactNode;
+  dragHandle?: HTMLAttributes<HTMLElement>;
+  onNavigate?: (event: { preventDefault(): void }) => void;
+}
+
 export interface PluginNavPanelRegistration extends PluginSlotBase {
   title: string;
   icon: string;
@@ -53,6 +62,8 @@ export interface PluginNavPanelRegistration extends PluginSlotBase {
   component: ComponentType<PluginNavPanelProps>;
   experimental_sidebarAccessory?: ComponentType;
   experimental_basicSidebarSection?: ComponentType<BasicSidebarSectionProps>;
+  /** Replaces the destination row in the expanded desktop sidebar. */
+  experimental_sidebarSection?: ComponentType<PluginSidebarSectionProps>;
   headerContent?: ComponentType<PluginNavPanelProps>;
 }
 
@@ -1586,6 +1597,9 @@ export function collectPluginApp(
         ) {
           throw new Error(`${kind}: "experimental_basicSidebarSection" must be a React component function when set`);
         }
+        if (registration.experimental_sidebarSection !== undefined && typeof registration.experimental_sidebarSection !== 'function') {
+          throw new Error(`${kind}: "experimental_sidebarSection" must be a React component function when set`);
+        }
         if (
           registration.placement !== undefined &&
           !PLUGIN_NAV_PANEL_PLACEMENTS.includes(registration.placement)
@@ -1601,6 +1615,7 @@ export function collectPluginApp(
             ...(registration.placement ? { placement: registration.placement } : {}),
             component: requireComponent(kind, 'component', registration.component),
             ...(registration.experimental_basicSidebarSection ? { experimental_basicSidebarSection: registration.experimental_basicSidebarSection } : {}),
+            ...(registration.experimental_sidebarSection ? { experimental_sidebarSection: registration.experimental_sidebarSection } : {}),
             ...(registration.experimental_sidebarAccessory
               ? { experimental_sidebarAccessory: registration.experimental_sidebarAccessory }
               : {}),

@@ -74,6 +74,7 @@ export type {
   PluginNavPanelPlacement,
   PluginNavPanelProps,
   BasicSidebarSectionProps,
+  PluginSidebarSectionProps,
   PluginNavPanelRegistration,
   PluginNewThreadPanelActionRegistration,
   PluginPendingInteractionProps,

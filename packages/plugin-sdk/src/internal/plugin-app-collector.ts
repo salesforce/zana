@@ -253,6 +253,7 @@ const NAV_PANEL_REGISTRATION_KEYS: ReadonlySet<string> = new Set(
     fixedTabs: true,
     experimental_sidebarAccessory: true,
     experimental_basicSidebarSection: true,
+    experimental_sidebarSection: true,
     headerContent: true,
   } satisfies Record<keyof PluginNavPanelRegistration, true>),
 );
@@ -469,6 +470,9 @@ export function collectPluginAppRegistrations(
             `${kind}: "experimental_basicSidebarSection" must be a React component function when set`,
           );
         }
+        if (registration.experimental_sidebarSection !== undefined && typeof registration.experimental_sidebarSection !== "function") {
+          throw new Error(`${kind}: "experimental_sidebarSection" must be a React component function when set`);
+        }
         const fixedTabs: PluginNavPanelFixedTabRegistration[] = (() => {
           if (registration.fixedTabs === undefined) return [];
           if (!Array.isArray(registration.fixedTabs)) {
@@ -543,6 +547,9 @@ export function collectPluginAppRegistrations(
           ...(fixedTabs.length > 0 ? { fixedTabs } : {}),
           ...(registration.experimental_basicSidebarSection !== undefined
             ? { experimental_basicSidebarSection: registration.experimental_basicSidebarSection }
+            : {}),
+          ...(registration.experimental_sidebarSection !== undefined
+            ? { experimental_sidebarSection: registration.experimental_sidebarSection }
             : {}),
           ...(registration.experimental_sidebarAccessory !== undefined
             ? {

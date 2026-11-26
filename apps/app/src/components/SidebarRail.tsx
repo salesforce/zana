@@ -66,6 +66,8 @@ export interface SidebarRailRow {
   onClick?: (event: { preventDefault: () => void; metaKey?: boolean; ctrlKey?: boolean }) => void;
   /** When set, cmd-click and drag-to-edge open this content in the split workspace. */
   splitContent?: PaneContent;
+  /** Use a collection at this position while the desktop rail is expanded. */
+  expandedSection?: ReactElement;
   /** Row stays visible with navigation suppressed; `disabledReason` replaces the title tooltip. */
   disabled?: boolean;
   disabledReason?: string;
@@ -162,6 +164,7 @@ export function SidebarRail({
   const orderedIds = [...pinnedNavIds, ...sortableNavIds, ...trailingNavIds];
   const rows = orderedIds.map((id) => itemsById.get(id)!).filter((item): item is SidebarRailRow => item.kind === 'row');
   const hiddenRows = rows.filter((row) => hidden.has(row.id));
+  const hasExpandedCollection = !rail && rows.some((row) => row.expandedSection && !hidden.has(row.id));
   const visibleIds = (ids: readonly string[]) => ids.filter((id) => itemsById.get(id)?.kind === 'section' || !hidden.has(id));
   const openContextMenu = (event: ReactMouseEvent<HTMLElement>) => {
     const target = event.target as HTMLElement;
@@ -179,13 +182,15 @@ export function SidebarRail({
   const renderItem = (id: string, sortable: boolean, inMenu = false) => {
     const item = itemsById.get(id);
     if (!item) return null;
-    if (item.kind === 'section') {
-      if (rail) {
-        // Rail: Projects collapse to an icon switcher; the Sessions tree has no icon form.
-        return id === PROJECTS_SECTION_SORT_ID ? <RailProjects key={id} /> : null;
-      }
+    if (item.kind === 'section' && rail) {
+      // Projects collapse to an icon switcher; the Sessions tree has no icon form.
+      return id === PROJECTS_SECTION_SORT_ID ? <RailProjects key={id} /> : null;
+    }
+    const collection = item.kind === 'section' ? item.node
+      : !rail && !dismissMobileNav && !inMenu ? item.expandedSection : undefined;
+    if (collection) {
       const section = cloneElement(
-        item.node as ReactElement<{
+        collection as ReactElement<{
           dragHandle?: HTMLAttributes<HTMLElement>;
           onNavigate?: (event: { preventDefault: () => void }) => void;
         }>,
@@ -204,6 +209,7 @@ export function SidebarRail({
         </SortableSidebarSection>
       );
     }
+    if (item.kind === 'section') return null;
     const row = item.splitContent && !dismissMobileNav && !inMenu ? (
       <SplitEnabledNavRow
         item={item}
@@ -265,7 +271,7 @@ export function SidebarRail({
       >
         <div className="sidebar-sections" onContextMenu={openContextMenu}>
           <nav
-            className="sidebar-nav sidebar-nav--sortable"
+            className={`sidebar-nav sidebar-nav--sortable${hasExpandedCollection ? ' sidebar-nav--with-collection' : ''}`}
             aria-label={navAriaLabel}
             data-testid="sidebar-navigation"
             onKeyDown={(event) => {
