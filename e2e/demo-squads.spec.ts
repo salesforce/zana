@@ -89,7 +89,8 @@ test('demo: define and launch a Squad', async ({ app }) => {
     await app.electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 900));
     await page.evaluate((bin) => window.cc.config.set({
       teamJobLaunchEnabled: true, sponsorPromptDismissed: true, claudeBinary: bin, codexBinary: bin,
-      trustZccToolsEnabled: false, tmuxScope: 'off', defaultHarness: 'claude', opencodeBinary: undefined
+      trustZccToolsEnabled: false, tmuxScope: 'off', defaultHarness: 'claude', opencodeBinary: undefined,
+      squadDefaultTransport: 'CLI'
     }), agent.path);
     await page.evaluate(async (path) => {
       const added = await window.cc.projects.add(path);
@@ -249,7 +250,9 @@ test('demo: define and launch a Squad', async ({ app }) => {
     await beat(600);
     await caption('Flow view shows who is working and how work hands off');
     await tap(page, page.getByRole('button', { name: 'Squads view' }));
-    await tap(page, page.getByRole('button', { name: 'Map', exact: true }));
+    const squads = page.getByRole('region', { name: 'Squads', exact: true });
+    await squads.getByRole('combobox', { name: 'Project', exact: true }).selectOption({ label: 'atlas-site' });
+    await tap(page, squads.getByRole('button', { name: 'Map', exact: true }));
     await expect(page.locator('svg.squad-flow-edges path.squad-flow-edge').first()).toBeVisible({ timeout: 30_000 });
     await beat(2600);
     await tap(page, page.getByRole('button', { name: 'Board view' }));
