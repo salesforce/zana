@@ -1,8 +1,9 @@
 import { fixedNavShortcutKey } from '../lib/keyboard-shortcut-settings.js';
 import { History } from 'lucide-react';
 import { useConversationHistory } from './history/history-store.js';
-import { navPanelListsInSidebar } from '@zana-ai/zcc-plugin-sdk';
+import { navPanelListsInSidebar, type PluginNavPanelRegistration, type PluginSidebarSectionProps } from '@zana-ai/zcc-plugin-sdk';
 import { useMemo, useSyncExternalStore, type ReactNode } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Blocks,
   Bot,
@@ -23,7 +24,7 @@ import {
   type NavId
 } from '../store.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
-import { DEFAULT_PLUGIN_PANEL_PATH, getNavRoutePath } from '../lib/route-paths.js';
+import { DEFAULT_PLUGIN_PANEL_PATH, getNavRoutePath, getThreadRoutePath } from '../lib/route-paths.js';
 import { hrefForPluginNavPanel } from '../plugins/plugin-nav-href.js';
 import { useMergedModules } from '../modules/index.js';
 import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
@@ -80,6 +81,25 @@ const NON_SPLITTABLE_NAV_IDS = new Set<string>([
   'goals'
 ]);
 
+function PluginSidebarSection({ panel, active, ...sectionProps }: {
+  panel: PluginNavPanelRegistration;
+  active: boolean;
+} & Pick<PluginSidebarSectionProps, 'dragHandle' | 'onNavigate'>) {
+  const { threadId } = useRouteState();
+  const navigate = useNavigate();
+  const Section = panel.experimental_sidebarSection;
+  if (!Section) return null;
+  const label = `Open ${panel.title} panel`;
+  return <PluginSlotBoundary pluginId={panel.pluginId} generation={panel.generation}>
+    <Section {...sectionProps} activeThreadId={threadId} openThread={(id) => navigate(getThreadRoutePath(id))}
+      panelLink={<Link to={hrefForPluginNavPanel(panel.pluginId, panel.path ?? panel.id)}
+        aria-current={active ? 'page' : undefined}
+        data-sidebar-nav-id={`${panel.pluginId}/${panel.path ?? panel.id}`} onClick={sectionProps.onNavigate}>
+        {label}
+      </Link>} />
+  </PluginSlotBoundary>;
+}
+
 export function Sidebar({ railVariant = 'expanded' }: { railVariant?: 'expanded' | 'rail' } = {}) {
   const route = useRouteState();
   const { nav, pluginPanelPath } = route;
@@ -101,7 +121,9 @@ export function Sidebar({ railVariant = 'expanded' }: { railVariant?: 'expanded'
     [navPanels]
   );
   const pluginPanels = useMemo(
-    () => navPanels.filter((panel) => navPanelListsInSidebar(panel.placement)),
+    () => navPanels.filter((panel) => navPanelListsInSidebar(panel.placement)).sort(
+      (a, b) => Number(!!a.experimental_sidebarSection) - Number(!!b.experimental_sidebarSection)
+    ),
     [navPanels]
   );
   const extraItems = useMemo(() => {
@@ -235,6 +257,7 @@ export function Sidebar({ railVariant = 'expanded' }: { railVariant?: 'expanded'
         to: hrefForPluginNavPanel(panel.pluginId, path),
         testId: `nav-${id}`,
         active,
+        expandedSection: panel.experimental_sidebarSection ? <PluginSidebarSection key={panel.generation} panel={panel} active={active} /> : undefined,
         title: collapsed || rail ? panel.title : undefined,
         badge: Accessory ? (
           <PluginSlotBoundary pluginId={panel.pluginId} generation={panel.generation}>

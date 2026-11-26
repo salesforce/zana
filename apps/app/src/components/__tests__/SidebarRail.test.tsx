@@ -93,6 +93,18 @@ afterEach(() => {
 });
 
 describe('SidebarRail', () => {
+  it('renders a contributed collection in the expanded rail and keeps its destination in the icon rail', () => {
+    const destinations: SidebarRailItem[] = [{ kind: 'row', id: 'sample', label: 'Sample', icon: null,
+      to: '/sample', testId: 'nav-sample', active: false, expandedSection: <AgentsSectionStub /> }];
+    const rail = (railVariant: 'expanded' | 'rail') => renderRail(<SidebarRail className="sidebar" navAriaLabel="Nav"
+      storageKey="zcc.testSidebarNavOrder" pinnedIds={[]} items={destinations} railVariant={railVariant} />);
+    expect(rail('expanded')).toContain('data-sortable-sidebar-section-id="sample"');
+    expect(rail('expanded')).toContain('sidebar-nav--with-collection');
+    expect(rail('expanded')).not.toContain('data-testid="nav-sample"');
+    expect(rail('rail')).toContain('data-testid="nav-sample"');
+    expect(rail('rail')).not.toContain('sidebar-nav--with-collection');
+  });
+
   it('uses touch navigation inside a mobile drawer without desktop drag or resize controls', () => {
     h.state.sidebarCollapsed = false;
     const markup = renderRail(

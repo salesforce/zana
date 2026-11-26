@@ -876,6 +876,13 @@ declare module '@zana-ai/zcc-plugin-sdk/app' {
     openThread(threadId: string): void;
     registerThreads(threadIds: readonly string[]): () => void;
   }
+  export interface PluginSidebarSectionProps {
+    activeThreadId: string | null;
+    openThread(threadId: string): void;
+    panelLink: import('react').ReactNode;
+    dragHandle?: import('react').HTMLAttributes<HTMLElement>;
+    onNavigate?: (event: { preventDefault(): void }) => void;
+  }
 
   export function useRpc(): { call<T = unknown>(method: string, input?: unknown): Promise<T> };
   export function useRealtime(channel: string, handler: (payload: unknown) => void): void;

@@ -20,6 +20,15 @@ async function route(page: Page, path: string) {
   }, path);
 }
 
+function organizeBots(page: Page) {
+  return page.getByRole('button', { name: 'Organize bots' });
+}
+
+async function openBotsPanel(page: Page) {
+  await organizeBots(page).click();
+  await page.getByRole('link', { name: 'Open Bots panel' }).click();
+}
+
 async function openBotsSwitch(page: Page) {
   await route(page, '/settings/experimental');
   return page.getByRole('switch', { name: 'Bots', exact: true });
@@ -27,7 +36,7 @@ async function openBotsSwitch(page: Page) {
 
 test.beforeEach(async ({ app }) => {
   const page = app.window;
-  const nav = page.locator('.nav-item').filter({ hasText: /^Bots$/ }).first();
+  const nav = organizeBots(page);
   const toggle = await openBotsSwitch(page);
   await expect(toggle).toHaveAttribute('aria-checked', 'false', { timeout: 45_000 });
   await page.getByRole('link', { name: 'Back to app' }).click();
@@ -38,6 +47,86 @@ test.beforeEach(async ({ app }) => {
   await expect(toggle).toHaveAttribute('aria-checked', 'true');
   await page.getByRole('link', { name: 'Back to app' }).click();
   await expect(nav).toBeVisible();
+});
+
+test('Advanced sidebar discloses five bots at a time alongside Machines', async ({ app }) => {
+  const page = app.window;
+  const section = page.locator('.sidebar--global').getByRole('region', { name: 'Bots', exact: true });
+  const create = (name: string) => page.request.post(new URL('/api/v1/plugin-apps/bots/rpc', page.url()).href, {
+    data: { method: 'create', args: { name, personality: 'A local preview bot.' } }
+  });
+  for (let index = 1; index <= 12; index++) expect((await create(`Sidebar Bot ${index}`)).ok()).toBe(true);
+  const rows = section.locator('.project-terminal-row');
+  const machines = page.getByTestId('sidebar-projects-heading');
+  await expect(machines).toBeVisible();
+  await expect(rows).toHaveCount(5);
+  const botsHeading = section.getByRole('button', { name: 'Bots', exact: true });
+  const botsActions = section.locator('header .list-header-actions');
+  const machineActions = machines.locator('xpath=..').locator('.list-header-actions');
+  const away = page.getByRole('link', { name: 'New Chat', exact: true });
+  await away.focus();
+  await away.hover();
+  await expect(botsActions).toHaveCSS('opacity', '0');
+  await expect(machineActions).toHaveCSS('opacity', '0');
+  await botsHeading.hover();
+  await expect(botsActions).toHaveCSS('opacity', '1');
+  await machines.hover();
+  await expect(machineActions).toHaveCSS('opacity', '1');
+  await expect(botsActions).toHaveCSS('opacity', '0');
+  await away.hover();
+  await botsHeading.focus();
+  await page.keyboard.press('Tab');
+  await expect(organizeBots(page)).toBeFocused();
+  await expect(botsActions).toHaveCSS('opacity', '1');
+  await machines.focus();
+  await page.keyboard.press('Tab');
+  const organizeProjects = page.getByRole('button', { name: 'Organize projects' });
+  await expect(organizeProjects).toBeFocused();
+  await expect(machineActions).toHaveCSS('opacity', '1');
+  await organizeProjects.click();
+  await away.hover();
+  await expect(machineActions).toHaveCSS('opacity', '1');
+  await organizeProjects.click();
+  await away.focus();
+  await away.hover();
+  await expect(machineActions).toHaveCSS('opacity', '0');
+  await section.getByRole('button', { name: 'Show more 7 left' }).click();
+  await expect(rows).toHaveCount(10);
+  await expect(rows.nth(5)).toBeFocused();
+  await section.getByRole('button', { name: 'Show more 2 left' }).click();
+  await expect(rows).toHaveCount(12);
+  await section.getByRole('button', { name: 'Show fewer' }).click();
+  await expect(rows).toHaveCount(5);
+  await section.getByRole('button', { name: 'Bots', exact: true }).click();
+  await expect(rows.first()).toBeHidden();
+  await expect(machines).toBeVisible();
+  await section.getByRole('button', { name: 'Bots', exact: true }).click();
+  await rows.first().click();
+  await expect(page).toHaveURL(/\/threads\//);
+  await expect(rows.first()).toHaveAttribute('aria-current', 'true');
+
+  const menu = page.getByRole('dialog', { name: 'Organize bots' });
+  await organizeBots(page).click();
+  await menu.getByRole('button', { name: 'Pinned only' }).click();
+  await expect(section.getByText('No pinned bots.')).toBeVisible();
+  await organizeBots(page).click();
+  await menu.getByRole('button', { name: 'All bots' }).click();
+  await organizeBots(page).click();
+  await menu.getByRole('button', { name: 'Alphabetical' }).click();
+  await expect(rows.nth(1)).toContainText('Sidebar Bot 10');
+  const refresh = section.getByRole('button', { name: 'Reload bot list' });
+  await refresh.click();
+  await expect(refresh).toBeEnabled();
+  await expect(rows).toHaveCount(5);
+  await section.getByRole('button', { name: 'New bot' }).click();
+  const createDialog = page.getByRole('dialog', { name: 'New bot' });
+  await createDialog.getByRole('textbox', { name: 'Name', exact: true }).fill('Fresh bot');
+  await createDialog.getByRole('button', { name: 'Create bot', exact: true }).click();
+  await expect(createDialog).toBeHidden();
+  await expect(rows.first()).toContainText('Fresh bot');
+  await expect(rows.first()).toContainText('Not started');
+  await openBotsPanel(page);
+  await expect(page.locator('.bt-root')).toBeVisible();
 });
 
 test('bot tabs share a centered content column at wide and narrow pane sizes', async ({ app, home }, testInfo) => {
@@ -65,7 +154,7 @@ test('bot tabs share a centered content column at wide and narrow pane sizes', a
     win.setContentSize(1800, 800);
   });
   await nativeWindow.dispose();
-  await page.locator('.nav-item').filter({ hasText: /^Bots$/ }).first().click();
+  await openBotsPanel(page);
   const panel = page.locator('.bt-root');
   const pane = panel.locator('.bt-main');
   const tabs = panel.getByRole('tablist');
@@ -153,7 +242,7 @@ test('Bots shows routines, tagged memory, and host settings controls in the inst
     const response = await fetch('/api/v1/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({path}) });
     return (await response.json()).project.id as string;
   }, projectPath);
-  await expect(app.window.locator('.nav-item').filter({ hasText: /^Bots$/ }).first()).toBeVisible();
+  await expect(organizeBots(app.window)).toBeVisible();
   await run(['bots','create','Release Scout','--color','#f97316','--personality','Watch release branches and flag risky merges.','--project',projectId]);
   await run(['bots','routine','add','release-scout','--name','Digest','--cron','0 9 * * 1-5','--prompt','Report changes']);
   // Bundled plugins finish starting independently during a cold launch.
@@ -163,7 +252,7 @@ test('Bots shows routines, tagged memory, and host settings controls in the inst
     return plugins.find((plugin: { id: string }) => plugin.id === 'memory')?.status;
   }, { timeout: 30_000 }).toBe('running');
   await run(['memory','add','--scope','global','--name','release-digest','--summary','Release digest preferences','--details','Include branch names.','--tag','bot:release-scout','--reason','Remember the release format']);
-  await app.window.locator('.nav-item').filter({hasText:/^Bots$/}).first().click();
+  await openBotsPanel(app.window);
   const panel = app.window.locator('.bt-root');
   await expect(panel.getByRole('tab', {name:'Overview'})).toBeVisible();
   await expect(panel.getByText('Next run')).toBeVisible();
@@ -265,7 +354,7 @@ test('Bots shows routines, tagged memory, and host settings controls in the inst
   const toggle = await openBotsSwitch(app.window);
   await expect(toggle).toHaveAttribute('aria-checked', 'true');
   await toggle.click();
-  const nav = app.window.locator('.nav-item').filter({ hasText: /^Bots$/ }).first();
+  const nav = organizeBots(app.window);
   await expect(toggle).toBeEnabled();
   await app.window.reload();
   await expect(toggle).toHaveAttribute('aria-checked', 'false');
@@ -276,7 +365,7 @@ test('Bots shows routines, tagged memory, and host settings controls in the inst
   await expect(toggle).toBeEnabled();
   await app.window.getByRole('link', { name: 'Back to app' }).click();
   await expect(nav).toBeVisible();
-  await nav.click();
+  await openBotsPanel(app.window);
   await expect(panel.getByRole('heading', { name: 'Scout II' })).toBeVisible();
   await expect.poll(readPersonality).toBe('**Triage releases**');
   await expect(panel.getByText('Digest', { exact: true }).first()).toBeVisible();
@@ -451,7 +540,7 @@ test('Basic sidebar opens bot conversations and leaves Advanced navigation intac
   await renamed.click();
   await expect(profile.getByRole('heading', { name: 'Interview Coach' })).toBeVisible();
   await expect(page).toHaveURL(chat);
-  await expect(page.locator('.nav-item').filter({ hasText: /^Bots$/ }).first()).toBeVisible();
+  await expect(organizeBots(page)).toBeVisible();
 
   await page.getByTestId('nav-agents').click();
   const cards = page.locator('.agent-card.is-thread');

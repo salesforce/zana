@@ -213,6 +213,7 @@ export type {
   PluginRegistrationSet,
   PluginNavPanelPlacement,
   PluginNavPanelRegistration,
+  PluginSidebarSectionProps,
   PluginSettingsSectionRegistration,
   PluginNotificationSoundProviderRegistration,
   PluginHomepageSectionRegistration,
