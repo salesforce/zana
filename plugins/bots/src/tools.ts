@@ -37,10 +37,14 @@ export const BOT_TOOL_NAMES = ['bot_list', 'bot_send', 'bot_reply', 'bot_job_sta
  * Tools offered per thread role (the service enforces the same rules again).
  * Jobs only read; replies and jobs are for a bot's own main thread.
  */
-export function toolsFor(role: ThreadRole['kind']): string[] {
-  if (role === 'main') return [...BOT_TOOL_NAMES, 'bot_vault_list'];
-  if (role === 'job') return ['bot_list'];
-  if (role === 'routine') return ['bot_list', 'bot_vault_list'];
+export function toolsFor(role: ThreadRole): string[] {
+  if (role.kind === 'main') {
+    const tools: string[] = [...BOT_TOOL_NAMES, 'bot_vault_list'];
+    if (role.bot.isHelper) tools.push('bot_search_zana_guides');
+    return tools;
+  }
+  if (role.kind === 'job') return ['bot_list'];
+  if (role.kind === 'routine') return ['bot_list', 'bot_vault_list'];
   return ['bot_list', 'bot_send', 'bot_routines', 'bot_create'];
 }
 

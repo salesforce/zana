@@ -257,7 +257,7 @@ export interface PluginSdkInboxReport extends PluginSdkInboxEntry {
 }
 export interface PluginSdkAssistant {
   /** Bounded text-only inference, without agent tools or Project access. */
-  complete(args: { instructions: string; prompt: string; projectId?: string; expectedProviderId?: string; signal?: AbortSignal }): Promise<{ text: string; providerId?: string }>;
+  complete(args: { instructions: string; prompt: string; signal?: AbortSignal }): Promise<{ text: string }>;
 }
 
 export type PluginSdk = ZccPluginApi['sdk'];

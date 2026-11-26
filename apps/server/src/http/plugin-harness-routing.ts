@@ -6,14 +6,12 @@
  * the same launch resolvers a CLI Agent launch uses. Main-trusted state only —
  * plugin overrides are validated and stored by the host (Rule 1).
  */
-import { join } from 'node:path';
 import { PluginHarnessOverrideSchema } from '@zana-ai/zcc-contracts/project-settings';
 import type {
   AppConfig,
   EffectiveHarnessDefaultResult,
   HarnessFamily,
   LaunchProfileId,
-  Persona,
   PluginHarnessOverrideV1,
   Project,
   ProjectSettings
@@ -28,7 +26,7 @@ import {
   resolveModelTarget,
   resolveRoleTarget
 } from '@zana-ai/zcc-host-daemon/harness/target-resolution';
-import { harnessDescriptors, harnessEffectiveDefault, harnessVerify } from './harness-via-rpc.js';
+import { harnessDescriptors, harnessVerify } from './harness-via-rpc.js';
 import {
   bridgeLaunchForProvider,
   getThreadProvider,
@@ -36,8 +34,6 @@ import {
 } from '../services/threads/thread-provider-catalog.js';
 import { validateProviderModelSelection } from '../services/threads/provider-model-validation.js';
 import type { ProductHttpContext } from './product-context.js';
-import { listJsonFiles } from './disk-json.js';
-import { resolveProjectHost } from './project-host.js';
 import { ThreadCreateError } from './thread-create.js';
 import { resolvePluginThreadRouting, type PluginThreadRouting } from './plugin-thread-routing.js';
 import { PLUGIN_AI_HARNESS_SETTINGS_HINT, PluginSpawnHarnessError } from './plugin-thread-spawn.js';
@@ -46,23 +42,6 @@ export type PluginHarnessRoutingCtx = Pick<
   ProductHttpContext,
   'toProjects' | 'projectSettings' | 'config' | 'hostHub' | 'modelCatalogs' | 'pluginHostArtifacts'
 >;
-
-/** The project's effective AI harness, resolved like `GET /api/v1/harness/effective-default`. */
-export function productProjectHarnessDefault(
-  ctx: Pick<ProductHttpContext, 'toProjects' | 'hostHub' | 'config' | 'dataDir' | 'db'>,
-  projectId: string,
-  hostId?: string
-) {
-  const project = ctx.toProjects().find((row) => row.id === projectId);
-  if (!project) return Promise.resolve({ ok: false as const, code: 'NOT_FOUND' as const, message: 'Project not found' });
-  return harnessEffectiveDefault({
-    hub: ctx.hostHub,
-    project,
-    config: ctx.config.getConfig(),
-    personas: listJsonFiles(join(ctx.dataDir, 'personas')) as Persona[],
-    hostId: resolveProjectHost(ctx, hostId ?? project?.hostId)
-  });
-}
 
 function threadProviderLabel(provider: Pick<ThreadProviderRecord, 'id' | 'displayName'> | undefined, fallback: string): string {
   return provider?.displayName?.trim() || fallback;

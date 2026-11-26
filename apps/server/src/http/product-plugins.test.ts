@@ -1,4 +1,3 @@
-import { productProjectHarnessDefault } from './plugin-harness-routing.js';
 import { PROJECT_COLORS } from '@zana-ai/zcc-domain/project-colors';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,6 +10,7 @@ import {
   pluginAssetRootFromService,
   productListProjects,
   productListProviders,
+  productProjectHarnessDefault,
   productPushInbox,
   productRegisterPersonas,
   productRegisterTeams,

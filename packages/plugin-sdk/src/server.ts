@@ -701,12 +701,8 @@ export interface PluginSdkInboxReport extends PluginSdkInboxEntry {
   truncated: boolean;
 }
 export interface PluginSdkAssistant {
-  /**
-   * Bounded text-only inference without agent tools or project access.
-   * Pass a registered projectId to resolve its effective provider and model.
-   * expectedProviderId rejects a provider change before sending conversation data.
-   */
-  complete(args: { instructions: string; prompt: string; projectId?: string; expectedProviderId?: string; signal?: AbortSignal }): Promise<{ text: string; providerId?: string }>;
+  /** Bounded text-only inference, without agent tools or Project access. */
+  complete(args: { instructions: string; prompt: string; signal?: AbortSignal }): Promise<{ text: string }>;
 }
 
 export interface PluginSdkProject {

@@ -56,6 +56,8 @@ export interface BotRoutine {
 export interface Bot {
   id: string;
   name: string;
+  /** Set exclusively by the built-in Helper provisioning path. */
+  isHelper?: true;
   /** Most recently pinned bots appear first in the Basic sidebar. */
   pinnedAt?: number;
   /** Profile color for the bot's avatar blob (#rrggbb). */

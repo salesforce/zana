@@ -33,7 +33,8 @@ const entries = sources.flatMap(([id, guide, path, plugin]) => {
     }];
   });
 });
-const serialized = JSON.stringify({ version: commitVersion, entries }, null, 2) + '\n';
+// Bump the schema only when older readers can no longer consume this format.
+const serialized = JSON.stringify({ schemaVersion: 1, version: commitVersion, entries }, null, 2) + '\n';
 if (process.argv.includes('--check')) {
   if (readFileSync(output, 'utf8') !== serialized) {
     console.error('Zana Helper catalog is stale. Run node ' + fileURLToPath(new URL(import.meta.url)));

@@ -67,6 +67,7 @@ test('bot tabs share a centered content column at wide and narrow pane sizes', a
   await nativeWindow.dispose();
   await page.locator('.nav-item').filter({ hasText: /^Bots$/ }).first().click();
   const panel = page.locator('.bt-root');
+  await panel.getByRole('button', { name: /^GUS Pulse/ }).click();
   const pane = panel.locator('.bt-main');
   const tabs = panel.getByRole('tablist');
   await expect(panel.locator('.bt-meta')).toContainText('bot-layout');
@@ -165,6 +166,7 @@ test('Bots shows routines, tagged memory, and host settings controls in the inst
   await run(['memory','add','--scope','global','--name','release-digest','--summary','Release digest preferences','--details','Include branch names.','--tag','bot:release-scout','--reason','Remember the release format']);
   await app.window.locator('.nav-item').filter({hasText:/^Bots$/}).first().click();
   const panel = app.window.locator('.bt-root');
+  await panel.getByRole('button', { name: /^Release Scout/ }).click();
   await expect(panel.getByRole('tab', {name:'Overview'})).toBeVisible();
   await expect(panel.getByText('Next run')).toBeVisible();
   await panel.getByRole('tab', { name: 'Vault' }).click();
@@ -277,6 +279,7 @@ test('Bots shows routines, tagged memory, and host settings controls in the inst
   await app.window.getByRole('link', { name: 'Back to app' }).click();
   await expect(nav).toBeVisible();
   await nav.click();
+  await panel.getByRole('button', { name: /^Scout II/ }).click();
   await expect(panel.getByRole('heading', { name: 'Scout II' })).toBeVisible();
   await expect.poll(readPersonality).toBe('**Triage releases**');
   await expect(panel.getByText('Digest', { exact: true }).first()).toBeVisible();
@@ -498,19 +501,99 @@ test('a ten-minute direct routine posts in the main chat without starting a prov
   expect(events.filter((event: { type: string }) => event.type === 'client/turn/requested')).toHaveLength(0);
 });
 
-test('shows the built-in Zana Helper with offline guides and reversible visibility', async ({ app }) => {
+test('Zana Helper and a custom bot open the same native chat and reuse their main threads', async ({ app }) => {
   const page = app.window;
+  const url = new URL('/api/v1/plugin-apps/bots/rpc', page.url()).href;
+  async function rpc(method: string, args?: Record<string, unknown>) {
+    const response = await page.request.post(url, { data: { method, args } });
+    expect(response.ok()).toBe(true);
+    return (await response.json()).value;
+  }
+
+  const bots = await rpc('list');
+  const helper = bots.find((bot: { name: string }) => bot.name === 'Zana Helper');
+  expect(helper).toBeDefined();
+  expect(helper.mainThreadId).toBeUndefined();
+  await rpc('update', { bot: helper.id, patch: { providerId: 'fake' } });
+  await rpc('create', { name: 'Custom bot', projectId: helper.projectId, providerId: 'fake' });
+
+  await route(page, '/settings/plugins/bots?area=configuration');
+  const guideUpdates = page.getByRole('switch', { name: 'Download Zana guide updates' });
+  await expect(guideUpdates).toHaveAttribute('aria-checked', 'true');
+  await guideUpdates.click();
+  await expect.poll(() => page.evaluate(async () =>
+    (await window.cc.pluginApps.getSettings('bots')).values.downloadGuideUpdates
+  )).toBe(false);
+  await page.getByRole('link', { name: 'Back to app' }).click();
+
   await page.locator('.nav-item').filter({ hasText: /^Bots$/ }).first().click();
-  const panel = page.locator('.bt-root');
-  const helper = panel.getByRole('button', { name: /Zana Helper Built-in/ });
-  await expect(helper).toBeVisible();
-  await expect(panel.getByRole('heading', { name: 'Zana Helper' })).toBeVisible();
-  await panel.locator('summary').filter({ hasText: /^Browse Zana guides$/ }).click();
+  const panel = page.locator('.bt-root').filter({ has: page.getByRole('navigation', { name: 'Bots' }) });
+  const screenshot = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aB7sAAAAASUVORK5CYII=';
+  for (const name of ['Zana Helper', 'Custom bot']) {
+    await panel.getByRole('navigation', { name: 'Bots' }).getByRole('button', { name: new RegExp('^' + name) }).click();
+    await expect(panel.getByRole('tablist', { name: name + ' sections' }).getByRole('tab')).toHaveText(['Overview', 'Library', 'Vault', 'Settings']);
+    const chat = panel.getByRole('button', { name: 'Chat', exact: true });
+    await chat.click();
+    const sidePanel = page.getByTestId('thread-secondary-panel');
+    const conversationTab = sidePanel.getByRole('button', { name, exact: true });
+    await expect(conversationTab).toHaveAttribute('aria-pressed', 'true');
+    const nativeChat = page.getByTestId('panel-agent-tab-chat').filter({ visible: true });
+    const composer = nativeChat.getByTestId('thread-command-input');
+    await expect(composer).toBeVisible();
+    await expect(nativeChat.getByRole('button', { name: 'Attach files' })).toBeVisible();
+
+    const { bot } = await rpc('get', { bot: name });
+    expect(bot.mainThreadId).toBeTruthy();
+    const threadApi = new URL('/api/v1/threads/' + bot.mainThreadId, page.url()).href;
+    const { thread } = await (await page.request.get(threadApi)).json();
+    expect(thread).toMatchObject({ title: name, status: 'idle', providerThreadId: null, permissionMode: 'full' });
+
+    if (name === 'Zana Helper') {
+      await composer.evaluate((field, data) => {
+        const bytes = Uint8Array.from(atob(data), char => char.charCodeAt(0));
+        const clipboardData = new DataTransfer();
+        clipboardData.items.add(new File([bytes], 'pasted.png', { type: 'image/png' }));
+        field.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData }));
+      }, screenshot);
+      const remove = nativeChat.getByRole('button', { name: 'Remove pasted.png' });
+      await expect(remove).toBeVisible();
+      await remove.click();
+    }
+
+    await sidePanel.getByTestId('thread-secondary-hide').click();
+    await chat.click();
+    await expect(conversationTab).toHaveAttribute('aria-pressed', 'true');
+    expect((await rpc('get', { bot: name })).bot.mainThreadId).toBe(bot.mainThreadId);
+  }
+
+  await panel.getByRole('navigation', { name: 'Bots' }).getByRole('button', { name: /^Zana Helper/ }).click();
+  await panel.getByRole('tab', { name: 'Library' }).click();
   await panel.getByRole('searchbox', { name: 'Search guides' }).fill('choose a bot provider');
   await panel.getByText('Bots · Choose a bot provider', { exact: true }).click();
   await expect(panel.getByText(/Settings → Configuration → AI Harness → Defaults → Default for CLI agents/)).toBeVisible();
-  await panel.getByRole('button', { name: 'Hide Zana Helper' }).click();
-  await expect(helper).toHaveCount(0);
-  await panel.getByRole('button', { name: 'Restore Zana Helper' }).click();
-  await expect(helper).toBeVisible();
+
+  await app.electron.evaluate(({ shell }) => {
+    const opened: string[] = [];
+    (globalThis as typeof globalThis & { helperGuideLinks?: string[] }).helperGuideLinks = opened;
+    shell.openExternal = async url => { opened.push(url); };
+  });
+  const guideLink = panel.getByRole('link', { name: 'Read Choose a bot provider', exact: true });
+  const guideUrl = await guideLink.getAttribute('href');
+  expect(guideUrl).toMatch(/^https:\/\/github\.com\/salesforce\/zana\/blob\//);
+  await guideLink.click();
+  const externallyOpened = () => app.electron.evaluate(() =>
+    (globalThis as typeof globalThis & { helperGuideLinks?: string[] }).helperGuideLinks
+  );
+  await expect.poll(externallyOpened).toEqual([guideUrl]);
+
+  await panel.getByRole('searchbox', { name: 'Search guides' }).fill('remote presentation support');
+  await panel.getByText('Using Zana in Slack · 8. Understand answers, code, and access', { exact: true }).click();
+  const sourceLink = panel.getByRole('link', { name: 'Read 8. Understand answers, code, and access', exact: true });
+  const inlineLink = panel.getByRole('link', { name: 'remote presentation support', exact: true });
+  const slackSource = await sourceLink.getAttribute('href');
+  expect(slackSource).toMatch(/^https:\/\/github\.com\/salesforce\/zana\/blob\//);
+  const inlineUrl = new URL('remote-conversation-presentation.md', slackSource!).href;
+  await expect(inlineLink).toHaveAttribute('href', inlineUrl);
+  await inlineLink.click();
+  await expect.poll(externallyOpened).toEqual([guideUrl, inlineUrl]);
 });

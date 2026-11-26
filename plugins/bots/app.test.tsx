@@ -1,11 +1,12 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 const state = vi.hoisted(() => ({
   rpc: { call: vi.fn() },
   navigate: { toThread: vi.fn(), toPluginPanel: vi.fn(), openPanelAgent: vi.fn((_options: unknown) => true) as ReturnType<typeof vi.fn> | undefined },
   realtime: [] as Array<(payload?: unknown) => void>,
+  guideRefresh: undefined as (() => void) | undefined,
   registered: [] as unknown[]
 }));
 
@@ -18,10 +19,14 @@ vi.mock('@zana-ai/zcc-plugin-sdk/app', () => ({
     ? <textarea aria-label={editor.label} value={content} disabled={editor.disabled} onChange={event => editor.onChange(event.target.value)} />
     : <div className={className}>{content}</div>,
   useZccNavigate: () => state.navigate,
-  useRealtime: (channel: string, handler: (payload?: unknown) => void) => { if (channel === 'bots:changed') state.realtime.push(handler); }
+  useRealtime: (channel: string, handler: (payload?: unknown) => void) => {
+    if (channel === 'bots:changed') state.realtime.push(handler);
+    if (channel === 'bots:helper-guides-changed') state.guideRefresh = handler;
+  }
 }));
 
 import { BasicBots, BotAvatar, BotsPanel, BotThreadIcon, BotThreadProfile, BotThreadTitle, botState, cronFor } from './app.tsx';
+import { HELPER_ID } from './src/helper/shared.js';
 
 const memoryRpc = vi.fn<(...args: unknown[]) => Promise<unknown>>();
 const scout = {
@@ -36,13 +41,17 @@ const fresh = { ...scout, id: 'fresh', name: 'Fresh', color: undefined, personal
 function route(handlers: Record<string, (args: any) => unknown>) {
   state.rpc.call.mockImplementation(async (method: string, args: unknown) => {
     const handler = handlers[method] ?? (method === 'jobs' ? () => [] : method === 'nextRuns' ? () => ({digest: 1795509000000}) : undefined) ?? (method === 'catalog' ? () => ({ projects: [], providers: [], models: [], modelError: null }) : undefined);
-    if (method === 'helperProfile' && !handler) return null;
     if (!handler) throw new Error(`unexpected ${method}`);
     return handler(args);
   });
 }
 
-beforeEach(() => { memoryRpc.mockReset().mockResolvedValue({ memories: [], hasMore: false }); state.realtime.length = 0; state.navigate.openPanelAgent = vi.fn(() => true); });
+beforeEach(() => {
+  memoryRpc.mockReset().mockResolvedValue({ memories: [], hasMore: false });
+  state.realtime.length = 0;
+  state.guideRefresh = undefined;
+  state.navigate.openPanelAgent = vi.fn(() => true);
+});
 afterEach(() => { cleanup(); state.rpc.call.mockReset(); state.navigate.toThread.mockReset(); });
 
 it('registers the Bots nav panel', () => {
@@ -110,7 +119,7 @@ it('opens the main thread in the host side panel and starts a fresh bot there', 
 
   fireEvent.click(screen.getByRole('button', { name: /^Fresh/ }));
   const box = await screen.findByLabelText('Message Fresh');
-  expect(screen.queryByRole('button', { name: 'Chat' })).toBeNull();
+  expect((screen.getByRole('button', { name: 'Chat' }) as HTMLButtonElement).disabled).toBe(false);
   fireEvent.change(box, { target: { value: 'hi' } });
   fireEvent.click(screen.getByText('Start conversation'));
   await waitFor(() => expect(state.rpc.call).toHaveBeenCalledWith('send', { bot: 'fresh', message: 'hi' }));
@@ -426,11 +435,11 @@ it('handles missing and unreachable main threads', async () => {
   route({ list: () => [{ ...scout, mainThreadStatus: null }, { ...scout, id: 'lost', name: 'Lost', mainThreadStatus: 'unknown' }] });
   render(<BotsPanel />);
   await screen.findByText(/main thread was deleted/);
-  expect(screen.queryByRole('button', { name: 'Chat' })).toBeNull();
+  expect((screen.getByRole('button', { name: 'Chat' }) as HTMLButtonElement).disabled).toBe(false);
   expect(screen.queryByText('Wake')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: /^Lost/ }));
   await screen.findByText(/Can't reach Lost/);
-  expect(screen.queryByRole('button', { name: 'Chat' })).toBeNull();
+  expect((screen.getByRole('button', { name: 'Chat' }) as HTMLButtonElement).disabled).toBe(true);
 });
 
 it('keeps tab panels mounted and supports arrow keys', async () => {
@@ -733,29 +742,54 @@ it('converts an existing AI prompt to a ten-minute price check in place', async 
   } }));
 });
 
-it('opens the built-in Helper and preserves the conversation when hiding and restoring it', async () => {
-  const profile: { hidden: boolean; version: string; turns: Array<{ question: string; answer: string; sources: [] }> } = {
-    hidden: false, version: '2.7.0', turns: []
-  };
-  route({
-    list: () => [scout],
-    helperProfile: () => ({ ...profile }),
-    helperVisibility: ({ hidden }) => { profile.hidden = hidden; return { ...profile }; },
-    helperAsk: ({ question }) => {
-      profile.turns = [...profile.turns, { question, answer: 'Choose a project in the sidebar.', sources: [] }];
-    }
-  });
-
+it('opens Helper and custom bot conversations through the same Chat action', async () => {
+  const helper = { ...fresh, id: HELPER_ID, name: 'Zana Helper', isHelper: true };
+  const open = vi.fn(({ bot }) => ({ threadId: bot === HELPER_ID ? 'helper-thread' : 'custom-thread' }));
+  route({ list: () => [helper, fresh], openThread: open });
   render(<BotsPanel />);
-  const helper = await screen.findByRole('button', { name: /Zana Helper Built-in/ });
-  expect(screen.getByRole('navigation', { name: 'Bots' }).querySelector('.bt-item')).toBe(helper);
-  fireEvent.click(helper);
-  fireEvent.click(screen.getByRole('button', { name: 'How do I add a project?' }));
-  expect(screen.getByRole('textbox', { name: 'Message Zana Helper' })).toHaveProperty('value', 'How do I add a project?');
-  fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
-  await screen.findByText('Choose a project in the sidebar.');
-  fireEvent.click(screen.getByRole('button', { name: 'Hide Zana Helper' }));
-  await waitFor(() => expect(screen.queryByRole('button', { name: /Zana Helper Built-in/ })).toBeNull());
-  fireEvent.click(screen.getByRole('button', { name: 'Restore Zana Helper' }));
-  expect(await screen.findByText('Choose a project in the sidebar.')).toBeTruthy();
+
+  await screen.findByRole('tablist', { name: 'Zana Helper sections' });
+  expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Overview', 'Library', 'Vault', 'Settings']);
+  fireEvent.click(screen.getByRole('button', { name: 'Chat', exact: true }));
+  await waitFor(() => expect(state.navigate.openPanelAgent).toHaveBeenCalledWith({ threadId: 'helper-thread', title: 'Zana Helper' }));
+  fireEvent.click(screen.getByRole('button', { name: /Fresh Not started/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Chat', exact: true }));
+  await waitFor(() => expect(state.navigate.openPanelAgent).toHaveBeenCalledWith({ threadId: 'custom-thread', title: 'Fresh' }));
+  expect(open.mock.calls).toEqual([[{ bot: HELPER_ID }], [{ bot: 'fresh' }]]);
+});
+
+it('keeps the offline guides and earlier Helper conversations in the standard Library', async () => {
+  route({
+    list: () => [{ ...fresh, id: HELPER_ID, name: 'Zana Helper', isHelper: true }],
+    helperGuides: () => { throw new Error('offline'); },
+    helperHistory: () => [{ question: 'Where are my projects?', answer: 'In the sidebar.', sources: [] }]
+  });
+  render(<BotsPanel />);
+  fireEvent.click(await screen.findByRole('tab', { name: 'Library' }));
+  fireEvent.change(screen.getByRole('searchbox', { name: 'Search guides' }), { target: { value: 'choose a bot provider' } });
+  expect(screen.getByText('Bots · Choose a bot provider')).toBeTruthy();
+  expect(await screen.findByText('Where are my projects?')).toBeTruthy();
+});
+
+it('shows a correction and its main-branch link in an open Library', async () => {
+  const initial = Promise.withResolvers<unknown>();
+  const correctedUrl = 'https://github.com/salesforce/zana/blob/main/docs/slack-user-guide.md#corrected';
+  const guides = vi.fn()
+    .mockReturnValueOnce(initial.promise)
+    .mockResolvedValue([{ id: 'corrected', guide: 'Slack', title: 'Corrected guide', text: 'Updated steps.', url: correctedUrl }]);
+  route({
+    list: () => [{ ...fresh, id: HELPER_ID, name: 'Zana Helper', isHelper: true }],
+    helperGuides: guides,
+    helperHistory: () => []
+  });
+  render(<BotsPanel />);
+  fireEvent.click(await screen.findByRole('tab', { name: 'Library' }));
+  await waitFor(() => expect(guides).toHaveBeenCalledOnce());
+  await act(async () => state.guideRefresh?.());
+  fireEvent.click(await screen.findByText('Slack · Corrected guide', { exact: true }));
+  expect(screen.getByRole('link', { name: 'Read Corrected guide' }).getAttribute('href')).toBe(correctedUrl);
+
+  // A first RPC that returns after the update must not overwrite it.
+  await act(async () => initial.resolve([]));
+  expect(screen.getByText('Updated steps.')).toBeTruthy();
 });

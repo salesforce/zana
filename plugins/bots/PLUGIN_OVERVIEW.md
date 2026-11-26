@@ -35,9 +35,11 @@ Click a bot in the Basic sidebar to open its main thread. The first click create
 
 ## Zana Helper
 
-Open **Bots → Zana Helper** for answers about Zana or feedback on a prompt you paste in. **Browse Zana guides** works without an AI provider or internet access. Answers include links to the relevant guides for your installed Zana version.
+Zana Helper comes with Bots. Open **Bots → Zana Helper → Chat** to open its main conversation for answers about Zana or feedback on a prompt. Use the chat composer to paste a screenshot or choose **Attach files**. Open **Library → Browse Zana guides** to search guides offline. The app keeps the earlier Helper panel’s saved conversations as a read-only archive under **Library → Earlier Helper conversations**. This archive receives no new messages or scheduled cleanup.
 
-Zana Helper uses the Default Project’s AI provider for text-only answers. If you use Claude Code or Codex, it uses that provider’s sign-in. The guides are available with any provider. **Hide Zana Helper** removes it from the Bots list. Use **Restore Zana Helper** in the list to bring it back with its saved conversation.
+Guide updates load in the background from `raw.githubusercontent.com` when you browse or search the guides. Downloaded guides may describe features added after your installed version. The request fetches a public catalog and sends no conversation text or project data. To stop these checks, turn off **Download Zana guide updates** in **Settings → Plugins → Bots → Configuration**. Bundled and previously downloaded guides remain available offline. Use **Read** to open a guide's source in your browser.
+
+Zana Helper is provisioned once the Default Project is available and starts with that project’s provider settings. Chat sends the messages you submit, including pasted prompts and attachments, to the provider and model selected for the conversation. Manage **Provider and model**, **Project and access**, and **Danger zone** in the bot’s **Settings**. Like other bots, it runs with full access in its selected project. Deleting it from **Danger zone** stops its routines and lets you choose whether to archive or keep its threads.
 
 ## Choose a bot provider
 

@@ -9,6 +9,18 @@ export interface HelperGuide {
   plugin?: string;
 }
 
+export const GUIDE_REPOSITORY = 'https://github.com/salesforce/zana/blob/';
+export const HELPER_GUIDES_CHANGED = 'bots:helper-guides-changed';
+
+/** Resolve inline Markdown destinations against the same source as the guide. */
+export function guideMarkdown(text: string, source: string): string {
+  return text.replace(/(\]\(<?)([^<>\s()]+)(?=>?[\s)])/g, (link, prefix: string, destination: string) => {
+    if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(destination) || destination.includes('\\')) return link;
+    const base = destination.startsWith('/') ? 'https://zana-ide.com/' : source;
+    return prefix + new URL(destination, base).href;
+  });
+}
+
 const commonWords = new Set([
   'and', 'are', 'can', 'does', 'for', 'from', 'have', 'how', 'the', 'this', 'what', 'when',
   'where', 'which', 'will', 'with', 'you', 'your', 'zana'
@@ -43,4 +55,4 @@ export function browseGuides(entries: readonly HelperGuide[], query: string): He
     .map(({ guide }) => guide);
 }
 
-export const helpCatalog: { version: string; entries: HelperGuide[] } = bundled;
+export const helpCatalog: { schemaVersion: number; version: string; entries: HelperGuide[] } = bundled;
