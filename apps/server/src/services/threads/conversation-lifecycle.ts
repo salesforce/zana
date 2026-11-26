@@ -43,6 +43,7 @@ import {
   sendDeferredConversationMessage
 } from './conversation-deferred-messages.js';
 import type { ProductHttpContext } from '../../http/product-context.js';
+import type { HostRpcCommand } from '@zana-ai/zcc-contracts/host-rpc';
 import type { PermissionMode, ReasoningLevel, PromptInput } from '@zana-ai/zcc-domain/thread-runtime';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import {
@@ -118,6 +119,9 @@ import {
 } from './conversation-deferred-first-turn.js';
 
 export type { ThreadSendMode } from './conversation-dispatch-checkpoint.js';
+
+type ThreadStartCommand = Extract<HostRpcCommand, { type: 'thread.start' }>;
+type ExistingEnvironment = NonNullable<ThreadStartCommand['existingEnvironment']>;
 
 export async function sendConversationTurn(
   ctx: ProductHttpContext,
@@ -315,6 +319,15 @@ async function sendConversationTurnWithLease(
     throw new ThreadCreateError(409, 'environment_not_ready', 'thread has no environment');
   }
   const environment = getEnvironment(ctx.db, live.environmentId);
+  let existingEnvironment: ExistingEnvironment | undefined;
+  if (!live.providerThreadId && (live.originKind === 'fork'
+    || (live.originPluginId && preparedThreadEvent(ctx, live.id)))) {
+    if (!environment?.path || environment.status !== 'ready'
+      || environment.projectId !== live.projectId || environment.hostId !== live.hostId) {
+      throw new ThreadCreateError(409, 'environment_not_ready', 'The conversation workspace is unavailable');
+    }
+    existingEnvironment = { path: environment.path, workspaceProvisionType: environment.workspaceProvisionType };
+  }
   await validateProviderModelSelection(ctx, {
     hostId: live.hostId,
     providerId: live.providerId,
@@ -363,6 +376,7 @@ async function sendConversationTurnWithLease(
     execution: packedExecution,
     clientRequestId,
     input,
+    existingEnvironment,
     ...(options.peerReviewId ? { onAccepted: () => markPeerDelivered(ctx, getPeerReview(ctx, options.peerReviewId!)!) } : {}),
     drain: options.drain === true
   });
@@ -404,6 +418,7 @@ async function dispatchTurnSubmit(
     };
     clientRequestId?: string;
     input: unknown;
+    existingEnvironment?: ExistingEnvironment;
     onAccepted?: () => void;
     drain: boolean;
   }
@@ -438,11 +453,11 @@ async function dispatchTurnSubmit(
     }
   };
   try {
-    if (!args.thread.providerThreadId && (args.thread.originKind === 'fork'
-      || (args.thread.originPluginId && preparedThreadEvent(ctx, args.thread.id)))) {
+    if (args.existingEnvironment) {
       const command = await threadStartCommandForFirstMessage(
         ctx,
         args.thread,
+        args.existingEnvironment,
         args.prompt,
         args.execution,
         args.clientRequestId
@@ -1097,6 +1112,7 @@ async function turnSubmitCommand(
 async function threadStartCommandForFirstMessage(
   ctx: ProductHttpContext,
   thread: ConversationThreadRow,
+  existingEnvironment: ExistingEnvironment,
   prompt: PromptInput[],
   execution?: {
     permissionMode?: PermissionMode;
@@ -1108,11 +1124,10 @@ async function threadStartCommandForFirstMessage(
     providerOptions?: Record<string, unknown>;
   },
   clientRequestId?: string
-): Promise<Parameters<ProductHttpContext['hostHub']['callHostOnlineRpc']>[0]['command']> {
+): Promise<ThreadStartCommand> {
   if (!thread.environmentId) {
     throw new ThreadCreateError(409, 'environment_not_ready', 'thread has no environment');
   }
-  const environment = getEnvironment(ctx.db, thread.environmentId);
   const permissionMode = threadPermissionMode(ctx, thread, execution?.permissionMode);
   const sessionTooling = await packConversationSessionTooling(ctx, {
     threadId: thread.id,
@@ -1132,7 +1147,8 @@ async function threadStartCommandForFirstMessage(
     projectId: thread.projectId,
     providerId: thread.providerId,
     input: prompt,
-    cwd: project?.remote && !remoteToolProxy ? undefined : environment?.path ?? undefined,
+    cwd: project?.remote && !remoteToolProxy ? undefined : existingEnvironment.path,
+    existingEnvironment,
     ...(remoteToolProxy ? { remoteToolProxy: true, remote: threadLaunchRemote(project, remoteWorkspacePath(
       project, true, ctx.config.getConfig().remoteDefaultPath, listExecutionHosts(ctx.db).map(toRemoteStartPathHost)
     )) } : {}),

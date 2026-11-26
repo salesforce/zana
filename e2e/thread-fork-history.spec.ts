@@ -49,11 +49,12 @@ export default function(pi) {
     await use({ PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: '1',
       ZCC_PI_BRIDGE_COMMAND: process.execPath, ZCC_PI_BRIDGE_ARGS: JSON.stringify([cli]) });
   },
-  initialConfig: [{ sponsorPromptDismissed: true }, { option: true }]
+  initialConfig: [{ sponsorPromptDismissed: true, threadSessionReleaseMinutes: 15 }, { option: true }]
 });
 
 for (const anchor of ['tip', 'first reply', 'second reply'] as const) {
-  test(`fork from ${anchor} preserves the selected completed history`, async ({ app }) => {
+  const restartHost = anchor === 'first reply';
+  test(`fork from ${anchor} preserves the selected completed history${restartHost ? ' after a host restart' : ''}`, async ({ app }) => {
     test.setTimeout(90_000);
     const { window } = app;
     await waitForThreadProvider(window, 'pi');
@@ -115,6 +116,11 @@ for (const anchor of ['tip', 'first reply', 'second reply'] as const) {
     await expect(timeline).toContainText('Response to: First fork marker');
     if (anchor === 'first reply') await expect(timeline).not.toContainText('Second fork marker');
     else await expect(timeline).toContainText('Response to: Second fork marker');
+    if (restartHost) {
+      // The fork exists but has no provider session yet. Restart the enrolled
+      // daemon and leave the original conversation idle.
+      await expect(window.evaluate(() => window.cc.hosts.relaunchLocal())).resolves.toEqual({ ok: true });
+    }
     const composer = window.getByTestId('thread-detail').getByTestId('thread-command-input');
     // Navigation keeps the same view mounted; wait for the new thread's
     // execution catalogue before interacting with its composer.

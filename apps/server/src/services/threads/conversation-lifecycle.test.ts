@@ -54,6 +54,15 @@ const thread = {
   updatedAt: 1
 };
 
+const environment = {
+  id: thread.environmentId,
+  projectId: thread.projectId,
+  hostId: thread.hostId,
+  path: '/tmp/proj',
+  status: 'ready' as const,
+  workspaceProvisionType: 'unmanaged' as const
+};
+
 vi.mock('@zana-ai/zcc-db', () => {
   const listConversationThreadEvents = vi.fn(() => [{
     id: 'evt-1',
@@ -142,7 +151,7 @@ vi.mock('@zana-ai/zcc-db', () => {
   listDeferredThreadMessages: vi.fn(() => []),
   deleteDeferredThreadMessage: vi.fn(() => false),
   getDeferredThreadMessage: vi.fn(() => null),
-   getEnvironment: vi.fn(() => ({ id: thread.environmentId, path: '/tmp/proj' })),
+   getEnvironment: vi.fn(() => environment),
    getThreadPluginMetadata: vi.fn(() => ({ metadata: {}, corrupt: false })),
    patchThreadPluginMetadata: vi.fn(() => ({ ok: true })),
   getThreadPlanByRootThread: vi.fn(() => null),
@@ -1393,12 +1402,30 @@ describe('conversation lifecycle', () => {
     expect(callHostOnlineRpc).toHaveBeenCalledWith(expect.objectContaining({
       command: expect.objectContaining({
         type: 'thread.start',
+        environmentId: thread.environmentId,
+        existingEnvironment: { path: environment.path, workspaceProvisionType: 'unmanaged' },
         providerThreadId: 'prov-source',
         providerCheckpointId: 'cp-9',
         input: [{ type: 'text', text: 'continue from here', mentions: [] }]
       })
     }));
     expect(setConversationProviderThreadId).toHaveBeenCalledWith(expect.anything(), forkId, 'prov-fork');
+  });
+
+  it.each([
+    null,
+    { ...environment, path: null },
+    { ...environment, status: 'destroyed' },
+    { ...environment, projectId: 'another-project' },
+    { ...environment, hostId: 'another-host' }
+  ])('rejects an unavailable or mismatched fork environment before dispatch (%j)', async (workspace) => {
+    vi.mocked(getConversationThread).mockReturnValue({ ...thread, originKind: 'fork', providerThreadId: null });
+    vi.mocked(getEnvironment).mockReturnValueOnce(workspace as ReturnType<typeof getEnvironment>);
+    const rpc = vi.fn();
+    await expect(sendConversationTurn(ctx(rpc), thread.id, 'continue'))
+      .rejects.toMatchObject({ code: 'environment_not_ready', status: 409 });
+    expect(rpc).not.toHaveBeenCalled();
+    expect(applyConversationThreadLifecycleEvent).not.toHaveBeenCalled();
   });
 
   it('starts a fork with an empty automated skill selection', async () => {
@@ -2329,7 +2356,7 @@ describe('conversation lifecycle', () => {
 
 
 describe('dispatch admission override (OBL-003)', () => {
-  function queuedAdmissionRow(admission: { generation: number; overrideable: boolean; reason: string; pluginId?: string }) {
+  function queuedAdmissionRow(admission?: { generation: number; overrideable: boolean; reason: string; pluginId?: string }) {
     return {
       id: 'dmsg_1',
       threadId: thread.id,
@@ -2463,6 +2490,22 @@ describe('dispatch admission override (OBL-003)', () => {
       })
     }));
     expect(rpc).toHaveBeenCalled();
+  });
+
+  it('passes the saved workspace when Send now starts a fork', async () => {
+    vi.mocked(getConversationThread).mockReturnValue({ ...thread, originKind: 'fork', providerThreadId: null });
+    const row = queuedAdmissionRow();
+    vi.mocked(getDeferredThreadMessage).mockReturnValue(row);
+    const rpc = vi.fn().mockResolvedValue({ threadId: thread.id, started: true, providerThreadId: 'prov-fork' });
+    await sendHeldConversationMessage(ctx(rpc), thread.id, row.id);
+    expect(rpc).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.objectContaining({
+        type: 'thread.start',
+        existingEnvironment: { path: environment.path, workspaceProvisionType: 'unmanaged' },
+        input: [{ type: 'text', text: 'queued prompt', mentions: [] }]
+      })
+    }));
+    expect(setConversationProviderThreadId).toHaveBeenCalledWith(expect.anything(), thread.id, 'prov-fork');
   });
 
   it('a duplicate Send-now click on an already-consumed generation is rejected as stale and audited', async () => {

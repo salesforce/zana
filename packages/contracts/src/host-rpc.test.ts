@@ -37,7 +37,7 @@ const peerCommand = {
 describe('peer.forward v2 contract', () => {
   it('round-trips the flat command and envelope with separate protocol versions', () => {
     const { type: _type, method: _method, body: _body, timeoutMs: _timeout, ...envelope } = peerCommand;
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(52);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(53);
     expect(PeerRequestEnvelopeSchema.parse(envelope)).toEqual(envelope);
     expect(PeerForwardCommandSchema.parse(peerCommand)).toEqual(peerCommand);
     expect(HostRpcCommandSchema.parse(peerCommand)).toEqual(peerCommand);
@@ -213,7 +213,7 @@ describe('host-rpc contract', () => {
       callId: 'call-1', method: 'echo', input: {}, timeoutMs: 1000,
       projectRoot: '/registered/project'
     };
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(52);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(53);
     expect(HostRpcRequestMessageSchema.parse({
       type: 'host-rpc.request', protocolVersion: HOST_RPC_PROTOCOL_VERSION,
       requestId: 'r1', command
@@ -225,6 +225,19 @@ describe('host-rpc contract', () => {
     expect(HostRpcCommandSchema.safeParse({ ...command, projectRoot: '' }).success).toBe(false);
     expect(HostRpcCommandSchema.safeParse({ ...command, unexpected: true }).success).toBe(false);
     expect(HostRpcCommandSchema.safeParse({ ...command, projectRoot: undefined }).success).toBe(true);
+  });
+
+  it('accepts a persisted environment on the current thread start protocol', () => {
+    const command = {
+      type: 'thread.start', threadId, environmentId, projectId: 'project-1', providerId: 'provider-1',
+      input: [], existingEnvironment: { path: '/worktree', workspaceProvisionType: 'managed-worktree' }
+    };
+    const request = { type: 'host-rpc.request', requestId: 'fork-start', command };
+    expect(HostRpcRequestMessageSchema.parse({ ...request, protocolVersion: 53 }).command).toEqual(command);
+    expect(HostRpcRequestMessageSchema.safeParse({ ...request, protocolVersion: 52 }).success).toBe(false);
+    expect(HostRpcCommandSchema.safeParse({
+      ...command, existingEnvironment: { ...command.existingEnvironment, checkout: { kind: 'new' } }
+    }).success).toBe(false);
   });
 
   it('round-trips the command union and rejects unknown types', () => {
@@ -985,7 +998,7 @@ describe('host-rpc contract', () => {
   });
 
   it('parses desktop.browser commands, results, and a non-UUID thread payload', () => {
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(52);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(53);
     expect(HostRpcCommandSchema.parse({
       type: 'desktop.browser.list_instances'
     }).type).toBe('desktop.browser.list_instances');
@@ -1044,7 +1057,7 @@ describe('host.environment.replace', () => {
   const entry = { name: 'GH_TOKEN', value: 'token-value' };
 
   it('retains protocol 44 environment forwarding in the combined protocol and parses a bounded, strict entry list', () => {
-    expect(HOST_RPC_PROTOCOL_VERSION).toBe(52);
+    expect(HOST_RPC_PROTOCOL_VERSION).toBe(53);
     const command = {
       type: 'host.environment.replace',
       entries: [

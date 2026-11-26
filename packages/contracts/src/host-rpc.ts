@@ -101,7 +101,8 @@ import {
 // tool/policy/decide relay (/internal/hosts/native-tool-policy). A pre-51 daemon answers
 // that request as unsupported, so the bridge denies every tool; the bump makes it self-update.
 // 52: machine-local encrypted environment settings and secret-free status.
-export const HOST_RPC_PROTOCOL_VERSION = 52;
+// 53: restore an existing environment on a deferred thread start after a daemon restart.
+export const HOST_RPC_PROTOCOL_VERSION = 53;
 export const HOST_HEARTBEAT_INTERVAL_MS = 5_000;
 export const HOST_LEASE_TIMEOUT_MS = 30_000;
 const ProtocolVersionSchema = z.literal(HOST_RPC_PROTOCOL_VERSION);
@@ -368,6 +369,11 @@ export const ThreadStartCommandSchema = z.object({
   providerId: z.string().min(1),
   input: z.array(promptInputSchema).default([]),
   cwd: PathSchema.optional(),
+  /** Persisted workspace identity authorized by the server for a deferred start. */
+  existingEnvironment: z.object({
+    path: PathSchema,
+    workspaceProvisionType: workspaceProvisionTypeSchema
+  }).strict().optional(),
   title: z.string().max(200).optional(),
   extraArgs: z.array(z.string().max(4000)).max(64).optional(),
   harnessRouting: z.unknown().optional(),
