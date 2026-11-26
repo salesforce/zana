@@ -244,11 +244,11 @@ export const AgentLauncher = memo(function AgentLauncher({
           <div className="launch-header">
             <div>
               <h3>
-                {mode === 'thread'
+                {(mode === 'thread' || mode === 'team')
                   ? (projectMode ? project!.name : 'New agent')
                   : projectMode ? project!.name : scratchIsTarget ? 'Quick agent' : target?.name ?? 'New agent'}
               </h3>
-              <p>
+              {mode !== 'team' && <p>
                 {mode === 'thread'
                   ? 'Start an agent'
                   : projectMode
@@ -256,7 +256,7 @@ export const AgentLauncher = memo(function AgentLauncher({
                     : scratchIsTarget
                       ? 'A scratch Claude session in your workspace'
                       : 'Start a Claude session in this project'}
-              </p>
+              </p>}
             </div>
           </div>
 

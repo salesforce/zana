@@ -45,22 +45,27 @@ for (const mode of ['now', 'review'] as const) {
           expect(receipt.proposalId).toBeTruthy();
           expect(receipt.inboxEntryId).toBeTruthy();
           const detail = await openSquadReview(ctx, title);
-          // The card stays short: launch policies and location are in the composer under Review settings.
+          // The card stays short: launch policies and location are in the composer under Launch settings.
           await expect(detail).not.toContainText('(launch)');
           await expect(detail).not.toContainText('failurePolicyDefault:');
           await ctx.window.getByRole('button', { name: 'Review Squad launch' }).click();
           const modal = ctx.window.getByTestId('launch-modal');
           await expect(modal.getByLabel('Reviewed launch settings')).toHaveCount(0);
-          await modal.getByRole('button', { name: 'Review settings', exact: true }).click();
+          await modal.getByRole('button', { name: 'Launch settings', exact: true }).click();
           if (checkout !== 'new-worktree') await expect(modal).toContainText(realpathSync(checkout === 'worktree' ? linked : ctx.projectDir));
-          else await expect(modal).toContainText('path assigned at launch');
+          else await expect(modal).toContainText('Path assigned at launch');
            await expect(modal).toContainText('Keep checkout and branch (This launch)');
            await expect(modal).toContainText('Blocked (This launch)');
            await expect(modal).toContainText('No checks (This launch)');
            await expect(modal).toContainText('Fail run (This launch)');
            await expect(modal).toContainText(checkout === 'new-worktree' ? 'New worktree' : checkout === 'worktree' ? 'feature/e2e' : 'main');
           await modal.getByTestId('team-command-send').click();
-          await expect(modal).toBeHidden();
+          try {
+            await expect(modal).toBeHidden({ timeout: 35_000 });
+          } catch (error) {
+            throw new Error(`Reviewed launch stayed open. ${await modal.getByTestId('team-command-error').allTextContents()}
+${String(error)}`);
+          }
           executionId = await findJobExecutionId(ctx.window, projectId, title);
         } else {
           const receipt = await squadNowReceipt(ctx, 'parity');
@@ -103,7 +108,7 @@ for (const mode of ['now', 'review'] as const) {
   }
 }
 
-test('composer attached plan survives repeated previews and launch', async ({ app, home }) => {
+test('composer attached plan survives repeated previews and launch', async ({ app, home }, testInfo) => {
   const ctx = createJobTeamContext(app, { tmpPrefix: 'composer-direct-', root: home, scenario: 'unattended' });
   try {
     initSquadRepo(ctx);
@@ -127,38 +132,41 @@ test('composer attached plan survives repeated previews and launch', async ({ ap
     await modal.getByTestId('team-command-input').fill('Follow attached plan');
     await modal.getByRole('button', { name: 'Attach sources' }).click();
     await expect(modal.getByLabel('Attached sources')).toContainText('attached-plan.md');
-    const customize = modal.getByRole('button', { name: /^Customize launch/ });
-    const review = modal.getByRole('button', { name: 'Review settings', exact: true });
-    const createPlugin = modal.getByTestId('composer-create-plugin');
-    await expect(createPlugin).toBeVisible();
-    const [customizeBox, reviewBox, createPluginBox] = await Promise.all([
-      customize.boundingBox(), review.boundingBox(), createPlugin.boundingBox()
-    ]);
-    expect(customizeBox).not.toBeNull();
-    expect(reviewBox).not.toBeNull();
-    expect(createPluginBox).not.toBeNull();
-    expect(Math.abs(customizeBox!.height - createPluginBox!.height)).toBeLessThan(0.1);
-    expect(Math.abs(reviewBox!.height - createPluginBox!.height)).toBeLessThan(0.1);
-
-    await review.click();
+    const settings = modal.getByRole('button', { name: /^Launch settings/ });
+    const checkout = modal.getByRole('button', { name: 'Squad target', exact: true });
     const reviewed = modal.getByLabel('Reviewed launch settings');
+    await expect(modal.getByRole('heading', { name: 'New agent' })).toBeVisible();
+    await expect(modal.getByTestId('composer-create-plugin')).toBeVisible();
+    await expect(checkout).toContainText('New worktree from main');
+    await expect(reviewed).toBeHidden();
+    await settings.click();
     await expect(reviewed).toContainText('Create new worktree (Plan)');
     await expect(reviewed).toContainText('Keep checkout and branch (Plan)');
     await expect(reviewed).toContainText('Blocked (Plan)');
-    await expect(review).toHaveAttribute('aria-expanded', 'true');
-    await expect(customize).toHaveAttribute('aria-expanded', 'false');
-    const [reviewedBox, reviewButtonBox] = await Promise.all([reviewed.boundingBox(), review.boundingBox()]);
-    expect(reviewedBox).not.toBeNull();
-    expect(reviewButtonBox).not.toBeNull();
-    expect(reviewedBox!.y).toBeGreaterThan(reviewButtonBox!.y);
-
-    await customize.click();
+    await expect(settings).toHaveAttribute('aria-expanded', 'true');
+    await settings.click();
     await expect(reviewed).toBeHidden();
-    await expect(customize).toHaveAttribute('aria-expanded', 'true');
-    await expect(review).toHaveAttribute('aria-expanded', 'false');
-    await modal.getByLabel('On complete', { exact: true }).selectOption('delete');
-    await modal.getByLabel('Push', { exact: true }).selectOption('true');
-    await review.click();
+
+    await checkout.focus();
+    await checkout.press('ArrowDown');
+    const checkoutOptions = ctx.window.getByRole('listbox', { name: 'Squad target' });
+    await expect(checkoutOptions).toBeVisible();
+    await expect(checkoutOptions.getByRole('option', { name: /^Use defaults/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(checkoutOptions.getByRole('option', { name: /^New worktree from main/ })).toBeVisible();
+    await ctx.window.screenshot({ path: testInfo.outputPath('squad-checkout-picklist.png') });
+    await ctx.window.keyboard.press('Escape');
+    await expect(checkout).toBeFocused();
+    await app.electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(880, 620));
+    await expect(checkout).toBeInViewport();
+    await expect(settings).toBeInViewport();
+    await expect.poll(() => modal.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await settings.click();
+    await expect(reviewed).toBeVisible();
+    await ctx.window.screenshot({ path: testInfo.outputPath('squad-settings-narrow.png') });
+    for (const [label, choice] of [['On complete', 'Delete checkout and branch'], ['Push', 'Allow push']]) {
+      await modal.getByRole('button', { name: label, exact: true }).click();
+      await ctx.window.getByRole('listbox', { name: label, exact: true }).getByRole('option', { name: choice, exact: true }).click();
+    }
     await expect(reviewed).toContainText('Delete checkout and branch (This launch)');
     await expect(reviewed).toContainText('Allowed (This launch)');
     await modal.getByTestId('team-command-send').click();

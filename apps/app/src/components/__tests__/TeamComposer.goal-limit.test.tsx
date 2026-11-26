@@ -189,7 +189,7 @@ describe('TeamComposer goal limit', () => {
     fireEvent.click(screen.getByTestId('team-command-send'));
     await waitFor(() => expect(screen.getByTestId('team-command-error').textContent).toContain('Launch preview changed'));
     expect(h.startJob).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Review settings' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Launch settings/ }));
     expect(screen.getByLabelText('Reviewed launch settings').textContent).toContain('Allowed (Plan)');
     fireEvent.click(screen.getByTestId('team-command-send'));
     await waitFor(() => expect(h.startJob).toHaveBeenCalledOnce());
@@ -256,7 +256,7 @@ describe('TeamComposer goal limit', () => {
   it('caps the summary and blocks a stored summary over the limit', async () => {
     h.goalText = 'do it';
     render(<TeamComposer prefill={prefill('s'.repeat(2049))} />);
-    fireEvent.click(screen.getByRole('button', { name: /^Customize launch/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Launch settings/ }));
     expect((document.getElementById('team-summary') as HTMLTextAreaElement).maxLength).toBe(2048);
     expect(screen.getByTestId('team-summary-count').textContent).toBe('2,049 / 2,048');
     expect(screen.getByTestId('team-goal-limit-message').textContent).toContain('The summary is too long for a Squad');

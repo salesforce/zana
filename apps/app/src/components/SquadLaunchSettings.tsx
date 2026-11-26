@@ -1,3 +1,4 @@
+import { PopoverPicklist, type PopoverPicklistOption } from './ui/PopoverPicklist.js';
 import { useEffect, useRef, useState } from 'react';
 import type { ExecutionResolvedLaunchV1, LaunchOptions } from '@zana-ai/zcc-domain/launch-options';
 import { launchOptionsSchema } from '@zana-ai/zcc-domain/launch-options';
@@ -56,12 +57,30 @@ export function SquadResolvedLaunchDetails({ resolved, projectId }: { resolved: 
   })}</dl>;
 }
 
-export function SquadLaunchPolicyFields({ value, onChange, disabled, includeCheckout = false }: {
+function LaunchPolicyChoice<T extends string>({ label, ariaLabel = label, value, options, onChange, disabled, composer }: {
+  label: string;
+  ariaLabel?: string;
+  value: T;
+  options: readonly PopoverPicklistOption<T>[];
+  onChange: (value: T) => void;
+  disabled: boolean;
+  composer: boolean;
+}) {
+  if (composer) return <div className="squad-launch-policy-choice">
+    <span>{label}</span>
+    <PopoverPicklist ariaLabel={ariaLabel} value={value} options={options} onChange={onChange} disabled={disabled} searchable={false} />
+  </div>;
+  return <label><span>{label}</span><select aria-label={ariaLabel} value={value} onChange={(event) => onChange(event.target.value as T)} disabled={disabled}>
+    {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+  </select></label>;
+}
+
+export function SquadLaunchPolicyFields({ value, onChange, disabled, composer = false, checkoutOwned = false }: {
   value: LaunchOptions;
   onChange: (value: LaunchOptions) => void;
   disabled: boolean;
-  /** Full settings owns checkout isolation. Composer passes false to keep this field. */
-  includeCheckout?: boolean;
+  composer?: boolean;
+  checkoutOwned?: boolean;
 }) {
   const externalMode: ChecksMode = value.checks === undefined ? '' : value.checks.length === 0 ? 'none' : 'named';
   const [checksMode, setChecksMode] = useState<ChecksMode>(externalMode);
@@ -78,17 +97,33 @@ export function SquadLaunchPolicyFields({ value, onChange, disabled, includeChec
     else onChange(updateOption(value, 'checks', text ? text.split(',').map((name) => name.trim()) : ['']));
   };
 
-  return <div className="squad-launch-policy-fields">
-    {!includeCheckout ? <div className="precedence-divided"><PrecedenceStrip settingKey="launch.options" /></div> : null}
-    {!includeCheckout ? <label><span>Worktree isolation</span><select aria-label="Worktree isolation" disabled={disabled} value={value.worktree === undefined ? '' : String(value.worktree)} onChange={(event) => onChange(updateOption(value, 'worktree', event.target.value === '' ? undefined : event.target.value === 'true'))}><option value="">Use default</option><option value="true">Create new worktree</option><option value="false">Use selected checkout</option></select></label> : null}
-    <label><span>On complete</span><select aria-label="On complete" disabled={disabled} value={value.onComplete ?? ''} onChange={(event) => onChange(updateOption(value, 'onComplete', event.target.value === '' ? undefined : event.target.value as 'leave' | 'merge' | 'delete'))}><option value="">Use default</option><option value="leave">Keep checkout and branch</option><option value="merge">Merge then remove</option><option value="delete">Delete checkout and branch</option></select></label>
-    <label><span>Push</span><select aria-label="Push" disabled={disabled} value={value.push === undefined ? '' : String(value.push)} onChange={(event) => onChange(updateOption(value, 'push', event.target.value === '' ? undefined : event.target.value === 'true'))}><option value="">Use default</option><option value="true">Allow push</option><option value="false">Do not push</option></select></label>
-    <label><span>Named checks</span><select aria-label="Named checks mode" disabled={disabled} value={checksMode} onChange={(event) => {
-      const mode = event.target.value as ChecksMode;
-      editingChecks.current = false;
-      setChecksMode(mode);
-      commitChecks(mode, checksText);
-    }}><option value="">Use default</option><option value="none">No checks</option><option value="named">Named checks</option></select></label>
+  return <div className={composer ? 'squad-launch-policy-fields squad-launch-policy-fields--composer' : 'squad-launch-policy-fields'}>
+    <LaunchPolicyChoice<'' | NonNullable<LaunchOptions['onComplete']>>
+      label="On complete" composer={composer} disabled={disabled || checkoutOwned}
+      value={checkoutOwned ? 'leave' : value.onComplete ?? ''}
+      onChange={(next) => onChange(updateOption(value, 'onComplete', next || undefined))}
+      options={[
+        { value: '', label: 'Use default' },
+        { value: 'leave', label: 'Keep checkout and branch' },
+        { value: 'merge', label: 'Merge then remove' },
+        { value: 'delete', label: 'Delete checkout and branch' }
+      ]}
+    />
+    <LaunchPolicyChoice<'' | 'true' | 'false'>
+      label="Push" composer={composer} disabled={disabled}
+      value={value.push === undefined ? '' : value.push ? 'true' : 'false'}
+      onChange={(next) => onChange(updateOption(value, 'push', next === '' ? undefined : next === 'true'))}
+      options={[{ value: '', label: 'Use default' }, { value: 'true', label: 'Allow push' }, { value: 'false', label: 'Do not push' }]}
+    />
+    <LaunchPolicyChoice<ChecksMode>
+      label="Named checks" ariaLabel="Named checks mode" composer={composer} disabled={disabled} value={checksMode}
+      onChange={(mode) => {
+        editingChecks.current = false;
+        setChecksMode(mode);
+        commitChecks(mode, checksText);
+      }}
+      options={[{ value: '', label: 'Use default' }, { value: 'none', label: 'No checks' }, { value: 'named', label: 'Named checks' }]}
+    />
     {checksMode === 'named' ? <label><span>Check names</span><input aria-label="Named checks input" disabled={disabled} value={checksText} placeholder="lint, test" onChange={(event) => {
       const text = event.target.value;
       editingChecks.current = true;
@@ -187,7 +222,7 @@ export function SquadLaunchSettings({ teamId, projectId, goal, coordinationMode,
       }}><option value="">Inherit checkout</option><option value="new-worktree">Generated new worktree</option><option value="project-root">Project checkout</option><option value="selected-checkout">Selected checkout</option>{selectedBranch && !knownBranch ? <option value={`worktree:${selectedBranch}`}>{selectedBranch} (missing worktree)</option> : null}{worktrees.filter((tree) => !tree.isMain && tree.branch && !tree.detached && !tree.bare).map((tree) => <option key={tree.path} value={`worktree:${tree.branch}`}>{tree.branch} (existing worktree)</option>)}</select></label>
       <p className="squad-launch-help">Existing branches resolve only from this registered Project. Main validates all checkout choices.</p>
       <PrecedenceStrip settingKey="launch.checkout" />
-      <SquadLaunchPolicyFields value={value} onChange={change} disabled={disabled} includeCheckout />
+      <SquadLaunchPolicyFields value={value} onChange={change} disabled={disabled} />
       <div className="squad-launch-reset"><button type="button" className="btn" disabled={disabled} onClick={() => change({})}>Reset launch settings</button></div>
     </div> : null}
   </section>;

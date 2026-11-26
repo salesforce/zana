@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  */
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const startJob = vi.fn();
@@ -100,12 +100,17 @@ async function launchAndGetPayload() {
   return startJob.mock.calls[0]![0] as Record<string, unknown>;
 }
 
-function openReviewSettings() {
-  fireEvent.click(screen.getByRole('button', { name: 'Review settings' }));
+function settingsButton() {
+  return screen.getByRole('button', { name: /^Launch settings/ });
 }
 
-function openCustomizeLaunch() {
-  fireEvent.click(screen.getByRole('button', { name: /^Customize launch/ }));
+function openSettings() {
+  const button = settingsButton();
+  if (button.getAttribute('aria-expanded') === 'false') fireEvent.click(button);
+}
+
+function pick(label: string, option: string | RegExp) {
+  fireEvent.click(within(screen.getByLabelText(label)).getByRole('button', { name: option }));
 }
 
 function reviewedSettings() {
@@ -126,29 +131,30 @@ describe('TeamComposer Squad target picker', () => {
     pushToast.mockClear();
   });
 
-  it('is hidden when only Default is available', async () => {
+  it('offers new worktree when no linked worktree is available', async () => {
     listWorktrees.mockResolvedValue([mainWt, worktree('x', { detached: true }), worktree('y', { bare: true })]);
     render(<TeamComposer />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));
     await waitFor(() => expect(listWorktrees).toHaveBeenCalledWith('/repos/one'));
     await Promise.resolve();
-    expect(screen.queryByLabelText('Squad target')).toBeNull();
+    expect(within(screen.getByLabelText('Squad target')).getByRole('button', { name: /^New worktree/ })).toBeTruthy();
   });
 
-  it('is hidden when listWorktrees rejects', async () => {
+  it('offers checkout choices if linked worktree discovery fails', async () => {
     listWorktrees.mockRejectedValue(new Error('boom'));
     render(<TeamComposer />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));
     await waitFor(() => expect(listWorktrees).toHaveBeenCalled());
-    expect(screen.queryByLabelText('Squad target')).toBeNull();
+    expect(within(screen.getByLabelText('Squad target')).getByRole('button', { name: /^New worktree/ })).toBeTruthy();
   });
 
-  it('shows Default, Project root and linked worktrees for a local Project', async () => {
+  it('shows defaults, Project, new worktree, and linked worktrees', async () => {
     render(<TeamComposer />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));
     const picker = await screen.findByLabelText('Squad target');
+    await within(picker).findByRole('button', { name: 'Worktree · feat/b' });
     const labels = Array.from(picker.querySelectorAll('button')).map((b) => b.textContent);
-    expect(labels).toEqual(['Default', 'Project root', 'Worktree: feat/a', 'Worktree: feat/b']);
+    expect(labels).toEqual(['Use defaults', 'Project · main', 'New worktree from main', 'Worktree · feat/a', 'Worktree · feat/b']);
   });
 
   it('bounds branch discovery display to registered project worktrees', async () => {
@@ -164,7 +170,7 @@ describe('TeamComposer Squad target picker', () => {
     render(<TeamComposer />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));
     const picker = await screen.findByLabelText('Squad target');
-    fireEvent.click(screen.getByRole('button', { name: 'Project root' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Project (checkout|· main)$/ }));
     await waitFor(() => expect(picker.getAttribute('data-value')).toBe('project-root'));
     expect(await launchAndGetPayload()).toMatchObject({ projectId: 'p1', target: { kind: 'project-root' } });
   });
@@ -172,76 +178,81 @@ describe('TeamComposer Squad target picker', () => {
   it('forwards explicit launch policies and shows resolved values with sources', async () => {
     render(<TeamComposer />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));
-    openCustomizeLaunch();
-    fireEvent.change(screen.getByLabelText('Worktree isolation'), { target: { value: 'false' } });
-    fireEvent.change(screen.getByLabelText('On complete'), { target: { value: 'leave' } });
-    fireEvent.change(screen.getByLabelText('Push'), { target: { value: 'false' } });
-    fireEvent.change(screen.getByLabelText('Named checks mode'), { target: { value: 'named' } });
+    openSettings();
+    pick('Squad target', /^New worktree/);
+    pick('On complete', 'Keep checkout and branch');
+    pick('Push', 'Do not push');
+    pick('Named checks mode', 'Named checks');
     fireEvent.change(screen.getByLabelText('Named checks input'), { target: { value: 'unit, lint' } });
-    openReviewSettings();
+    openSettings();
     await waitFor(() => expect(reviewedSettings().textContent).toContain('Blocked (This launch)'));
     const payload = await launchAndGetPayload();
-    expect(payload).toMatchObject({ worktree: false, onComplete: 'leave', push: false, checks: ['unit', 'lint'] });
+    expect(payload).toMatchObject({ worktree: true, onComplete: 'leave', push: false, checks: ['unit', 'lint'] });
     expect(payload).not.toHaveProperty('failurePolicyDefault');
     expect(reviewedSettings().textContent).toContain('Fail run (Default)');
   });
 
-  it('keeps Customize and Review mutually exclusive, with review below the button row', async () => {
+  it('reveals the full path, policy picklists and effective values together', async () => {
     render(<TeamComposer />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));
-    await waitFor(() => expect(screen.getByLabelText('Effective launch settings')).toBeTruthy());
-    expect(screen.getByRole('button', { name: 'Review settings' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /^Customize launch$/ })).toBeTruthy();
-    expect(screen.queryByLabelText('Reviewed launch settings')).toBeNull();
-    expect(screen.queryByLabelText('Worktree isolation')).toBeNull();
-    expect(screen.queryByLabelText('On complete')).toBeNull();
+    expect(settingsButton().getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByLabelText('Effective launch settings')).toBeNull();
     expect(screen.queryByLabelText('Push')).toBeNull();
-    expect(screen.queryByLabelText('Named checks mode')).toBeNull();
-    expect(screen.queryByLabelText('Title Optional')).toBeNull();
-    expect(screen.queryByLabelText('Summary Optional')).toBeNull();
 
-    openReviewSettings();
+    openSettings();
     await waitFor(() => expect(reviewedSettings().textContent).toContain('Blocked (Default)'));
-    expect(screen.queryByLabelText('Push')).toBeNull();
-    expect(screen.queryByLabelText('Title Optional')).toBeNull();
-    const actions = screen.getByRole('button', { name: 'Review settings' }).parentElement!;
-    expect(actions.compareDocumentPosition(reviewedSettings()) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
-
-    openCustomizeLaunch();
-    expect(screen.queryByLabelText('Reviewed launch settings')).toBeNull();
-    expect(screen.getByLabelText('Worktree isolation')).toBeTruthy();
+    const effective = screen.getByLabelText('Effective launch settings');
+    expect(effective.textContent).toContain('main · /repos/one');
+    expect(within(effective).getByTestId('precedence-launch.options').textContent).toMatch(/This launch.*Plan.*Squad.*Built-in default/);
     expect(screen.getByLabelText('On complete')).toBeTruthy();
     expect(screen.getByLabelText('Push')).toBeTruthy();
     expect(screen.getByLabelText('Named checks mode')).toBeTruthy();
     expect(screen.queryByLabelText('Named checks input')).toBeNull();
-    expect(screen.queryByLabelText('Failure policy')).toBeNull();
     expect(screen.getByLabelText('Title Optional')).toBeTruthy();
     expect(screen.getByLabelText('Summary Optional')).toBeTruthy();
+    fireEvent.click(settingsButton());
+    expect(screen.queryByLabelText('Reviewed launch settings')).toBeNull();
+  });
+
+  it('keeps user-owned checkouts and restores the generated-worktree policy when reselected', async () => {
+    render(<TeamComposer />);
+    fireEvent.click(screen.getByTestId('pick-project-p1'));
+    openSettings();
+    pick('Squad target', /^New worktree/);
+    pick('On complete', 'Merge then remove');
+    pick('Squad target', /^Project (checkout|· main)$/);
+    const completion = screen.getByLabelText('On complete');
+    expect(completion.getAttribute('data-value')).toBe('leave');
+    expect(completion.getAttribute('data-disabled')).toBe('true');
+    await waitFor(() => expect(previewJob).toHaveBeenLastCalledWith(expect.objectContaining({ target: { kind: 'project-root' }, onComplete: 'leave' })));
+    pick('Squad target', /^New worktree/);
+    expect(completion.getAttribute('data-value')).toBe('merge');
+    expect(await launchAndGetPayload()).toMatchObject({ worktree: true, onComplete: 'merge' });
   });
 
   it('updates override badge and clears it when controls return to inheritance', async () => {
     render(<TeamComposer />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));
-    openCustomizeLaunch();
-    fireEvent.change(screen.getByLabelText('Worktree isolation'), { target: { value: 'true' } });
-    fireEvent.change(screen.getByLabelText('On complete'), { target: { value: 'leave' } });
-    fireEvent.change(screen.getByLabelText('Push'), { target: { value: 'true' } });
-    fireEvent.change(screen.getByLabelText('Named checks mode'), { target: { value: 'named' } });
+    openSettings();
+
+    pick('On complete', 'Keep checkout and branch');
+    pick('Push', 'Allow push');
+    pick('Named checks mode', 'Named checks');
     fireEvent.change(screen.getByLabelText('Named checks input'), { target: { value: 'unit' } });
-    expect(screen.getByRole('button', { name: /^Customize launch.*4/ })).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('Worktree isolation'), { target: { value: '' } });
-    fireEvent.change(screen.getByLabelText('On complete'), { target: { value: '' } });
-    fireEvent.change(screen.getByLabelText('Push'), { target: { value: '' } });
-    fireEvent.change(screen.getByLabelText('Named checks mode'), { target: { value: '' } });
-    expect(screen.getByRole('button', { name: /^Customize launch$/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Launch settings.*3/ })).toBeTruthy();
+
+    pick('On complete', 'Use default');
+    pick('Push', 'Use default');
+    pick('Named checks mode', 'Use default');
+    expect(screen.getByRole('button', { name: /^Launch settings$/ })).toBeTruthy();
   });
 
   it('keeps inherited destructive risks visible while review details stay collapsed', async () => {
     render(<TeamComposer resolveLaunchPreview={async () => resolveAllLaunch({ plan: { push: true, onComplete: 'merge' } })} />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));
-    await waitFor(() => expect(screen.getByLabelText('Effective launch settings').textContent).toContain('Push allowed (plan)'));
-    expect(screen.getByLabelText('Effective launch settings').textContent).toContain('Merge on completion (plan)');
-    expect(screen.getByLabelText('Effective launch settings').textContent).not.toContain('push: true (plan)');
+    await waitFor(() => expect(screen.getByLabelText('Launch policy notices').textContent).toContain('Push allowed (plan)'));
+    expect(screen.getByLabelText('Launch policy notices').textContent).toContain('Merge on completion (plan)');
+    expect(screen.getByLabelText('Launch policy notices').textContent).not.toContain('push: true (plan)');
   });
 
   it('uses real product preview by default and disables launch while pending or failed', async () => {
@@ -250,11 +261,11 @@ describe('TeamComposer Squad target picker', () => {
     render(<TeamComposer />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));
     await waitFor(() => expect(previewJob).toHaveBeenCalled());
-    expect(screen.getByRole('button', { name: 'Review settings' }).getAttribute('aria-expanded')).toBe('false');
+    expect(settingsButton().getAttribute('aria-expanded')).toBe('false');
     expect((screen.getByTestId('team-command-send') as HTMLButtonElement).disabled).toBe(true);
     settle({ ok: false, code: 'INVALID_PLAN', message: 'Plan cannot be parsed' });
     await waitFor(() => expect((screen.getByTestId('team-command-send') as HTMLButtonElement).disabled).toBe(true));
-    openReviewSettings();
+    openSettings();
     await waitFor(() => expect(screen.getByLabelText('Effective launch settings').textContent).toContain('Plan cannot be parsed'));
     expect((screen.getByTestId('team-command-send') as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByLabelText('Effective launch settings').textContent).not.toContain('push: false (default)');
@@ -267,23 +278,23 @@ describe('TeamComposer Squad target picker', () => {
     fireEvent.click(screen.getByTestId('pick-project-p1'));
     await waitFor(() => expect(pending.length).toBeGreaterThan(0));
     const old = pending.at(-1)!;
-    await screen.findByRole('button', { name: 'Worktree: feat/b' });
-    fireEvent.click(screen.getByRole('button', { name: 'Worktree: feat/b' }));
+    await screen.findByRole('button', { name: 'Worktree · feat/b' });
+    fireEvent.click(screen.getByRole('button', { name: 'Worktree · feat/b' }));
     await waitFor(() => expect(pending.length).toBeGreaterThan(1));
-    openReviewSettings();
+    openSettings();
     old({ ok: true, value: { resolvedLaunch: resolveAllLaunch({ plan: { push: true } }), location: { kind: 'project-root', projectId: 'p1' }, path: '/old', branch: 'old' } });
     await Promise.resolve();
     expect(screen.getByLabelText('Effective launch settings').textContent).not.toContain('/old');
     expect((screen.getByTestId('team-command-send') as HTMLButtonElement).disabled).toBe(true);
     pending.at(-1)!({ ok: true, value: { resolvedLaunch: resolveAllLaunch({}), location: { kind: 'worktree', projectId: 'p1', branch: 'feat/b', ownership: 'user' }, path: '/wt/feat/b', branch: 'feat/b' } });
-    await waitFor(() => expect(screen.getByLabelText('Effective launch settings').textContent).toContain('/wt/feat/b (user-owned)'));
+    await waitFor(() => expect(screen.getByLabelText('Effective launch settings').textContent).toContain('/wt/feat/b'));
   });
 
   it('fails closed on missing product preview and rejected transport', async () => {
     previewJob.mockRejectedValue(new Error('preview transport down'));
     render(<TeamComposer />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));
-    openReviewSettings();
+    openSettings();
     await waitFor(() => expect(screen.getByLabelText('Effective launch settings').textContent).toContain('preview transport down'));
     expect((screen.getByTestId('team-command-send') as HTMLButtonElement).disabled).toBe(true);
     expect(startJob).not.toHaveBeenCalled();
@@ -293,22 +304,22 @@ describe('TeamComposer Squad target picker', () => {
     const resolveLaunchPreview = vi.fn(async () => resolveAllLaunch({ plan: { push: true, checks: ['unit'] } }));
     render(<TeamComposer resolveLaunchPreview={resolveLaunchPreview} />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));
-    openCustomizeLaunch();
+    openSettings();
     await waitFor(() => expect(resolveLaunchPreview).toHaveBeenCalledWith(expect.objectContaining({ teamId: 't1', projectId: 'p1', goal: 'do the thing', sourceCapabilityIds: [] })));
-    fireEvent.change(screen.getByLabelText('Push'), { target: { value: 'false' } });
+    pick('Push', 'Do not push');
     await waitFor(() => expect(resolveLaunchPreview).toHaveBeenLastCalledWith(expect.objectContaining({ push: false })));
   });
 
   it('returns policy controls to inheritance and refuses blank named checks', async () => {
     render(<TeamComposer />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));
-    openCustomizeLaunch();
-    fireEvent.change(screen.getByLabelText('Push'), { target: { value: 'true' } });
-    fireEvent.change(screen.getByLabelText('Push'), { target: { value: '' } });
-    fireEvent.change(screen.getByLabelText('Named checks mode'), { target: { value: 'named' } });
+    openSettings();
+    pick('Push', 'Allow push');
+    pick('Push', 'Use default');
+    pick('Named checks mode', 'Named checks');
     expect((screen.getByTestId('team-command-send') as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText('Named checks mode'), { target: { value: '' } });
-    openReviewSettings();
+    pick('Named checks mode', 'Use default');
+    openSettings();
     await waitFor(() => expect(reviewedSettings().textContent).toContain('Blocked (Default)'));
     const payload = await launchAndGetPayload();
     expect(payload).not.toHaveProperty('push');
@@ -318,8 +329,8 @@ describe('TeamComposer Squad target picker', () => {
   it('forwards explicit no-checks policy', async () => {
     render(<TeamComposer />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));
-    openCustomizeLaunch();
-    fireEvent.change(screen.getByLabelText('Named checks mode'), { target: { value: 'none' } });
+    openSettings();
+    pick('Named checks mode', 'No checks');
 
     const payload = await launchAndGetPayload();
     expect(payload).toHaveProperty('checks', []);
@@ -327,7 +338,7 @@ describe('TeamComposer Squad target picker', () => {
 
   it('keeps bound reviewed project and target when project-change callback is invoked', async () => {
     render(<TeamComposer prefill={{ proposalId: 'proposal', projectId: 'p1', teamId: 't1', coordinationMode: 'freeform', goal: 'ship', sources: [], launchOptions: { target: { kind: 'worktree', branch: 'feat/a' }, push: false } }} />);
-    await screen.findByRole('button', { name: 'Worktree: feat/a' });
+    await screen.findByRole('button', { name: 'Worktree · feat/a' });
     expect(screen.getByLabelText('Squad target').getAttribute('data-value')).toBe('worktree:feat/a');
     fireEvent.click(screen.getByTestId('pick-project-p2'));
     const payload = await launchAndGetPayload();
@@ -338,18 +349,18 @@ describe('TeamComposer Squad target picker', () => {
   it('locks bound reviewed policies and target and labels fixed reviewed values', async () => {
     const options = { target: { kind: 'worktree' as const, branch: 'feat/a' }, push: true, checks: ['unit'], onComplete: 'leave' as const };
     render(<TeamComposer prefill={{ proposalId: 'proposal', projectId: 'p1', teamId: 't1', coordinationMode: 'freeform', goal: 'ship', sources: [], launchOptions: options, launchPreview: { launchOptions: options, resolvedLaunch: resolveAllLaunch({ launch: options }), location: { kind: 'worktree', projectId: 'p1', branch: 'feat/a', ownership: 'user' }, path: '/wt/feat/a', branch: 'feat/a', fingerprint: 'reviewed' } }} />);
-    await screen.findByRole('button', { name: 'Worktree: feat/a' });
+    await screen.findByRole('button', { name: 'Worktree · feat/a' });
     expect(screen.queryByLabelText('Worktree isolation')).toBeNull();
     expect(screen.queryByLabelText('On complete')).toBeNull();
     expect(screen.queryByLabelText('Push')).toBeNull();
     expect(screen.queryByLabelText('Named checks mode')).toBeNull();
     expect(screen.queryByLabelText('Failure policy')).toBeNull();
-    expect(screen.getByText('Reviewed launch policies and target are fixed. Prepare a new proposal to change them.')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Review settings' }).getAttribute('aria-expanded')).toBe('false');
+    expect(settingsButton().getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByLabelText('Reviewed launch settings')).toBeNull();
-    openReviewSettings();
+    openSettings();
+    expect(screen.getByText('Reviewed launch policies and target are fixed. Prepare a new proposal to change them.')).toBeTruthy();
     await waitFor(() => expect(reviewedSettings().textContent).toContain('Allowed (This launch)'));
-    openCustomizeLaunch();
+    openSettings();
     expect(screen.getByLabelText('Title Optional')).toBeTruthy();
     expect(screen.getByLabelText('Summary Optional')).toBeTruthy();
     expect(screen.queryByLabelText('Push')).toBeNull();
@@ -362,7 +373,7 @@ describe('TeamComposer Squad target picker', () => {
     previewJob.mockResolvedValue({ ok: true, value: { launchOptions: {}, resolvedLaunch: resolveAllLaunch({}), location: { kind: 'project-root', projectId: 'p1' }, path: '/repos/one', branch: 'main', fingerprint: 'not-authorization', previewToken: 'opaque-main-token' } });
     render(<TeamComposer />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));
-    openReviewSettings();
+    openSettings();
     const payload = await launchAndGetPayload();
     expect(payload).toHaveProperty('previewToken', 'opaque-main-token');
     expect(payload).not.toHaveProperty('fingerprint');
@@ -410,7 +421,7 @@ describe('TeamComposer Squad target picker', () => {
     await waitFor(() => expect(previewJob).toHaveBeenCalledTimes(3));
     expect((screen.getByTestId('team-command-send') as HTMLButtonElement).disabled).toBe(true);
     if (code === 'CAPABILITY_AVAILABILITY_UNKNOWN') expect((screen.getByRole('button', { name: 'Retry' }) as HTMLButtonElement).disabled).toBe(true);
-    openReviewSettings();
+    openSettings();
     expect(reviewedSettings().textContent).toContain('Blocked (Default)');
     await act(async () => { finish(makePreview()); });
     await waitFor(() => expect((screen.getByTestId('team-command-send') as HTMLButtonElement).disabled).toBe(false));
@@ -426,7 +437,7 @@ describe('TeamComposer Squad target picker', () => {
     previewJob.mockImplementation(async () => ({ ok: true, value: { resolvedLaunch: resolveAllLaunch({ plan: { push: ++sequence > 1 } }), location: { kind: 'project-root', projectId: 'p1' }, path: '/repos/one', branch: 'main', previewToken: `proof-${sequence}` } }));
     render(<TeamComposer />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));
-    openReviewSettings();
+    openSettings();
     await waitFor(() => expect((screen.getByTestId('team-command-send') as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByTestId('team-command-send'));
     await waitFor(() => expect(screen.getByTestId('team-command-error').textContent).toContain('Launch preview changed'));
@@ -443,10 +454,10 @@ describe('TeamComposer Squad target picker', () => {
     startJob.mockResolvedValueOnce({ ok: false, code: 'TEMPORARY', message: 'consumed' });
     render(<TeamComposer />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));
-    openReviewSettings();
+    openSettings();
     await launchAndGetPayload();
     await waitFor(() => expect(screen.getByTestId('team-command-error').textContent).toContain('Launch preview changed'));
-    expect(screen.getByLabelText('Effective launch settings').textContent).toContain('changed — /repos/one');
+    expect(screen.getByLabelText('Effective launch settings').textContent).toContain('changed · /repos/one');
     expect(startJob).toHaveBeenCalledOnce();
     expect(previewJob).toHaveBeenCalledTimes(3);
   });
@@ -458,8 +469,8 @@ describe('TeamComposer Squad target picker', () => {
     startJob.mockResolvedValue({ ok: false, code: 'TEMPORARY', message: 'consumed' });
     render(<TeamComposer />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));
-    openCustomizeLaunch();
-    openReviewSettings();
+    openSettings();
+    openSettings();
     await waitFor(() => expect((screen.getByTestId('team-command-send') as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByTestId('team-command-send'));
     fireEvent.click(screen.getByTestId('team-command-send'));
@@ -476,7 +487,7 @@ describe('TeamComposer Squad target picker', () => {
     previewJob.mockResolvedValue({ ok: true, value: { launchOptions: {}, resolvedLaunch: resolveAllLaunch({ plan: { push: true } }), location: { kind: 'project-root', projectId: 'p1' }, path: '/repos/one', branch: 'main', fingerprint: 'reviewed' } });
     render(<TeamComposer prefill={{ proposalId: 'proposal', projectId: 'p1', teamId: 't1', coordinationMode: 'freeform', goal: 'ship', sources: [], launchPreview: { launchOptions: {}, resolvedLaunch: resolveAllLaunch({ plan: { push: true } }), location: { kind: 'project-root', projectId: 'p1' }, path: '/repos/one', branch: 'main', fingerprint: 'reviewed' } }} />);
     expect(screen.queryByLabelText('Push')).toBeNull();
-    openReviewSettings();
+    openSettings();
     await waitFor(() => expect(reviewedSettings().textContent).toContain('Allowed (Plan)'));
     const payload = await launchAndGetPayload();
     expect(payload).toHaveProperty('proposalId', 'proposal');
@@ -491,8 +502,8 @@ describe('TeamComposer Squad target picker', () => {
     fireEvent.click(screen.getByTestId('pick-project-p1'));
     await waitFor(() => expect((screen.getByTestId('team-command-send') as HTMLButtonElement).disabled).toBe(false));
     previewJob.mockImplementationOnce(() => new Promise((resolve) => { refresh = resolve; }));
-    openCustomizeLaunch();
-    fireEvent.change(screen.getByLabelText('Push'), { target: { value: 'true' } });
+    openSettings();
+    pick('Push', 'Allow push');
     expect((screen.getByTestId('team-command-send') as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByLabelText('Effective launch settings').textContent).not.toContain('push: false (default)');
     await waitFor(() => expect(refresh).toBeTypeOf('function'));
@@ -506,16 +517,16 @@ describe('TeamComposer Squad target picker', () => {
     render(<TeamComposer />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));
     await screen.findByLabelText('Squad target');
-    fireEvent.click(screen.getByRole('button', { name: 'Worktree: feat/b' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Worktree · feat/b' }));
     expect(await launchAndGetPayload()).toMatchObject({ target: { kind: 'worktree', branch: 'feat/b' } });
   });
 
-  it('sends no target for Default', async () => {
+  it('sends no target when defaults are selected', async () => {
     render(<TeamComposer />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));
     await screen.findByLabelText('Squad target');
-    fireEvent.click(screen.getByRole('button', { name: 'Project root' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Default' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Project (checkout|· main)$/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Use defaults' }));
     const payload = await launchAndGetPayload();
     expect(payload).not.toHaveProperty('target');
   });
@@ -527,14 +538,14 @@ describe('TeamComposer Squad target picker', () => {
     render(<TeamComposer />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));
     await screen.findByLabelText('Squad target');
-    fireEvent.click(screen.getByRole('button', { name: 'Worktree: feat/a' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Worktree · feat/a' }));
     expect(screen.getByLabelText('Squad target').getAttribute('data-value')).toBe('worktree:feat/a');
 
     fireEvent.click(screen.getByTestId('pick-project-p2'));
     await waitFor(() => expect(listWorktrees).toHaveBeenCalledWith('/repos/two'));
-    await screen.findByRole('button', { name: 'Worktree: other' });
+    await screen.findByRole('button', { name: 'Worktree · other' });
     expect(screen.getByLabelText('Squad target').getAttribute('data-value')).toBe('');
-    expect(screen.queryByRole('button', { name: 'Worktree: feat/a' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Worktree · feat/a' })).toBeNull();
     expect(await launchAndGetPayload()).not.toHaveProperty('target');
   });
 

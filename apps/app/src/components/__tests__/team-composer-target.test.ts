@@ -6,7 +6,7 @@ const wt = (over: Partial<Worktree>): Worktree => ({ path: '/p', head: 'abc', br
 
 describe('squadTargetOptions', () => {
   it('offers default and project root with no worktrees', () => {
-    expect(squadTargetOptions([]).map((o) => o.value)).toEqual([NO_TARGET, 'project-root']);
+    expect(squadTargetOptions([]).map((o) => o.value)).toEqual([NO_TARGET, 'project-root', 'new-worktree']);
   });
   it('lists linked worktrees by branch, skipping main, detached, bare, unsafe, and duplicates', () => {
     const values = squadTargetOptions([
@@ -18,7 +18,7 @@ describe('squadTargetOptions', () => {
       wt({ bare: true, branch: 'bare' }),
       wt({ branch: '--evil' })
     ]).map((o) => o.value);
-    expect(values).toEqual([NO_TARGET, 'project-root', 'worktree:feat/a']);
+    expect(values).toEqual([NO_TARGET, 'project-root', 'new-worktree', 'worktree:feat/a']);
   });
 });
 

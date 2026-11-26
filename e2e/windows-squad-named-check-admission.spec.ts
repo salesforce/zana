@@ -71,8 +71,9 @@ test('Windows rejects named checks in the visible Squad preview and direct launc
     await modal.getByLabel('Squad', { exact: true }).click();
     await window.getByRole('listbox', { name: 'Squad' }).getByRole('option', { name: 'Windows Check Squad' }).click();
     await modal.getByTestId('team-command-input').fill(PLAN);
-    await modal.getByRole('button', { name: 'Customize launch' }).click();
-    await modal.getByLabel('Named checks mode').selectOption('named');
+    await modal.getByRole('button', { name: 'Launch settings' }).click();
+    await modal.getByRole('button', { name: 'Named checks mode' }).click();
+    await window.getByRole('listbox', { name: 'Named checks mode' }).getByRole('option', { name: 'Named checks', exact: true }).click();
     await modal.getByLabel('Named checks input').fill('verify');
 
     // Preview IPC intentionally gives the renderer no internal admission detail, but must fail closed.

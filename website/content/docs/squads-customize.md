@@ -218,8 +218,7 @@ the same Project.
 
 ### Launch settings
 
-Use structured **Customize launch** controls for launch overrides.
-Goal and schedule forms offer:
+In Goal and schedule forms, **Customize launch** offers launch overrides:
 
 - **Checkout**: **Inherit checkout**, **Generated new worktree**, **Project
   checkout**, **Selected checkout**, or one existing worktree from the selected
@@ -233,15 +232,17 @@ Goal and schedule forms offer:
   then inherits from the plan, then the Squad, then the default. For the default
   rung for worktree isolation, a Project setting takes precedence over its global setting.
 
-Goal and schedule forms show **Launch preview** automatically. It lists execution
-location plus every effective value and its source. Preview is advisory; each
-run revalidates its plan, Squad, and checkout. In the new Squad composer,
-**Customize launch** and **Review settings** are separate, mutually exclusive
-disclosures below the composer buttons. **Review settings** shows effective
-values and sources; **Customize launch** contains **Worktree isolation**, **On
-complete**, **Push**, and **Named checks** overrides plus title and summary.
-The composer chooses its checkout separately. **Use default** removes an explicit
-override so the plan, Squad, and defaults decide its effective value.
+Goal and schedule forms show **Launch preview** automatically. It lists the run
+location and each effective setting with its source. Each run revalidates its
+plan, Squad, and checkout.
+
+In the Squad composer, choose the Project and checkout on the row below the
+goal. **Use defaults** inherits the checkout from the plan, Squad, or Project
+settings. You can also select the Project checkout, a new worktree, or an
+existing worktree. Open **Launch settings** on the same row to see the full
+location and effective settings. The panel also lets you set **On complete**,
+**Push**, and **Named checks**, or add a title and summary. **Use default** on
+a policy clears that launch override.
 
 ### Worktree isolation
 
