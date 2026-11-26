@@ -99,7 +99,13 @@ vi.mock('electron', () => {
           return win;
         },
         setTitleBarOverlay: (options: unknown) => { h.overlays.push(options); },
-        webContents: new Proxy({ id, isDestroyed: () => h.contentsDestroyed(), send: (...a: unknown[]) => { h.sent.push(a); } }, fallback)
+        setBackgroundColor: vi.fn(),
+        setVibrancy: vi.fn(),
+        webContents: new Proxy(Object.assign(new h.EventEmitter(), {
+          id,
+          isDestroyed: () => h.contentsDestroyed(),
+          send: (...a: unknown[]) => { h.sent.push(a); }
+        }), fallback)
       }, fallback);
       h.lastWin = win;
       h.windowHandlers.set(win, handlers);
@@ -1833,6 +1839,45 @@ describe('host bootstrap wiring', () => {
       expect(await ctx().leaveProjectWindow(primary, 'projects')).toBe(false);
     } finally {
       primarySend.mockRestore(); secondarySend.mockRestore(); h.contentsDestroyed = alive;
+    }
+  });
+
+  it('applies the Glass Mode preference to all loaded macOS workspace windows', () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    const previousWindow = h.lastWin;
+    const config = { ...store.getConfig(), theme: 'light' as const, glassModeEnabled: true };
+    const settings = vi.spyOn(store, 'getConfig').mockReturnValue(config);
+    const workspaceWindows = [];
+    try {
+      Object.defineProperty(process, 'platform', { ...platform, value: 'darwin' });
+      expect(ctx().openNewWindow()).toBe(true);
+      workspaceWindows.push(h.lastWin);
+      expect(ctx().openNewWindow(project.id)).toBe(true);
+      workspaceWindows.push(h.lastWin);
+      expect(workspaceWindows[0]).not.toBe(workspaceWindows[1]);
+
+      ctx().refreshWorkspaceVibrancy();
+      for (const win of workspaceWindows) {
+        expect(win.setVibrancy).not.toHaveBeenCalled();
+        win.webContents.emit('did-finish-load');
+        expect(win.setVibrancy).toHaveBeenCalledWith('sidebar');
+        expect(win.setBackgroundColor).toHaveBeenCalledWith('#00000000');
+      }
+
+      settings.mockReturnValue({ ...config, glassModeEnabled: false });
+      ctx().refreshWorkspaceVibrancy();
+      for (const win of workspaceWindows) {
+        expect(win.setVibrancy.mock.calls).toEqual([['sidebar'], [null]]);
+        expect(win.setBackgroundColor.mock.calls).toEqual([['#00000000'], ['#f6f8fa']]);
+      }
+    } finally {
+      for (const win of workspaceWindows) {
+        for (const close of h.windowHandlers.get(win)?.get('closed') ?? []) close();
+        h.windowHandlers.delete(win);
+      }
+      h.lastWin = previousWindow;
+      Object.defineProperty(process, 'platform', platform);
+      settings.mockRestore();
     }
   });
 
