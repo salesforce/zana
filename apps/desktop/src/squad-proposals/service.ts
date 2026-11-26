@@ -36,6 +36,7 @@ import {
   type SquadAttachmentMapping,
   type SquadProposalInput,
   type SquadProposalRecord,
+  type SquadProposalTransportPin,
   type SquadProposalResult,
   type SquadProposalSource,
   type SquadProposer
@@ -165,6 +166,8 @@ export interface SquadProposalServiceDeps {
   teams: { get(id: string): Team | undefined };
   personas: { get(id: string): Persona | undefined };
   teamHostProblem(project: ProjectRef): string | undefined;
+  /** Effective transport for a Squad (resolver chain); the proposer, when known, is the caller. Absent: the Squad's own value. */
+  resolveTransport?(team: Team, project: ProjectRef, callerTransport?: 'CLI' | 'MODERN'): SquadProposalTransportPin | { refusal: string };
   expandTeamSlots(team: Team): readonly unknown[];
   resolveSquadPlan(
     planSource: 'provided',
@@ -268,6 +271,7 @@ function validateInput(input: SquadProposalInput): string | undefined {
 interface PreparedAttachment { name: string; text: string; bytes: number }
 
 interface Prepared {
+  resolvedTransport?: SquadProposalTransportPin;
   launchPreview?: SquadLaunchPreview;
   project: ProjectRef;
   /** Undefined only when the project folder is unavailable and nothing needed it. */
@@ -389,7 +393,7 @@ async function checkProvidedPlan(
 /** Checks 4-10 of §5, shared by propose and review (which re-runs them on current files). */
 async function prepare(
   deps: SquadProposalServiceDeps, projectId: string, teamId: string, goal: string, planningInput: SquadPlanning | undefined, rawSources: string[],
-  rawAttachments: readonly SquadAttachmentInput[] = [], launchOptions?: LaunchOptions
+  rawAttachments: readonly SquadAttachmentInput[] = [], launchOptions?: LaunchOptions, proposerKind?: string
 ): Promise<SquadProposalOutcome<Prepared>> {
   const squad = resolveSquad(deps, projectId, teamId);
   if (!squad.ok) return squad;
@@ -422,7 +426,12 @@ async function prepare(
   if (refusedGoalPath) {
     return fail('SOURCE_NOT_ALLOWED', `The goal names ${refusedGoalPath.path}, which can't be attached. ${sourcePolicyText(scope?.policy)} Remove the path from the goal, or name a file that can be.`);
   }
-  const transport = planAuthoringTransportOf(team.transport);
+  const callerTransport = proposerKind === 'pty' ? 'CLI' : proposerKind ? 'MODERN' : undefined;
+  const resolution = deps.resolveTransport?.(team, project, callerTransport);
+  // An explicit Modern pin that cannot run here is refused, never quietly pinned as CLI.
+  if (resolution && 'refusal' in resolution) return fail('TRANSPORT_UNAVAILABLE', resolution.refusal);
+  const resolvedTransport = resolution;
+  const transport = planAuthoringTransportOf(resolvedTransport ? resolvedTransport.transport : team.transport);
   const canInfer = canAuthorAndRegisterPlan(orchestrator, { transport });
   const planning: SquadPlanning = planningInput ?? team.defaultPlanning ?? (canInfer ? 'infer' : 'provided');
   if (planning === 'infer' && !canInfer) {
@@ -464,6 +473,7 @@ async function prepare(
   if (launchPreview && launchPreview.location.projectId !== projectId) return fail('INVALID', 'Launch preview belongs to another project.');
   return ok({
     ...(launchPreview ? { launchPreview } : {}),
+    ...(resolvedTransport ? { resolvedTransport } : {}),
     project, ...(scope ? { scope } : {}), team, orchestrator, workers: Math.max(0, slots - 1), planning,
     sources: sources.value.map((s) => s.source), ...(planSteps ? { planSteps } : {}),
     ...(planFindings ? { planFindings } : {}), ...(planBindings ? { planBindings } : {}),
@@ -485,6 +495,7 @@ function newRecord(
     goal: input.goal,
     planning: prepared.planning,
     ...(input.launchOptions ? { launchOptions: input.launchOptions } : {}),
+    ...(prepared.resolvedTransport ? { resolvedTransport: prepared.resolvedTransport } : {}),
     ...(prepared.launchPreview ? { launchPreview: prepared.launchPreview, location: prepared.launchPreview.location } : {}),
     sources: staged ? [...prepared.sources, ...staged.sources] : prepared.sources,
     title: input.title?.trim() || firstLine(input.goal, TITLE_FALLBACK_CHARS),
@@ -885,7 +896,7 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         await sweepExpired();
         // Cheap pre-check before reading up to 16 MiB of sources; re-checked when creating.
         if (await pendingCapReached(route.projectId)) return tooManyProposals();
-        const prepared = await prepare(deps, route.projectId, input.teamId, input.goal, input.planning, input.sources ?? [], input.attachments ?? [], input.launchOptions);
+        const prepared = await prepare(deps, route.projectId, input.teamId, input.goal, input.planning, input.sources ?? [], input.attachments ?? [], input.launchOptions, proposer.kind);
         if (!prepared.ok) return prepared;
         // A plan with a Must fix is put to the user first; they can still choose to review it as it is.
         const decision = input.acceptFindings ? undefined : buildSquadPlanDecision(prepared.value.planFindings ?? []);
@@ -929,7 +940,7 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
         if (proposer.squadMember) return fail('PROPOSER_IN_SQUAD', 'Members of a running Squad cannot launch a Squad.');
         const invalid = validateInput(input);
         if (invalid) return fail('INVALID', invalid);
-        const prepared = await prepare(deps, route.projectId, input.teamId, input.goal, input.planning, input.sources ?? [], input.attachments ?? [], input.launchOptions);
+        const prepared = await prepare(deps, route.projectId, input.teamId, input.goal, input.planning, input.sources ?? [], input.attachments ?? [], input.launchOptions, proposer.kind);
         if (!prepared.ok) return prepared;
         // A Must fix cannot run unattended. Refuse before launching so no "needs correction" card reaches the Inbox;
         // the agent asks the user, and "as it is" goes through review mode where the Must fix stays visible.
@@ -1151,6 +1162,7 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
       sourcePaths: string[];
       launchOptions?: LaunchOptions;
       launchPreview?: SquadLaunchPreview;
+      resolvedTransport?: SquadProposalTransportPin;
     }>> {
       // Take the hold before any await, so two Launch presses (or two windows) can't both pass.
       if (leases.active(proposalId)) return fail('NOT_PENDING', 'This Squad launch is already starting.');
@@ -1187,6 +1199,7 @@ export function createSquadProposalService(deps: SquadProposalServiceDeps) {
           proposal: { id: proposalId, proposerKind: proposer.kind, proposerId: proposer.id, ...(proposer.title ? { proposerTitle: proposer.title } : {}) },
           sourcePaths: pending.value.sources.map((source) => source.path),
           ...(record.launchOptions ? { launchOptions: record.launchOptions } : {}),
+          ...(record.resolvedTransport ? { resolvedTransport: record.resolvedTransport } : {}),
           ...(record.launchPreview ? { launchPreview: record.launchPreview } : {})
         });
       } catch (error) {

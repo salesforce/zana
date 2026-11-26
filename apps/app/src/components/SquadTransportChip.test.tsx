@@ -4,7 +4,8 @@ import { SquadTransportChip, squadPicklistOption } from './SquadTransportChip.js
 
 describe('SquadTransportChip', () => {
   it('reuses the fleet kind pill: CLI Agent for CLI or legacy squads, Thread for Modern', () => {
-    const legacy = renderToStaticMarkup(<SquadTransportChip team={{}} />);
+    // An absent transport is Use default, which resolves from the global default, not always CLI Agent.
+    const legacy = renderToStaticMarkup(<SquadTransportChip team={{ transport: 'CLI' }} />);
     const cli = renderToStaticMarkup(<SquadTransportChip team={{ transport: 'CLI' }} />);
     const modern = renderToStaticMarkup(<SquadTransportChip team={{ transport: 'MODERN' }} />);
     for (const html of [legacy, cli]) {
@@ -14,6 +15,15 @@ describe('SquadTransportChip', () => {
     expect(modern).toContain('class="fleet-kind-chip fleet-kind-thread"');
     expect(modern).toContain('Modern');
     expect(modern).not.toContain('CLI Agent');
+  });
+
+  it('tags a mode the Squad does not pin, never one it does', () => {
+    expect(renderToStaticMarkup(<SquadTransportChip team={{ transport: 'CLI' }} />)).not.toContain('squad-transport-hint');
+    expect(renderToStaticMarkup(<SquadTransportChip team={{ transport: 'MODERN' }} />)).not.toContain('squad-transport-hint');
+    const inherited = renderToStaticMarkup(<SquadTransportChip team={{}} />);
+    expect(inherited).toContain('squad-transport-hint');
+    expect(inherited).toMatch(/>(default|follows caller|fallback)</);
+    expect(renderToStaticMarkup(<SquadTransportChip team={{ transport: 'CALLER' }} />)).toContain('>follows caller<');
   });
 });
 
@@ -33,7 +43,7 @@ describe('squadPicklistOption', () => {
   it('adds the description line only when requested and present', () => {
     expect(squadPicklistOption(team, { withDescription: true }).description).toBe('Ships things');
     expect(squadPicklistOption({ ...team, description: undefined }, { withDescription: true }).description).toBeUndefined();
-    const cli = renderToStaticMarkup(<>{squadPicklistOption({ id: 'c', name: 'Legacy' }).content}</>);
+    const cli = renderToStaticMarkup(<>{squadPicklistOption({ id: 'c', name: 'Legacy', transport: 'CLI' }).content}</>);
     expect(cli).toContain('data-squad-transport="CLI"');
     expect(cli).toContain('CLI Agent');
   });

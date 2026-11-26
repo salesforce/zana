@@ -259,6 +259,21 @@ describe('launchSquad', () => {
     expect(start.mock.calls[0]![2]).toMatchObject({ completionInboxNotice: true });
   });
 
+  it('seeds the proposal\'s transport pin under the minted launch id before starting', async () => {
+    const pinLaunchTransport = vi.fn();
+    const { deps, start } = makeDeps({ pinLaunchTransport });
+    await launchSquad(deps, makeInput({ transportPin: { transport: 'MODERN', source: 'caller' } }), { sources: { kind: 'session', sessionId: 'a' }, owner: { principalId: 'a' } });
+    expect(pinLaunchTransport).toHaveBeenCalledWith('ui:launch-1', { transport: 'MODERN', source: 'caller' });
+    expect(pinLaunchTransport.mock.invocationCallOrder[0]).toBeLessThan(start.mock.invocationCallOrder[0]!);
+  });
+
+  it('does not pin when the launch carries no proposal pin', async () => {
+    const pinLaunchTransport = vi.fn();
+    const { deps } = makeDeps({ pinLaunchTransport });
+    await launchSquad(deps, makeInput(), { sources: { kind: 'session', sessionId: 'a' }, owner: { principalId: 'a' } });
+    expect(pinLaunchTransport).not.toHaveBeenCalled();
+  });
+
   it('gives a session launch its confined source paths and starts it unattended', async () => {
     const { deps, start } = makeDeps();
     const session = { kind: 'session' as const, sessionId: 'agent-session' };

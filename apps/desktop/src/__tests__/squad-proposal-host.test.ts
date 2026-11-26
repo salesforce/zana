@@ -139,7 +139,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   h.remoteLocalIo = [];
-  h.config = {};
+  h.config = { squadDefaultTransport: 'CLI' };
   h.sessions.clear();
   h.projects = [];
   h.replies = [];

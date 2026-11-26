@@ -43525,6 +43525,9 @@ body.resizing-col .thread-secondary-resizer:active::after {
 .agents-squad-owner { font-size: 11px; color: var(--text-muted); padding: 0 8px 2px; }
 
 /* Settings > Squads: squad-wide run settings under the list, same Advanced treatment as the squad editor. */
+.squads-defaults { margin-top: 14px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
+.squads-defaults-title { margin: 0 0 4px; font-size: 13px; font-weight: 600; }
+.squads-defaults-title small { margin-left: 8px; font-weight: 400; color: var(--text-muted); }
 .squads-advanced { margin-top: 14px; border: 1px solid var(--border); border-radius: 8px; }
 .squads-advanced > summary { padding: 8px 12px; cursor: pointer; font-weight: 600; }
 .squads-advanced > summary small { margin-left: 8px; font-weight: 400; color: var(--text-muted); }

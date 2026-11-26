@@ -1891,6 +1891,12 @@ export const PROJECT_EXPANDED_CAP = 200;
 
 export interface AppConfig {
   version: 1;
+  /** All Squads launch mode. Missing reads as `caller`. See `resolveSquadTransport`. */
+  squadDefaultTransport?: 'follow' | 'caller' | SquadTransport;
+  /** Mirror of the Composer default launch mode (`agent | thread | team`). */
+  composerDefaultLaunchMode?: 'agent' | 'thread' | 'team';
+  /** Last non-Team Composer mode; Team resolves Squad transport through it. */
+  composerLastTransportMode?: 'agent' | 'thread';
   /**
    * App light/dark mode. 'system' (added WARP-A2) follows the OS
    * `prefers-color-scheme` live; 'dark'/'light' pin it. Stored as this
@@ -5185,6 +5191,15 @@ export interface TeamLaunchAuthorizationResult {
   slots: Array<TeamLaunchTaskSlot & { personaId: string; authorizationId: string }>;
   context?: TeamLaunchAuthorizationContextV1;
   admissionDigest?: string;
+  /** Transport pinned for this run; recovery and resume read the stored copy. */
+  resolvedTransport?: ResolvedSquadTransport;
+}
+
+/** Run-level Squad transport decision. */
+export interface ResolvedSquadTransport {
+  transport: SquadTransport;
+  source: 'squad' | 'launch-picker' | 'caller' | 'global' | 'launch-mode' | 'fallback' | 'fallback-squad-mode';
+  fallbackReason?: string;
 }
 
 /** Main-issued audit snapshot. Historical only; never a reusable launch grant. */
@@ -5350,8 +5365,12 @@ export interface Team {
    * always-allowed skills. Only the boolean `true` is stored; see `effectiveSkills`.
    */
   leanWorkers?: boolean;
-  /** Transport selected for every squad member. Absent persisted teams remain CLI. */
-  transport?: SquadTransport;
+  /**
+   * Transport for every squad member. Absent = "Use default"; `CALLER` follows the
+   * launching session. Resolve with `resolveSquadTransport`; older builds read
+   * any non-MODERN value as CLI.
+   */
+  transport?: SquadTransport | 'CALLER';
   /** Planning mode preselected when this Squad is picked or proposed. Absent ⇒ the built-in default (infer when the orchestrator can plan). */
   defaultPlanning?: SquadPlanning;
   /** Keep the orchestrator session open after successful Squad completion. */
@@ -7055,6 +7074,8 @@ export interface ExecutionBoardProjection {
   jobTitle: string;
   /** Main-owned coordination contract, so Job UI never infers its mode from a title. */
   coordinationMode?: TeamCoordinationMode;
+  /** Launch mode pinned for this run at launch. Display only; absent for runs started before launch modes resolved. */
+  resolvedTransport?: ResolvedSquadTransport;
   /** The PTY or thread conversation this run was started from, when launched from a Squad proposal. */
   startedFrom?: { kind: 'pty' | 'thread'; id: string; title?: string };
   origin?: LaunchOrigin;
@@ -7282,6 +7303,8 @@ export interface TeamJobLaunchInput {
   coordinationMode?: Extract<TeamCoordinationMode, 'structured' | 'freeform'>;
   /** Main-held Squad proposal id. Only valid from a desktop window; main re-authorizes it. */
   proposalId?: string;
+  /** New Agent launch picker choice for this launch only. A hint: main validates it and a pinned Squad ignores it. */
+  launchModePick?: SquadTransport;
   /** Existing user-owned execution target by role/branch. Absent keeps legacy behavior; main resolves and revalidates it. */
   target?: SquadExecutionTargetSelector;
 }

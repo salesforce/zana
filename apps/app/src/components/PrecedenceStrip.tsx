@@ -1,5 +1,5 @@
 import {
-  LAYER_LABELS,
+  precedenceLayerLabel,
   getSettingPrecedence,
   hasOrderStrip,
   precedenceHelp,
@@ -20,7 +20,7 @@ export function PrecedenceStrip({ settingKey }: { settingKey: SettingPrecedenceK
   return (
     <div className="precedence-strip" role="group" aria-label={`${row.label} priority`} data-testid={`precedence-${settingKey}`}>
       <span className="precedence-direction">Checked first →</span>
-      <ol>{row.layers.map((layer) => <li key={layer}>{LAYER_LABELS[layer]}</li>)}</ol>
+      <ol>{row.layers.map((layer) => <li key={layer}>{precedenceLayerLabel(row, layer)}</li>)}</ol>
       <span className="precedence-direction">→ checked last</span>
       <p className="precedence-note">The first layer that sets a value wins.{row.note ? ` ${row.note}` : ''}</p>
     </div>

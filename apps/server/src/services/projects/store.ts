@@ -1,6 +1,7 @@
 import { sanitizeStoredTrustedPreviewFolders } from '../config/trusted-preview-folders.js';
 import { normalizeAgentSoundVolume, normalizeNotificationSoundProvider } from '@zana-ai/zcc-domain/product';
 import { isAgentsViewId, PROJECT_EXPANDED_CAP } from '@zana-ai/zcc-domain/product';
+import { isGlobalSquadTransport, isLaunchMode } from '@zana-ai/zcc-domain/squad-transport';
 import { parseOnboardingProgress } from '@zana-ai/zcc-domain/onboarding';
 import { projectConfigCompatibility } from '@zana-ai/zcc-domain/harness-config-compatibility';
 import { normalizeThreadProviderDefault, threadProviderIdForHarnessFamily } from '@zana-ai/zcc-domain/launch-provider';
@@ -1300,6 +1301,15 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (typeof input.squadUnitCheckpointsEnabled === 'boolean') {
     normalized.squadUnitCheckpointsEnabled = input.squadUnitCheckpointsEnabled;
+  }
+  if (isGlobalSquadTransport(input.squadDefaultTransport)) {
+    normalized.squadDefaultTransport = input.squadDefaultTransport;
+  }
+  if (isLaunchMode(input.composerDefaultLaunchMode)) {
+    normalized.composerDefaultLaunchMode = input.composerDefaultLaunchMode;
+  }
+  if (input.composerLastTransportMode === 'agent' || input.composerLastTransportMode === 'thread') {
+    normalized.composerLastTransportMode = input.composerLastTransportMode;
   }
   if (typeof input.composerShowCliAgent === 'boolean') {
     normalized.composerShowCliAgent = input.composerShowCliAgent;

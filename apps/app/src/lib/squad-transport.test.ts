@@ -63,5 +63,8 @@ describe('squad transport helpers', () => {
     expect(agentSessionTransport({ id: 'pty-2', cohort: cohort('modern') }, teams, true)).toBe('MODERN');
     expect(agentSessionTransport({ id: 'thread-1', cohort: cohort('cli') }, teams, false, true)).toBe('MODERN');
     expect(agentSessionTransport({ id: 'thread-1' }, teams, undefined, true)).toBe('MODERN');
+    // The run's pinned transport wins over the Squad's current setting, but never over a live PTY.
+    expect(agentSessionTransport({ id: 'execution:e1', cohort: cohort('cli') }, teams, true, false, 'MODERN')).toBe('MODERN');
+    expect(agentSessionTransport({ id: 'pty-1', cohort: cohort('cli') }, teams, false, false, 'MODERN')).toBe('CLI');
   });
 });

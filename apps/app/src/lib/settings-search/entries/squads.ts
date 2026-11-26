@@ -1,8 +1,19 @@
 import type { SettingsSearchEntry } from '../types';
+import { squadDefaultTransportLabel } from '@zana-ai/zcc-domain/squad-transport';
 
 // The squad list has no settings rows (squad names and descriptions come from providers/catalogues.ts);
 // the settings on this page are the human-blocker reminder window and unit checkpoints (both under Advanced).
 export const entries: readonly SettingsSearchEntry[] = [
+  {
+    id: 'squads.default-launch-mode',
+    section: 'squads',
+    anchor: 'squad-default-launch-mode',
+    label: 'All Squads launch mode',
+    help: "What a Squad set to Use default runs as. A Squad's own launch mode and the launch picker override this. Squads that already pin CLI Agent or Modern are not affected.",
+    keywords: ['squad', 'launch', 'mode', 'transport', 'cli agent', 'modern', 'caller', 'default', 'follow'],
+    kind: 'setting',
+    value: (s) => squadDefaultTransportLabel(s.config.squadDefaultTransport)
+  },
   {
     id: 'squads.blocker-reminder.minutes',
     section: 'squads',

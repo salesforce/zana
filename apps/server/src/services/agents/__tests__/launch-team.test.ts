@@ -22,6 +22,7 @@ const PROJECT: Project = { id: 'p1', name: 'Proj', path: '/tmp/proj' } as Projec
 mkdirSync(PROJECT.path, { recursive: true });
 
 const CONFIG: AppConfig = {
+  squadDefaultTransport: 'CLI',
   version: 1,
   theme: 'dark',
   shell: '/bin/zsh',

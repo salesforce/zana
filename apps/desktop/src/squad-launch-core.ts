@@ -63,6 +63,8 @@ export interface SquadLaunchDeps {
   realpath(path: string): Promise<string>;
   sourceBases(): { home: string; cloneRoot?: string; dataDirs: string[]; protectedRoots: string[] };
   newLaunchRequestId(): string;
+  /** Seeds the run's transport from a proposal, so launch reuses what the proposal decided. */
+  pinLaunchTransport?(launchRequestId: string, pin: { transport: 'CLI' | 'MODERN'; source: string; fallbackReason?: string }): void;
   inboxStore: ProvidedPlanGateDeps['inboxStore'];
   planCorrectionLaunchBinding: ProvidedPlanGateDeps['planCorrectionLaunchBinding'] & { forgetLaunch(launchRequestId: string): void };
   nameTeamExecution(launchId: string, objective: string, explicitTitle?: string, sourceTexts?: readonly (string | undefined)[]): Promise<string>;
@@ -81,6 +83,7 @@ export interface SquadLaunchDeps {
 
 /** A launch whose team, Project, and slots main has already looked up and authorized. */
 export interface SquadLaunchInput {
+  transportPin?: { transport: 'CLI' | 'MODERN'; source: string; fallbackReason?: string };
   launchOptions?: LaunchOptions;
   launchPreview?: SquadLaunchPreview;
   teamId: string;
@@ -234,6 +237,7 @@ export async function launchSquad(
   // Mint identity before snapshotting: source content lands in a dedicated,
   // immutable content store and execution ledger carries only bounded metadata.
   const launchRequestId = deps.newLaunchRequestId();
+  if (input.transportPin) deps.pinLaunchTransport?.(launchRequestId, input.transportPin);
   const snapshot = await deps.snapshotSources(ctx.sources, {
     projectId: project.id, launchRequestId, sourceCapabilityIds: input.sourceCapabilityIds, sourcePaths, goalSourceDescriptors,
     // Re-checked against the realpath issue() takes, so a symlink swapped in after discovery can't escape.

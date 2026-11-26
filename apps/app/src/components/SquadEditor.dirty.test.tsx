@@ -33,6 +33,7 @@ import { SquadEditor } from './SquadEditor.js';
 
 const team: Team = {
   id: 'user:dirty',
+  transport: 'CLI',
   name: 'Dirty Squad',
   source: 'user',
   orchestratorPersonaId: 'orch',

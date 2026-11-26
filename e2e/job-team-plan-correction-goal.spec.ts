@@ -57,7 +57,7 @@ async function setup(window: Page): Promise<Setup> {
   }));
   await window.evaluate(() => window.cc.teams.save({
     id: 'e2e-job-team', name: 'E2E Job Team', description: 'Plan correction team',
-    slots: [{ personaId: 'e2e-worker', quantity: 2 }], orchestratorPersonaId: 'e2e-orchestrator'
+    slots: [{ personaId: 'e2e-worker', quantity: 2 }], orchestratorPersonaId: 'e2e-orchestrator', transport: 'CLI'
   }));
   const projectId = await window.evaluate(async (path) => {
     const res = await window.cc.projects.add(path);

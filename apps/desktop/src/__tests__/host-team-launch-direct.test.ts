@@ -222,7 +222,7 @@ beforeEach(() => {
   ];
   seq += 1;
   h.projects = [{ id: 'p1', name: 'Proj', path: projectDir }];
-  h.config = { version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null };
+  h.config = { squadDefaultTransport: 'CLI', version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null };
   h.personas = [persona('orch'), persona('w1'), persona('w2')];
   h.teams = [{
     id: 'team1', name: 'Team One', orchestratorPersonaId: 'orch',
@@ -1319,7 +1319,7 @@ describe('launchTeam Modern structured path', () => {
 
   describe('Modern preflight refusals and permission mapping', () => {
     it.each([
-      ['a remote project', () => { h.projects[0].remote = { host: 'ssh-box' }; h.projects[0].hostId = 'other-host'; }, {}, /requires a local project/],
+      ['a remote project', () => { h.projects[0].remote = { host: 'ssh-box' }; h.projects[0].hostId = 'other-host'; }, {}, /local project/i],
       ['a CLI-shaped native-recovery slot', () => {}, { nativeRecovery: true }, /no restorable native session/],
       ['persona tool overrides', () => { h.personas[1] = persona('w1', { allowedTools: ['Bash'] }); }, {}, /tool or sandbox overrides/],
       ['plan-only personas', () => { h.personas[1] = persona('w1', { permissionMode: 'plan' }); }, {}, /plan-only execution/]
@@ -1330,7 +1330,8 @@ describe('launchTeam Modern structured path', () => {
         ? { ...slot, nativeRecovery: { role: 'worker', slotId: slot.slotId, personaId: 'w1', profileId: 'claude', nativeConversationId: 'native-1' } }
         : slot);
       const result = await launchTeam('team1', 'p1', { ...req, slots } as never);
-      expect(result).toMatchObject({ ok: false, code: 'UNSUPPORTED', message: expect.stringMatching(message) });
+      // A pinned Modern Squad on a remote Project is refused by the transport resolver before preflight.
+      expect(result).toMatchObject({ ok: false, code: _label === 'a remote project' ? 'TRANSPORT_UNAVAILABLE' : 'UNSUPPORTED', message: expect.stringMatching(message) });
       // The CLI-shaped recovery fence runs after preflight (it needs the resolved host); nothing is created.
       if (!/no restorable native session/.test(String(message))) expect(h.runtime.preflightSquadRuntime).not.toHaveBeenCalled();
       expect(h.runtime.createSquadMember).not.toHaveBeenCalled();

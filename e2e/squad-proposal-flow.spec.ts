@@ -215,7 +215,7 @@ async function setUpModernProject(window: Page, projectDir: string, agentPath: s
   }));
   await window.evaluate(() => window.cc.teams.save({
     id: 'e2e-job-team', name: 'E2E Job Team', description: 'Modern proposer team',
-    slots: [{ personaId: 'e2e-worker', quantity: 2 }], orchestratorPersonaId: 'e2e-orchestrator', defaultPlanning: 'provided'
+    slots: [{ personaId: 'e2e-worker', quantity: 2 }], orchestratorPersonaId: 'e2e-orchestrator', defaultPlanning: 'provided', transport: 'CLI'
   }));
   return window.evaluate(async (path) => {
     const result = await window.cc.projects.add(path);

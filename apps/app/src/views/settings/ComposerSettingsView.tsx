@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
+import { SQUAD_TRANSPORT_LABELS } from '@zana-ai/zcc-domain/squad-transport';
 import { RefreshCw } from 'lucide-react';
 import { Section, Field, CheckboxField, SettingsActionRow } from '@/components/settings/FormFields';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
@@ -54,6 +55,7 @@ export function ComposerSettingsView({ config, onUpdate }: ComposerTabProps) {
   const surfaces = composerSurfacesFromConfig(config);
   const picklistOptions = launchModePicklistOptions(surfaces);
   const picklistValue = resolveAvailableLaunchMode(launchMode, surfaces);
+  const lastTransportLabel = config.composerLastTransportMode === 'agent' ? SQUAD_TRANSPORT_LABELS.CLI : SQUAD_TRANSPORT_LABELS.MODERN;
 
   const updateSurfaces = (patch: Partial<ComposerSurfaceFlags>) => {
     const next = normalizeComposerSurfaces({ ...surfaces, ...patch });
@@ -80,6 +82,11 @@ export function ComposerSettingsView({ config, onUpdate }: ComposerTabProps) {
             onChange={(value) => setLaunchMode(value as LaunchMode)}
           />
         </Field>
+        {picklistValue === 'team' ? (
+          <p className="settings-hint" data-testid="launch-mode-team-hint">
+            Follow default launch mode ({lastTransportLabel}). A Squad has no launch mode of its own here, so Squads that follow the default use the last CLI Agent or Modern mode you picked.
+          </p>
+        ) : null}
         <DefaultThreadPermissionsField
           value={config.defaultThreadPermissionMode}
           onChange={(defaultThreadPermissionMode) => onUpdate({ defaultThreadPermissionMode })}

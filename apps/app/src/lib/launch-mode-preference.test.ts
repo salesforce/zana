@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  launchModeMirrorPatch,
+  launchModeSeedPatch,
   DEFAULT_LAUNCH_MODE,
   LAUNCH_MODE_PICKLIST_OPTIONS,
   LAUNCH_MODE_PREF_KEY,
@@ -35,7 +37,7 @@ afterEach(() => {
 describe('launch modes', () => {
   it('exposes one Team mode', () => {
     expect([...LAUNCH_MODES]).toEqual(['agent', 'thread', 'team']);
-    expect(LAUNCH_MODE_PICKLIST_OPTIONS.map(({ label }) => label)).toEqual(['CLI Agent', 'Modern', 'Team']);
+    expect(LAUNCH_MODE_PICKLIST_OPTIONS.map(({ label }) => label)).toEqual(['CLI Agent', 'Modern', 'Squad']);
   });
 
   it('migrates stored autonomous and job preferences to Team', () => {
@@ -109,5 +111,18 @@ describe('composer surface flags', () => {
       composerShowAutonomousTeam: false,
       teamJobLaunchEnabled: false
     });
+  });
+});
+
+describe('launch mode mirror', () => {
+  it('moves the last transport only for agent and thread', () => {
+    expect(launchModeMirrorPatch('agent')).toEqual({ composerDefaultLaunchMode: 'agent', composerLastTransportMode: 'agent' });
+    expect(launchModeMirrorPatch('thread')).toEqual({ composerDefaultLaunchMode: 'thread', composerLastTransportMode: 'thread' });
+    expect(launchModeMirrorPatch('team')).toEqual({ composerDefaultLaunchMode: 'team' });
+  });
+
+  it('seeds only when the config was never mirrored', () => {
+    expect(launchModeSeedPatch({}, 'agent')).toEqual(launchModeMirrorPatch('agent'));
+    expect(launchModeSeedPatch({ composerDefaultLaunchMode: 'team' }, 'agent')).toBeNull();
   });
 });
