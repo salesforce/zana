@@ -4,10 +4,13 @@ import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { useHelp } from './components/help/HelpProvider.js';
 import { setBasicUiMode } from './lib/basic-ui.js';
+import type { AppSurface } from './lib/app-surface.js';
+import type { ShellPlatform } from './lib/shellChrome.js';
 
 const fixtures = vi.hoisted(() => ({
   compact: false, unread: 0, drawer: vi.fn(),
   nav: 'home',
+  chrome: { surface: 'desktop' as AppSurface, platform: 'linux' as ShellPlatform },
   pluginChanged: null as null | ((entries: unknown[]) => void),
   navigateFromMain: null as null | ((path: string) => void),
   menuEvent: null as null | ((event: string) => void),
@@ -39,7 +42,7 @@ vi.mock('./store.js', async importOriginal => ({ ...await importOriginal<object>
 }));
 vi.mock('./hooks/useRouteSync.js', () => ({ useRouteSync: () => {} }));
 vi.mock('./hooks/useRouteState.js', () => ({ useRouteState: () => ({ nav: fixtures.nav, focusedProjectId: null }) }));
-vi.mock('./hooks/useShellChromeState.js', () => ({ useShellChromeState: () => ({ platform: 'linux' }) }));
+vi.mock('./hooks/useShellChromeState.js', () => ({ useShellChromeState: () => fixtures.chrome }));
 vi.mock('./hooks/useCompactLayout.js', () => ({ useCompactLayout: () => fixtures.compact }));
 vi.mock('./hooks/useAgentCards.js', () => ({ useFavoriteCount: () => 0 }));
 vi.mock('./lib/product-ws.js', () => ({ waitForProductWsOpen: async () => {}, subscribeProductReconnect: () => () => {} }));
@@ -114,6 +117,29 @@ afterEach(() => {
   setBasicUiMode('advanced'); sessionStorage.clear();
   fixtures.pluginChanged = null;
   fixtures.recoverCatalogs.mockClear(); fixtures.recoverStale.mockClear(); fixtures.recoverAfterWake.mockClear(); fixtures.offWake.mockClear(); fixtures.reconcilePlugins.mockClear(); fixtures.unsubscribePlugins.mockClear();
+});
+
+it.each([
+  ['desktop', 'macos', true],
+  ['desktop', 'windows', false],
+  ['web', 'macos', false],
+  ['mobile', 'macos', false]
+] as const)('renders the Glass Mode preference on %s/%s only when supported', (surface, platform, supported) => {
+  const chrome = fixtures.chrome;
+  const { glassModeEnabled } = store.useData.getState();
+  fixtures.chrome = { surface, platform };
+  store.useData.setState({ glassModeEnabled: false });
+  try {
+    const { container } = render(<MemoryRouter><App /></MemoryRouter>);
+    const shell = container.querySelector('.app-shell')!;
+    expect(shell.getAttribute('data-glass-mode')).toBe('false');
+    act(() => store.useData.setState({ glassModeEnabled: true }));
+    expect(shell.getAttribute('data-glass-mode')).toBe(String(supported));
+  } finally {
+    cleanup();
+    fixtures.chrome = chrome;
+    store.useData.setState({ glassModeEnabled });
+  }
 });
 
 it('switches to Basic and collapses its sidebar without changing the Advanced rail', () => {
