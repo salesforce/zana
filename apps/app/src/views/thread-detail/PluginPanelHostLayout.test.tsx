@@ -60,7 +60,7 @@ vi.mock('../../components/thread/secondary-panel/PanelAgentTab.js', () => ({
   </>)
 }));
 vi.mock('../../components/thread/secondary-panel/ThreadPluginTab.js', () => ({
-  ThreadPluginTab: ({ moduleId, actionId, params, layout, surface, projectId, tabId, page }: {
+  ThreadPluginTab: ({ moduleId, actionId, params, layout, surface, projectId, tabId, page, active, tabState, onTabStateChange }: {
     moduleId: string;
     actionId?: string;
     params?: unknown;
@@ -69,9 +69,15 @@ vi.mock('../../components/thread/secondary-panel/ThreadPluginTab.js', () => ({
     projectId: string | null;
     tabId?: string;
     page?: { pluginId: string; page: string };
+    active?: boolean;
+    tabState?: unknown;
+    onTabStateChange?: (state: unknown) => void;
   }) => (
     <div
       data-testid="plugin-tool"
+      data-active={String(active)}
+      data-state={JSON.stringify(tabState ?? null)}
+      onClick={() => onTabStateChange?.({ saved: tabId })}
       data-tool={`${moduleId}/${actionId}`}
       data-params={JSON.stringify(params ?? null)}
       data-layout={layout ?? ''}
@@ -91,6 +97,7 @@ import { pluginPanelOwnerId, PluginPanelHostLayout } from './PluginPanelHostLayo
 import { parsePanelAgentTarget, requestPluginPanelAgent } from '../../plugins/plugin-panel-agent.js';
 import { requestPluginPageContext, requestPluginPanelScope, requestPluginPanelTool, usePluginPagePanel, usePluginPagePanelOpen, usePluginPagePublicationScope } from '../../plugins/plugin-page-panel.js';
 import { addClosableTab, loadSecondaryPanelState, persistSecondaryPanelState } from '../../components/thread/secondary-panel/threadSecondaryPanelState.js';
+import { setBasicUiMode } from '../../lib/basic-ui.js';
 
 beforeEach(() => {
   class ResizeObserverStub {
@@ -103,6 +110,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  setBasicUiMode('advanced');
   desktop.compact = false;
   vi.unstubAllGlobals();
   localStorage.clear();
@@ -132,6 +140,29 @@ describe('pluginPanelOwnerId', () => {
 const tabLabels = () => screen.getAllByRole('button', { name: /^Close / }).map((row) => row.getAttribute('aria-label'));
 
 describe('PluginPanelHostLayout', () => {
+  it('hides the native browser in Basic without replacing its host or saved tab', () => {
+    const api = desktopApi();
+    desktop.api = api;
+    const ownerId = pluginPanelOwnerId('docs', 'panel');
+    persistSecondaryPanelState(ownerId, {
+      version: 1, isOpen: true, isMaximized: false, widthPx: 352, activeId: 'preview',
+      tabs: [{ id: 'preview', kind: 'browser', title: 'Preview', url: 'https://example.com' }]
+    });
+    render(<PluginPanelHostLayout pluginId="docs" panelPath="panel"><div>editor</div></PluginPanelHostLayout>);
+    const host = screen.getByTestId('thread-browser-tab');
+    const saved = loadSecondaryPanelState(ownerId);
+    expect(api.setVisible).toHaveBeenLastCalledWith({ tabId: 'preview', visible: true });
+    expect(api.attach).toHaveBeenCalledOnce();
+    act(() => setBasicUiMode('basic'));
+    expect(api.setVisible).toHaveBeenLastCalledWith({ tabId: 'preview', visible: false });
+    expect(screen.getByTestId('thread-browser-tab')).toBe(host);
+    expect(loadSecondaryPanelState(ownerId)).toEqual(saved);
+    act(() => setBasicUiMode('advanced'));
+    expect(api.setVisible).toHaveBeenLastCalledWith({ tabId: 'preview', visible: true });
+    expect(api.attach).toHaveBeenCalledOnce();
+    expect(api.detach).not.toHaveBeenCalled();
+  });
+
   it('keeps the shared panel available without the native browser', () => {
     desktop.api = null;
     const view = render(
@@ -391,7 +422,8 @@ describe('PluginPanelHostLayout', () => {
       shown = requestPluginPanelTool('salesforce', { actionId: 'studio-graph', params: { node: 'n1' } });
     });
     expect(shown).toBe(true);
-    const tool = () => screen.getByTestId('plugin-tool');
+    // Opened tabs stay mounted while hidden; the shown tool is the one in the visible slot.
+    const tool = () => screen.getAllByTestId('plugin-tool').find((el) => !el.closest('[hidden]'))!;
     expect(tool().dataset).toMatchObject({ tool: 'salesforce/studio-graph', params: '{"node":"n1"}', layout: 'flush', surface: 'plugin-page', project: 'p1' });
     // Asking again focuses the same tab with the new params.
     act(() => {
@@ -399,6 +431,11 @@ describe('PluginPanelHostLayout', () => {
     });
     expect(tabLabels()).toEqual(['Close Graph view']);
     expect(tool().dataset.params).toBe('{"node":"n2"}');
+    // The plugin saves its place; it comes back through the same tab and the hidden tab learns it is inactive.
+    expect(tool().dataset.active).toBe('true');
+    expect(tool().dataset.state).toBe('null');
+    fireEvent.click(tool());
+    expect(tool().dataset.state).toBe(JSON.stringify({ saved: tool().dataset.tab }));
 
     // The New Tab page lists only this page's tools.
     fireEvent.click(screen.getByTestId('thread-secondary-new-tab'));
@@ -414,6 +451,8 @@ describe('PluginPanelHostLayout', () => {
     expect(tabLabels()).toEqual(['Close Graph view']);
     expect(tool().dataset.tool).toBe('salesforce/studio-graph');
     expect(tool().dataset.tab).toMatch(/\S/);
+    // The closed tab is unmounted, not just hidden.
+    expect(screen.getAllByTestId('plugin-tool')).toHaveLength(1);
 
     view.unmount();
     expect(requestPluginPanelTool('salesforce', { actionId: 'studio-graph' })).toBe(false);

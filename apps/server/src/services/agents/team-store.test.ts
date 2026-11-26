@@ -21,6 +21,14 @@ import { PersonaTeamRegistry } from '../../../../desktop/src/extensions/persona-
 import type { Project } from '@zana-ai/zcc-domain/product';
 
 describe('sanitizeTeam', () => {
+  it('stores bounded run limits, drops invalid ones and omits the key when none survive', () => {
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], limits: { maxConcurrent: 99, claimStallMs: 120_000, claimWallClockMs: 'bad' } })?.limits)
+      .toEqual({ maxConcurrent: 32, claimStallMs: 120_000 });
+    for (const limits of [undefined, {}, { maxConcurrent: -1 }, 'x']) {
+      expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], limits })).not.toHaveProperty('limits');
+    }
+  });
+
   it('preserves boolean retention and drops omitted or invalid values', () => {
     for (const retainOrchestrator of [true, false]) {
       expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], retainOrchestrator })?.retainOrchestrator).toBe(retainOrchestrator);
@@ -58,8 +66,11 @@ describe('sanitizeTeam', () => {
       .toMatchObject({ routingEnforced: undefined });
   });
 
-  it('defaults legacy teams to CLI and preserves the whole-squad Modern transport', () => {
-    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [] })?.transport).toBe('CLI');
+  it('keeps absent transport absent and preserves CLI, Modern and Follow caller', () => {
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [] })).not.toHaveProperty('transport');
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], transport: null })).not.toHaveProperty('transport');
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], transport: 'CALLER' })?.transport).toBe('CALLER');
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], transport: 'CLI' })?.transport).toBe('CLI');
     expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], transport: 'MODERN' })?.transport).toBe('MODERN');
     expect(sanitizeTeam({ id: 'x', name: 'X', slots: [], transport: 'mixed' })?.transport).toBe('CLI');
   });
@@ -106,6 +117,18 @@ describe('sanitizeTeam', () => {
       ]
     });
     expect(t?.slots.map((s) => s.quantity)).toEqual([16, 1, 1, 3]);
+  });
+
+  it('normalizes slot roles and preserves legacy slots without roles', () => {
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [{ personaId: 'p', roles: [' Engineer ', 'engineer', 'Reviewer'] }] })?.slots)
+      .toEqual([{ personaId: 'p', quantity: 1, roles: ['engineer', 'reviewer'] }]);
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [{ personaId: 'p' }] })?.slots)
+      .toEqual([{ personaId: 'p', quantity: 1 }]);
+    expect(sanitizeTeam({ id: 'x', name: 'X', slots: [{ personaId: 'p', roles: 'engineer' }] })?.slots).toEqual([{ personaId: 'p', quantity: 1 }]);
+    const many = Array.from({ length: 40 }, (_, i) => `r${i}`);
+    const bounded = sanitizeTeam({ id: 'x', name: 'X', slots: [{ personaId: 'p', roles: [...many, 'a'.repeat(200)] }] })?.slots[0]?.roles;
+    expect(bounded).toHaveLength(16);
+    expect(Math.max(...bounded!.map((r) => r.length))).toBeLessThanOrEqual(64);
   });
 
   it('drops slots whose personaId is not a non-empty string', () => {
@@ -197,6 +220,13 @@ describe('TeamStore', () => {
     if (existsSync(testHome)) rmSync(testHome, { recursive: true, force: true });
   });
 
+  it('rejects a save where one persona id collides with another slot role', () => {
+    expect(() => store.saveUser({ name: 'Collision', slots: [
+      { personaId: 'reviewer' },
+      { personaId: 'worker', roles: ['Reviewer'] }
+    ] })).toThrow('persona id collides with another slot role: reviewer');
+  });
+
   it('lists the built-in team on boot', () => {
     const t = store.list().find((x) => x.id === 'builtin:review-squad');
     expect(t).toBeDefined();
@@ -230,6 +260,39 @@ describe('TeamStore', () => {
       expect.objectContaining({ personaId: 'builtin:squad-worker-medium', quantity: 2, label: 'Engineer' }),
       expect.objectContaining({ personaId: 'builtin:squad-worker-high', label: 'Reviewer' })
     ]);
+  });
+
+  it('seeds built-in tags without overriding a persisted shadow', () => {
+    expect(store.list().find((team) => team.id === 'builtin:delivery-squad')?.slots[0]?.roles).toEqual(['engineer']);
+    store.saveUser({ id: 'builtin:delivery-squad', name: 'Delivery override', slots: [{ personaId: 'custom', roles: ['custom-role'] }] });
+    expect(store.list().find((team) => team.id === 'builtin:delivery-squad')?.slots[0]?.roles).toEqual(['custom-role']);
+  });
+
+  it('rejects a save colliding with a persona-level default role', () => {
+    store.setPersonaRoleLookup((id) => (id === 'p-tagged' ? ['reviewer'] : undefined));
+    expect(() => store.saveUser({ name: 'C2', slots: [{ personaId: 'reviewer' }, { personaId: 'p-tagged' }] }))
+      .toThrow('persona id collides with another slot role: reviewer');
+  });
+
+  it('guards built-in tags against persona-id collisions', () => {
+    for (const team of store.list().filter((t) => t.source === 'builtin')) {
+      const ids = new Set(team.slots.map((slot) => slot.personaId.toLowerCase()));
+      for (const slot of team.slots) for (const role of slot.roles ?? []) expect(ids.has(role)).toBe(false);
+    }
+  });
+
+  it('loads a pre-existing colliding Squad with a warning instead of rejecting it', () => {
+    mkdirSync(userDir, { recursive: true });
+    writeFileSync(join(userDir, 'legacy.json'), JSON.stringify({ id: 'legacy', name: 'Legacy', slots: [
+      { personaId: 'reviewer' }, { personaId: 'worker', roles: ['Reviewer'] }
+    ] }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const reloaded = new TeamStore(() => []);
+    reloaded.start();
+    try {
+      expect(reloaded.list().find((t) => t.id === 'legacy')?.slots).toHaveLength(2);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('collisions: reviewer'));
+    } finally { reloaded.stop(); warn.mockRestore(); }
   });
 
   it('every built-in team slot + orchestrator resolves to a built-in persona', () => {

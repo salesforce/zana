@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { act,cleanup,fireEvent,render,screen,waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach,describe,expect,it,vi } from 'vitest';
-const h=vi.hoisted(() => ({event:(_:any) => {},updated:(_:any) => {},reconnect:() => {},off:vi.fn(),get:vi.fn(),timeline:vi.fn(),upsert:vi.fn(),status:vi.fn(),pullRequest:vi.fn(),panelOpen:false}));
+const h=vi.hoisted(() => ({event:(_:any) => {},updated:(_:any) => {},reconnect:() => {},off:vi.fn(),get:vi.fn(),timeline:vi.fn(),upsert:vi.fn(),status:vi.fn(),pullRequest:vi.fn(),openPluginPanel:vi.fn(),panelOpen:false}));
 vi.mock('../../hooks/useHosts.js', () => ({ useHosts: () => [] }));
 vi.mock('../../lib/product-client.js',() => ({product:{environments:{status:h.status,pullRequest:h.pullRequest},threads:{get:h.get,timeline:h.timeline,onEvent:(fn:any) => {h.event=fn;return h.off;},onUpdated:(fn:any) => {h.updated=fn;return h.off;}}}}));
 vi.mock('../../lib/product-ws.js',() => ({subscribeProductReconnect:(fn:any) => {h.reconnect=fn;return h.off;}}));
@@ -25,11 +25,16 @@ vi.mock('../../components/thread/ThreadTimeline.js',() => ({ThreadTimeline:({row
 vi.mock('../../components/thread/ThreadWorkspaceBanner.js',() => ({ThreadWorkspaceBanner:() => null}));
 vi.mock('../../components/thread/ThreadDetailOverflow.js',() => ({ThreadDetailOverflow:() => null}));
 vi.mock('../../components/thread/ThreadDetailSearch.js',() => ({ThreadDetailSearch:() => null}));
-vi.mock('../../components/thread/timeline/ThreadBanners.js',() => ({ThreadDetailHeading:({title,metadata}:any) => <><h1>{title}</h1>{metadata}</>,ThreadDetailActions:({children}:any) => children,ThreadPromptModeCard:() => null,ThreadStatusBadge:() => null,ThreadTodoCard:() => null}));
+vi.mock('../../components/thread/timeline/ThreadBanners.js',() => ({ThreadDetailHeading:({title,titleContent,metadata}:any) => <><h1>{titleContent ?? title}</h1>{metadata}</>,ThreadDetailActions:({children}:any) => children,ThreadPromptModeCard:() => null,ThreadStatusBadge:() => null,ThreadTodoCard:() => null}));
 vi.mock('../../components/thread/timeline/ComposerStackCards.js',() => ({BackgroundCommandsCard:() => null,ModelFallbackCard:() => null,PromptContextBanner:({branchName}:any) => <div data-testid="composer-branch">{branchName}</div>,QueuedMessagesCard:() => null}));
 vi.mock('../../components/thread/timeline/PeerMessageReviews.js', () => ({ PeerMessageReviews: () => null }));
 vi.mock('../../components/thread/pending-interactions/ChildThreadPendingBanners.js',() => ({ChildThreadPendingBanners:() => null}));
-vi.mock('../../plugins/PluginThreadHeaderActions.js',() => ({PluginThreadHeaderActions:() => null}));
+vi.mock('../../plugins/plugin-thread-panel.js', () => ({ openPluginThreadPanel: h.openPluginPanel }));
+vi.mock('../../plugins/PluginThreadHeaderActions.js', () => ({
+  PluginThreadHeaderActions: () => null,
+  PluginOwnedThreadTitle: ({ title, owner, onOpen }: { title: string; owner: string; onOpen(id: string, action: string): void }) =>
+    <button onClick={() => onOpen(owner, 'profile')}>{title}</button>
+}));
 vi.mock('../../plugins/thread-panel-owner.js',() => ({ThreadPanelOwnerProvider:({children}:any) => children}));
 import { ThreadDetail } from './ThreadDetailView.js';
 afterEach(() => {cleanup();vi.useRealTimers();vi.clearAllMocks();h.panelOpen=false;});
@@ -253,4 +258,25 @@ it('leaves the roster alone when the detail record has no id', async () => {
   render(<MemoryRouter><ThreadDetail threadId="a" embedded/></MemoryRouter>);
   await screen.findByText('Loading');
   expect(h.upsert).not.toHaveBeenCalled();
+});
+
+
+it.each([true, false])('opens the owning plugin profile from the thread title (embedded panel available=%s)', async showSecondaryPanel => {
+  function CurrentRoute() {
+    return <output data-testid="route">{useLocation().pathname}</output>;
+  }
+  const thread = { id: 'a', title: 'Helper', originPluginId: 'notes', projectId: 'project', status: 'idle' };
+  h.get.mockResolvedValue({ thread });
+  h.timeline.mockResolvedValue(historyPage([]));
+  render(<MemoryRouter initialEntries={['/start']}><ThreadDetail threadId="a" embedded showSecondaryPanel={showSecondaryPanel}/><CurrentRoute/></MemoryRouter>);
+  const title = await screen.findByRole('button', { name: 'Helper' });
+  expect(h.upsert).toHaveBeenCalledWith(expect.objectContaining({ id: 'a', originPluginId: 'notes' }));
+  act(() => h.reconnect());
+  await waitFor(() => expect(h.get).toHaveBeenCalledTimes(2));
+  h.openPluginPanel.mockReturnValueOnce(false).mockReturnValueOnce(true);
+  fireEvent.click(title);
+  expect(screen.getByTestId('route').textContent).toBe('/start');
+  fireEvent.click(title);
+  expect(h.openPluginPanel).toHaveBeenCalledWith({ threadId: 'a', pluginId: 'notes', actionId: 'profile' });
+  expect(screen.getByTestId('route').textContent).toBe(showSecondaryPanel ? '/start' : '/threads/a');
 });

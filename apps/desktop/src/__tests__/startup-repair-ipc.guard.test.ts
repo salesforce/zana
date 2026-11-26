@@ -12,10 +12,10 @@ describe('startup repair IPC', () => {
   });
 
   it('opens a repair-only window without reading persisted window bounds', () => {
-    // A repair-only window counts as scoped, and scoped windows skip the main window's saved geometry.
-    expect(source).toContain('const scoped = !!projectId || repairOnly || !!threadView;');
-    expect(source).toContain('const saved = scoped ? undefined : config.windowBounds;');
-    expect(source).toContain('scoped ? undefined : config.windowMaximized');
+    // Only the primary, healthy shell uses persisted geometry.
+    expect(source).toContain('const useMainBounds = !secondary && !repairOnly;');
+    expect(source).toContain('const saved = useMainBounds ? config.windowBounds : undefined;');
+    expect(source).toContain('useMainBounds ? config.windowMaximized : undefined');
     expect(source).toContain('createWindow(undefined, true)');
     expect(source).toContain("createWindow(undefined, startupState.mode === 'repair-required')");
   });

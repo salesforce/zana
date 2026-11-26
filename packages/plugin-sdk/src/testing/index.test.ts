@@ -2,6 +2,21 @@ import { describe, expect, it, vi } from 'vitest';
 import { createFakePluginHost, PluginContextStaleError } from './index.js';
 
 describe('createFakePluginHost', () => {
+  it('stubs thread interaction list/resolve and revokes them on dispose', async () => {
+    const { zcc, harness } = createFakePluginHost({ pluginId: 'relay' });
+    expect(await zcc.sdk.threads.interactions.list({ threadId: 't1' })).toEqual([]);
+    const args = { threadId: 't1', interactionId: 'i1', resolution: { decision: 'deny' as const },
+      actor: { kind: 'plugin-relayed-human' as const, pluginId: 'relay', externalUser: 'tenant/user' } };
+    await expect(zcc.sdk.threads.interactions.resolve(args)).rejects.toThrow('not stubbed');
+    harness.sdk.stub('threads.interactions.list', () => [{ id: 'i1', status: 'pending' }]);
+    harness.sdk.stub('threads.interactions.resolve', input => ({ id: 'i1', status: 'resolved', resolution: (input as typeof args).resolution }));
+    expect(await zcc.sdk.threads.interactions.list({ threadId: 't1' })).toEqual([{ id: 'i1', status: 'pending' }]);
+    expect(await zcc.sdk.threads.interactions.resolve(args)).toEqual({ id: 'i1', status: 'resolved', resolution: args.resolution });
+    expect(harness.sdk.callsTo('threads.interactions.resolve')).toEqual([[args], [args]]);
+    await harness.dispose();
+    await expect(zcc.sdk.threads.interactions.list({ threadId: 't1' })).rejects.toThrow('stale');
+    await expect(zcc.sdk.threads.interactions.resolve(args)).rejects.toThrow('stale');
+  });
   it('records a single connection provider and revokes it on disposal', async () => {
     const { zcc, harness } = createFakePluginHost();
     const provider = { owns: () => true, prepare: async () => ({ status: 'ready' as const }) };

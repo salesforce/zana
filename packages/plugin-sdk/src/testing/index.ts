@@ -182,6 +182,7 @@ export interface FakePluginHostOptions {
     types?: readonly string[];
     order?: 'asc' | 'desc';
   }) => Promise<import('../server.js').PluginSdkThreadEventRow[]>;
+  postThreadMessage?: (args: { threadId: string; text: string }) => Promise<void>;
   sendThread?: (args: import('../server.js').PluginSdkThreadSendArgs) => Promise<{ id: string }>;
   stopThread?: (args: { threadId: string }) => Promise<{ ok: true }>;
   threadOutput?: (args: { threadId: string }) => Promise<import('../server.js').PluginSdkThreadOutput>;
@@ -338,6 +339,7 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
     disposeHooks.push(hook);
   });
 
+  const deviceKey = crypto.getRandomValues(new Uint8Array(32));
   const api: ZccPluginApi = {
     sshConnections: { register(provider) {
       assertLive();
@@ -370,6 +372,7 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
       }
     },
     storage: {
+      async deviceKey() { assertLive(); return deviceKey.slice(); },
       kv: {
         async get<T>(key: string) {
           return kv.get(key) as T | undefined;
@@ -584,6 +587,17 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
         }
       },
       threads: {
+        interactions: {
+          async list(args) {
+            assertLive();
+            return invokeSdk('threads.interactions.list', () => [], args) as ReturnType<ZccPluginApi['sdk']['threads']['interactions']['list']>;
+          },
+          async resolve(args) {
+            assertLive();
+            return invokeSdk('threads.interactions.resolve', undefined, args) as ReturnType<ZccPluginApi['sdk']['threads']['interactions']['resolve']>;
+          }
+        },
+        messageSources: true,
         async search(args) {
           return invokeSdk('threads.search', undefined, args) as ReturnType<ZccPluginApi['sdk']['threads']['search']>;
         },
@@ -607,6 +621,10 @@ export function createFakePluginHost(options?: FakePluginHostOptions): FakePlugi
             }
             return options.listThreadEvents(args);
           }
+        },
+        async postMessage(args) {
+          if (!options?.postThreadMessage) throw new Error('Thread message posting is unavailable');
+          await options.postThreadMessage(args);
         },
         async send(args) {
           if (!options?.sendThread) {

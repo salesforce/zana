@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   handlers: new Map<string, (win: unknown, ...args: unknown[]) => Promise<any>>(),
   windows: new Map<number, { projectId?: string }>(),
-  review: vi.fn()
+  review: vi.fn(),
+  recheck: vi.fn(),
+  messageProposer: vi.fn()
 }));
 
 vi.mock('electron', () => ({ dialog: {} }));
@@ -14,7 +16,11 @@ vi.mock('../ctx.js', () => ({
     safeHandle: () => {},
     safeHandleFromWindow: (channel: string, handler: (win: unknown, ...args: unknown[]) => Promise<any>) => { h.handlers.set(channel, handler); },
     get windows() { return h.windows; },
-    squadProposals: { review: (...args: unknown[]) => h.review(...args) }
+    squadProposals: {
+      review: (...args: unknown[]) => h.review(...args),
+      recheck: (...args: unknown[]) => h.recheck(...args),
+      messageProposer: (...args: unknown[]) => h.messageProposer(...args)
+    }
   }
 }));
 
@@ -54,5 +60,31 @@ describe('teams:reviewProposal', () => {
     // An unscoped window may review any project.
     await run({ id: 8 }, 'p1');
     expect((h.review.mock.calls[1]![2] as (projectId: string) => boolean)('proj-b')).toBe(true);
+  });
+});
+
+describe.each([['recheckProposalPlan', 'recheck'], ['messageProposer', 'messageProposer']] as const)('teams:%s', (channelKey, method) => {
+  const call = (win: { id: number }, id: unknown) => h.handlers.get(IPC.teams[channelKey])!(win, id);
+  beforeEach(() => {
+    h.handlers.clear();
+    h.windows.clear();
+    h[method].mockReset();
+    registerExecutionBoardIpc();
+  });
+
+  it('rejects a bad id without calling the service', async () => {
+    expect(await call({ id: 1 }, 5)).toMatchObject({ ok: false, code: 'INVALID' });
+    expect(await call({ id: 1 }, '')).toMatchObject({ ok: false, code: 'INVALID' });
+    expect(h[method]).not.toHaveBeenCalled();
+  });
+
+  it('passes only the id and a scope callback, and returns the result', async () => {
+    h[method].mockResolvedValue({ ok: true, value: {} });
+    h.windows.set(7, { projectId: 'proj-a' });
+    expect(await call({ id: 7 }, 'p1')).toEqual({ ok: true, value: {} });
+    expect(h[method]).toHaveBeenCalledWith('p1', expect.any(Function));
+    const allow = h[method].mock.calls[0]![1] as (projectId: string) => boolean;
+    expect(allow('proj-a')).toBe(true);
+    expect(allow('proj-b')).toBe(false);
   });
 });

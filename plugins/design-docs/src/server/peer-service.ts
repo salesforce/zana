@@ -14,6 +14,8 @@ import type { DocActor, PeerConflictChoices, PeerResolutionChoice } from '../sha
 
 type ReceiverFence = Pick<PluginPeerRequest, 'signal' | 'scope' | 'grantEpoch' | 'commitSync'>;
 
+const CHUNKS_PER_HEARTBEAT_YIELD = 16;
+
 /** Platform authenticates pair/capability; DD verifies store, roster and payload. */
 export class DesignDocPeerService {
   private running: Promise<SyncSummary> | null = null;
@@ -171,6 +173,7 @@ export class DesignDocPeerService {
           await this.completeManualAck(peers, body, member.machineId);
           this.requireCurrentHandshake(body, member.machineId);
           await peers.call(member.machineId, 'manual-deliver', body, options);
+          await this.yieldToHeartbeat();
         }
         if (unanswered) awaiting++;
       } catch (error) { awaiting++; this.sync.noteManualAnswer(member.replicaId, 'error'); this.warnOnce(`manual sync with ${member.machineId} awaiting`, error); }
@@ -205,9 +208,13 @@ export class DesignDocPeerService {
         if (reply?.accepted === true && reply.manualId === consent.manualId) {
           await this.completeManualAck(peers, body, member.machineId);
         }
+        await this.yieldToHeartbeat();
       } catch (error) { this.warnOnce(`manual consent retry for ${member.machineId} deferred`, error); /* Durable consent stays waiting for authorized reconnect. */ }
     }
-    for (const intent of this.sync.readyIntents(local.repoId)) {
+    const intents = this.sync.readyIntents(local.repoId);
+    for (const [intentIndex, intent] of intents.entries()) {
+      // Local peers can answer through the bridge without returning to the worker event loop. Split backlog work into turns.
+      if (intentIndex > 0) await this.yieldToHeartbeat();
       if (this.abort.signal.aborted || this.sync.isRetiringReplica(local.repoId, local.replicaId)) break;
       attempted++;
       try {
@@ -236,6 +243,7 @@ export class DesignDocPeerService {
             for (const page of this.sync.outgoingAncestry(intent, transfer)) {
               this.requireCurrentHandshake(page, member.machineId);
               await peers.call(member.machineId, 'ancestry', page, options);
+              await this.yieldToHeartbeat();
             }
             this.requireCurrentHandshake(transfer, member.machineId);
             const staged = await peers.call(member.machineId, 'transfer', transfer, options) as { stage?: unknown } | null;
@@ -246,7 +254,10 @@ export class DesignDocPeerService {
               this.requireCurrentHandshake(transfer, member.machineId);
               const missing = validateMissing(await peers.call(member.machineId, 'missing', query, options), transfer);
               if (!missing.chunks.length) break;
-              for (const chunk of missing.chunks) await peers.call(member.machineId, 'chunk', this.sync.outgoingChunk(transfer, chunk.blobHash, chunk.index), options);
+              for (const [chunkIndex, chunk] of missing.chunks.entries()) {
+                await peers.call(member.machineId, 'chunk', this.sync.outgoingChunk(transfer, chunk.blobHash, chunk.index), options);
+                if ((chunkIndex + 1) % CHUNKS_PER_HEARTBEAT_YIELD === 0) await this.yieldToHeartbeat();
+              }
               if (window === maximumWindows - 1) throw new PeerProtocolError('limit', 'missing chunk windows did not converge');
             }
             this.requireCurrentHandshake(transfer, member.machineId);
@@ -298,6 +309,10 @@ export class DesignDocPeerService {
   private logDeferred(intent: FrozenSyncIntent, reason: string, attempts: number): void {
     const peer = this.sync.members(intent.repoId).find((member) => member.replicaId === intent.memberReplicaId)?.machineId ?? 'unknown';
     console.debug(`[design-docs] delivery deferred doc=${intent.docId} peer=${peer} direction=out reason=${deliveryReasonCode(reason)} attempts=${attempts}`);
+  }
+
+  private async yieldToHeartbeat(): Promise<void> {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
 
   /**

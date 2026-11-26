@@ -7,6 +7,7 @@ import {
   type ServerResponse
 } from 'node:http';
 import { Transform } from 'node:stream';
+import { urlToHttpOptions } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createMobilePushRelay } from './push.js';
 import { digest, MobileDeviceStore } from './device-store.js';
@@ -96,6 +97,25 @@ export function isMobileProxyPath(path: string): boolean {
   if (pathname.startsWith('/_'))
     return pathname === '/_zcc/bootstrap' || pathname === '/_zcc/health';
   return true;
+}
+
+/**
+ * Path and query to forward to the fixed upstream, or null when the target is
+ * not a plain origin-form path. A pathname that still starts with `//` after
+ * dot-segment normalization (e.g. `/.//host/x`) would be read as a host when
+ * resolved against a base URL, so it is refused rather than forwarded.
+ */
+export function upstreamPathFor(raw: string | undefined): string | null {
+  const value = raw ?? '/';
+  if (!/^\/(?![/\\])/.test(value)) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(value, 'http://upstream.invalid');
+  } catch {
+    return null;
+  }
+  if (parsed.origin !== 'http://upstream.invalid' || parsed.pathname.startsWith('//')) return null;
+  return parsed.pathname + parsed.search;
 }
 
 /** Opt-in, authenticated edge in front of the unchanged loopback product server. */
@@ -241,6 +261,8 @@ export async function startMobileGateway(options: MobileGatewayOptions) {
       const machine = authenticatedMachine(req);
       if ((req.headers[MACHINE_HOST_HEADER] || req.headers[MACHINE_INSTANCE_HEADER]) && !machine) return json(res, 403, { error: 'Invalid machine identity' });
       if (machine ? !isMachinePath(req.method, req.url) : !isMobileProxyPath(req.url ?? '/')) return json(res, 404, { error: 'Not found' });
+      const upstreamPath = upstreamPathFor(req.url);
+      if (!upstreamPath) return json(res, 400, { error: 'Bad request' });
       if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method ?? 'GET'))
         return json(res, 405, { error: 'Method not allowed' });
       if (Number(req.headers['content-length'] ?? 0) > MAX_BODY)
@@ -290,9 +312,17 @@ export async function startMobileGateway(options: MobileGatewayOptions) {
         headers['x-zcc-ui-send-surface'] = 'mobile';
         headers['content-length'] = String(Buffer.byteLength(confirmedSendBody));
       }
+      // Host and port come only from the configured upstream; the caller
+      // contributes the validated path and query and can never pick the host.
       const proxy = httpRequest(
-        new URL(url.pathname + url.search, upstream),
-        { method: req.method, headers, timeout: 120_000 },
+        {
+          // urlToHttpOptions strips the brackets from an IPv6 host such as [::1].
+          ...urlToHttpOptions(upstream),
+          path: upstreamPath,
+          method: req.method,
+          headers,
+          timeout: 120_000
+        },
         (response) => {
           const outgoing = { ...response.headers };
           for (const key of [
@@ -353,11 +383,12 @@ export async function startMobileGateway(options: MobileGatewayOptions) {
   server.on('upgrade', (req, socket, head) => {
     const id = sessionDevice(req);
     const machine = authenticatedMachine(req);
+    const machinePath = machine ? upstreamPathFor(req.url) : null;
     if (
       !requestAllowed(req) ||
       ((req.headers[MACHINE_HOST_HEADER] || req.headers[MACHINE_INSTANCE_HEADER]) && !machine) ||
       !id ||
-      (machine ? !isMachinePath('GET', req.url, true) : !['/ws', '/ws/'].includes(req.url ?? '')) ||
+      (machine ? !isMachinePath('GET', req.url, true) || !machinePath : !['/ws', '/ws/'].includes(req.url ?? '')) ||
       sockets.size >= 40
     ) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
@@ -365,7 +396,7 @@ export async function startMobileGateway(options: MobileGatewayOptions) {
     }
     wss.handleUpgrade(req, socket, head, (client) => {
       sockets.set(client, id);
-      const target = new URL(machine ? req.url! : '/ws', upstream);
+      const target = new URL(machinePath ?? '/ws', upstream);
       target.protocol = 'ws:';
       const remote = new WebSocket(target, {
         ...(machine ? { headers: {

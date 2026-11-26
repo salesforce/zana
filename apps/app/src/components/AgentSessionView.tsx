@@ -4,6 +4,8 @@ import type { AgentState, CliPlanFile, SessionStats, TerminalSession } from '@za
 import { product } from '../lib/product-client.js';
 import { AgentDetailPanel } from './AgentDetailPanel.js';
 import { AgentSessionHeader } from './AgentSessionHeader.js';
+import { MobileMoreMenu } from './MobilePageHeader.js';
+import { useCompactLayout } from '../hooks/useCompactLayout.js';
 import { CliAgentSurface } from './CliAgentSurface.js';
 import { AgentDiffPanel } from './AgentDiffPanel.js';
 import { useSessionStats } from './AgentInsights.js';
@@ -12,6 +14,7 @@ import { ThreadNewTabPage } from './thread/secondary-panel/ThreadNewTabPage.js';
 import { ThreadFilePreviewTab } from './thread/secondary-panel/ThreadFilePreviewTab.js';
 import { BrowserTabDeck } from './thread/secondary-panel/BrowserTabDeck.js';
 import { DockedTerminalTab } from './thread/secondary-panel/DockedTerminalTab.js';
+import { PluginTabDeck } from './thread/secondary-panel/PluginTabDeck.js';
 import { ThreadPluginTab } from './thread/secondary-panel/ThreadPluginTab.js';
 import { ThreadExplorerTab } from './thread/secondary-panel/ThreadExplorerTab.js';
 import { ThreadInboxTab } from './thread/secondary-panel/ThreadInboxTab.js';
@@ -31,6 +34,7 @@ import {
 } from './thread/secondary-panel/threadSecondaryPanelState.js';
 import { getDesktopBrowserApi } from '../lib/desktop-browser.js';
 import { getBrowserUrlHost } from '../lib/browser-url.js';
+import { useBasicUi } from '../lib/basic-ui.js';
 import { useOptionalPaneContext } from '../views/thread-detail/PaneContext.js';
 import { agentSessionPanelOwnerId, ThreadPanelOwnerProvider } from '../plugins/thread-panel-owner.js';
 import { SplitPaneHeaderActions } from '../views/thread-detail/SplitPaneHeaderActions.js';
@@ -184,6 +188,8 @@ function DesktopAgentSessionView({
   modal?: boolean;
   mobileTitleInShell?: boolean;
 }) {
+  const basicUi = useBasicUi();
+  const compact = useCompactLayout();
   const pane = useOptionalPaneContext();
   const viewRef = useRef<HTMLElement>(null);
   const panelOwnerId = agentSessionPanelOwnerId(session.id, modal);
@@ -317,6 +323,7 @@ function DesktopAgentSessionView({
     panelBody = (
       <ThreadFilePreviewTab
         threadId={session.id}
+        previewId={closable.id}
         previewRevision={closable.previewRevision}
         path={closable.path}
         openerKey={closable.openerKey}
@@ -327,19 +334,6 @@ function DesktopAgentSessionView({
     );
   } else if (closable?.kind === 'browser') {
     panelBody = null;
-  } else if (closable?.kind === 'plugin' && closable.moduleId) {
-    panelBody = (
-      <ThreadPluginTab
-        moduleId={closable.moduleId}
-        projectId={projectId}
-        threadId={session.id}
-        actionId={closable.actionId}
-        params={closable.params}
-        layout={closable.layout}
-        surface="agent-session"
-        tabId={closable.id}
-      />
-    );
   } else if (closable?.kind === 'explorer') {
     panelBody = <ThreadExplorerTab projectId={projectId} />;
   } else if (closable?.kind === 'inbox') {
@@ -358,10 +352,13 @@ function DesktopAgentSessionView({
     >
       <div className="thread-detail-split">
       <div className="thread-detail-main agent-session-main">
-        <AgentSessionHeader session={session} state={state} projectName={projectName}
+        <AgentSessionHeader title={session.title}
           useShellTitle={mobileTitleInShell && !modal && pane?.isFocused !== false}>
             <SplitPaneHeaderActions />
-            {!panelOpen ? (
+            {!panelOpen && compact && <MobileMoreMenu title="Agent">
+              <button type="button" onClick={panel.open}><PanelRight size={16} aria-hidden="true" /> Agent tools</button>
+            </MobileMoreMenu>}
+            {!panelOpen && !compact ? (
               <button
                 type="button"
                 className="icon-btn"
@@ -396,10 +393,30 @@ function DesktopAgentSessionView({
           onResize={panel.setWidth}
         >
           {panelBody}
+          <PluginTabDeck
+            tabs={panel.state.tabs}
+            activeId={panel.state.activeId}
+            ownerId={session.id}
+            render={(tab, active) => (
+              <ThreadPluginTab
+                moduleId={tab.moduleId!}
+                projectId={projectId}
+                threadId={session.id}
+                actionId={tab.actionId}
+                params={tab.params}
+                layout={tab.layout}
+                surface="agent-session"
+                tabId={tab.id}
+                active={active}
+                tabState={tab.tabState}
+                onTabStateChange={(next) => panel.setTabState(tab.id, next)}
+              />
+            )}
+          />
           <BrowserTabDeck
             browserTabs={panel.state.tabs.filter((tab) => tab.kind === 'browser')}
             activeBrowserTabId={closable?.kind === 'browser' ? closable.id : null}
-            canShowNativeBrowserView={panelOpen && (modal || pane?.isFocused !== false)}
+            canShowNativeBrowserView={!basicUi && panelOpen && (modal || pane?.isFocused !== false)}
             threadId={session.id}
             onUpdate={({ tabId, url, title }) => {
               const nextTitle = title && title.length > 0 ? title : getBrowserUrlHost(url) || 'Browser';

@@ -38,6 +38,7 @@ import { retainTerminalExpansionIds } from './timeline/timeline-window.js';
 import { THREAD_MESSAGE_SENT_EVENT } from './timeline/thread-optimistic-events.js';
 import { observeStickyUserPrompts } from './timeline/timeline-sticky-user.js';
 import { useThreadSearchHighlights } from './timeline/search-highlight.js';
+import { ConversationWelcome } from '../ConversationWelcome.js';
 import { PaneEmptyState } from '../PaneEmptyState.js';
 
 export interface ThreadTimelineProps {
@@ -67,6 +68,7 @@ export interface ThreadTimelineProps {
   planExecution?: PlanExecutionView | null;
   loadError?: string | null;
   loading?: boolean;
+  archived?: boolean;
   onRetryLoad?: () => void;
   hasOlder?: boolean;
   loadingOlder?: boolean;
@@ -115,6 +117,7 @@ export function ThreadTimeline({
   includePluginMessageActions,
   planExecution,
   loading = false,
+  archived = false,
   loadError = null,
   onRetryLoad,
   hasOlder = false,
@@ -134,6 +137,8 @@ export function ThreadTimeline({
   const viewRows = useMemo(() => buildTimelineViewRows(rows), [rows]);
   const showLoading = loading && viewRows.length === 0 && !loadError;
   const awaitingUser = waitingOnUser || timelineRowsAwaitUser(rows);
+  const showWelcome = viewRows.length === 0 && !loading && !loadError && !archived && !awaitingUser
+    && (status === 'idle' || status === 'pending');
   const expansion = useMemo(
     () => collectTimelineAutoExpansionRowIds({
       rows: viewRows,
@@ -239,6 +244,15 @@ export function ThreadTimeline({
     clearTransientScrollbarScrolling(paneRef.current, scrollbarIdleRef);
   }, []);
 
+  // A timeline that fits (or is already pinned) never scrolls, so opening it
+  // or receiving a reply at the bottom must count as reading it.
+  const latestRowId = viewRows.at(-1)?.id;
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (!pane || !latestRowId || !isNearBottom(pane)) return;
+    onReachedBottom?.();
+  }, [threadId, latestRowId, onReachedBottom]);
+
   const onScroll = useCallback(() => {
     const pane = paneRef.current;
     if (!pane) return;
@@ -278,7 +292,7 @@ export function ThreadTimeline({
   }, []);
 
   return (
-    <div className="thread-detail-timeline-shell">
+    <div className={showWelcome ? 'thread-detail-timeline-shell is-welcoming' : 'thread-detail-timeline-shell'}>
       {threadId && <ThreadAnnotationSelection rootRef={paneRef} threadId={threadId} />}
       <div className="thread-banner-stack">
         <ThreadGoalBanner goal={goal} />
@@ -314,9 +328,7 @@ export function ThreadTimeline({
             testId="thread-loading"
           />
         ) : viewRows.length === 0 ? (
-          loadError ? null : (
-            <PaneEmptyState art="first-turn" title="Waiting for the first turn…" testId="thread-first-turn" />
-          )
+          showWelcome && <ConversationWelcome heading="h2" />
         ) : (
           <TimelineRows
             rows={viewRows}

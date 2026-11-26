@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Kanban, KanbanColumn } from '@zana-ai/zcc-ui/kanban';
 import { Bot, AlertCircle, Zap, Moon, CheckCircle2, HelpCircle, CheckCheck, PauseCircle, Network, Crown, Users, Clock, Calendar, GitBranch, ShieldCheck, ShieldAlert, Boxes, Unplug } from 'lucide-react';
 import type { AgentState, ExecutionBoardProjection, IdleResolution, IdleTriageResult, OverseerActivity, Persona, ScheduledTask, TerminalSession } from '@zana-ai/zcc-domain/product';
 import { scheduleSummary } from '@zana-ai/zcc-domain/schedule-spec';
 import { profileIcon, personaIcon } from '../lib/profileIcon.js';
-import { isRecentlyFinished } from '../lib/sessionBuckets.js';
+import { squadWorkerVisibility, squadWorkerVisibilityText } from '../lib/squad-worker-visibility.js';
+import { isRecentlyFinished, isRetainedWorkerExit } from '../lib/sessionBuckets.js';
 import { sortProjectsForDisplay, usePersonas, useData, useScheduler, useTeams, useUi } from '../store.js';
 import { agentSessionTransport, isModernSquadThread, squadTransportClass, squadTransportKind } from '../lib/squad-transport.js';
 import { useSessionGit } from '../lib/gitInfo.js';
@@ -14,7 +15,7 @@ import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from './threadCa
 import { FavoriteStar } from './FavoriteStar.js';
 import { PromptModal } from './PromptModal.js';
 import { FleetKindChip } from './FleetKindChip.js';
-import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
+import { ThreadIdentityIcon } from './thread/ThreadIdentityIcon.js';
 import { shortRunId } from '../lib/executionIdentity.js';
 import { boardDropAction, boardItemKey, canSwipeClose } from '../lib/agent-board-moves.js';
 import { agentBoardMoves, closeBoardItem, useAgentBoardMoves } from '../stores/agent-board-moves.js';
@@ -388,11 +389,24 @@ export function partitionExecutionMembers(
     // card in the same project as a stand-in; executionHost() falls back to
     // the hardcoded 'Project'/'claude' placeholder only when even that misses.
     const template = items.find((item) => item.projectId === execution.projectId);
-    const host = executionHost(template, execution);
+    // Borrow only the project look from the template. Cloning its session would reuse a live
+    // worker's id and cohort, rendering that worker once per finished run and nesting the
+    // finished run under the live Squad.
+    const host = executionHost(
+      template && { projectId: template.projectId, projectName: template.projectName, projectColor: template.projectColor, liveSubagents: 0 } as AgentCard,
+      execution,
+      true
+    );
     syntheticByExecution.set(execution.executionId, host);
     top.push(host);
   }
   return { top, workersByHost };
+}
+
+/** Card line for a Squad waiting on a human answer, so the wait is visible without opening Squad details. */
+export function blockerWaitText(execution: ExecutionBoardProjection, now: number): string {
+  const since = execution.currentBlocker?.waitingSince;
+  return since === undefined ? 'Needs your answer' : `Needs your answer · waiting ${formatDuration(now - since)}`;
 }
 
 /** A Job needs attention only while its details expose an answer the user can act on. */
@@ -656,6 +670,27 @@ function TunnelChip({ status }: { status?: TerminalSession['remoteTunnel'] }) {
 const MAX_VISIBLE_WORKERS = 5;
 
 /**
+ * Worker slots that failed to spawn. They have no session, so they cannot appear as worker rows;
+ * main projects them (sanitized, capped) and they stay on the Squad card with their reason.
+ */
+function SquadFailedWorkers({ failed, executionId }: { failed: ReadonlyArray<{ slotId: string; reason: string }>; executionId: string }) {
+  const visible = failed.slice(0, MAX_VISIBLE_WORKERS);
+  const hidden = failed.length - visible.length;
+  return (
+    <div className="agent-squad-workers agent-squad-failed-workers" data-testid={`squad-failed-workers-${executionId}`}>
+      {visible.map((slot) => (
+        <div key={slot.slotId} className="agent-squad-worker exited failed" data-testid={`squad-failed-worker-${slot.slotId}`} title={`${slot.slotId}: ${slot.reason}`}>
+          <span className="tab-agent-dot agent-blocked" aria-hidden="true" />
+          <span className="agent-squad-worker-label">{slot.slotId}</span>
+          <span className="agent-squad-worker-dur" data-testid={`squad-failed-worker-reason-${slot.slotId}`}>failed to start: {slot.reason}</span>
+        </div>
+      ))}
+      {hidden > 0 && <span className="agent-squad-worker-more">+{hidden} more failed</span>}
+    </div>
+  );
+}
+
+/**
  * The compact worker rows nested under a squad's orchestrator card (see
  * {@link partitionSquads}). Each row is a status dot + label + duration and is
  * itself clickable (peeks that worker), so the squad collapses to one board
@@ -684,6 +719,9 @@ function SquadWorkers({
   const hidden = workers.length - visible.length;
   return (
     <div className="agent-squad-workers">
+      {execution?.startedFrom?.title?.trim() && (
+        <div className="agent-squad-owner" data-testid="squad-owner">Owner {execution.startedFrom.title.trim()}</div>
+      )}
       {visible.map((w) => {
         const { session: t } = w;
         const exited = t.status === 'exited';
@@ -695,6 +733,8 @@ function SquadWorkers({
           : undefined;
         const activity = assignment ? assignment.title : exited ? 'Exited' : 'Waiting for assignment';
         const dur = formatDuration((exited ? t.finishedAt ?? t.createdAt : now) - t.createdAt);
+        const visibility = exited ? undefined : squadWorkerVisibility(execution, slotId, now);
+        const visibilityText = visibility ? squadWorkerVisibilityText(visibility, now, { includeSquad: false, includeOwner: false }) : '';
         return (
           <button
             key={t.id}
@@ -708,6 +748,15 @@ function SquadWorkers({
             <span className="agent-squad-worker-label">{slotLabel}</span>
             <FleetKindChip kind={w.modernThreadId ? 'thread' : 'agent'} />
             <span className="agent-squad-worker-dur">{exited ? `ran ${dur}` : dur}</span>
+            {visibility && visibilityText && (
+              <span
+                className={`agent-squad-worker-visibility${visibility.stale ? ' is-stale' : ''}`}
+                data-testid="squad-worker-visibility"
+                data-stale={visibility.stale ? 'true' : 'false'}
+              >
+                {visibilityText}
+              </span>
+            )}
           </button>
         );
       })}
@@ -744,6 +793,7 @@ interface AgentBoardLanesProps {
   onInspect: (c: FleetItem) => void;
   /** Show a per-card project chip (the global, cross-project board). */
   showProject?: boolean;
+  mobileSearch?: ReactNode;
   executions?: ExecutionBoardProjection[];
   hasMoreExecutions?: boolean;
   onLoadMoreExecutions?: () => void;
@@ -757,7 +807,7 @@ interface AgentBoardLanesProps {
  * "running for X" timers. Caller computes `cards` behind a memo so a status
  * tick doesn't rebuild the world (render-storm guard).
  */
-export function AgentBoardLanes({ cards, activeId, onInspect, showProject, executions, hasMoreExecutions, onLoadMoreExecutions, onDismissExecution, onCloseLaneAgents }: AgentBoardLanesProps) {
+export function AgentBoardLanes({ cards, activeId, onInspect, showProject, mobileSearch, executions, hasMoreExecutions, onLoadMoreExecutions, onDismissExecution, onCloseLaneAgents }: AgentBoardLanesProps) {
   const compact = useCompactLayout();
   const hosts = useHosts();
   const personas = usePersonas((s) => s.personas);
@@ -767,6 +817,8 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
   // Advisory per CLAUDE.md rule 1 — main owns/normalizes the value.
   const sensitivity = useData((s) => s.idleAttentionSensitivity);
   const includeScheduled = useData((s) => s.includeScheduledAgentsInAgentView);
+  const dismissedWorkerExits = useUi((s) => s.dismissedWorkerExits);
+  const dismissWorkerExit = useUi((s) => s.dismissWorkerExit);
   const projects = useData((s) => s.projects);
   const projectOrder = useMemo(() => sortProjectsForDisplay(projects).map((project) => project.id), [projects]);
   // Schedules, indexed by the session ids they've fired, so a scheduled card
@@ -898,7 +950,8 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
         cards: laneCards.filter(
           (item) =>
             pendingDone[boardItemKey(item)] !== undefined || (item.kind === 'agent' &&
-            (item.card.isSyntheticExecutionHost || isRecentlyFinished(item.card.session, now)))
+            (item.card.isSyntheticExecutionHost || isRecentlyFinished(item.card.session, now)
+              || isRetainedWorkerExit(item.card.session, dismissedWorkerExits)))
         )
       };
     }
@@ -989,7 +1042,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
     const isOrchestrator = cohort?.role === 'orchestrator';
     // A live session is always a CLI agent; a Modern member card is Modern, and
     // a synthetic Job host borrows its squad's transport.
-    const transport = agentSessionTransport(t, teams, Boolean(c.isSyntheticExecutionHost), Boolean(c.modernThreadId));
+    const transport = agentSessionTransport(t, teams, Boolean(c.isSyntheticExecutionHost), Boolean(c.modernThreadId), execution?.resolvedTransport?.transport);
     const teamRunTooltip = execution
       ? [
           `Squad: ${execution.teamName ?? cohort?.teamName ?? 'Squad'}`,
@@ -1070,6 +1123,11 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
             <span className="agent-card-triage-label">{c.triage!.summary || triageBadge.label}</span>
           </span>
         )}
+        {execution && executionNeedsAttention(execution) && (
+          <span className="agent-card-blocker-wait" data-testid="agent-card-blocker-wait">
+            {blockerWaitText(execution, now)}
+          </span>
+        )}
         <span className="agent-card-meta">
           {/* When cards are grouped under a project header (global board), the
               project is already named above — show the harness/runtime subtitle
@@ -1089,6 +1147,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
             </span>
           )}
           {(!showProject || grouped) && !execution && <span className="agent-card-sub">{subtitle}</span>}
+          {compact && laneKey === 'blocked' && <span className="mobile-agent-attention">Needs you</span>}
           {/* Branch of the agent's cwd — surfaced so a glance tells you which
               branch/worktree each agent is on. Local git only (remote omits it),
               and only for a repo cwd; renders nothing otherwise. */}
@@ -1183,11 +1242,29 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
 
     // Lifecycle controls belong in Squad details or the card context menu. The
     // Kanban card is a compact status surface, never a button stack.
-    if (nestedWorkers.length === 0) return cardButton;
+    const failedWorkers = isOrchestrator ? execution?.failedWorkers ?? [] : [];
+    if (nestedWorkers.length === 0 && failedWorkers.length === 0) {
+      if (!isRetainedWorkerExit(t, dismissedWorkerExits)) return cardButton;
+      // A failed Squad worker stays until acknowledged; the dismiss control is a sibling, never nested in the card button.
+      return (
+        <div key={t.id} className="agent-card-retained">
+          {cardButton}
+          <button
+            type="button"
+            className="agent-card-dismiss"
+            title="Dismiss this exited worker"
+            aria-label={`Dismiss exited worker ${t.title}`}
+            onClick={() => dismissWorkerExit(t.id)}
+          >
+            Dismiss
+          </button>
+        </div>
+      );
+    }
     return (
       <div key={t.id} className="agent-squad">
         {cardButton}
-        <SquadWorkers workers={nestedWorkers} now={now} onInspect={(card) => onInspect(agentFleetItem(card))} onContextMenu={(e, card) => {
+        {nestedWorkers.length > 0 && <SquadWorkers workers={nestedWorkers} now={now} onInspect={(card) => onInspect(agentFleetItem(card))} onContextMenu={(e, card) => {
           setLaneMenu(null);
           if (card.modernThread) {
             setMenu(null);
@@ -1198,7 +1275,8 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
           e.stopPropagation();
           setThreadMenu(null);
           setMenu({ card, ...clampMenuAnchor(e) });
-        }} personas={personas} execution={execution} />
+        }} personas={personas} execution={execution} />}
+        {failedWorkers.length > 0 && execution && <SquadFailedWorkers failed={failedWorkers} executionId={execution.executionId} />}
       </div>
     );
   };
@@ -1241,9 +1319,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
           </span>
         )}
         <span className="agent-card-head">
-          <span className="agent-card-icon">
-            <ProviderIcon providerId={item.thread.providerId} size={14} />
-          </span>
+          <ThreadIdentityIcon thread={item.thread} className="agent-card-icon" />
           <span className="agent-card-title">{item.title}</span>
           <FleetKindChip kind="thread" />
            {unread ? <span className="thread-unread-dot" data-testid="thread-unread-indicator" title="New activity" role="img" aria-label="New activity" /> : null}
@@ -1260,6 +1336,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
             </span>
           )}
           {(!showProject || grouped) && <span className="agent-card-sub">{runtime}</span>}
+          {compact && laneKey === 'blocked' && <span className="mobile-agent-attention">Needs you</span>}
         </span>
       </button>
     );
@@ -1334,21 +1411,25 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
     );
   };
 
-  const renderLane = (key: string) => {
-    const lane = lanes.find((candidate) => candidate.key === key);
-    if (!lane) return null;
-    if (lane.cards.length === 0) return <div className="agents-lane-empty" aria-hidden="true" />;
-    if (!showProject) return lane.cards.map((item) => renderItem(item, lane.key));
-    return groupFleetByProject(lane.cards, projectOrder, projects, hosts).map((group) => (
+  const renderCards = (items: FleetItem[], laneFor: (item: FleetItem) => LaneKey) => {
+    if (items.length === 0) return <div className="agents-lane-empty" aria-hidden="true" />;
+    if (!showProject) return items.map((item) => renderItem(item, laneFor(item)));
+    return groupFleetByProject(items, projectOrder, projects, hosts).map((group) => (
       <div key={group.key} className="agents-lane-group">
         <div className="agents-lane-group-head" title={group.projectName}>
           <span className="agents-lane-group-dot" style={group.projectColor ? { background: group.projectColor } : undefined} aria-hidden="true" />
           <span className="agents-lane-group-name">{group.projectName}</span>
           <span className="agents-lane-group-count">{group.cards.length}</span>
         </div>
-        {group.cards.map((item) => renderItem(item, lane.key, true))}
+        {group.cards.map((item) => renderItem(item, laneFor(item), true))}
       </div>
     ));
+  };
+  const renderMobileLane = (key?: LaneKey) => {
+    const lane = lanes.find((candidate) => candidate.key === key);
+    if (lane) return renderCards(lane.cards, () => lane.key);
+    const membership = new Map<FleetItem, LaneKey>(lanes.flatMap(({ key, cards }) => cards.map((item) => [item, key] as const)));
+    return renderCards([...membership.keys()], (item) => membership.get(item)!);
   };
 
   return (
@@ -1356,7 +1437,8 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
       {compact ? (
         <MobileAgentBoard
           lanes={lanes.map((lane) => ({ key: lane.key, label: lane.label, count: lane.cards.length, icon: <lane.icon size={16} /> }))}
-          renderLane={renderLane}
+          search={mobileSearch}
+          renderLane={renderMobileLane}
         />
       ) : <Kanban label="Agents board. Drag agents to Idle to stop, or Done to close after one minute. Drag empty space to pan; two-finger scroll also pans.">
         {lanes.map((lane) => {
@@ -1400,7 +1482,7 @@ export function AgentBoardLanes({ cards, activeId, onInspect, showProject, execu
                 });
               }}
             >
-              {renderLane(lane.key)}
+              {renderCards(lane.cards, () => lane.key)}
             </KanbanColumn>
           );
         })}

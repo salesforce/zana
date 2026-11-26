@@ -61,7 +61,17 @@ use. Add `notify: true` so the run reports back to you.
 | Anything else, or unclear | Review first | `squad_launch` with `mode: 'review'` |
 
 Start now only when the user's message explicitly asks to start immediately. Do not
-infer it from urgency or from "go ahead". Say which path you took, in one line.
+infer it from urgency, from "go ahead" or from the word "launch" alone ("launch
+it on X" is review first). Say which path you took, in one line.
+
+When `squad_plan_check` reports a Must fix in a plan the user gave you, never stop
+with a bare report and never edit their file. `squad_plan_check` returns a `decision`,
+and `squad_launch` refuses with NEEDS_DECISION carrying the same text. Ask once with
+the ask-user-question tool, using the decision's question and exactly its options (the
+tool adds a free-text answer). Apply a chosen fix to a copy. For "Prepare the launch as
+it is", or when the user already said so, call `squad_launch` with `mode: 'review'` and
+`acceptFindings: true` on the original: the card and composer show the Must fix and
+block Launch. Never use `mode: 'now'` on a plan with a Must fix.
 After Start you will receive a
 `[Squad report]` when the run finishes or needs a human answer. Don't poll in
 a loop. Answer with `execution.respond { executionId, expectedStateVersion, blockerId, message }`.

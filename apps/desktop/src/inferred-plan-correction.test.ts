@@ -21,6 +21,18 @@ describe('createInferredPlanCorrection', () => {
     expect(reviewInvalid).toHaveBeenCalledTimes(INFERRED_PLAN_NUDGE_BUDGET + 2);
   });
 
+  it('escalate opens the correction record at once, without spending nudges', async () => {
+    const { escalator, begin } = setup();
+    await expect(escalator.escalate(ctx('e9'), 'blocked')).resolves.toBe('wait');
+    expect(begin).toHaveBeenCalledWith('e9', 'blocked', false);
+  });
+
+  it('escalate defers to an existing record', async () => {
+    const { escalator, begin } = setup(new Set(['e9']));
+    await expect(escalator.escalate(ctx('e9'), 'blocked')).resolves.toBe('wait');
+    expect(begin).not.toHaveBeenCalled();
+  });
+
   it('defers to an existing record (provided plans) without counting or beginning', async () => {
     const { escalator, begin } = setup(new Set(['e1']));
     for (let i = 0; i < 5; i += 1) await expect(escalator.reviewInvalid(ctx('e1'), 'bad')).resolves.toBe('wait');

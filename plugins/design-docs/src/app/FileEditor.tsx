@@ -3,6 +3,7 @@ import { AlertTriangle, FileWarning, RotateCcw, Save } from 'lucide-react';
 import type { DesignDocFile } from '../shared/contract.js';
 import { localizeDocLink } from '../shared/paths.js';
 import { errorMessage, isConflict, toast, useApi, type DocKind, type WriteResult } from './api.js';
+import { useEditorFind } from './use-editor-find.js';
 import { ActorLabel, Spinner } from './ui.js';
 
 export interface EditorState {
@@ -51,6 +52,8 @@ export function FileEditor({
   const preview = useDeferredValue(draft);
   const latest = useRef({ dirty, draft, saved });
   const awaitingRefresh = useRef<DesignDocFile | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const find = useEditorFind(inputRef, draft);
   latest.current = { dirty, draft, saved };
 
   // Follow remote revisions while clean; flag them while dirty.
@@ -154,7 +157,7 @@ export function FileEditor({
   };
 
   return (
-    <div className="dd-editor">
+    <div className="dd-editor" {...find.rootProps}>
       {removed && dirty && !conflict ? (
         <div className="dd-banner dd-banner-warn" role="alert">
           <FileWarning size={14} aria-hidden />
@@ -178,16 +181,22 @@ export function FileEditor({
         </div>
       ) : null}
       <div className={`dd-editor-body${split ? ' dd-editor-split' : ''}`}>
-        <textarea
-          className="dd-editor-input"
-          value={draft}
-          spellCheck={file.kind === 'markdown' || file.kind === 'text'}
-          aria-label={`Edit ${file.path}`}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={onKeyDown}
-          onPaste={onPaste}
-          autoFocus
-        />
+        {find.bar}
+        <div className={`dd-editor-field${find.active ? ' dd-editor-field-find' : ''}`}>
+          {find.backdrop}
+          <textarea
+            ref={inputRef}
+            className="dd-editor-input"
+            value={draft}
+            spellCheck={file.kind === 'markdown' || file.kind === 'text'}
+            aria-label={`Edit ${file.path}`}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={onKeyDown}
+            onPaste={onPaste}
+            onScroll={find.onScroll}
+            autoFocus
+          />
+        </div>
         {split ? <div className="dd-editor-preview">{renderPreview(preview)}</div> : null}
       </div>
       <div className="dd-editor-footer">

@@ -15,6 +15,7 @@ import { addFromTemplate, asInput, optionalString, readTemplate, requiredString 
 import { docPageReader, NO_KIT, renderPage, type KitReader } from './pages.js';
 import { parseRenderReport, type RenderReports } from './render-reports.js';
 import { siteFiles } from './site-files.js';
+import type { AutoConvergeSetting } from './auto-converge-setting.js';
 import { DesignDocError, type DesignDocStore, type DocKind } from './store.js';
 import type { DesignDocPeerService } from './peer-service.js';
 import type { DesignDocPairing } from './pairing.js';
@@ -42,6 +43,8 @@ export interface RpcDeps {
   /** Full-database backups and the restore evidence recorded at startup. */
   backups?: DesignDocBackups;
   localPeerId?(): string | null;
+  /** The "settle safe peer changes" preference edited in Settings → Peers. */
+  autoConverge?: Pick<AutoConvergeSetting, 'get' | 'set'>;
 }
 
 function optionalNumber(input: Record<string, unknown>, key: string): number | undefined {
@@ -79,6 +82,11 @@ export function titleFromMarkdown(text: string, fallback = 'Design doc from chat
     .trim();
   if (!line) return fallback;
   return line.length > 80 ? `${line.slice(0, 79).trimEnd()}…` : line;
+}
+
+function requireAutoConverge(deps: RpcDeps): NonNullable<RpcDeps['autoConverge']> {
+  if (!deps.autoConverge) throw new DesignDocError('invalid', 'this setting is unavailable');
+  return deps.autoConverge;
 }
 
 function requirePairing(deps: RpcDeps): DesignDocPairing {
@@ -211,6 +219,14 @@ export function createRpcHandlers(deps: RpcDeps): Record<string, (args: unknown)
     backupDatabase: async () => {
       if (!deps.backups?.available) throw new DesignDocError('invalid', 'database backup is unavailable');
       return deps.backups.create(deps.localPeerId?.() ?? null);
+    },
+
+    autoConverge: async () => ({ enabled: await requireAutoConverge(deps).get() }),
+
+    setAutoConverge: async (raw) => {
+      const input = onlyKeys(raw, ['enabled']);
+      if (typeof input.enabled !== 'boolean') throw new DesignDocError('invalid', 'enabled must be a boolean');
+      return { enabled: await requireAutoConverge(deps).set(input.enabled) };
     },
 
     backups: () => deps.backups?.list() ?? { backups: [], restores: [] },

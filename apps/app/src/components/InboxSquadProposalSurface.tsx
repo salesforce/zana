@@ -5,6 +5,7 @@ export interface InboxSquadProposalSurfaceProps {
   ownershipLoading: boolean;
   ownershipError: boolean;
   projectAlive: boolean;
+  planCheck?: { mustFix: number; check: number; fixedForYou: number };
   reviewBusy: boolean;
   dismissBusy: boolean;
   reviewError: string | null;
@@ -44,6 +45,7 @@ export function InboxSquadProposalSurface(props: InboxSquadProposalSurfaceProps)
   const notice = hostAction.message || props.dismissError;
   return (
     <div className="inbox-reply" data-testid="squad-proposal-surface">
+      <PlanCheckLine planCheck={props.planCheck} />
       <p>Review opens the Squad composer filled in. Nothing starts until you press Launch.</p>
       {notice ? <p role="alert">{notice}</p> : null}
       {props.reviewError ? <p role="alert">{props.reviewError}</p> : null}
@@ -54,5 +56,25 @@ export function InboxSquadProposalSurface(props: InboxSquadProposalSurfaceProps)
         <button type="button" className="btn" disabled={busy} onClick={props.onDismiss}>Dismiss</button>
       </div>
     </div>
+  );
+}
+
+/** "Plan check:" with each count in its severity colour (Must fix red, to check amber, fixed for you green). */
+function PlanCheckLine({ planCheck }: { planCheck?: { mustFix: number; check: number; fixedForYou: number } }) {
+  if (!planCheck) return null;
+  const parts: Array<{ severity: 'blocking' | 'warning' | 'repair'; text: string }> = [];
+  if (planCheck.mustFix) parts.push({ severity: 'blocking', text: `${planCheck.mustFix} Must fix before this can launch` });
+  if (planCheck.check) parts.push({ severity: 'warning', text: `${planCheck.check} to check` });
+  if (planCheck.fixedForYou) parts.push({ severity: 'repair', text: `${planCheck.fixedForYou} fixed for you` });
+  return (
+    <p className="inbox-plan-check" data-testid="inbox-plan-check">
+      Plan check:{' '}
+      {parts.length
+        ? parts.map((part, index) => (
+          <span key={part.severity}>{index ? ', ' : ''}<span className="inbox-plan-check-item" data-severity={part.severity}>{part.text}</span></span>
+        ))
+        : <span className="inbox-plan-check-item" data-severity="ok">No problems found</span>}
+      . Review shows the details.
+    </p>
   );
 }

@@ -40,6 +40,11 @@
     "group": "Squads"
   },
   {
+    "slug": "squads-plans",
+    "title": "Writing a Squad plan",
+    "group": "Squads"
+  },
+  {
     "slug": "squads-watch",
     "title": "Watching a Squad",
     "group": "Squads"

@@ -41,7 +41,7 @@ async function capture(page: Page) {
   return page.locator('.shell-main').evaluate((root) => {
     const viewport = innerWidth;
     return [...root.querySelectorAll<HTMLElement>('*')].filter((el) => {
-      if (el.closest('.aurora-grid, .zcc-kanban, .mobile-agent-lanes')) return false;
+      if (el.closest('.aurora-grid, .zcc-kanban')) return false;
       const box = el.getBoundingClientRect();
       const style = getComputedStyle(el);
       return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' &&
@@ -279,6 +279,7 @@ test('Main views and populated Inbox fit phone and tablet screens', async ({ app
           await sheet.getByRole('button', { name: 'Close actions', exact: true }).click();
         }
         if (name === 'inbox') {
+          await page.getByRole('button', { name: 'Split view', exact: true }).click();
           const firstRow = page.locator('.inbox-row.unread').first();
           await expect(firstRow).toBeVisible();
           const title = (await firstRow.locator('.inbox-row-title').boundingBox())!;
@@ -640,39 +641,42 @@ test('Main views and populated Inbox fit phone and tablet screens', async ({ app
           const board = page.getByTestId('mobile-agent-board');
           await expect(board).toBeVisible();
           await expect(page.locator('.zcc-kanban')).toHaveCount(0);
-          await expect(board.getByRole('tabpanel')).toHaveCount(1);
-          await expect(board.locator('.agent-card').first()).toBeVisible();
-          const card = board.locator('.agent-card').first();
+          const panel = board.getByRole('region', { name: 'All agents', exact: true });
+          await expect(panel).toBeVisible();
+          const card = panel.locator('.agent-card').first();
+          await expect(card).toBeVisible();
           expect((await card.boundingBox())!.width).toBeGreaterThanOrEqual(width - 32);
           await expect(card).toHaveAttribute('draggable', 'false');
-          const populatedTab = await board.getByRole('tab', { selected: true }).getAttribute('id');
-          for (const tab of await board.getByRole('tab').all()) {
-            await tab.scrollIntoViewIfNeeded();
-            expect((await tab.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-            await tab.click();
-            await expect(tab).toHaveAttribute('aria-selected', 'true');
-            await expect(board.getByRole('tabpanel')).toHaveCount(1);
-          }
-          await board.getByRole('tab', { name: /^Needs you/ }).click();
-          await expect(board.getByText('No agents in this column')).toBeVisible();
-          await page.locator(`[id="${populatedTab}"]`).click();
+          const search = board.getByRole('textbox', { name: 'Filter agents' });
+          const filter = board.getByRole('button', { name: /^Filter by status/ });
+          const searchBox = (await search.boundingBox())!;
+          const filterBox = (await filter.boundingBox())!;
+          expect(Math.abs(searchBox.y + searchBox.height / 2 - (filterBox.y + filterBox.height / 2))).toBeLessThan(3);
+          expect(searchBox.x + searchBox.width).toBeLessThanOrEqual(filterBox.x);
+          expect(filterBox.height).toBeGreaterThanOrEqual(44);
+          await filter.click();
+          const filters = page.getByRole('dialog', { name: 'Filter by status' });
+          await expect(filters.getByRole('button', { name: 'All agents' })).toHaveAttribute('aria-pressed', 'true');
+          await filters.getByRole('button', { name: /^Needs you/ }).click();
+          await expect(board.getByText('No agents need you.')).toBeVisible();
+          await filter.click();
+          await expect(filters.getByRole('button', { name: /^Needs you/ })).toHaveAttribute('aria-pressed', 'true');
+          await filters.getByRole('button', { name: 'All agents' }).click();
+          await search.fill('no-such-agent-here');
+          await expect(board.getByText('No agents match your filters.')).toBeVisible();
+          await board.getByRole('button', { name: 'Clear filter' }).click();
+          await expect(card).toBeVisible();
           await page.screenshot({ path: testInfo.outputPath(`${width}-agents-board.png`) });
           expect.soft(await capture(page), `${width}px agents board`).toEqual([]);
-          const panel = board.getByRole('tabpanel');
           await panel.hover();
           await page.mouse.wheel(0, 600);
           await expect.poll(() => panel.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
-          expect((await board.getByRole('tab', { selected: true }).boundingBox())!.y).toBeLessThan(300);
+          expect((await filter.boundingBox())!.y).toBeLessThan(300);
           // Even when desktop prefers inspectors, mobile cards open the page.
           for (const kind of ['thread', 'terminal'] as const) {
             const agentCard = kind === 'thread'
               ? board.locator('.agent-card[data-kind="thread"]').first()
               : board.locator('.agent-card').filter({ hasText: 'Mobile terminal' });
-            for (const tab of await board.getByRole('tab').all()) {
-              await tab.click();
-              await expect(tab).toHaveAttribute('aria-selected', 'true');
-              if (await agentCard.count()) break;
-            }
             await agentCard.click();
             await expect(page).toHaveURL(kind === 'thread' ? /\/threads\/[^/]+$/ : /\/sessions\/[^/]+$/);
             await expect(page.locator('.agent-terminal-modal, .modal-backdrop')).toHaveCount(0);

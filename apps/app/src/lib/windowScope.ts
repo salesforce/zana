@@ -10,7 +10,7 @@
  * and remember that id in `sessionStorage` so a later document load that drops
  * the query (address-bar `/inbox`, SPA fallback) still stays locked.
  * Client-side path changes also keep that query so a refresh still locks the
- * window. `null` ⇒ the normal, unscoped shell (the main window).
+ * window. Back explicitly clears the stored scope and reloads the global shell.
  *
  * SCOPE IS A DISPLAY LOCK, NOT A SECURITY/PRIVACY BOUNDARY. A scoped window runs
  * the same `window.cc` IPC surface as the main one, and main's `safeSend`
@@ -25,6 +25,13 @@ const SCOPED_PROJECT_STORAGE_KEY = 'zcc.scopedProjectId';
 function readScopedProjectId(): string | null {
   try {
     const fromQuery = new URLSearchParams(window.location.search).get('projectId');
+    if (fromQuery === '') {
+      window.sessionStorage?.removeItem(SCOPED_PROJECT_STORAGE_KEY);
+      const url = new URL(window.location.href);
+      url.searchParams.delete('projectId');
+      window.history.replaceState(window.history.state, '', url);
+      return null;
+    }
     if (fromQuery && fromQuery.trim()) {
       try {
         window.sessionStorage?.setItem(SCOPED_PROJECT_STORAGE_KEY, fromQuery);

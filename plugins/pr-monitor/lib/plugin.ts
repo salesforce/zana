@@ -87,13 +87,13 @@ export async function createPrMonitorPlugin(zcc: ZccPluginApi, deps: PrMonitorPl
   });
   zcc.rpc.method('listProjects', async () => zcc.sdk.projects.list());
   zcc.rpc.method('pushInbox', async (args) => {
-    const rec = args as { projectId?: unknown; comments?: unknown };
+    const rec = args as { projectId?: unknown; comments?: unknown; offerAgentFix?: unknown };
     const projectId = typeof rec?.projectId === 'string' ? rec.projectId.trim() : '';
     const comments = typeof rec?.comments === 'string' ? rec.comments : '';
     if (!projectId || !comments.trim()) {
       throw new Error('pushInbox requires projectId and comments');
     }
-    return zcc.sdk.inbox.push({ projectId, comments });
+    return zcc.sdk.inbox.push({ projectId, comments, ...(rec.offerAgentFix === true && { offerAgentFix: true }) });
   });
   zcc.rpc.method('badge', async () => {
     const prs = await methods.listPrs();
@@ -106,7 +106,11 @@ export async function createPrMonitorPlugin(zcc: ZccPluginApi, deps: PrMonitorPl
     const settings = await readSettings(zcc);
     for (const delivery of inboxDeliveriesForDeltas(deltas, settings)) {
       try {
-        await zcc.sdk.inbox.push({ projectId: delivery.projectId, comments: delivery.comments });
+        await zcc.sdk.inbox.push({
+          projectId: delivery.projectId,
+          comments: delivery.comments,
+          ...(delivery.offerAgentFix && { offerAgentFix: true })
+        });
       } catch (err) {
         zcc.log.warn(
           `inbox push failed for ${delivery.pr.repo}#${delivery.pr.number}: ${

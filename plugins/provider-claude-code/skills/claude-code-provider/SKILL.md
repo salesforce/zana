@@ -9,6 +9,11 @@ Read and change declared settings in Plugins → Claude Code provider → Settin
 Use `zcc thread show <id> --json` to inspect a thread and `zcc guide threads` for
 the CLI operations available in this build.
 
+- `sandboxEnabled` defaults to `true`. Zana supplies Claude Code's Bash sandbox
+  in Accept Edits and Approve for me modes. Turning it off removes Zana's sandbox
+  override and uses Claude Code's own command approvals and sandbox settings;
+  it does not force Claude's own sandbox off or select Full Access. Changes
+  restart the Claude process on the next turn, preserving the conversation.
 - `idleQueryReleaseEnabled` defaults to `false`. When enabled, the native process
   closes after 30 seconds of quiescence while the ZCC thread remains resumable.
   Changes apply on the next start, resume, or turn.

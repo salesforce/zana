@@ -363,6 +363,7 @@ export function toPluginAppSnapshot(row: PluginUiSnapshot) {
     description: row.description,
     icon: row.icon,
     enabled: row.enabled,
+    ...(bundledPluginById(row.id)?.experimental ? { experimental: true as const } : {}),
     provenance: row.provenance,
     sourceKind: row.sourceKind,
     ...(row.extra.threadProvider === true || row.extra.ptyHarness === true
@@ -452,7 +453,7 @@ export interface PluginServiceOptions {
   cancelInteraction?: (
     args: { pluginId: string } & import('@zana-ai/zcc-domain').InteractionAcknowledgement
   ) => Promise<import('@zana-ai/zcc-domain').InteractionContract>;
-  spawnThread?: (args: import('@zana-ai/zcc-plugin-sdk/server').PluginSdkThreadSpawnArgs & { pluginId: string }) => Promise<{ id: string }>;
+  spawnThread?: (args: Omit<import('@zana-ai/zcc-plugin-sdk/server').PluginSdkThreadSpawnArgs, 'source' | 'agentContext'> & { pluginId: string } & import('./plugin-message-source.js').PluginMessageAttribution) => Promise<{ id: string }>;
   getThread?: (args: { pluginId: string; threadId: string }) => Promise<
     import('@zana-ai/zcc-plugin-sdk/server').PluginSdkThreadSummary | null
   >;
@@ -463,13 +464,14 @@ export interface PluginServiceOptions {
     types?: readonly string[];
     order?: 'asc' | 'desc';
   }) => Promise<import('@zana-ai/zcc-plugin-sdk/server').PluginSdkThreadEventRow[]>;
+  postThreadMessage?: (args: { pluginId: string; threadId: string; text: string }) => Promise<void>;
   sendThread?: (args: {
     pluginId: string;
     threadId: string;
     prompt: string;
     visibility?: 'visible' | 'agent-only';
     mode?: 'start' | 'auto' | 'steer' | 'queue-if-active' | 'steer-if-active';
-  }) => Promise<{ id: string }>;
+  } & import('./plugin-message-source.js').PluginMessageAttribution) => Promise<{ id: string }>;
   stopThread?: (args: { pluginId: string; threadId: string }) => Promise<{ ok: true }>;
   threadOutput?: (args: { pluginId: string; threadId: string }) => Promise<
     import('@zana-ai/zcc-plugin-sdk/server').PluginSdkThreadOutput
@@ -1778,6 +1780,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       spawnThread: opts.spawnThread,
       getThread: opts.getThread,
       listThreadEvents: opts.listThreadEvents,
+      postThreadMessage: opts.postThreadMessage,
       sendThread: opts.sendThread,
       stopThread: opts.stopThread,
       threadOutput: opts.threadOutput,

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type Ref, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { AppWindow, Archive, FolderInput, GitFork, Mail, MailCheck, MoreHorizontal, Pencil, Search, Square } from 'lucide-react';
+import { AppWindow, Archive, FolderInput, GitFork, Mail, MailCheck, MoreHorizontal, PanelRight, Pencil, Search, Square } from 'lucide-react';
 import { product } from '../../lib/product-client.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { isThreadViewSurface } from '../../lib/threadViewSurface.js';
@@ -55,6 +55,7 @@ export function ThreadDetailOverflowMenu({
   onOpenInWindow,
   menuRef,
   onSearch,
+  onOpenTools,
   extraActions,
   notificationsThreadId,
   style
@@ -70,6 +71,7 @@ export function ThreadDetailOverflowMenu({
   onOpenInWindow?: () => void;
   menuRef?: Ref<HTMLDivElement>;
   onSearch?: () => void;
+  onOpenTools?: () => void;
   extraActions?: ReactNode;
   /** When set, the menu offers this thread's phone-notification level. */
   notificationsThreadId?: string;
@@ -85,6 +87,7 @@ export function ThreadDetailOverflowMenu({
       style={style}
       onMouseDown={(e) => e.stopPropagation()}
     >
+      {onOpenTools && <button type="button" role="menuitem" onClick={onOpenTools}><PanelRight size={16} aria-hidden="true" /> Thread tools</button>}
       {onSearch && <button type="button" role="menuitem" onClick={onSearch}><Search size={16} /> Search in thread</button>}
       {extraActions}
       {onOpenInWindow ? (
@@ -172,6 +175,7 @@ export function ThreadDetailOverflow({
   onRenamed,
   onUnread,
   onSearch,
+  onOpenTools,
   extraActions
 }: {
   threadId: string;
@@ -182,6 +186,7 @@ export function ThreadDetailOverflow({
   onRenamed?: (title: string) => void;
   onUnread?: () => void;
   onSearch?: () => void;
+  onOpenTools?: () => void;
   extraActions?: ReactNode;
 }) {
   const compact = useCompactLayout();
@@ -225,6 +230,7 @@ export function ThreadDetailOverflow({
       menuRef={menuRef}
       style={compact ? undefined : menuPos}
       onSearch={onSearch ? () => { close(); onSearch(); } : undefined}
+      onOpenTools={onOpenTools ? () => { close(); onOpenTools(); } : undefined}
       extraActions={<>{extraActions}<button type="button" role="menuitem" onClick={() => {
         close();
         useSessionMove.getState().open(threadId);
@@ -292,6 +298,7 @@ export function ThreadDetailOverflow({
         aria-expanded={open}
         data-testid="thread-overflow-trigger"
         onClick={() => {
+          if (compact) triggerRef.current?.focus();
           const rect = triggerRef.current?.getBoundingClientRect();
           if (rect) setMenuPos(threadOverflowMenuPosition(rect, window));
           setOpen((value) => !value);

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { openThreadFind, registerThreadFindTarget, threadFindClaims, type ThreadFindTarget } from './thread-find.js';
+import { OWN_FIND_ATTRIBUTE, openThreadFind, registerThreadFindTarget, threadFindClaims, type ThreadFindTarget } from './thread-find.js';
 
 const unregister: Array<() => void> = [];
 
@@ -176,5 +176,30 @@ describe('thread find routing', () => {
     const again = threadView(false);
     expect(pressFind(document.body).opened).toBe(false);
     expect(again.target.open).not.toHaveBeenCalled();
+  });
+});
+
+describe('surfaces that claim Ctrl+F with data-own-find', () => {
+  function ownFindSurface() {
+    const surface = document.createElement('div');
+    surface.setAttribute(OWN_FIND_ATTRIBUTE, '');
+    const inner = document.createElement('p');
+    surface.append(inner);
+    document.body.append(surface);
+    return inner;
+  }
+
+  it('keeps thread find out, even with a primary thread mounted', () => {
+    const view = threadView();
+    expect(pressFind(ownFindSurface())).toEqual({ opened: false, claimed: false, prevented: false });
+    expect(view.target.open).not.toHaveBeenCalled();
+  });
+
+  it('leaves thread find working everywhere else', () => {
+    const view = threadView();
+    ownFindSurface();
+    expect(pressFind(view.composer).opened).toBe(true);
+    expect(pressFind(document.body).opened).toBe(true);
+    expect(view.target.open).toHaveBeenCalledTimes(2);
   });
 });

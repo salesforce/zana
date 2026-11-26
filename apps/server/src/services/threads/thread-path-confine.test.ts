@@ -42,3 +42,11 @@ describe('confinePathToRoot', () => {
       .toBe('docs/guide.md');
   });
 });
+
+describe('confinePathToRoot on a long input', () => {
+  it('rejects a drive-mismatched candidate with many separators in linear time', () => {
+    const started = performance.now();
+    expect(confinePathToRoot('C:\\root', `D:\\${'\\'.repeat(100_000)}x`)).toBeNull();
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+});

@@ -2,7 +2,7 @@ export { ControlError, exitCodeForControlError, type ControlErrorCode } from './
 export { Zcc } from './client.js';
 export { ProductHttpClient, probeHealth } from './http.js';
 export { resolveConnect } from './connect.js';
-export { spawnThread, ThreadHandle, type LaunchContext } from './threads.js';
+export { spawnThread, ThreadHandle, callerThreadId, type LaunchContext } from './threads.js';
 export { launchCliAgent, CliAgentHandle, assertRoleXorModel, rejectIsolatedCliAgent } from './cli-agents.js';
 export { liveEnabled, preflightOrSkip, isSkip } from './matrix.js';
 export { waitForThreadStatus, waitForThreadEvent, threadIsQuiet } from './wait.js';

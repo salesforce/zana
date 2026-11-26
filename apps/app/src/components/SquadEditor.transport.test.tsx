@@ -13,6 +13,7 @@ afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 const team: Team = {
   id: 'user:s1',
+  transport: 'CLI',
   name: 'Squad',
   orchestratorPersonaId: 'p-orch',
   slots: [{ personaId: 'p-orch', quantity: 1 }],
@@ -23,7 +24,7 @@ it('saves the transport chosen in the selector', async () => {
   mocks.save.mockResolvedValue({ ok: true, value: { ...team, transport: 'MODERN' } });
   const onClose = vi.fn();
   render(<SquadEditor team={team} mode="edit" onClose={onClose} />);
-  const select = screen.getByLabelText('Squad transport') as HTMLSelectElement;
+  const select = screen.getByLabelText('Squad launch mode') as HTMLSelectElement;
   expect(select.value).toBe('CLI');
   fireEvent.change(select, { target: { value: 'MODERN' } });
   expect(select.value).toBe('MODERN');
@@ -39,4 +40,27 @@ it('labels the squad detail header with the transport pill its members carry', (
   const chip = modern.container.querySelector('.modal-header .fleet-kind-chip');
   expect(chip?.getAttribute('data-kind')).toBe('thread');
   expect(chip?.textContent).toBe('Modern');
+});
+
+it('saves a Use default Squad without a transport and shows what it resolves to', async () => {
+  const { transport: _pinned, ...useDefault } = team;
+  mocks.save.mockResolvedValue({ ok: true, value: useDefault });
+  render(<SquadEditor team={useDefault} mode="edit" onClose={vi.fn()} />);
+  const select = screen.getByLabelText('Squad launch mode') as HTMLSelectElement;
+  expect(select.value).toBe('DEFAULT');
+  expect(screen.getByRole('option', { name: 'Use default (Modern)' })).toBeTruthy();
+  fireEvent.change(select, { target: { value: 'CLI' } });
+  fireEvent.change(select, { target: { value: 'DEFAULT' } });
+  fireEvent.change(screen.getByLabelText(/^name/i), { target: { value: 'Renamed' } });
+  fireEvent.click(screen.getByRole('button', { name: /^save/i }));
+  await waitFor(() => expect(mocks.save).toHaveBeenCalled());
+  expect(mocks.save.mock.calls[0]![0]).not.toHaveProperty('transport');
+});
+
+it('saves Follow caller as CALLER', async () => {
+  mocks.save.mockResolvedValue({ ok: true, value: { ...team, transport: 'CALLER' } });
+  render(<SquadEditor team={team} mode="edit" onClose={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText('Squad launch mode'), { target: { value: 'CALLER' } });
+  fireEvent.click(screen.getByRole('button', { name: /^save/i }));
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ transport: 'CALLER' })));
 });

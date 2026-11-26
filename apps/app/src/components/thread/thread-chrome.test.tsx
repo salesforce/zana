@@ -840,7 +840,7 @@ describe('expandable row and chips', () => {
     expect(source).toContain('<ThreadSecondaryPanel');
     const mountAt = source.indexOf('{hostedSecondary || !showSecondaryPanel ? null : secondaryPanelNode}');
     const splitAt = source.indexOf('className="thread-detail-split"');
-    const mainAt = source.indexOf('className="thread-detail-main"');
+    const mainAt = source.indexOf('ref={mainRef}');
     const bodyAt = source.indexOf('className="thread-detail-body"');
     expect(mountAt).toBeGreaterThan(-1);
     expect(splitAt).toBeGreaterThan(-1);
@@ -852,7 +852,7 @@ describe('expandable row and chips', () => {
   it('keeps the thread-detail-header in the left column of the split', () => {
     const source = readSourceText(fileURLToPath(new URL('../../views/threads/ThreadDetailView.tsx', import.meta.url)));
     const splitAt = source.indexOf('className="thread-detail-split"');
-    const mainAt = source.indexOf('className="thread-detail-main"');
+    const mainAt = source.indexOf('ref={mainRef}');
     const headerAt = source.indexOf('className="thread-detail-header thread-detail-header--balanced"');
     const bodyAt = source.indexOf('className="thread-detail-body"');
     expect(splitAt).toBeGreaterThan(-1);

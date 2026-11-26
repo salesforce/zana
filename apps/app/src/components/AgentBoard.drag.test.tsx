@@ -1,6 +1,8 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { definePluginApp } from '@zana-ai/zcc-plugin-sdk';
+import { clearPluginSlots, interpretPluginApp } from '../plugins/plugin-slots.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentCard } from './AgentBoard.js';
 import type { ThreadListItem } from '../thread-store.js';
@@ -60,6 +62,22 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+it('shows the owning plugin’s icon on its Kanban card even when another thread has the same title', () => {
+  interpretPluginApp('notes', definePluginApp(app => {
+    app.slots.threadPanelAction({
+      id: 'profile', title: 'Profile', component: () => null,
+      experimental_ownedThreadIcon: ({ threadId }) => <svg data-thread={threadId} />
+    });
+  }));
+  try {
+    setup([threadFleetItem({ ...thread, originPluginId: 'notes' }), threadFleetItem({ ...thread, id: 'ordinary', status: 'idle' })]);
+    expect(lane('working').querySelector('.agent-card-icon svg')?.getAttribute('data-thread')).toBe(thread.id);
+    expect(lane('idle').querySelector('.agent-card-icon svg')?.getAttribute('width')).toBe('14');
+  } finally {
+    act(() => clearPluginSlots('notes'));
+  }
+});
+
 describe('agent board drag/drop', () => {
   it('keeps project groups in project order across closes, status updates, and board remounts', () => {
     useData.setState({ projects: [
@@ -94,7 +112,7 @@ describe('agent board drag/drop', () => {
     expect(names()).toEqual(['Other']);
   });
 
-  it('uses a single readable phone lane and opens cards without allowing touch drag moves', () => {
+  it('shows all agents on phones and filters cards without allowing touch drag moves', () => {
     layout.compact = true;
     const inspect = vi.fn();
     render(<MemoryRouter><AgentBoardLanes cards={[agentFleetItem(agent), threadFleetItem({ ...thread, status: 'idle' })]} showProject onInspect={inspect} /></MemoryRouter>);
@@ -106,7 +124,10 @@ describe('agent board drag/drop', () => {
     expect(dataTransfer.setData).not.toHaveBeenCalled();
     fireEvent.click(card('CLI probe'));
     expect(inspect).toHaveBeenCalledWith(expect.objectContaining({ id: 'cli' }));
-    fireEvent.click(screen.getByRole('tab', { name: 'Idle 1' }));
+    expect(screen.getByRole('region', { name: 'All agents' }).contains(card('Thread probe'))).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Filter by status' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Idle 1' }));
+    expect(screen.queryByRole('button', { name: /CLI probe/ })).toBeNull();
     fireEvent.click(card('Thread probe'));
     expect(inspect).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'thread' }));
     expect(api.stop).not.toHaveBeenCalled();

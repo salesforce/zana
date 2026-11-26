@@ -46,9 +46,9 @@ test('Global and Project harness settings persist provider, model, execution, an
     await window.locator('.settings-section-item').filter({ hasText: 'AI Harness' }).click();
     await expect(window.locator('.settings-header')).toContainText('AI Harness');
 
-    await window.getByRole('tab', { name: 'CLI Agent' }).click();
-    const globalOpenCode = window.getByTestId('harness-legacy-list').locator('.opener-row').filter({ hasText: 'OpenCode' });
-    await globalOpenCode.locator('.opener-row-expand').click();
+    const globalOpenCode = window.getByTestId('registered-harness-list').locator('[data-harness-family="opencode"]');
+    await globalOpenCode.getByRole('button', { name: 'Configure OpenCode' }).click();
+    await globalOpenCode.getByRole('button', { name: 'Advanced settings for OpenCode' }).click();
     const globalProvider = globalOpenCode.getByRole('button', { name: 'Default provider' });
     const globalModel = globalOpenCode.getByRole('button', { name: 'Default model level' });
     const globalExecution = globalOpenCode.getByRole('button', { name: 'Default execution state' });

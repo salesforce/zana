@@ -1,7 +1,8 @@
 import { sanitizeStoredTrustedPreviewFolders } from '../config/trusted-preview-folders.js';
 import { normalizeAgentSoundVolume, normalizeNotificationSoundProvider } from '@zana-ai/zcc-domain/product';
 import { isAgentsViewId, PROJECT_EXPANDED_CAP } from '@zana-ai/zcc-domain/product';
-import { onboardingProgressSchema } from '@zana-ai/zcc-domain/onboarding';
+import { isGlobalSquadTransport, isLaunchMode } from '@zana-ai/zcc-domain/squad-transport';
+import { parseOnboardingProgress } from '@zana-ai/zcc-domain/onboarding';
 import { projectConfigCompatibility } from '@zana-ai/zcc-domain/harness-config-compatibility';
 import { normalizeThreadProviderDefault, threadProviderIdForHarnessFamily } from '@zana-ai/zcc-domain/launch-provider';
 import { isNotificationLevel, isOwnNotificationLevel, isProjectIcon } from '@zana-ai/zcc-domain';
@@ -12,6 +13,9 @@ import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import type { Project, ProjectRemote, AppConfig, ProjectSettings, OpenTarget, ProjectLaunchDefault, HarnessFamily } from '@zana-ai/zcc-domain/product';
 import { normalizeApiErrorResume, SESSION_MEMORY_DEFAULTS, AUTO_CLOSE_IDLE_DEFAULTS, THREAD_SESSION_RELEASE_DEFAULTS, EXPLORER_FILE_ICON_THEME_CHOICES, EXPLORER_MINIMAP_WIDTH_CHOICES, EXPLORER_MINIMAP_VERTICAL_SIZE_CHOICES, EXPLORER_MINIMAP_SLIDER_CHOICES, EXPLORER_MINIMAP_SIDE_CHOICES, COMPOSER_LAUNCH_SURFACES_REV, DEFAULT_PROJECT_DISPLAY_NAME, CLOSE_WRAP_UP_INSTRUCTIONS_MAX, MIN_AUTONOMOUS_WAIT_MS, MAX_AUTONOMOUS_WAIT_MS } from '@zana-ai/zcc-domain/product';
+
+/** Dismissed exited-worker session ids kept in config; older ones fall off. */
+export const MAX_DISMISSED_WORKER_EXITS = 200;
 
 /** Shared floor/ceiling for the autonomous idle-timeout and blocked-wait settings. */
 function clampAutonomousWaitMs(value: number): number {
@@ -621,6 +625,9 @@ function normalizeThreadViewWindowBounds(
 /** Clamp bounds for a non-zero {@link AppConfig.executionPlanStartupGraceMs} (0 disables). */
 const MIN_STARTUP_GRACE_MS = 30_000;
 const MAX_STARTUP_GRACE_MS = 3_600_000;
+/** Clamp bounds for a non-zero {@link AppConfig.executionBlockerReminderMs} (0 disables). */
+const MIN_BLOCKER_REMINDER_MS = 60_000;
+const MAX_BLOCKER_REMINDER_MS = 86_400_000;
 
 function normalizeCompanionPlacement(
   placement: AppConfig['companionPlacement'] | undefined
@@ -1014,8 +1021,9 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   ) {
     normalized.lastSeenVersion = input.lastSeenVersion.trim();
   }
-  const onboarding = onboardingProgressSchema.safeParse(input.onboarding);
-  if (onboarding.success) normalized.onboarding = onboarding.data;
+  // Accept v1 or v2 progress; always store v2.
+  const onboarding = parseOnboardingProgress(input.onboarding);
+  if (onboarding) normalized.onboarding = onboarding;
   if (typeof input.walkthroughCompleted === 'boolean') {
     normalized.walkthroughCompleted = input.walkthroughCompleted;
   }
@@ -1024,6 +1032,11 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (typeof input.sponsorPromptDismissed === 'boolean') {
     normalized.sponsorPromptDismissed = input.sponsorPromptDismissed;
+  }
+  if (Array.isArray(input.dismissedWorkerExits)) {
+    // Retention cap: the newest ids win, so the list cannot grow without bound.
+    const ids = input.dismissedWorkerExits.filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 128);
+    normalized.dismissedWorkerExits = [...new Set(ids)].slice(-MAX_DISMISSED_WORKER_EXITS);
   }
   if (typeof input.autoRenameTabs === 'boolean') {
     normalized.autoRenameTabs = input.autoRenameTabs;
@@ -1281,6 +1294,22 @@ export function normalizeConfig(input: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof input.executionPlanStartupGraceMs === 'number' && Number.isFinite(input.executionPlanStartupGraceMs)) {
     const v = Math.round(input.executionPlanStartupGraceMs);
     normalized.executionPlanStartupGraceMs = v <= 0 ? 0 : Math.max(MIN_STARTUP_GRACE_MS, Math.min(MAX_STARTUP_GRACE_MS, v));
+  }
+  if (typeof input.executionBlockerReminderMs === 'number' && Number.isFinite(input.executionBlockerReminderMs)) {
+    const v = Math.round(input.executionBlockerReminderMs);
+    normalized.executionBlockerReminderMs = v <= 0 ? 0 : Math.max(MIN_BLOCKER_REMINDER_MS, Math.min(MAX_BLOCKER_REMINDER_MS, v));
+  }
+  if (typeof input.squadUnitCheckpointsEnabled === 'boolean') {
+    normalized.squadUnitCheckpointsEnabled = input.squadUnitCheckpointsEnabled;
+  }
+  if (isGlobalSquadTransport(input.squadDefaultTransport)) {
+    normalized.squadDefaultTransport = input.squadDefaultTransport;
+  }
+  if (isLaunchMode(input.composerDefaultLaunchMode)) {
+    normalized.composerDefaultLaunchMode = input.composerDefaultLaunchMode;
+  }
+  if (input.composerLastTransportMode === 'agent' || input.composerLastTransportMode === 'thread') {
+    normalized.composerLastTransportMode = input.composerLastTransportMode;
   }
   if (typeof input.composerShowCliAgent === 'boolean') {
     normalized.composerShowCliAgent = input.composerShowCliAgent;

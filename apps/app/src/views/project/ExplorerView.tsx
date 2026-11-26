@@ -18,6 +18,7 @@ import { useDirectoryLoader } from '@/components/explorer/useDirectoryLoader';
 import { DirectoryLoading } from '@/components/explorer/DirectoryLoading';
 import { useExplorerFileReveal } from './useExplorerFileReveal.js';
 import type { DocumentLink } from '../../components/document-links.js';
+import { MarkdownSaveRecovery } from '../../components/markdown/MarkdownSaveRecovery.js';
 import {
   WorktreeMenu,
   ExplorerGitFooter,
@@ -286,6 +287,11 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
   // null, the editor mirrors fileResult.content exactly.
   const [editedContent, setEditedContent] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [saveFailure, setSaveFailure] = useState<{ path: string; message: string; attempt: number } | null>(null);
+  const saveIdentity = JSON.stringify([project.id, scope, isRemote, explorerFile]);
+  const saveTarget = useRef({ identity: saveIdentity, epoch: 0 });
+  if (saveTarget.current.identity !== saveIdentity) saveTarget.current = { identity: saveIdentity, epoch: saveTarget.current.epoch + 1 };
+  useEffect(() => { setSaveFailure(null); setSaving(false); }, [saveIdentity]);
   // Markdown files open as a rendered preview by default; the user can flip to
   // the Monaco editor to make edits. Resets per file (see effect below).
   const [previewMode, setPreviewMode] = useState(false);
@@ -786,15 +792,23 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
 
   const saveFile = useCallback(async () => {
     if (!explorerFile || editedContent === null || saving) return;
+    const epoch = saveTarget.current.epoch;
     setSaving(true);
+    setSaveFailure(null);
     let r;
     try {
       r = isRemote
         ? await product.fs.writeFileRemote(project.id, explorerFile, editedContent)
         : await product.fs.writeFile(explorerFile, editedContent, scope, fileResult?.sha256);
-    } catch (error) { pushToast(error instanceof Error ? error.message : 'Failed to save file', 'error'); return; }
-    finally { setSaving(false); }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save file';
+      if (saveTarget.current.epoch === epoch) setSaveFailure({ path: explorerFile, message, attempt: Date.now() });
+      pushToast(message, 'error'); return;
+    }
+    finally { if (saveTarget.current.epoch === epoch) setSaving(false); }
+    if (saveTarget.current.epoch !== epoch) return;
     if (!r.ok) {
+      if (fileClickStateRef.current.explorerFile === explorerFile) setSaveFailure({ path: explorerFile, message: r.message ?? 'Failed to save file', attempt: Date.now() });
       pushToast(r.message ?? 'Failed to save file', 'error');
       return;
     }
@@ -817,6 +831,7 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
       const mod = navigator.platform.toUpperCase().includes('MAC') ? e.metaKey : e.ctrlKey;
       if (!mod || e.shiftKey || e.altKey) return;
       if (e.key !== 's' && e.key !== 'S') return;
+      if (e.target instanceof Element && e.target.closest('.md-document')) return;
       e.preventDefault();
       e.stopPropagation();
       saveFile();
@@ -1046,6 +1061,12 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
         onDoubleClick={onResizeDoubleClick}
       />
       <FileViewer
+        fileScope={scope}
+        sourceKey={JSON.stringify([project.id, scope, isRemote])}
+        saveRecovery={saveFailure && saveFailure.path === explorerFile && isMarkdown && !isRemote ? <MarkdownSaveRecovery key={saveFailure.attempt}
+          message={saveFailure.message} read={() => product.fs.readFile(explorerFile!, scope)}
+          onUseReviewed={latest => { setFileResult(latest); setSaveFailure(null); }}
+          onDiscard={latest => { setFileResult(latest); setEditedContent(null); setSaveFailure(null); }} /> : undefined}
         project={project}
         explorerFile={explorerFile}
         fileResult={fileResult}

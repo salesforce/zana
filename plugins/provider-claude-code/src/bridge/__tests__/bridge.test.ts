@@ -170,6 +170,7 @@ interface ClaudeQueryCallOptions {
   sandbox?: BridgeSessionOptions["sandbox"];
   sessionId?: string;
   settingSources?: string[];
+  settings?: BridgeSessionOptions["settings"];
   stderr?: (data: string) => void;
 }
 
@@ -6749,6 +6750,89 @@ describe("canonical model context-window hint", () => {
 });
 
 describe("live Claude permission policy", () => {
+  it.each(["thread/start", "thread/resume"] as const)("retains the sandbox opt-out through %s and later permission updates", async method => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const queries: ControlledClaudeQuery[] = [];
+    queryMock.mockImplementation(() => {
+      const query = createControlledClaudeQuery(); queries.push(query); return query;
+    });
+    const threadId = `thread-sandbox-native-${method}`;
+    try {
+      bridge.sendRequest(1, method, { threadId, cwd: "/tmp/worktree", instructionMode: "append",
+        ...(method === "thread/resume" ? { providerThreadId: threadId } : {}),
+        options: canonicalOptions({ providerOptions: { sandboxEnabled: false } }),
+      });
+      expect((await bridge.waitForResponse(1)).error).toBeUndefined();
+      expect(getLatestQueryOptions()).not.toHaveProperty("sandbox");
+      bridge.sendRequest(3, "turn/start", canonicalTurnParams({ threadId,
+        input: [{ type: "text", text: "change roots while keeping native settings" }],
+        providerOptions: { additionalWorkspaceWriteRoots: ["/tmp/native-extra"] },
+      }));
+      await expect(readNextPromptText(getLatestQueryCall())).resolves.toBe("change roots while keeping native settings");
+      expect((await bridge.waitForResponse(3)).error).toBeUndefined();
+      expect(queries).toHaveLength(1);
+      const settings = queries[0]!.applyFlagSettings.mock.calls.at(-1)![0];
+      expect(settings).not.toHaveProperty("sandbox");
+      expect(settings).toMatchObject({ permissions: { additionalDirectories: ["/tmp/native-extra"] } });
+      expect(getLatestQueryOptions()).not.toHaveProperty("sandbox");
+      expect(getLatestQueryOptions().settings).not.toHaveProperty("sandbox");
+      await stopBridgeThread({ bridge, queries, threadId });
+    } finally { queries.forEach(query => query.finish()); bridge.restore(); }
+  });
+
+  it.each(["turn/start", "turn/steer"] as const)("restarts with native settings when the sandbox toggle changes on %s", async method => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const queries: ControlledClaudeQuery[] = [];
+    queryMock.mockImplementation(() => {
+      const query = createControlledClaudeQuery(); queries.push(query); return query;
+    });
+    const threadId = `thread-sandbox-toggle-${method}`;
+    try {
+      bridge.sendRequest(1, "thread/start", { threadId, cwd: "/tmp/worktree", instructionMode: "append", options: canonicalOptions() });
+      expect((await bridge.waitForResponse(1)).error).toBeUndefined();
+      expect(getLatestQueryOptions().sandbox?.enabled).toBe(true);
+
+      // A permission update leaves an explicit override in SDK settings as well.
+      bridge.sendRequest(3, "turn/start", canonicalTurnParams({ threadId, input: [{ type: "text", text: "extra root" }],
+        providerOptions: { additionalWorkspaceWriteRoots: ["/tmp/extra"] } }));
+      await expect(readNextPromptText(getLatestQueryCall())).resolves.toBe("extra root");
+      await bridge.waitForResponse(3);
+      queries[0]!.emit(createSuccessfulResultMessage(threadId));
+      await bridge.flushWork();
+
+      for (const [index, sandboxEnabled] of [false, undefined, true].entries()) {
+        const requestId = 10 + index;
+        bridge.sendRequest(requestId, method, canonicalTurnParams({ threadId,
+          ...(method === "turn/steer" ? { expectedTurnId: "turn-1" } : {}),
+          input: [{ type: "text", text: `continue ${index}` }],
+          providerOptions: { additionalWorkspaceWriteRoots: ["/tmp/extra"],
+            ...(sandboxEnabled === undefined ? {} : { sandboxEnabled }) },
+        }));
+        await bridge.flushWork();
+        await expect(readNextPromptText(getLatestQueryCall())).resolves.toBe(`continue ${index}`);
+        expect((await bridge.waitForResponse(requestId)).error).toBeUndefined();
+        expect(queries).toHaveLength(index === 2 ? 3 : 2);
+        expect(getLatestQueryOptions().resume).toBe(threadId);
+        expect(getLatestQueryOptions().permissionMode).toBe("acceptEdits");
+        if (sandboxEnabled === true) {
+          expect(getLatestQueryOptions().sandbox?.enabled).toBe(true);
+          expect(queries[1]!.close).toHaveBeenCalled();
+        } else {
+          expect(getLatestQueryOptions()).not.toHaveProperty("sandbox");
+          expect(getLatestQueryOptions().settings).not.toHaveProperty("sandbox");
+          expect(queries[0]!.close).toHaveBeenCalled();
+        }
+        queries.at(-1)!.emit(createSuccessfulResultMessage(threadId));
+        await bridge.flushWork();
+      }
+      expect(bridge.messages.filter(message => message.method === "session/replaced")).toEqual([
+        expect.objectContaining({ params: expect.objectContaining({ contextLost: false, providerThreadId: threadId }) }),
+        expect.objectContaining({ params: expect.objectContaining({ contextLost: false, providerThreadId: threadId }) }),
+      ]);
+      await stopBridgeThread({ bridge, queries, threadId });
+    } finally { queries.forEach(query => query.finish()); bridge.restore(); }
+  });
+
   it.each(["full", "extra-root", "plan"] as const)("applies %s permissions before accepting the next prompt", async scenario => {
     const bridge = createBridgeJsonRpcTestHarness(handleLine);
     const queries: ControlledClaudeQuery[] = [];

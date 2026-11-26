@@ -647,6 +647,8 @@ export interface InboxEntry {
    * unstamped rather than recorded as if verified.
    */
   extensionSource?: { extensionId: string };
+  /** An authenticated plugin offers an editable agent draft for this issue. */
+  offerAgentFix?: true;
   /**
    * OPTIONAL click-navigation redirect, set only by an extension's brokered
    * `ctx.inbox.push` (never the agent MCP tools or the renderer-panel path) and
@@ -686,7 +688,7 @@ export interface InboxEntry {
    * Host-stamped marker linking this entry to a pending Squad launch proposal.
    * Never agent-supplied; presentation only (main re-authorizes on review).
    */
-  squadProposal?: { proposalId: string };
+  squadProposal?: { proposalId: string; planCheck?: { mustFix: number; check: number; fixedForYou: number } };
   /**
    * Optional host-authored decision context. Main content stays plain-language;
    * technical material appears only after the user opens its Details disclosure.
@@ -1889,6 +1891,12 @@ export const PROJECT_EXPANDED_CAP = 200;
 
 export interface AppConfig {
   version: 1;
+  /** All Squads launch mode. Missing reads as `caller`. See `resolveSquadTransport`. */
+  squadDefaultTransport?: 'follow' | 'caller' | SquadTransport;
+  /** Mirror of the Composer default launch mode (`agent | thread | team`). */
+  composerDefaultLaunchMode?: 'agent' | 'thread' | 'team';
+  /** Last non-Team Composer mode; Team resolves Squad transport through it. */
+  composerLastTransportMode?: 'agent' | 'thread';
   /**
    * App light/dark mode. 'system' (added WARP-A2) follows the OS
    * `prefers-color-scheme` live; 'dark'/'light' pin it. Stored as this
@@ -2285,6 +2293,11 @@ export interface AppConfig {
    * `walkthroughCompleted` / `setupDismissed` pattern (main window only).
    */
   sponsorPromptDismissed?: boolean;
+  /**
+   * Session ids of exited non-zero Squad worker cards the user dismissed from the Agent board. Such cards stay
+   * visible past the usual finished-linger window until dismissed. Newest last, capped by the config store.
+   */
+  dismissedWorkerExits?: string[];
   /**
    * Auto-name a Claude tab or a conversation thread from its first instruction
    * via an LLM micro-call (the `tab-namer` prompt). Default true. When false,
@@ -2796,6 +2809,16 @@ export interface AppConfig {
    * Default 300000 (5 min).
    */
   executionPlanStartupGraceMs?: number;
+  /**
+   * How long (ms) a human Squad blocker may wait unanswered before one reminder is posted to the Inbox.
+   * `0` disables the reminder; absent means the default (30 min). Old config files keep the default.
+   */
+  executionBlockerReminderMs?: number;
+  /**
+   * Per-unit git checkpoints for Squad runs: record what each unit changed in its checkout (by any means, including
+   * shell writes) and restore a failed unit's own edits. Default on; explicit false turns the feature off.
+   */
+  squadUnitCheckpointsEnabled?: boolean;
   /**
    * Show CLI Agent in the New Chat / New agent launch switcher. Default ON.
    * At least one of this and {@link composerShowModern} must stay on.
@@ -3882,6 +3905,12 @@ export interface WalkedFile {
   path: string;
 }
 
+/** Result of a bounded project walk; `truncated` means a cap cut the listing short. */
+export interface WalkResult {
+  files: WalkedFile[];
+  truncated: boolean;
+}
+
 export interface SearchOptions {
   caseSensitive?: boolean;
   regex?: boolean;
@@ -4020,6 +4049,10 @@ export interface ThreadHistoryRow {
   title: string | null;
   updatedAt: number;
   archivedAt: number | null;
+  /** Execution host, creation time and creating plugin, so history lists can share roster filters. */
+  hostId?: string;
+  createdAt?: number;
+  originPluginId?: string | null;
   unavailableReason?: string;
 }
 export interface ThreadHistoryPage {
@@ -4802,8 +4835,26 @@ export interface Persona {
    * ones. Resolve with {@link effectiveSkills}, which always adds `zcc-inbox`.
    */
   skills?: string[];
+  /** Routing tags used by Squad plans. Stored lowercase and matched case-insensitively. */
+  roles?: string[];
   /** Set by the loader/host for UI display; never read from disk / trusted from the renderer. */
   source?: PersonaSource;
+}
+
+export const ROLES_MAX = 16;
+export const ROLE_MAX_CHARS = 64;
+
+/** Normalize bounded routing tags without retaining empty or duplicate values. */
+export function normalizeRoles(value: unknown): string[] | undefined | null {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return null;
+  const roles = [...new Set(value.slice(0, ROLES_MAX).map((role) => typeof role === 'string' ? role.trim().toLowerCase().slice(0, ROLE_MAX_CHARS) : '').filter(Boolean))];
+  return roles;
+}
+
+/** Slot tags override persona tags; this keeps one source of truth for every roster projection. */
+export function effectiveRoles(slot: Pick<TeamSlot, 'roles'>, persona: Pick<Persona, 'roles'> | undefined): string[] | undefined {
+  return slot.roles ?? persona?.roles;
 }
 
 /**
@@ -5089,6 +5140,8 @@ export interface TeamSlot {
   quantity?: number;
   /** Optional tab label override. */
   label?: string;
+  /** Slot-specific routing tags. When absent, the persona's roles apply. */
+  roles?: string[];
   /**
    * Opt-in: keep this seat closed until the engine has a first unit for it.
    * Only the boolean `true` is stored; absent means the seat starts at launch.
@@ -5138,6 +5191,15 @@ export interface TeamLaunchAuthorizationResult {
   slots: Array<TeamLaunchTaskSlot & { personaId: string; authorizationId: string }>;
   context?: TeamLaunchAuthorizationContextV1;
   admissionDigest?: string;
+  /** Transport pinned for this run; recovery and resume read the stored copy. */
+  resolvedTransport?: ResolvedSquadTransport;
+}
+
+/** Run-level Squad transport decision. */
+export interface ResolvedSquadTransport {
+  transport: SquadTransport;
+  source: 'squad' | 'launch-picker' | 'caller' | 'global' | 'launch-mode' | 'fallback' | 'fallback-squad-mode';
+  fallbackReason?: string;
 }
 
 /** Main-issued audit snapshot. Historical only; never a reusable launch grant. */
@@ -5219,6 +5281,50 @@ export interface CancelTeamLaunchResult {
   lifecycleState: 'cancel-pending' | 'canceled';
 }
 
+/** Per-Squad run limits. Every field is optional; absent keeps the run default. */
+export interface TeamLimits {
+  /** Most workers a run may have launched at once; bounded by the 32-session run cap. */
+  maxConcurrent?: number;
+  /** Wall-clock ceiling for one claimed work unit, in ms. Absent keeps the 20 minute default. */
+  claimWallClockMs?: number;
+  /** Output-silence ceiling for one claimed work unit, in ms. Absent keeps the 10 minute default. */
+  claimStallMs?: number;
+  /** Ceiling for a claim whose worker keeps producing output but sends no turn heartbeat and changes no file.
+   *  Replaces the stall and wall-clock limits for such a claim. Absent keeps the 30 minute default. */
+  claimOutputCeilingMs?: number;
+}
+
+/** Defaults a Squad run uses when `claimWallClockMs` / `claimStallMs` / `claimOutputCeilingMs` are absent (mirrors the execution service). */
+export const DEFAULT_CLAIM_WALL_CLOCK_MS = 20 * 60_000;
+export const DEFAULT_CLAIM_STALL_MS = 10 * 60_000;
+export const DEFAULT_CLAIM_OUTPUT_CEILING_MS = 30 * 60_000;
+
+/** Inclusive bounds {@link sanitizeTeamLimits} enforces; the editor shows the same ranges. */
+export const TEAM_LIMIT_BOUNDS = {
+  maxConcurrent: { min: 1, max: 32 },
+  claimWallClockMs: { min: 60_000, max: 24 * 60 * 60_000 },
+  claimStallMs: { min: 60_000, max: 24 * 60 * 60_000 },
+  claimOutputCeilingMs: { min: 60_000, max: 24 * 60 * 60_000 }
+} as const;
+
+/**
+ * Normalize untrusted Squad limits. Non-numeric, non-finite and non-positive values are dropped
+ * (absent keeps the default); values outside {@link TEAM_LIMIT_BOUNDS} are clamped; fractions are
+ * floored. Returns undefined when nothing survives so a Squad without limits stores no field.
+ */
+export function sanitizeTeamLimits(raw: unknown): TeamLimits | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const source = raw as Record<string, unknown>;
+  const out: TeamLimits = {};
+  for (const key of ['maxConcurrent', 'claimWallClockMs', 'claimStallMs', 'claimOutputCeilingMs'] as const) {
+    const value = source[key];
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 1) continue;
+    const { min, max } = TEAM_LIMIT_BOUNDS[key];
+    out[key] = Math.max(min, Math.min(max, Math.floor(value)));
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 /**
  * A named bundle of personas that opens N terminal tabs when launched — the
  * core "Team" primitive. NOT a daemon: a Team is a registry row, launching
@@ -5259,14 +5365,20 @@ export interface Team {
    * always-allowed skills. Only the boolean `true` is stored; see `effectiveSkills`.
    */
   leanWorkers?: boolean;
-  /** Transport selected for every squad member. Absent persisted teams remain CLI. */
-  transport?: SquadTransport;
+  /**
+   * Transport for every squad member. Absent = "Use default"; `CALLER` follows the
+   * launching session. Resolve with `resolveSquadTransport`; older builds read
+   * any non-MODERN value as CLI.
+   */
+  transport?: SquadTransport | 'CALLER';
   /** Planning mode preselected when this Squad is picked or proposed. Absent ⇒ the built-in default (infer when the orchestrator can plan). */
   defaultPlanning?: SquadPlanning;
   /** Keep the orchestrator session open after successful Squad completion. */
   retainOrchestrator?: boolean;
   /** Whether agent-started runs of this Squad need the user's Launch first. Review is a floor: the Project's review applies even when this is absent or direct. Absent ⇒ direct unless the Project asks for review. */
   launchApproval?: LaunchApproval;
+  /** Per-run concurrency and claim limits applied when a run starts. Absent ⇒ run defaults. */
+  limits?: TeamLimits;
   /** Preselected in the New Agent squad picker. Absent ⇒ the first squad alphabetically. */
   isDefault?: boolean;
   /** Set by the loader/host for UI display; never read from disk / trusted from the renderer. */
@@ -5329,6 +5441,8 @@ export interface TeamSummary {
   description?: string;
   /** Number of slot rows (NOT the total tab count — slots may have quantity > 1). */
   slotCount: number;
+  /** Launchable roster, excluding prompts and other launch internals. */
+  slots: Array<{ label?: string; personaId: string; level?: Persona['modelLevel']; roles?: string[] }>;
   source?: PersonaSource;
   /** Planning mode preselected for this Squad. Absent ⇒ the built-in default (infer when the orchestrator can plan). */
   defaultPlanning?: SquadPlanning;
@@ -5534,12 +5648,22 @@ export interface SquadFlowGraph {
 }
 
 /** Project a full {@link Team} down to its non-sensitive {@link TeamSummary}. */
-export function toTeamSummary(t: Team): TeamSummary {
+export function toTeamSummary(t: Team, personaById?: (id: string) => Pick<Persona, 'modelLevel' | 'roles'> | undefined): TeamSummary {
   return {
     id: t.id,
     name: t.name,
     description: t.description,
     slotCount: Array.isArray(t.slots) ? t.slots.length : 0,
+    slots: (Array.isArray(t.slots) ? t.slots : []).map((slot) => {
+      const persona = personaById?.(slot.personaId);
+      const roles = effectiveRoles(slot, persona);
+      return {
+        personaId: slot.personaId,
+        ...(slot.label ? { label: slot.label } : {}),
+        ...(persona?.modelLevel ? { level: persona.modelLevel } : {}),
+        ...(roles !== undefined ? { roles } : {})
+      };
+    }),
     source: t.source,
     ...(t.defaultPlanning ? { defaultPlanning: t.defaultPlanning } : {}),
     ...(t.launchApproval ? { launchApproval: t.launchApproval } : {})
@@ -6355,6 +6479,8 @@ export interface PluginAppEntry {
   sourceKind?: 'path' | 'git' | 'npm' | 'builtin';
   /** Display grouping derived from declared plugin capabilities, including disabled installs. */
   collection?: 'coding-agents';
+  /** Offer this plugin’s enable switch in Experimental settings. */
+  experimental?: true;
   status: 'running' | 'disabled' | 'degraded' | 'needs-configuration';
   statusDetail?: string | null;
   /** Host-derived recovery choices; local paths and replacement sources remain private. */
@@ -6917,7 +7043,8 @@ export const EXECUTION_FAILURE_CODES = [
   'SEMANTIC_CONFLICT',
   'POLICY_ESCALATION',
   'NO_QUALIFIED_ROUTE',
-  'ROUTE_FACTS_UNAVAILABLE'
+  'ROUTE_FACTS_UNAVAILABLE',
+  'STALLED'
 ] as const;
 export type ExecutionFailureCode = typeof EXECUTION_FAILURE_CODES[number];
 export const EXECUTION_FAILURE_DETAIL_MAX_CHARS = 2_048;
@@ -6947,6 +7074,8 @@ export interface ExecutionBoardProjection {
   jobTitle: string;
   /** Main-owned coordination contract, so Job UI never infers its mode from a title. */
   coordinationMode?: TeamCoordinationMode;
+  /** Launch mode pinned for this run at launch. Display only; absent for runs started before launch modes resolved. */
+  resolvedTransport?: ResolvedSquadTransport;
   /** The PTY or thread conversation this run was started from, when launched from a Squad proposal. */
   startedFrom?: { kind: 'pty' | 'thread'; id: string; title?: string };
   origin?: LaunchOrigin;
@@ -6968,6 +7097,8 @@ export interface ExecutionBoardProjection {
   modernMembers?: Array<{ threadId: string; slotId: string; personaId: string; role: 'orchestrator' | 'worker'; live: boolean }>;
   /** Terminal shared checkout retained for recovery or a follow-up agent. */
   retainedWorktree?: { path: string; branch: string; baseBranch?: string; disposition?: 'left' };
+  /** Worker slots that failed to spawn at launch (sanitized reasons, capped at 20); present only when any failed. */
+  failedWorkers?: Array<{ slotId: string; reason: string }>;
   sources?: Array<{
     id: string;
     name: string;
@@ -6985,6 +7116,9 @@ export interface ExecutionBoardProjection {
       title: string;
       dependencies: string[];
       slotId?: string;
+      /** Worker the routing decision picked and why (display only). */
+      chosenSlotId?: string;
+      chosenReason?: string;
       state: 'PENDING' | 'READY' | 'CLAIMED' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'SKIPPED';
       failureCode?: ExecutionFailureCode;
       result?: string;
@@ -7076,6 +7210,8 @@ export interface ExecutionBoardProjection {
      *  or Job Details. The renderer keys attention display off this (Rule 1: this
      *  is metadata, never the answer text). */
     audience?: 'human' | 'coordinator';
+    /** Epoch ms the wait for an answer began (creation, or escalation to a human); the Squad panel shows the wait from it. */
+    waitingSince?: number;
     response?: string;
     notice?: { status: 'PENDING' | 'ACKNOWLEDGED'; attempts: number; inboxItemId?: string };
     delivery?: {
@@ -7122,7 +7258,11 @@ export interface ExecutionBoardProjection {
       createdAt: number;
     }>;
   };
+  /** Effective run limits (policy value or the default that applies). */
+  limits?: { maxConcurrent: number; claimWallClockMs?: number; claimStallMs?: number; claimOutputCeilingMs?: number };
   finalSummary?: string;
+  /** Sanitized, bounded reason the run ended FAILED. */
+  failureReason?: string;
   eventCursor?: number;
   coordinator?: { status: 'live' | 'parked' | 'lost' | 'complete'; sessionId?: string };
   recoveryAttention?: boolean;
@@ -7155,12 +7295,16 @@ export interface TeamJobLaunchInput {
   teamId: string;
   projectId: string;
   goal: string;
+  /** Plan document supplied apart from the goal (size-capped by main). Never scanned for source paths. */
+  planText?: string;
   title?: string;
   summary?: string;
   sourceCapabilityIds?: string[];
   coordinationMode?: Extract<TeamCoordinationMode, 'structured' | 'freeform'>;
   /** Main-held Squad proposal id. Only valid from a desktop window; main re-authorizes it. */
   proposalId?: string;
+  /** New Agent launch picker choice for this launch only. A hint: main validates it and a pinned Squad ignores it. */
+  launchModePick?: SquadTransport;
   /** Existing user-owned execution target by role/branch. Absent keeps legacy behavior; main resolves and revalidates it. */
   target?: SquadExecutionTargetSelector;
 }
@@ -7235,6 +7379,8 @@ export type TeamJobLaunchResponse = { ok: true; value: TeamJobLaunchResult } | {
 
 export const TEAM_ID_MAX_CHARS = 256;
 export const TEAM_GOAL_MAX_CHARS = 4_000;
+/** Cap for a separately supplied plan document (`planText`); the goal keeps its own, smaller cap. */
+export const TEAM_PLAN_TEXT_MAX_CHARS = 64_000;
 export const TEAM_TITLE_MAX_CHARS = 256;
 export const TEAM_REPLY_MAX_CHARS = 16_000;
 
@@ -7245,6 +7391,8 @@ export interface ProductTeamLaunchInput extends LaunchOptions {
   teamId: string;
   projectId: string;
   goal: string;
+  /** Plan document supplied apart from the goal. Never scanned for source paths. */
+  planText?: string;
   mode: TeamLaunchMode;
   title?: string;
   summary?: string;
@@ -7270,6 +7418,8 @@ export interface ProductTeamStatus {
   summary?: string;
   /** Persisted terminal output; legacy executions may have only finalSummary text. */
   result?: NonNullable<ExecutionBoardProjection['assembledResult']> | string;
+  /** Sanitized, bounded reason the run ended FAILED. */
+  failure?: string;
   blockers?: Array<{ id: string; question?: string; resolved?: boolean }>;
 }
 

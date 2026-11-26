@@ -53,6 +53,20 @@ export function inboxSecondaryLine(entry: InboxEntry): string {
   return preview === inboxPrimaryTitle(entry) ? '' : preview;
 }
 
+/** Editable session context for a new agent opened from an Inbox entry. */
+export function buildInboxAgentPrompt(entry: InboxEntry, opening = 'Act on the following inbox message from this project.'): string {
+  const parts = [opening];
+  if (entry.docs?.length) {
+    parts.push('', 'Related documents (paths relative to the project root):');
+    for (const doc of entry.docs) parts.push(`- ${doc.path}`);
+  }
+  const comments = entry.comments?.trim();
+  if (comments) {
+    parts.push('', 'Message:', comments.length > 4000 ? `${comments.slice(0, 4000)}\n…(truncated)` : comments);
+  }
+  return parts.join('\n');
+}
+
 /**
  * Compact title form for chips/buttons where long titles are noisy.
  */
@@ -60,15 +74,22 @@ export function inboxShortTitle(entry: InboxEntry, max = 120): string {
   return inboxPrimaryTitle(entry).slice(0, max);
 }
 
+const TABLE_SEPARATOR_LINE = /^\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/;
+
+/** A GFM table row (`| a | b |`) or its `|---|---|` separator; not a readable one-liner. */
+function isMarkdownTableLine(line: string): boolean {
+  return line.trimStart().startsWith('|') || TABLE_SEPARATOR_LINE.test(line);
+}
+
 /**
- * Build a compact preview from comments/docs.
+ * Build a compact preview from comments/docs. Markdown table rows are skipped.
  */
 export function inboxPreview(entry: InboxEntry): string {
   const c = (entry.comments ?? '').trim();
-  if (c) {
-    const firstLine = c.split('\n').find((l) => l.trim().length > 0) ?? '';
-    return mdToPlainText(firstLine);
-  }
+  const firstLine = c.split('\n').find((l) => l.trim().length > 0 && !isMarkdownTableLine(l));
+  if (firstLine) return mdToPlainText(firstLine);
+  // A table-only comment has no one-line summary: fall through to docs / nothing.
+  if (c && !entry.docs?.length) return '';
   if (entry.docs && entry.docs.length > 0) {
     const d = entry.docs[0];
     if (d) {
@@ -85,6 +106,10 @@ export function isUnansweredQuestion(
   answeredIds: Record<string, true>
 ): boolean {
   return inboxQuestions(entry).length > 0 && !answeredIds[entry.id];
+}
+
+export function inboxOffersAgentFix(entry: InboxEntry): boolean {
+  return entry.offerAgentFix === true && !!entry.extensionSource && !entry.hostActionRequired;
 }
 
 /**

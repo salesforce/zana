@@ -4,6 +4,7 @@ import type {
   ExtensionKind,
   JsonObject,
   JsonValue,
+  MessageSource,
   OwnershipChangeOperationMetadata,
   PendingInteractionUserAnswer,
   PendingInteractionUserQuestionQuestion,
@@ -104,6 +105,8 @@ export interface EventProjectionUserMessage extends EventProjectionMessageBase {
   // event. Legacy events lacking them project as `unlabeled` / `null`.
   systemMessageKind: SystemMessageKind;
   systemMessageSubject: SystemMessageSubject | null;
+  /** Plugin-supplied sender for a message no person typed (e.g. a bot reply). */
+  messageSource?: MessageSource;
   turnRequest: EventProjectionTurnRequest;
   text: string;
   mentions: PromptTextMention[];
@@ -124,6 +127,8 @@ export interface EventProjectionAssistantTextMessage extends EventProjectionMess
   status: Extract<EventProjectionMessageStatus, "streaming" | "completed">;
   /** True when this message came from a legacy persisted user-visible system event. */
   isLegacyUserMessage?: boolean;
+  /** An independent display message published by the plugin that owns the thread. */
+  pluginId?: string;
 }
 
 export type EventProjectionToolParsedIntent =

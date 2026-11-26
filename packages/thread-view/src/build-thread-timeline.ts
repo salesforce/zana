@@ -70,6 +70,7 @@ import { extractThreadTimelineGoal } from "./goal-snapshot-extraction.js";
 import { extractThreadTimelineModelFallback } from "./model-fallback-extraction.js";
 import { extractThreadTimelinePendingTodos } from "./todo-snapshot-extraction.js";
 import { buildTimelineErrorDisplay } from "./error-display.js";
+import { trimTrailingChar } from "@zana-ai/zcc-domain/trim-edges";
 
 export type ThreadTimelineTurnMessageDetail = "summary" | "full";
 
@@ -450,7 +451,7 @@ function isPreviewablePath(
     return !path.split("/").includes("..");
   }
   return previewRoots.some((root) => {
-    const normalizedRoot = root.replace(/\/+$/u, "");
+    const normalizedRoot = trimTrailingChar(root, "/");
     return (
       normalizedRoot.length > 0 &&
       path.startsWith(`${normalizedRoot}/`) &&
@@ -671,6 +672,7 @@ function convertMessage(
           senderThreadId: message.senderThreadId,
           systemMessageKind: message.systemMessageKind,
           systemMessageSubject: message.systemMessageSubject,
+          ...(message.messageSource ? { messageSource: message.messageSource } : {}),
           turnRequest: message.turnRequest,
         },
       ];
@@ -1061,6 +1063,7 @@ function convertSteerMessage(
     senderThreadId: message.senderThreadId,
     systemMessageKind: message.systemMessageKind,
     systemMessageSubject: message.systemMessageSubject,
+    ...(message.messageSource ? { messageSource: message.messageSource } : {}),
     turnRequest: message.turnRequest,
   };
 }

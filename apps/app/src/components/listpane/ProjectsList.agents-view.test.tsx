@@ -152,7 +152,48 @@ describe('ProjectsList agents-only view', () => {
     renderList();
     expect(screen.getByRole('button', { name: 'Open local-core' })).toBeTruthy();
     expect(screen.queryByRole('list', { name: 'Agents' })).toBeNull();
-    expect(screen.getByPlaceholderText('Filter machines or projects')).toBeTruthy();
+    expect(screen.getByPlaceholderText('Filter machines, projects or chats')).toBeTruthy();
+  });
+
+  it('finds older chat titles in collapsed projects without changing the saved tree', () => {
+    h.projectExpanded = { p1: false };
+    h.threads = [
+      ...Array.from({ length: 9 }, (_, i) => thread(String(i), 'p1', 'Recent conversation', 100 - i)),
+      thread('old', 'p1', 'Release checklist', 1),
+      { ...thread('hidden', 'p2', 'Release secret', 2), visibility: 'hidden' },
+      { ...thread('archived', 'p2', 'Release archive', 3), archivedAt: 4 }
+    ];
+    renderList();
+    const input = screen.getByRole('textbox', { name: 'Filter machines, projects or chats' });
+    fireEvent.change(input, { target: { value: '  RELEASE  ' } });
+    expect(screen.getByRole('button', { name: 'Release checklist' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Open zana-builder' })).toBeNull();
+    expect(screen.queryByText('Recent conversation')).toBeNull();
+    expect(screen.getAllByTestId('project-thread-row')).toHaveLength(1);
+    fireEvent.change(input, { target: { value: '' } });
+    expect(screen.getByRole('button', { name: 'Expand sessions for local-core' })).toBeTruthy();
+    expect(screen.queryByText('Release checklist')).toBeNull();
+    expect(h.setProjectExpanded).not.toHaveBeenCalled();
+  });
+
+  it('searches the full visible history in Agents only and restores the idle limit on clear', () => {
+    localStorage.setItem('zcc.sidebarProjectView', 'agents');
+    h.threads = [
+      ...Array.from({ length: 9 }, (_, i) => thread(String(i), 'p1', 'Recent conversation', 100 - i)),
+      thread('old', 'p1', 'Release checklist', 4),
+      { ...thread('hidden', 'p1', 'Release secret', 3), visibility: 'hidden' },
+      { ...thread('archived', 'p1', 'Release archive', 2), archivedAt: 4 }
+    ];
+    renderList();
+    const input = screen.getByRole('textbox', { name: 'Filter agents' });
+    expect(screen.queryByText('Release checklist')).toBeNull();
+    fireEvent.change(input, { target: { value: '  RELEASE  ' } });
+    expect(screen.getAllByTestId('project-thread-row')).toHaveLength(1);
+    expect(screen.getByText('Release checklist')).toBeTruthy();
+    fireEvent.change(input, { target: { value: 'local-core' } });
+    expect(screen.getAllByTestId('project-thread-row')).toHaveLength(10);
+    fireEvent.change(input, { target: { value: '' } });
+    expect(screen.getAllByTestId('project-thread-row')).toHaveLength(8);
   });
 
   it('hides project rows and lists every session newest-first, tagged with its project', () => {
@@ -309,7 +350,10 @@ describe('machine project hierarchy', () => {
     fireEvent.click(within(remote).getByRole('button', { name: 'Open Default Project' }));
     expect(h.enterProjectFocus).toHaveBeenCalledWith('default');
     expect(screen.getByTestId('location').textContent).toBe('/');
-    fireEvent.change(screen.getByPlaceholderText('Filter machines or projects'), { target: { value: 'Devbox' } });
+    fireEvent.change(screen.getByPlaceholderText('Filter machines, projects or chats'), { target: { value: 'remote task' } });
+    expect(document.querySelector('[data-machine-id="local"]')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Remote task' })).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText('Filter machines, projects or chats'), { target: { value: 'Devbox' } });
     expect(document.querySelector('[data-machine-id="local"]')).toBeNull();
     expect(screen.getByRole('button', { name: 'Open API' })).toBeTruthy();
   });

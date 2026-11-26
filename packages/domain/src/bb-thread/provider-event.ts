@@ -914,6 +914,12 @@ const unscopedSystemEventSchema = z.discriminatedUnion("type", [
       threadId: z.string(),
     })
     .merge(systemLegacyUserMessageEventDataSchema),
+  z.object({
+    type: z.literal("system/plugin/message"),
+    threadId: z.string(),
+    pluginId: z.string().min(1),
+    text: z.string().min(1).max(8000),
+  }),
   z
     .object({
       type: z.literal("system/thread/interrupted"),

@@ -128,7 +128,7 @@ export async function deliverNotifications(
         `**${repo}#${d.pr.number}** — ${statusLabel(d.oldStatus)} → ` +
         `**${statusLabel(d.newStatus)}**\n\n${titleLine}`;
       try {
-        await host.pushInbox({ comments: md, projectId: d.pr.projectId });
+        await host.pushInbox({ comments: md, projectId: d.pr.projectId, ...(d.newStatus === 'failed' && { offerAgentFix: true }) });
       } catch {
         host.toast(
           `PR Monitor: couldn't post inbox notification for ${d.pr.repo}#${d.pr.number}`,

@@ -5,13 +5,13 @@ import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import type { Project } from '@zana-ai/zcc-domain/product';
 import type { ThreadListItem } from '../thread-store.js';
 
-const h = vi.hoisted(() => ({ panels: [] as Array<{ pluginId: string; id: string; path?: string; placement?: string }>, rpc: vi.fn(), select: vi.fn(), scope: null as string | null, load: vi.fn(), archived: null as null | ((id: string) => void), unsubscribe: vi.fn(), copy: vi.fn(), toast: vi.fn(), archive: vi.fn(), remove: vi.fn() }));
+const h = vi.hoisted(() => ({ panels: [] as Array<{ pluginId: string; id: string; path?: string; placement?: string }>, rpc: vi.fn(), select: vi.fn(), scope: null as string | null, load: vi.fn(), archived: null as null | ((id: string) => void), unsubscribe: vi.fn(), copy: vi.fn(), toast: vi.fn(), archive: vi.fn(), remove: vi.fn(), closeTerminal: vi.fn() }));
 vi.mock('../lib/copy-text.js', () => ({ copyTextOrFail: h.copy }));
 vi.mock('../lib/product-client.js', () => ({ product: { threads: { archive: h.archive }, pluginApps: { callRpc: h.rpc } } }));
 vi.mock('../lib/windowScope.js', () => ({ getScopedProjectId: () => h.scope }));
 vi.mock('../store.js', async () => {
   const { create } = await import('zustand');
-  return { useData: create(() => ({ projects: [], configLoaded: true })), useUi: create(() => ({ pushToast: h.toast, selectedProjectId: null as string | null, selectProject: h.select })) };
+  return { useData: create(() => ({ projects: [], configLoaded: true, terminals: {}, terminalsLoaded: {}, closeTerminal: h.closeTerminal })), useUi: create(() => ({ pushToast: h.toast, selectedProjectId: null as string | null, selectProject: h.select, unread: {} as Record<string, boolean> })), useAgentStatus: create(() => ({ byId: {} as Record<string, string> })) };
 });
 vi.mock('../plugins/plugin-slots.js', () => ({ listNavPanels: () => h.panels, listProjectTabs: () => [], projectTabView: () => '' }));
 vi.mock('../thread-store.js', async () => {
@@ -22,7 +22,11 @@ vi.mock('./thread/pickers/ProviderIcon.js', () => ({ ProviderIcon: ({ providerId
 vi.mock('./listpane/FocusedProjectMenu.js', () => ({
   FocusedProjectMenu: ({ project }: { project: Project }) => <div role="group" aria-label={`Project menu for ${project.name}`} />
 }));
-import { useData } from '../store.js';
+import { useSplitWorkspace } from '../lib/split-layout/store.js';
+import { createSinglePaneLayout } from '../lib/split-layout/splitThreadNavigation.js';
+import { listPanes } from '../lib/split-layout/ops.js';
+import { useData, useUi, useAgentStatus } from '../store.js';
+import { resumingAgents } from '../lib/agent-tab-resume.js';
 import { useThreads } from '../thread-store.js';
 import { useApplicationTabs } from '../lib/application-tabs.js';
 import { useSetupPages, setupPath } from './setup/setup-pages.js';
@@ -31,10 +35,11 @@ import { usePluginAppModules } from '../plugins/plugin-app-loader.js';
 import { REFUSAL_MESSAGES, usePinnedItemOverrides } from '../plugins/plugin-pinned-tabs.js';
 import { applicationTabId, type PluginApplicationTab } from '../lib/application-tabs.js';
 
+const agentRow = (id: string, title: string, extra: Record<string, unknown> = {}) => ({ id, projectId: 'p', title, profile: 'claude', cwd: '/x', createdAt: 1, status: 'running', ...extra }) as never;
 const row = (id: string, projectId = 'p', extra: Partial<ThreadListItem> = {}): ThreadListItem => ({ id, projectId, title: `Thread ${id}`, providerId: 'fake', status: 'idle', hostId: 'local', environmentId: null, createdAt: 1, cwd: null, branchName: null, isWorktree: false, ...extra });
 function Probe() {
   const location = useLocation(); const navigate = useNavigate();
-  return <><output data-testid="route">{location.pathname}</output>{['/threads/a', '/threads/b', '/threads/c', '/threads/hidden', '/threads/archived', '/settings', '/projects/p/threads/a', '/setup/machine'].map(path => <button key={path} onClick={() => navigate(path)}>{path}</button>)}</>;
+  return <><output data-testid="route">{location.pathname}</output>{['/threads/a', '/threads/b', '/threads/c', '/threads/hidden', '/threads/archived', '/settings', '/projects/p/threads/a', '/setup/machine', '/sessions/s1', '/sessions/s2', '/sessions/gone', '/projects/p/sessions/s1'].map(path => <button key={path} onClick={() => navigate(path)}>{path}</button>)}</>;
 }
 function mount(path = '/threads/a', includeThreads = true) { return render(<MemoryRouter initialEntries={[path]}><ApplicationTabs includeThreads={includeThreads} /><Probe /></MemoryRouter>); }
 const visit = (path: string) => fireEvent.click(screen.getByRole('button', { name: path, exact: true }));
@@ -42,6 +47,7 @@ const tabs = () => screen.getAllByRole('tab');
 
 beforeEach(() => {
   useApplicationTabs.setState({ open: [], closed: [], initializedScope: undefined });
+  useSplitWorkspace.setState({ layout: null, scopeKey: 'global', scopes: {} });
   useSetupPages.setState({ pages: [] });
   h.panels = [{ pluginId: 'test-plugin', id: 'docs' }];
   h.rpc.mockReset().mockResolvedValue({ available: true }); h.select.mockReset();
@@ -52,7 +58,8 @@ beforeEach(() => {
   h.archive.mockReset().mockResolvedValue({ ok: true });
   h.remove.mockReset().mockImplementation((id: string) => useThreads.setState({ threads: useThreads.getState().threads.filter(row => row.id !== id) }));
   vi.stubGlobal('confirm', vi.fn(() => true));
-  useData.setState({ projects: [{ id: 'p', name: 'Project P', color: '#abc' }, { id: 'q', name: 'Project Q' }] as Project[] });
+  useData.setState({ projects: [{ id: 'p', name: 'Project P', color: '#abc' }, { id: 'q', name: 'Project Q' }] as Project[], terminals: { p: [agentRow('s1', 'Agent one'), agentRow('s2', 'Agent two')] }, terminalsLoaded: { p: true, q: true } });
+  useUi.setState({ unread: {} }); useAgentStatus.setState({ byId: {} }); h.closeTerminal.mockReset().mockResolvedValue(undefined); resumingAgents.clear();
   useThreads.setState({ threads: [row('a'), row('b', 'q'), row('c', 'p', { title: null }), row('hidden', 'p', { visibility: 'hidden' }), row('archived', 'p', { archivedAt: 1 })] });
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -497,7 +504,7 @@ it('reorders mixed tabs from their menus and by dragging without navigating or l
   openActions('Connect a machine'); action('Move tab right');
   const transfer = { setData: vi.fn(), effectAllowed: '' };
   fireEvent.dragStart(tabs()[1]!, { dataTransfer: transfer });
-  expect(transfer.setData).toHaveBeenCalledWith('text/plain', 'setup:machine');
+  expect(transfer.setData).toHaveBeenCalledWith('application/x-zcc-application-tab', 'setup:machine');
   fireEvent.dragOver(tabs()[2]!); fireEvent.drop(tabs()[2]!); fireEvent.dragEnd(tabs()[1]!);
   expect(tabs()[2]!.getAttribute('aria-label')).toBe('Connect a machine');
   expect(useSetupPages.getState().pages).toHaveLength(1);
@@ -510,7 +517,7 @@ it('keeps setup tabs available when thread tabs are disabled and restores only c
   expect(tabs()).toHaveLength(1);
   expect(h.load).not.toHaveBeenCalled();
   expect(screen.queryByRole('button', { name: 'New thread' })).toBeNull();
-  expect(sessionStorage.getItem('zcc.application-tabs.v1:main')).not.toContain('machine');
+  expect(sessionStorage.getItem('zcc.application-tabs.v2')).not.toContain('machine');
   view.unmount();
   useApplicationTabs.setState({ open: [], closed: [], initializedScope: undefined });
   useSetupPages.setState({ pages: [] });
@@ -694,4 +701,216 @@ it('resolves immediately on hover and activation once the interval has passed', 
     await flush();
     expect(tabs()[0]!.getAttribute('aria-label')).toBe('Fresh — Project P');
   } finally { vi.useRealTimers(); }
+});
+
+const setTerms = (p: unknown[], loaded = true) => act(() => useData.setState({ terminals: { p } as never, terminalsLoaded: { p: loaded, q: true } }));
+
+it('opens an agent tab on visit with thread-style label, tooltip, context and keeps it open after leaving', () => {
+  mount('/threads/a'); visit('/sessions/s1');
+  const tab = screen.getByRole('tab', { name: 'Agent one — Project P' });
+  expect(tab.getAttribute('aria-selected')).toBe('true');
+  expect(tab.closest('[title]')?.getAttribute('title') ?? tab.getAttribute('title')).toContain('Project P · Idle');
+  visit('/threads/a');
+  expect(screen.getByRole('tab', { name: 'Agent one — Project P' }).getAttribute('aria-selected')).toBe('false');
+  fireEvent.click(screen.getByRole('tab', { name: 'Agent one — Project P' }));
+  expect(screen.getByTestId('route').textContent).toBe('/sessions/s1');
+});
+
+it('uses the project route for project-scoped visits and stays untouched for unlisted sessions', () => {
+  mount('/projects/p/sessions/s1');
+  expect(useApplicationTabs.getState().open).toEqual([{ kind: 'agent', sessionId: 's1', projectId: 'p', projectScoped: true }]);
+  visit('/sessions/gone');
+  setTerms([agentRow('s1', 'Agent one'), agentRow('sched', 'job', { scheduled: true }), agentRow('si', 'sign', { providerSignIn: { providerId: 'x' } })]);
+  expect(useApplicationTabs.getState().open).toHaveLength(1);
+});
+
+it('shows Working, Needs you and Error icons and quiet idle/exited tabs', () => {
+  mount('/threads/a'); visit('/sessions/s1'); visit('/sessions/s2');
+  expect(screen.queryByRole('img', { name: 'Working' })).toBeNull();
+  act(() => useAgentStatus.setState({ byId: { s1: 'working', s2: 'blocked' } }));
+  expect(screen.getByRole('img', { name: 'Working' })).toBeTruthy();
+  expect(screen.getByRole('img', { name: 'Needs you' })).toBeTruthy();
+  setTerms([agentRow('s1', 'Agent one', { status: 'exited', exitCode: 2 }), agentRow('s2', 'Agent two', { status: 'exited', exitCode: 0 })]);
+  expect(screen.getByRole('img', { name: 'Error' })).toBeTruthy();
+  expect(screen.queryByRole('img', { name: 'Working' })).toBeNull();
+  expect(screen.queryByRole('img', { name: 'Needs you' })).toBeNull();
+});
+
+it('marks an inactive agent tab Unread and clears the label when it becomes active', () => {
+  mount('/threads/a'); visit('/sessions/s1'); visit('/threads/a');
+  act(() => useUi.setState({ unread: { s1: true } }));
+  expect(screen.getByRole('tab', { name: 'Agent one — Project P — Unread' })).toBeTruthy();
+  visit('/sessions/s1');
+  expect(screen.queryByRole('tab', { name: /Unread/ })).toBeNull();
+});
+
+it('prunes tabs only for loaded projects, never in-flight, host-owned or scope-hidden sessions', () => {
+  mount('/threads/a'); visit('/sessions/s1'); visit('/sessions/s2'); visit('/threads/a');
+  setTerms([agentRow('s1', 'Agent one'), agentRow('s2', 'Agent two')], false);
+  setTerms([], false);
+  expect(useApplicationTabs.getState().open.filter(t => t.kind === 'agent')).toHaveLength(2);
+  resumingAgents.add('s1');
+  act(() => useData.setState({ terminals: { p: [agentRow('s2', 'Agent two', { hostId: 'h' })] } as never, terminalsLoaded: { p: true } }));
+  expect(useApplicationTabs.getState().open.map(applicationTabId)).toContain('agent:s1');
+  expect(useApplicationTabs.getState().open.map(applicationTabId)).toContain('agent:s2');
+  resumingAgents.clear();
+  act(() => useData.setState({ terminals: { p: [] } as never }));
+  // s1 (no host) is pruned once it is no longer in flight.
+  // s2 was last seen on a host: its absence may be host loss, so the tab stays.
+  expect(useApplicationTabs.getState().open.map(applicationTabId)).toEqual(['thread:a', 'agent:s2']);
+  expect(useApplicationTabs.getState().closed).toEqual([]);
+});
+
+it('prunes the active agent tab and returns to the fallback route', () => {
+  mount('/threads/a'); visit('/sessions/s1');
+  setTerms([]);
+  expect(useApplicationTabs.getState().open.some(t => t.kind === 'agent')).toBe(false);
+  expect(screen.getByTestId('route').textContent).toBe('/agents');
+});
+
+it('hides agent tabs when threads are off or the project window is scoped elsewhere', () => {
+  useApplicationTabs.setState({ open: [{ kind: 'agent', sessionId: 's1', projectId: 'p', projectScoped: false }], closed: [], initializedScope: null });
+  mount('/settings', false);
+  expect(screen.queryByRole('tab', { name: /Agent one/ })).toBeNull();
+  cleanup();
+  h.scope = 'q';
+  useApplicationTabs.setState({ open: [{ kind: 'agent', sessionId: 's1', projectId: 'p', projectScoped: false }], closed: [], initializedScope: 'q' });
+  mount('/settings');
+  expect(screen.queryByRole('tab', { name: /Agent one/ })).toBeNull();
+  expect(useApplicationTabs.getState().open).toHaveLength(1);
+});
+
+it('copies the agent link and closes an agent only after confirm, reporting nothing extra on success', async () => {
+  mount('/threads/a'); visit('/sessions/s1');
+  const menu = (label: string) => fireEvent.click(screen.getByRole('menuitem', { name: label }));
+  fireEvent.contextMenu(screen.getByRole('tab', { name: 'Agent one — Project P' }));
+  menu('Copy agent link');
+  await waitFor(() => expect(h.copy).toHaveBeenCalledWith(expect.stringContaining('/sessions/s1')));
+  fireEvent.contextMenu(screen.getByRole('tab', { name: 'Agent one — Project P' }));
+  vi.mocked(window.confirm).mockReturnValueOnce(false);
+  menu('Close agent');
+  expect(h.closeTerminal).not.toHaveBeenCalled();
+  fireEvent.contextMenu(screen.getByRole('tab', { name: 'Agent one — Project P' }));
+  menu('Close agent');
+  await waitFor(() => expect(h.closeTerminal).toHaveBeenCalledWith('s1', 'p'));
+  await waitFor(() => expect(useApplicationTabs.getState().open.some(t => t.kind === 'agent')).toBe(false));
+  expect(screen.getByTestId('route').textContent).toBe('/agents');
+});
+
+it('keeps the tab and toasts when closing the agent fails; copy failure toasts', async () => {
+  mount('/threads/a'); visit('/sessions/s1');
+  h.closeTerminal.mockRejectedValueOnce(new Error('x'));
+  fireEvent.contextMenu(screen.getByRole('tab', { name: 'Agent one — Project P' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Close agent' }));
+  await waitFor(() => expect(h.toast).toHaveBeenCalledWith('Could not close agent', 'error'));
+  expect(useApplicationTabs.getState().open.some(t => t.kind === 'agent')).toBe(true);
+  h.copy.mockRejectedValueOnce(new Error('no'));
+  fireEvent.contextMenu(screen.getByRole('tab', { name: 'Agent one — Project P' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Copy agent link' }));
+  await waitFor(() => expect(h.toast).toHaveBeenCalledWith('Could not copy agent link', 'error'));
+});
+
+it('closing an agent tab keeps the process running and offers reopen for a live session', () => {
+  mount('/threads/a'); visit('/sessions/s1'); visit('/threads/a');
+  fireEvent.click(screen.getAllByRole('button', { name: /Close/ }).find(b => b.closest('[data-tab-id="agent:s1"]') || b.getAttribute('aria-label')?.includes('Agent one'))!);
+  expect(h.closeTerminal).not.toHaveBeenCalled();
+  expect(useApplicationTabs.getState().closed.map(applicationTabId)).toEqual(['agent:s1']);
+});
+
+
+function mountDropTarget() {
+  const { container } = render(<div className="split-workspace"><div data-split-pane-id="pane-1"><textarea /></div></div>);
+  const pane = container.querySelector<HTMLElement>('[data-split-pane-id]')!;
+  vi.spyOn(pane, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 100, 500, 300));
+  const child = pane.querySelector('textarea')!;
+  const dataTransfer = { setData: vi.fn(), effectAllowed: '', dropEffect: '' };
+  const start = (tab: HTMLElement) => fireEvent.dragStart(tab, { dataTransfer });
+  const event = (type: string, x: number, y: number) => {
+    const drag = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y });
+    Object.defineProperty(drag, 'dataTransfer', { value: dataTransfer });
+    return fireEvent(child, drag);
+  };
+  return { start, event, child, dataTransfer, workspace: pane.parentElement! };
+}
+
+it('previews the edge under the pointer, splits at release and focuses an already visible tab', () => {
+  mount(); visit('/threads/b'); visit('/threads/a');
+  const { start, event, child, dataTransfer } = mountDropTarget();
+  const layout = createSinglePaneLayout({ kind: 'thread', threadId: 'a', projectId: null });
+  useSplitWorkspace.setState({ layout });
+  const order = [...tabs()];
+  const childDrop = vi.fn();
+  child.addEventListener('drop', childDrop);
+  start(order[1]!);
+  expect(event('dragover', 110, 250)).toBe(false);
+  expect(document.querySelector('.split-drag-overlay-label')?.textContent).toBe('Split left');
+  expect(dataTransfer.dropEffect).toBe('move');
+  fireEvent(child, new MouseEvent('dragleave', { bubbles: true, relatedTarget: child.parentElement }));
+  expect(document.querySelector<HTMLElement>('.split-drag-overlay')?.style.display).toBe('block');
+  fireEvent.dragLeave(child, { relatedTarget: null });
+  expect(document.querySelector<HTMLElement>('.split-drag-overlay')?.style.display).toBe('none');
+  event('dragover', 350, 115);
+  expect(document.querySelector('.split-drag-overlay-label')?.textContent).toBe('Split top');
+  event('drop', 350, 390);
+  expect(childDrop).not.toHaveBeenCalled();
+  const after = useSplitWorkspace.getState().layout!;
+  expect(after.root).toMatchObject({ type: 'split', dir: 'col' });
+  expect(listPanes(after.root).map(p => p.content)).toEqual([
+    { kind: 'thread', threadId: 'a', projectId: null }, { kind: 'thread', threadId: 'b', projectId: null }
+  ]);
+  expect(tabs()).toEqual(order);
+  expect(screen.getByTestId('route').textContent).toBe('/threads/b');
+  expect(document.querySelector('.split-drag-overlay')).toBeNull();
+  start(order[0]!);
+  event('dragover', 590, 250);
+  expect(document.querySelector('.split-drag-overlay-label')?.textContent).toContain('Already open');
+  event('drop', 590, 250);
+  expect(useSplitWorkspace.getState().layout?.root).toBe(after.root);
+  expect(screen.getByTestId('route').textContent).toBe('/threads/a');
+});
+
+it('cancels tab drops on dragend and navigation and ignores unsupported and external drags', () => {
+  mount(); openMachineSetup(); visit('/threads/a');
+  const { start, event, workspace } = mountDropTarget();
+  start(tabs()[1]!);
+  expect(event('dragover', 590, 250)).toBe(true);
+  fireEvent.dragEnd(tabs()[1]!);
+  start(tabs()[0]!);
+  fireEvent.dragOver(workspace);
+  event('dragover', 590, 250);
+  useSplitWorkspace.setState({ scopeKey: 'project:q' });
+  expect(event('dragover', 590, 250)).toBe(true);
+  expect(event('drop', 590, 250)).toBe(true);
+  useSplitWorkspace.setState({ scopeKey: 'global' });
+  fireEvent.dragEnd(tabs()[0]!);
+  expect(event('drop', 590, 250)).toBe(true);
+  start(tabs()[0]!);
+  visit('/settings');
+  expect(document.querySelector('.split-drag-overlay')).toBeNull();
+  expect(event('drop', 590, 250)).toBe(true);
+  expect(useSplitWorkspace.getState().layout).toBeNull();
+});
+
+it('uses the destination scope for a CLI agent and preserves project layout isolation', () => {
+  mount('/sessions/s1'); visit('/threads/b'); visit('/projects/p/threads/a');
+  useSplitWorkspace.setState({ scopeKey: 'project:p', layout: createSinglePaneLayout({ kind: 'thread', threadId: 'a', projectId: 'p' }) });
+  const { start, event } = mountDropTarget();
+  start(tabs()[1]!);
+  expect(event('dragover', 590, 250)).toBe(true);
+  fireEvent.dragEnd(tabs()[1]!);
+  start(tabs()[0]!);
+  event('drop', 350, 250);
+  expect(useSplitWorkspace.getState().layout?.root).toMatchObject({ content: { kind: 'agent-session', sessionId: 's1', projectId: 'p' } });
+  expect(screen.getByTestId('route').textContent).toBe('/projects/p/sessions/s1');
+});
+
+it('opens a pinned item at its own subpath in the existing plugin pane', () => {
+  seed(pin('one'), pin('two')); mountAt('/plugins/test-plugin/docs/one');
+  useSplitWorkspace.setState({ layout: createSinglePaneLayout({ kind: 'plugin-panel', pluginId: 'test-plugin', panelPath: 'docs', subPath: 'one' }) });
+  const { start, event } = mountDropTarget();
+  start(tabs()[1]!);
+  event('drop', 590, 250);
+  expect(h.select).toHaveBeenCalledWith('p');
+  expect(screen.getByTestId('route').textContent).toBe('/plugins/test-plugin/docs/two');
+  expect(listPanes(useSplitWorkspace.getState().layout!.root)).toHaveLength(1);
 });

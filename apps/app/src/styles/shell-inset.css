@@ -63,14 +63,14 @@
   width: auto;
   align-self: stretch;
   margin: 0 var(--inset-gap) var(--inset-gap) 0;
+  /* Keep the outline inside the sheet so the adjacent sidebar cannot cover it. */
+  border: 1px solid var(--border);
   border-radius: var(--inset-radius);
   /* No overflow override: each panel keeps its own scroller (settings, home,
      plugin slots scroll themselves) and a scroller already clips to the
      rounded corners. */
   background: var(--bg-panel);
-  box-shadow:
-    0 0 0 1px var(--border),
-    0 1px 3px rgb(0 0 0 / 0.04);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.04);
 }
 
 .app-shell.shell-inset.sidebar-is-collapsed .shell-main > *,

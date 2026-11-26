@@ -101,6 +101,8 @@ export interface IpcCtx {
   moduleRouter: any;
   offLoudInboxAppended: any;
   openProjectWindow: any;
+  openNewWindow: (projectId?: unknown) => boolean;
+  leaveProjectWindow: (win: import('electron').BrowserWindow, destination: unknown) => Promise<boolean>;
   overseerAudit: any;
   apiErrorResume: any;
   packAndInstallLocal: any;
@@ -124,6 +126,7 @@ export interface IpcCtx {
   restoreSquadWorktreeFollowUpClaim: any;
   restorePrincipal: any;
   runDiskSync: any;
+  productServerCredential: () => string;
   runtimeSupervisor: any;
   safeHandle: SafeHandle;
   safeHandleFromWindow: SafeHandleFromWindow;
@@ -134,6 +137,7 @@ export interface IpcCtx {
   scheduler: any;
   setActiveProjectSkillsWatcher: any;
   showMainWindow: any;
+  sendToMainWindow(channel: string, ...args: unknown[]): Promise<boolean>;
   ensureMainWindowReady: any;
   skillBundles: any;
   squadExecutionService: any;
@@ -147,6 +151,9 @@ export interface IpcCtx {
   syncCompanionMenu: any;
   teams: any;
   teamLifecycle: any;
+  squadWorkerRestarter: any;
+  /** Starts a new session for a Squad worker whose session is over (`respawn(recordId, slotId)`). */
+  squadWorkerRespawner: any;
   templates: any;
   terminateSession: any;
   tray: any;

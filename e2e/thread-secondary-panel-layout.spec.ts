@@ -4,13 +4,17 @@ import { captureElectronScreenshot } from './fixtures/native-screenshot.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+// The sponsor prompt can appear mid-test and take the context menu's focus, so dismiss it for every test here.
+test.use({ initialConfig: { sponsorPromptDismissed: true } });
+
 test.describe('document panel resizing', () => {
   test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { dockableThreadToolsEnabled: true, sponsorPromptDismissed: true } });
 
-  for (const width of [1440, 1000]) {
-    test(`document preview follows the divider at ${width}px`, async ({ app }, testInfo) => {
+  for (const [mode, width] of [['Advanced', 1440], ['Advanced', 1000], ['Basic', 1440]] as const) {
+    test(`document preview follows the divider at ${width}px in ${mode}`, async ({ app }, testInfo) => {
       const page = app.window;
       await page.setViewportSize({ width, height: 800 });
+      if (mode === 'Basic') await page.getByRole('button', { name: 'Basic view', exact: true }).click();
       const root = join(app.home, 'resize-project');
       mkdirSync(root, { recursive: true });
       writeFileSync(join(root, 'notes.md'), '# Resizable document\n\nA document opened in the thread panel.');
@@ -46,12 +50,22 @@ test.describe('document panel resizing', () => {
       const expectWidth = async (target: number) => {
         await expect.poll(async () => Math.abs(await panelWidth() - target)).toBeLessThan(2);
       };
+      const handle = panel.getByRole('separator', { name: 'Resize right panel' });
+      const leftHandles = page.locator('.sidebar-resizer:visible, .list-pane-resizer:visible');
+      if (mode === 'Basic') await expect(leftHandles.first()).toBeVisible();
+      const leftColors = () => leftHandles.evaluateAll(nodes => nodes.map(node => getComputedStyle(node, '::after').backgroundColor));
       const dragToWidth = async (target: number) => {
-        const divider = (await panel.getByRole('separator', { name: 'Resize right panel' }).boundingBox())!;
+        const divider = (await handle.boundingBox())!;
         await page.mouse.move(divider.x + divider.width / 2, divider.y + divider.height / 2);
+        const before = await leftColors();
         await page.mouse.down();
-        await page.mouse.move(container.right - target, divider.y + divider.height / 2, { steps: 10 });
-        await page.mouse.up();
+        try {
+          await page.mouse.move(container.right - target, divider.y + divider.height / 2, { steps: 10 });
+          expect(await leftColors()).toEqual(before);
+          expect(await handle.evaluate(node => getComputedStyle(node, '::after').backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
+        } finally {
+          await page.mouse.up();
+        }
       };
       const initialWidth = await panelWidth();
       const expandedWidth = Math.floor(container.width * 0.65);
@@ -88,10 +102,21 @@ test('panel menus close tab groups without affecting the other dock or pinned vi
   const right = page.getByTestId('thread-secondary-panel'), bottom = page.getByTestId('thread-bottom-panel');
   const tools = (panel: typeof right) => panel.locator('.thread-secondary-tab:not(.is-pinned)');
   await expect(tools(right)).toHaveCount(3); await expect(tools(bottom)).toHaveCount(2);
-  await right.getByRole('button', { name: 'middle', exact: true }).click({ button: 'right' });
+  const middle = right.getByRole('button', { name: 'middle', exact: true });
+  const closeRight = page.getByRole('menuitem', { name: 'Close tabs to the right', exact: true });
+  // The panel can still be settling when the first right-click lands, which dismisses the menu; retry until it stays open.
+  await expect(async () => {
+    if (!await closeRight.isVisible()) await middle.click({ button: 'right' });
+    await expect(closeRight).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: 20_000 });
   await expect(right.getByRole('button', { name: 'first', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await captureElectronScreenshot(app.electron, page, testInfo.outputPath('panel-bulk-close-menu.png'));
-  await page.getByRole('menuitem', { name: 'Close tabs to the right', exact: true }).click();
+  // The native capture can blur the window, which dismisses the menu; open it again when that happens.
+  if (!await closeRight.isVisible()) {
+    await middle.click({ button: 'right' });
+    await expect(closeRight).toBeVisible();
+  }
+  await closeRight.click();
   await expect(tools(right)).toHaveCount(2); await expect(right.getByRole('button', { name: 'last', exact: true })).toHaveCount(0);
   await expect(tools(bottom)).toHaveCount(2);
   await right.getByRole('button', { name: 'middle', exact: true }).press('Shift+F10');

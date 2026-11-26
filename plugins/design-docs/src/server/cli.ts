@@ -8,6 +8,7 @@ import type { PluginCliContext, PluginCliResult, ZccPluginApi } from '@zana-ai/z
 import type { DocActor } from '../shared/contract.js';
 import { formatBytes } from '../shared/display.js';
 import { DEFAULT_LIST_LIMIT, MAX_DOC_BYTES, MAX_FILES_PER_DOC, MAX_LIST_LIMIT } from '../shared/limits.js';
+import { isRenderableMarkdownPath } from '../shared/paths.js';
 import { formatBundle, formatList } from './format.js';
 import {
   addFromTemplate,
@@ -537,8 +538,8 @@ async function dispatch(deps: CliDeps, argv: string[], ctx: PluginCliContext): P
       if (!deps.pageUrl) throw new DesignDocError('invalid', 'previews are not available here');
       const doc = deps.store.summary(ref(0));
       const file = deps.store.readFile(doc.id, positional[1] ?? doc.entryPath);
-      if (file.kind !== 'html') {
-        throw new DesignDocError('invalid', `${file.path} is not an HTML page; pass one, e.g. zcc design-docs preview ${doc.slug} index.html`);
+      if (file.kind !== 'html' && !isRenderableMarkdownPath(file.path)) {
+        throw new DesignDocError('invalid', `${file.path} is not an HTML or markdown (.md) page; pass one, e.g. zcc design-docs preview ${doc.slug} index.html`);
       }
       const url = deps.pageUrl(doc.id, file.path);
       return [

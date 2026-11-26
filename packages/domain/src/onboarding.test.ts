@@ -40,3 +40,44 @@ describe('onboarding preferences are bounded, validated data, not access grants'
     expect(gitSignInStateSchema.safeParse({ phase: 'succeeded', token: 'x' }).success).toBe(false);
   });
 });
+
+import {
+  emptyOnboardingSteps, migrateOnboardingProgress, onboardingIdentityHintSchema, onboardingProgressV2Schema,
+  onboardingStepsSettled, parseOnboardingProgress
+} from './onboarding.js';
+
+describe('onboarding v2 progress', () => {
+  const v1 = { version: 1 as const, profileId: 'employees', audience: 'organization' as const, step: 'complete' as const, marketplaceSource: 'path:/x', packId: 'starter', pluginIds: ['work'] };
+  it('migrates v1 organization, general and undecided progress', () => {
+    const org = migrateOnboardingProgress(v1);
+    expect(org).toMatchObject({ version: 2, profileId: 'employees', audience: 'organization', marketplaceSource: 'path:/x', packId: 'starter', pluginIds: ['work'], steps: { harness: 'todo', workplace: 'done', bundle: 'done', advanced: 'todo' } });
+    expect(org).not.toHaveProperty('step');
+    expect(migrateOnboardingProgress({ ...v1, step: 'marketplace' }).steps.bundle).toBe('todo');
+    expect(migrateOnboardingProgress({ ...v1, audience: 'general' }).steps).toMatchObject({ workplace: 'skipped', bundle: 'skipped' });
+    expect(migrateOnboardingProgress({ ...v1, audience: 'undecided', step: 'welcome' }).steps).toEqual(emptyOnboardingSteps());
+    expect(onboardingProgressV2Schema.safeParse(org).success).toBe(true);
+  });
+  it('parses v1, v2 and rejects garbage or partial steps', () => {
+    expect(parseOnboardingProgress(v1)?.version).toBe(2);
+    const v2 = { version: 2, audience: 'undecided', steps: emptyOnboardingSteps(), minimized: true, completedAt: '2026-01-01T00:00:00.000Z' };
+    expect(parseOnboardingProgress(v2)).toEqual(v2);
+    expect(parseOnboardingProgress({ ...v2, steps: { harness: 'todo' } })).toBeUndefined();
+    expect(parseOnboardingProgress({ ...v2, steps: { ...v2.steps, harness: 'nope' } })).toBeUndefined();
+    expect(parseOnboardingProgress({ ...v2, completedAt: 'yesterday' })).toBeUndefined();
+    expect(parseOnboardingProgress(undefined)).toBeUndefined();
+  });
+  it('knows when steps are settled', () => {
+    expect(onboardingStepsSettled(emptyOnboardingSteps())).toBe(false);
+    expect(onboardingStepsSettled({ harness: 'done', workplace: 'skipped', bundle: 'done', advanced: 'skipped' })).toBe(true);
+    expect(onboardingStepsSettled({ harness: 'done', workplace: 'background', bundle: 'done', advanced: 'done' })).toBe(false);
+  });
+  it('validates the identity hint and profile domains strictly', () => {
+    expect(onboardingIdentityHintSchema.safeParse({ match: true, email: 'a@b.co' }).success).toBe(true);
+    expect(onboardingIdentityHintSchema.safeParse({ match: false, extra: 1 }).success).toBe(false);
+    expect(onboardingIdentityHintSchema.safeParse({ match: true, email: 'x'.repeat(255) }).success).toBe(false);
+    const profile = { id: 'e', organization: 'E', question: 'Q?', prerequisite: 'P', marketplaceSource: 'path:/f' };
+    expect(onboardingProfileSchema.safeParse({ ...profile, identityHint: { emailDomains: ['example.com'] } }).success).toBe(true);
+    for (const emailDomains of [[], ['Example.com'], ['@example.com'], ['example'], ['a.com/x']])
+      expect(onboardingProfileSchema.safeParse({ ...profile, identityHint: { emailDomains } }).success).toBe(false);
+  });
+});

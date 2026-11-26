@@ -35,5 +35,42 @@
 .provider-auth-summary .settings-btn{font-size:11.5px}
 .provider-auth-terminal{height:320px;position:relative;overflow:hidden;background:var(--bg-base);border:1px solid var(--border);border-radius:8px}
 @media(max-width:540px){.provider-auth{padding:0 12px 16px}}
-@media(max-width:1100px){.registered-harness-main{grid-template-columns:40px minmax(0,1fr);padding:20px 16px;gap:12px}.registered-harness-icon{width:40px;height:40px}.registered-harness-actions{grid-column:2;max-width:none;justify-content:flex-start}.registered-harness-models{padding-left:68px}}
-@media(max-width:540px){.registered-harness-main{grid-template-columns:32px minmax(0,1fr);padding:16px 12px;gap:10px}.registered-harness-icon{width:32px;height:32px}.registered-harness-models{padding:0 12px 16px}.registered-harness-toolbar>div{width:100%}}
+
+.registered-harness-main { grid-template-columns: 36px minmax(0, 1fr) auto; padding: 12px 16px; gap: 12px; }
+.registered-harness-icon { width: 36px; height: 36px; }
+.registered-harness-state, .registered-harness-source { margin-top: 2px; }
+.registered-harness-actions .settings-btn { display: inline-flex; gap: 6px; align-items: center; }
+.registered-harness-actions [aria-expanded="true"] svg { transform: rotate(180deg); }
+.registered-harness-models, .provider-auth { padding-inline-start: 64px; }
+.registered-harness-preferences { margin-bottom: 16px; }
+.registered-harness-default-action { display: flex; justify-content: flex-end; }
+.registered-harness-preferences .settings-field { padding-block: 8px; }
+@media(max-width:540px) {
+  .registered-harness-main { grid-template-columns: 26px minmax(0,1fr) auto; padding: 12px; gap: 8px; }
+  .registered-harness-icon { width: 26px; height: 26px; }
+  .registered-harness-models, .provider-auth { padding: 0 12px 16px; }
+  .registered-harness-toolbar > div { width: 100%; }
+}
+
+.harness-cli-detail {
+  margin: 0 16px 16px;
+  padding: 12px 16px;
+  border-block: 1px solid var(--border);
+}
+.harness-cli-status, .harness-cli-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.harness-cli-status { flex-wrap: wrap; }
+.harness-cli-status strong { margin-inline-end: auto; }
+.harness-cli-disclosure {
+  margin-top: 8px;
+  padding: 6px 0;
+  background: none;
+  color: var(--settings-link);
+  border: 0;
+  cursor: pointer;
+}
+.harness-cli-disclosure[aria-expanded="true"] svg { transform: rotate(90deg); }

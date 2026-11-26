@@ -7,11 +7,12 @@ vi.mock('../../../lib/app-surface.js', () => ({ getAppSurface: () => 'desktop' }
 
 afterEach(cleanup);
 
-function picker(count: number, switchable = true) {
+function picker(count: number, switchable = true, onUseDefaultProvider?: () => void) {
   return <ModelReasoningPicker
     providerOptions={Array.from({ length: count }, (_, i) => ({ value: `provider-${i}`, label: `Provider ${i}` }))}
     selectedProviderId="provider-0"
     onSelectedProviderChange={switchable ? () => undefined : undefined}
+    onUseDefaultProvider={onUseDefaultProvider}
     modelValue="default"
     modelOptions={[{ value: 'default', label: 'Default' }]}
     onModelChange={() => undefined}
@@ -38,4 +39,17 @@ it('keeps the model-only picker compact when the thread provider is locked', () 
   fireEvent.click(screen.getByTestId('model-reasoning-picker-trigger'));
   expect(screen.queryByRole('tablist')).toBeNull();
   expect(parseFloat(screen.getByTestId('model-reasoning-picker-menu').style.width)).toBe(208);
+});
+
+it('offers a reset inside the open picker when the composer has a harness override', () => {
+  const reset = vi.fn();
+  const view = render(picker(2));
+  const trigger = screen.getByRole('button', { name: 'Provider and model' });
+  fireEvent.click(trigger);
+  expect(screen.queryByRole('button', { name: 'Use default' })).toBeNull();
+  view.rerender(picker(2, true, reset));
+  fireEvent.click(screen.getByRole('button', { name: 'Use default' }));
+  expect(reset).toHaveBeenCalledOnce();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(document.activeElement).toBe(trigger);
 });

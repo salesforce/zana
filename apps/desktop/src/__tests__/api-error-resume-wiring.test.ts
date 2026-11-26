@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createApiErrorResume, handleApiErrorStop } from '../api-error-resume-wiring.js';
+import { apiErrorProducerLookup, createApiErrorDispatchCtx, createApiErrorResume, handleApiErrorStop } from '../api-error-resume-wiring.js';
 
 const config = (enabled = true) => ({
   apiErrorResume: {
@@ -92,5 +92,64 @@ describe('handleApiErrorStop without a resume service', () => {
     expect(agentStatus.turnFinished).toHaveBeenCalledWith('s1');
     expect(agentStatus.clearToolsInFlight).toHaveBeenCalledWith('s1');
     expect(logMainError).not.toHaveBeenCalled();
+  });
+});
+
+describe('createApiErrorDispatchCtx', () => {
+  const event = { error: 'overloaded', text: 'x' } as never;
+  it('is live only for a session that exists and has not exited', () => {
+    const sessions: Record<string, { status: string }> = { a: { status: 'running' }, b: { status: 'exited' } };
+    const ctx = createApiErrorDispatchCtx({ ptys: { getSession: (id) => sessions[id] }, onTurnFailed: vi.fn(), routeStop: vi.fn() });
+    expect([ctx.isLive('a'), ctx.isLive('b'), ctx.isLive('gone')]).toEqual([true, false, false]);
+  });
+  it('routes a stop for a live session, and drops one for a gone session', () => {
+    const routeStop = vi.fn();
+    const onTurnFailed = vi.fn();
+    const ctx = createApiErrorDispatchCtx({ ptys: { getSession: (id) => (id === 'a' ? { status: 'running' } : undefined) }, onTurnFailed, routeStop });
+    ctx.route('a', event);
+    ctx.route('gone', event);
+    ctx.onTurnFailed('a');
+    expect(routeStop).toHaveBeenCalledTimes(1);
+    expect(routeStop).toHaveBeenCalledWith('a', { status: 'running' }, event);
+    expect(onTurnFailed).toHaveBeenCalledWith('a');
+  });
+  it('runs and clears timers and logs with or without an error', () => {
+    const ctx = createApiErrorDispatchCtx({ ptys: { getSession: () => undefined }, onTurnFailed: vi.fn(), routeStop: vi.fn() });
+    const fn = vi.fn();
+    const keep = ctx.setTimer(fn, 100);
+    const drop = ctx.setTimer(fn, 100);
+    ctx.clearTimer(drop);
+    vi.advanceTimersByTime(100);
+    expect(fn).toHaveBeenCalledTimes(1);
+    void keep;
+    const log = vi.spyOn(console, 'log');
+    ctx.log('plain');
+    ctx.log('with error', new Error('boom'));
+    expect(log).toHaveBeenNthCalledWith(1, 'plain');
+    expect(log).toHaveBeenNthCalledWith(2, 'with error', expect.any(Error));
+  });
+  it('sends an error to the host error logger when one is given', () => {
+    const logError = vi.fn();
+    const log = vi.spyOn(console, 'log').mockClear();
+    const ctx = createApiErrorDispatchCtx({ ptys: { getSession: () => undefined }, onTurnFailed: vi.fn(), routeStop: vi.fn(), logError });
+    ctx.log('with error', new Error('boom'));
+    ctx.log('plain');
+    expect(logError).toHaveBeenCalledWith('with error', expect.any(Error));
+    expect(log).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('apiErrorProducerLookup', () => {
+  it('finds the producer through a live session, then a remembered one, else nothing', () => {
+    const producer = { quietMs: 1, markTurnStart: vi.fn(), check: vi.fn(), release: vi.fn() };
+    const producerForProfile = vi.fn((profile: string) => (profile === 'codex' ? producer : undefined));
+    const lookup = apiErrorProducerLookup({
+      ptys: { getSession: (id) => (id === 'live' ? { profile: 'codex' } : undefined), getRememberedSession: (id) => (id === 'old' ? { profile: 'claude' } : undefined) },
+      producerForProfile
+    });
+    expect(lookup('live')).toBe(producer);
+    expect(lookup('old')).toBeUndefined();
+    expect(lookup('none')).toBeUndefined();
+    expect(producerForProfile).toHaveBeenCalledWith('claude');
   });
 });

@@ -98,6 +98,7 @@ export interface InboxInput {
    * from the AUTHENTICATED moduleId; every other caller omits it.
    */
   extensionSource?: { extensionId: string };
+  offerAgentFix?: true;
   /**
    * OPTIONAL click-navigation redirect for an extension-pushed entry — see
    * {@link InboxEntry.target}. Only ever set alongside {@link extensionSource}
@@ -113,7 +114,7 @@ export interface InboxInput {
   /** Host-stamped Squad worktree lifecycle notice marker. */
   squadNotice?: 'worktree-lifecycle' | 'proposal-result';
   /** Host-stamped link to a pending Squad launch proposal; never agent-supplied. */
-  squadProposal?: { proposalId: string };
+  squadProposal?: { proposalId: string; planCheck?: { mustFix: number; check: number; fixedForYou: number } };
   /** Host-authored decision context rendered with deferred technical Details. */
   decisionGuidance?: InboxDecisionGuidance;
 }

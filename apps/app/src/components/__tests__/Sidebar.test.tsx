@@ -1,8 +1,9 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import type { AppModule } from '@zana-ai/zcc-extension-sdk/renderer';
+import type { PluginSidebarSectionProps } from '@zana-ai/zcc-plugin-sdk';
 
 const h = vi.hoisted(() => {
   const cache = new Map<string, unknown>();
@@ -27,6 +28,7 @@ const h = vi.hoisted(() => {
     agentCounts: { active: 0, blocked: 0 },
     enabledSchedules: 0,
     runningSchedules: 0,
+    navigate: vi.fn(),
     navPanels: [] as Array<{
       pluginId: string;
       path: string;
@@ -36,10 +38,16 @@ const h = vi.hoisted(() => {
       generation: number;
       component: () => null;
       experimental_sidebarAccessory?: () => JSX.Element;
+      experimental_sidebarSection?: (props: PluginSidebarSectionProps) => JSX.Element;
       placement?: 'sidebar' | 'extensions' | 'unlisted';
     }>
   };
 });
+
+vi.mock('react-router-dom', async (importOriginal) => ({
+  ...await importOriginal<typeof import('react-router-dom')>(),
+  useNavigate: () => h.navigate
+}));
 
 // Sidebar pulls in renderer stores (which close over window.cc / IPC) at module
 // load. Stub enough surface to render the rail through React SSR.
@@ -79,11 +87,13 @@ vi.mock('../../plugins/plugin-slots', () => ({
 }));
 
 import { Sidebar } from '../Sidebar.js';
+import { setCommandShortcutOverride } from '../../lib/keyboard-shortcut-settings.js';
+import { anchorTag, stubKeybindingStorage } from '../../__tests__/helpers/keybinding-storage.js';
 import { MobileNavDrawer } from '../MobileShellChrome.js';
 
-function renderSidebar() {
+function renderSidebar(path = '/') {
   return renderToStaticMarkup(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[path]}>
       <Sidebar />
     </MemoryRouter>
   );
@@ -212,6 +222,28 @@ describe('Sidebar structure and compact accessibility', () => {
     expect(row).toContain('>1<');
 
     h.navPanels = [];
+  });
+
+  it('mounts contributed collections above Machines and routes their panel and thread links', () => {
+    const collection = vi.fn(({ panelLink }: PluginSidebarSectionProps) => <div>{panelLink}</div>);
+    const panel = { pluginId: 'sample', path: 'workbench', id: 'main', title: 'Sample', icon: 'Box', generation: 1,
+      component: () => null, experimental_sidebarSection: collection };
+    h.navPanels = [panel, { ...panel, pluginId: 'other', experimental_sidebarSection: undefined }];
+    try {
+      const threadMarkup = renderSidebar('/threads/active-thread');
+      expect(threadMarkup).toMatch(/<a(?=[^>]+href="\/plugins\/sample\/workbench")[^>]*>Open Sample panel<\/a>/);
+      expect(threadMarkup.indexOf('data-testid="nav-other/workbench"')).toBeLessThan(threadMarkup.indexOf('Open Sample panel'));
+      expect(threadMarkup.indexOf('Open Sample panel')).toBeLessThan(threadMarkup.indexOf('data-testid="sidebar-projects"'));
+      const [section] = collection.mock.calls.at(-1)!;
+      expect(section.activeThreadId).toBe('active-thread');
+      section.openThread('another-thread');
+      expect(h.navigate).toHaveBeenCalledWith('/threads/another-thread');
+      const panelMarkup = renderSidebar('/plugins/sample/workbench');
+      expect(panelMarkup).toMatch(/<a(?=[^>]+aria-current="page")(?=[^>]+href="\/plugins\/sample\/workbench")[^>]*>Open Sample panel<\/a>/);
+    } finally {
+      h.navPanels = [];
+      h.navigate.mockClear();
+    }
   });
 
   it('badges Agents with a running count when the fleet is live', () => {
@@ -420,5 +452,38 @@ describe('Sidebar structure and compact accessibility', () => {
     expect(source).toContain('consumeClick: () => boolean');
     expect(source).toContain('suppressClickRef.current = true');
     expect(source).toContain('onEnd: () => {');
+  });
+});
+
+
+describe('Sidebar shortcut tooltips', () => {
+  beforeEach(() => {
+    h.state.sidebarCollapsed = false;
+    stubKeybindingStorage();
+    vi.stubGlobal('navigator', { platform: 'Linux' });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('shows the bound shortcut on New Chat and Settings, and keeps accessible names', () => {
+    const markup = renderSidebar();
+    expect(anchorTag(markup, 'nav-home')).toContain('title="New Chat (Ctrl + N)"');
+    expect(markup).toContain('title="Settings (Ctrl + ,)"');
+    expect(markup).toContain('aria-label="Settings"');
+    // Rows without a command keep their plain tooltip.
+    // Fixed (non-remappable) shortcuts wired in shortcuts.ts.
+    expect(anchorTag(markup, 'nav-inbox')).toContain('title="Inbox (Ctrl + I)"');
+    expect(anchorTag(markup, 'nav-agents')).toContain('title="Agents (Ctrl + O)"');
+    expect(anchorTag(markup, 'nav-scheduler')).toContain('title="Scheduler (Ctrl + J)"');
+    // Rows with no shortcut keep their plain tooltip.
+    expect(anchorTag(markup, 'nav-extensions')).toContain('title="Plugins"');
+  });
+
+  it('follows a rebinding and drops the suffix when unbound', () => {
+    setCommandShortcutOverride('thread.new', { key: 'j', mod: true, meta: false, control: false, alt: false, shift: true });
+    setCommandShortcutOverride('settings.open', null);
+    const markup = renderSidebar();
+    expect(anchorTag(markup, 'nav-home')).toContain('title="New Chat (Ctrl + Shift + J)"');
+    expect(markup).toContain('title="Settings"');
+    expect(markup).not.toContain('Settings (');
   });
 });

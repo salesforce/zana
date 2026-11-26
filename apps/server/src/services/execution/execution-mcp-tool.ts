@@ -13,7 +13,7 @@ import { isWithin } from '@zana-ai/zcc-path-confine';
 import { EXECUTION_FAILURE_CODES, EXECUTION_FAILURE_DETAIL_MAX_CHARS } from '@zana-ai/zcc-domain/product';
 import { LAUNCH_REVIEW_REQUIRED_MESSAGE, type LaunchApproval } from '@zana-ai/zcc-domain/squad-proposal';
 import { MAX_EXECUTION_PLAN_BYTES, validOutputDeclaration } from './contracts.js';
-import { assembledResultProjection } from './projection.js';
+import { assembledResultProjection, compactExecutionStatus } from './projection.js';
 import { answerReceipt } from './answer-receipt.js';
 import { planLaunchSchema } from '@zana-ai/zcc-domain/launch-options';
 import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS } from './loop-constants.js';
@@ -61,6 +61,8 @@ const workUnitSchema = z.strictObject({
     requiredModalities: z.array(z.string().min(1).max(2048)).max(100).optional(),
     estimatedContextBytes: z.number().int().min(0).max(8 * 1024 * 1024).optional(),
     requiredRole: z.string().min(1).max(2048).optional(), preferredRole: z.string().min(1).max(2048).optional(),
+    preferRoles: z.array(z.string().min(1).max(2048)).max(100).optional(),
+    excludeSameWorkerAs: z.array(z.string().min(1).max(2048)).max(100).optional(),
     hardSlotId: z.string().min(1).max(2048).optional()
   }).optional(),
   output: z.unknown().refine(validOutputDeclaration, { message: 'invalid bounded output declaration' }).optional(),
@@ -86,6 +88,8 @@ const executionStartSchema = z.strictObject({
   maxLaunches: z.number().int().min(1).max(32).optional(),
   maxTurnsPerClaim: z.number().int().min(1).max(10_000).optional(),
   maxClaimWallClockMs: z.number().int().min(1_000).max(24 * 60 * 60 * 1000).optional(),
+  /** Longest a claim that only prints output (no turn, no file change) may run before it is reclaimed as STALLED. */
+  maxClaimOutputOnlyMs: z.number().int().min(1_000).max(24 * 60 * 60 * 1000).optional(),
   usageBudget: z.strictObject({ maxTokens: z.number().int().min(1).optional(), maxUsd: z.number().positive().optional() }).optional(),
   /**
    * Existing user-owned target, resolved by main against the registered project's own
@@ -115,6 +119,14 @@ const executionControlSchema = { ...executionIdSchema, expectedStateVersion: z.n
 const executionResumeRunSchema = { ...executionControlSchema, replay: z.boolean().optional() };
 const executionRetainedRecoverySchema = { ...executionControlSchema, mode: z.enum(['exact-native', 'fresh-plan']) };
 const executionEventsSchema = { ...executionIdSchema, after: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(100).optional() };
+/** `compact` (default for these MCP tools) is bounded state + units + open blockers; `full` is the whole record. */
+const resultModeSchema = z.enum(['compact', 'full']).optional().describe('compact (default): state, unit table and open blockers, bounded; page the rest with execution.history. full: the whole record, unbounded.');
+const executionStatusSchema = { ...executionIdSchema, mode: resultModeSchema };
+/** History pages are small: each event carries free-text summary/detail. */
+const HISTORY_MAX_LIMIT = 25;
+const HISTORY_DEFAULT_LIMIT = 10;
+const HISTORY_TEXT_MAX = 400;
+const executionHistorySchema = { ...executionIdSchema, cursor: z.number().int().min(0).optional().describe('Return events after this sequence. Omit for the first page; pass nextCursor from the previous page to continue.'), limit: z.number().int().min(1).max(HISTORY_MAX_LIMIT).optional() };
 const executionSnapshotSchema = { ...executionIdSchema, after: z.number().int().min(0).optional() };
 const executionProducerEventSchema = {
   ...executionIdSchema,
@@ -138,6 +150,8 @@ const executionRespondSchema = {
   slotId: z.string().min(1).max(2048).optional().describe('The slot to message. Pass slotId or blockerId, not both.'),
   blockerId: z.string().min(1).max(2048).optional().describe('A human blocker of this run to answer, as named in its [Squad report].'),
   clientRequestId: z.string().min(1).max(256).optional().describe('Idempotency key for a blocker answer; generated when omitted.'),
+  mode: resultModeSchema,
+  scopeSplit: z.enum(['split', 'keep']).optional().describe('Blocker answers only. A response naming a file outside the unit\'s scope is split into a new unit automatically; "keep" delivers it to the unit unchanged, "split" confirms a split the check could not decide.'),
   message: z.string().min(1).max(64 * 1024)
 };
 const executionCompleteSchema = { ...executionIdSchema, summary: z.string().min(1).max(64 * 1024) };
@@ -190,6 +204,9 @@ const monitorRequestSchema = { targetSessionId: z.string().min(1).max(2048), ...
 const resumeMonitorExecuteSchema = { token: z.string().min(1).max(2048), ...executionMessageSchema };
 const monitorStatusSchema = { token: z.string().min(1).max(2048), ...executionIdSchema };
 const monitorEventsSchema = { ...monitorStatusSchema, after: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(100).optional() };
+const executionRespawnSchema = { ...executionIdSchema, slotId: z.string().min(1).max(120) };
+const executionRestartSchema = { ...executionIdSchema, slotId: z.string().min(1).max(120).describe('The worker slot to restart.') };
+const executionUnitReleaseSchema = { ...executionIdSchema, workUnitId: z.string().min(1).max(256).describe('A CLAIMED work unit of this run.') };
 const resumeBindingSchema = { ...executionIdSchema, token: z.string().min(1).max(2048) };
 const mintResumeGrantSchema = executionIdSchema;
 const revokeResumeGrantSchema = { ...executionIdSchema, effectiveOwnerPrincipalId: z.string().min(1).max(2048).optional() };
@@ -209,7 +226,7 @@ export const EXECUTION_MEMBER_TOOL_NAMES = {
   ],
   orchestrator: [
     'execution.snapshot', 'execution.event', 'execution.plan.register', 'execution.work.assign',
-    'execution.work.dispatch_ready', 'execution.work.retry', 'execution.work.answer',
+    'execution.work.dispatch_ready', 'execution.work.retry', 'execution.work.answer', 'execution.worker.respawn',
     'execution.source.list', 'execution.source.read', 'execution.complete'
   ]
 } as const;
@@ -253,6 +270,16 @@ export { LAUNCH_REVIEW_REQUIRED_MESSAGE };
 export const EXECUTION_START_DESCRIPTION =
   'Low-level start of one execution in this live session project (explicit slots, work units, policy). Deprecated for agent use: to launch a group of agents, prefer squad_launch. A launch target or project set to Review before launch refuses this with LAUNCH_REVIEW_REQUIRED. Pass either full request fields or a bounded requestPath. Main authorizes launch slots and stores launch identity before launch.';
 
+function clipText(value: string, max: number): string {
+  return typeof value === 'string' && value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+/** Slot-respond receipt: identity, state and version only, never the record's units, deliveries or history. */
+function compactSlotResult(value: unknown): Record<string, unknown> {
+  const record = (value && typeof value === 'object' ? value : {}) as { id?: unknown; state?: unknown; stateVersion?: unknown; attempt?: unknown };
+  return { mode: 'compact', executionId: record.id, state: record.state, ...(record.stateVersion === undefined ? {} : { stateVersion: record.stateVersion }), ...(record.attempt === undefined ? {} : { attempt: record.attempt }) };
+}
+
 function denied(name: string) {
   return { isError: true, content: [{ type: 'text' as const, text: `${name} unavailable: session MCP is not authorized for this live session.` }] };
 }
@@ -262,7 +289,7 @@ type McpSafeExecutionRecord = Omit<ExecutionRecord, 'deliveries'>;
 type BoundSnapshotExecutionRecord = Pick<ExecutionRecord,
   'id' | 'projectId' | 'teamId' | 'launchKind' | 'launchDisplay' | 'jobTitle' | 'summary'
   | 'attempt' | 'state' | 'stateVersion' | 'lastEventSequence' | 'workUnits'
-  | 'blockers' | 'finalSummary' | 'coordinationMode' | 'createdAt' | 'updatedAt' | 'dismissedAt'
+  | 'blockers' | 'finalSummary' | 'failureReason' | 'coordinationMode' | 'createdAt' | 'updatedAt' | 'dismissedAt'
 >;
 
 function toMcpSafeExecution(record: ExecutionRecord): McpSafeExecutionRecord {
@@ -273,12 +300,12 @@ function toMcpSafeExecution(record: ExecutionRecord): McpSafeExecutionRecord {
 function toBoundSnapshotExecution(record: ExecutionRecord): BoundSnapshotExecutionRecord {
   const {
     id, projectId, teamId, launchKind, launchDisplay, jobTitle, summary, attempt, state, stateVersion,
-    lastEventSequence, workUnits, blockers, finalSummary, coordinationMode, createdAt, updatedAt,
+    lastEventSequence, workUnits, blockers, finalSummary, failureReason, coordinationMode, createdAt, updatedAt,
     dismissedAt
   } = record;
   return sanitizeStructuredResults({
     id, projectId, teamId, launchKind, launchDisplay, jobTitle, summary, attempt, state, stateVersion,
-    lastEventSequence, workUnits, blockers, finalSummary, coordinationMode, createdAt, updatedAt,
+    lastEventSequence, workUnits, blockers, finalSummary, failureReason, coordinationMode, createdAt, updatedAt,
     dismissedAt
   }) as BoundSnapshotExecutionRecord;
 }
@@ -407,7 +434,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     const cohortBinding = await options.resolveCohortBinding?.(options.sessionId, options.projectId);
     return cohortBinding?.memberFence === undefined;
   };
-  const binding = async (correlationExecutionId?: string): Promise<ExecutionCohortBinding | undefined> => {
+  const binding = async (correlationExecutionId?: string): Promise<ExecutionRouteBinding | undefined> => {
     const resolved = options.sessionId ? await options.resolveCohortBinding?.(options.sessionId, options.projectId, options.memberFence) : undefined;
     if (!resolved || resolved.projectId !== options.projectId
       || correlationExecutionId && resolved.executionId !== correlationExecutionId) return undefined;
@@ -490,7 +517,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   });
   register('execution.work.claim', { description: 'Worker claims one ready work unit using its host-bound slot.', inputSchema: executionWorkSchema }, async ({ executionId, workUnitId, assignedSlotId }) => {
     if (!await authorized()) return denied('execution.work.claim'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.claim');
-    return boundResult('execution.work.claim', await options.service.claimWork(bound, workUnitId, assignedSlotId));
+    return boundResult('execution.work.claim', await options.service.claimWork(bound, workUnitId, assignedSlotId, options.sessionId, ...(bound.memberFence ? [bound.memberFence.generation] as [number] : [] as [])));
   });
   register('execution.work.assign', { description: 'Coordinator assigns one ready work unit to a worker slot.', inputSchema: executionWorkAssignSchema }, async ({ executionId, workUnitId, assignedSlotId }) => {
     if (!await authorized()) return denied('execution.work.assign'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.assign');
@@ -542,6 +569,12 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     if (!await authorized()) return denied('execution.work.retry'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.work.retry');
     return boundResult('execution.work.retry', await options.service.retryWork(bound, workUnitId, assignedSlotId));
   });
+  register('execution.worker.respawn', { description: 'Coordinator-only: start a new session for a worker slot whose session has ended (exited or failed to start). The slot keeps its role and persona from launch. Each slot can be respawned a limited number of times per run (default 2); once used up, the call is refused and the failure is reported to the user. Refused while the worker is still running or the run is stopping.', inputSchema: executionRespawnSchema }, async ({ executionId, slotId }) => {
+    if (!await authorized()) return denied('execution.worker.respawn'); const bound = await binding(executionId); if (!bound) return boundDenied('execution.worker.respawn');
+    // Authority is the main-resolved binding; `authorized()` is also true for an unfenced worker, so the role is checked explicitly.
+    if (bound.role !== 'orchestrator') return denied('execution.worker.respawn');
+    return boundResult('execution.worker.respawn', await options.service.respawnWorker(bound, slotId));
+  });
   register('execution.delivery.pull', { description: 'Pull one pending blocker response bound to this worker route.', inputSchema: {} }, async () => {
     if (!await authorized()) return denied('execution.delivery.pull'); const bound = await binding(); if (!bound) return boundDenied('execution.delivery.pull');
     return boundResult('execution.delivery.pull', await options.service.pullDelivery(bound));
@@ -582,7 +615,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     if (approval === 'review') {
       return { isError: true, content: [{ type: 'text' as const, text: `execution.start failed: LAUNCH_REVIEW_REQUIRED: ${LAUNCH_REVIEW_REQUIRED_MESSAGE}` }] };
     }
-    const { version, launchKind, launchDisplay, teamId, launchRequestId, jobTitle, summary, slots, deadlineMs, maxConcurrent, maxLaunches, maxTurnsPerClaim, maxClaimWallClockMs, usageBudget, workflow, workUnits, target, notify } = start;
+    const { version, launchKind, launchDisplay, teamId, launchRequestId, jobTitle, summary, slots, deadlineMs, maxConcurrent, maxLaunches, maxTurnsPerClaim, maxClaimWallClockMs, maxClaimOutputOnlyMs, usageBudget, workflow, workUnits, target, notify } = start;
     const request: ExecutionRequestV1 = {
       version, launchKind, ...(launchDisplay === undefined ? {} : { launchDisplay }), teamId, launchRequestId, jobTitle, summary, slots,
       ...(workflow === undefined ? {} : { workflow }), ...(workUnits === undefined ? {} : { workUnits }), coordinationMode: 'job-team',
@@ -594,6 +627,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
         ...(maxLaunches === undefined ? {} : { maxLaunches }),
         ...(maxTurnsPerClaim === undefined ? {} : { maxTurnsPerClaim }),
         ...(maxClaimWallClockMs === undefined ? {} : { maxClaimWallClockMs }),
+        ...(maxClaimOutputOnlyMs === undefined ? {} : { maxClaimOutputOnlyMs }),
         ...(usageBudget === undefined ? {} : { usageBudget })
       }
     };
@@ -606,14 +640,14 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   });
 
   register('execution.status', {
-    description: 'Read one project-scoped execution.', inputSchema: executionIdSchema
-  }, async ({ executionId }) => {
+    description: 'Read one project-scoped execution. Default mode compact returns state, units and open blockers only (bounded); use execution.history for events, or mode full for the whole record.', inputSchema: executionStatusSchema
+  }, async ({ executionId, mode }) => {
     if (!await ownerAuthorized()) return denied('execution.status');
     const cohort = await binding(executionId);
     if (cohort) return wrongAuthority('execution.status');
     const record = await options.service.status(options.sessionId!, options.projectId, executionId);
     return record
-      ? { content: [{ type: 'text' as const, text: JSON.stringify(toMcpSafeExecution(record)) }] }
+      ? { content: [{ type: 'text' as const, text: JSON.stringify(mode === 'full' ? toMcpSafeExecution(record) : compactExecutionStatus(record)) }] }
       : { isError: true, content: [{ type: 'text' as const, text: 'execution.status failed: execution not found for caller.' }] };
   });
 
@@ -656,6 +690,27 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
     if (cohort) return wrongAuthority('execution.list');
     const records = await options.service.list(options.sessionId!, options.projectId);
     return { content: [{ type: 'text' as const, text: JSON.stringify(records.map(toMcpSafeExecution)) }] };
+  });
+
+  register('execution.history', {
+    description: 'Page the ordered event history of one execution, newest page last. Pass nextCursor from the previous page as cursor; no nextCursor means the end. Each event is clipped; use execution.status mode full for complete records.', inputSchema: executionHistorySchema
+  }, async ({ executionId, cursor, limit }) => {
+    if (!await ownerAuthorized()) return denied('execution.history');
+    const cohort = await binding(executionId);
+    if (cohort) return wrongAuthority('execution.history');
+    const size = limit ?? HISTORY_DEFAULT_LIMIT;
+    const page = await options.service.events(options.sessionId!, options.projectId, executionId, cursor ?? 0, size + 1);
+    const rows = page.events;
+    const hasMore = rows.length > size;
+    const events = rows.slice(0, size).map((event) => ({
+      ...event,
+      summary: clipText(event.summary, HISTORY_TEXT_MAX),
+      ...(event.detail === undefined ? {} : { detail: clipText(event.detail, HISTORY_TEXT_MAX) }),
+      ...(event.blocker ? { blocker: { question: clipText(event.blocker.question, HISTORY_TEXT_MAX), ...(event.blocker.options ? { options: event.blocker.options.slice(0, 5).map((option) => clipText(option, 120)) } : {}) } } : {}),
+      ...(event.references ? { references: event.references.slice(0, 5) } : {})
+    }));
+    const last = events[events.length - 1];
+    return { content: [{ type: 'text' as const, text: JSON.stringify({ executionId, events, ...(hasMore && last ? { nextCursor: last.sequence } : {}) }) }] };
   });
 
   register('execution.events', {
@@ -789,7 +844,7 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
   register('execution.respond', {
     description: 'Deliver a response to one authorized execution slot (slotId), or answer one of the run\'s human blockers (blockerId) as its owner, e.g. the question a [Squad report] named. expectedStateVersion is required with slotId; with blockerId leave it out to use the latest state. Coordinator-directed blockers are not the owner\'s to answer.',
     inputSchema: executionRespondSchema
-  }, async ({ executionId, expectedStateVersion, slotId, blockerId, clientRequestId, message }) => {
+  }, async ({ executionId, expectedStateVersion, slotId, blockerId, clientRequestId, message, scopeSplit, mode }) => {
     if ((slotId === undefined) === (blockerId === undefined)) {
       // Authorization fails first, so an unauthorized caller learns nothing about input shape.
       if (!await authorized() && !await ownerAuthorized()) return denied('execution.respond');
@@ -803,18 +858,43 @@ export function registerExecutionTools(server: McpServer, options: RegisterExecu
         return { isError: true, content: [{ type: 'text' as const, text: `execution.respond failed: answer is ${bytes} bytes; max ${MAX_BLOCKER_ANSWER_BYTES}.` }] };
       }
       const answered = await options.service.respondToHumanBlockerAsOwner(
-        options.sessionId!, options.projectId, executionId, expectedStateVersion, blockerId, clientRequestId ?? `mcp:${randomUUID()}`, message
+        options.sessionId!, options.projectId, executionId, expectedStateVersion, blockerId, clientRequestId ?? `mcp:${randomUUID()}`, message, scopeSplit
       );
+      const blockerSlotLive = answered.ok ? await options.service.blockerSlotLive(options.sessionId!, options.projectId, executionId, blockerId).catch(() => undefined) : undefined;
       return answered.ok
-        ? { content: [{ type: 'text' as const, text: JSON.stringify({ executionId, blockerId, stateVersion: answered.value.stateVersion, state: answered.value.state }) }] }
+        ? { content: [{ type: 'text' as const, text: JSON.stringify({ executionId, blockerId, stateVersion: answered.value.stateVersion, state: answered.value.state, ...(blockerSlotLive === undefined ? {} : { sessionLive: blockerSlotLive }), ...('splitChildId' in answered && answered.splitChildId ? { splitChildId: answered.splitChildId } : {}) }) }] }
         : { isError: true, content: [{ type: 'text' as const, text: `execution.respond failed: ${answered.message}` }] };
     }
     if (!await ownerAuthorized()) return denied('execution.respond');
     if (expectedStateVersion === undefined) return { isError: true, content: [{ type: 'text' as const, text: 'execution.respond failed: expectedStateVersion is required with slotId' }] };
-    const result = await options.service.respond(options.sessionId!, options.projectId, executionId, expectedStateVersion, slotId!, message);
+    const result = await options.service.respondToSlotAsOwner(options.sessionId!, options.projectId, executionId, expectedStateVersion, slotId!, message);
+    return result.ok
+      ? { content: [{ type: 'text' as const, text: JSON.stringify({ ...(mode === 'full' ? result.value : compactSlotResult(result.value)), sessionLive: result.sessionLive, ...('restarted' in result && result.restarted ? { restarted: result.restarted } : {}) }) }] }
+      : { isError: true, content: [{ type: 'text' as const, text: `execution.respond failed: ${result.message}${'sessionLive' in result && result.sessionLive === false ? ' (sessionLive: false)' : ''}` }] };
+  });
+
+  // Owner recovery (AC2): owner-agent authority only (the owner gate rejects member/worker routes); the service
+  // re-checks that the caller owns the run and that the slot/unit belongs to it.
+  register('execution.slot_restart', {
+    description: 'Owner only: restart one worker slot of your run, e.g. a dead or wedged worker. An exited session is respawned and a live idle one is relaunched in place, through the same host paths as the Restart button on the worker card. Does not use the coordinator\'s per-slot respawn budget, but each slot can be restarted once per minute. Refused while the worker is mid-turn.',
+    inputSchema: executionRestartSchema
+  }, async ({ executionId, slotId }) => {
+    if (!await ownerAuthorized()) return denied('execution.slot_restart');
+    const result = await options.service.restartSlotAsOwner(options.sessionId!, options.projectId, executionId, slotId);
     return result.ok
       ? { content: [{ type: 'text' as const, text: JSON.stringify(result.value) }] }
-      : { isError: true, content: [{ type: 'text' as const, text: `execution.respond failed: ${result.message}` }] };
+      : { isError: true, content: [{ type: 'text' as const, text: `execution.slot_restart failed: ${result.code}: ${result.message}` }] };
+  });
+
+  register('execution.unit_release', {
+    description: 'Owner only: release one CLAIMED work unit of your run back to READY so another (or the same) seat can take it. The worker-side execution.work.release stays worker-only.',
+    inputSchema: executionUnitReleaseSchema
+  }, async ({ executionId, workUnitId }) => {
+    if (!await ownerAuthorized()) return denied('execution.unit_release');
+    const result = await options.service.releaseUnitAsOwner(options.sessionId!, options.projectId, executionId, workUnitId);
+    return result.ok
+      ? { content: [{ type: 'text' as const, text: JSON.stringify({ executionId, workUnitId, state: 'READY', stateVersion: result.value.stateVersion }) }] }
+      : { isError: true, content: [{ type: 'text' as const, text: `execution.unit_release failed: ${result.code}: ${result.message}` }] };
   });
 
   register('execution.resume', {

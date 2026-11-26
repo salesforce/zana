@@ -93,6 +93,7 @@ export type ClaudeSessionExecutionOptions = RuntimePermissionPolicy & {
   workflowsEnabled: boolean;
   idleQueryReleaseEnabled: boolean;
   chromeEnabled: boolean;
+  sandboxEnabled?: boolean | undefined;
   memoryEnabled?: boolean | undefined;
   providerSubagentsEnabled?: boolean | undefined;
   skillRoots?: readonly ClaudeCodeSkillRoot[] | undefined;
@@ -167,6 +168,7 @@ function buildInternalSessionParams(
     workflowsEnabled: args.options.workflowsEnabled,
     idleQueryReleaseEnabled: args.options.idleQueryReleaseEnabled,
     chromeEnabled: args.options.chromeEnabled,
+    sandboxEnabled: args.options.sandboxEnabled,
     memoryEnabled: args.options.memoryEnabled,
     providerSubagentsEnabled: args.options.providerSubagentsEnabled,
     ...(dynamicTools && dynamicTools.length > 0 ? { dynamicTools } : {}),
@@ -185,6 +187,7 @@ const claudeProviderOptionsSchema = z
     workflowsEnabled: z.boolean().optional(),
     idleQueryReleaseEnabled: z.boolean().optional(),
     chromeEnabled: z.boolean().optional(),
+    sandboxEnabled: z.boolean().optional(),
     memoryEnabled: z.boolean().optional(),
     providerSubagentsEnabled: z.boolean().optional(),
     additionalWorkspaceWriteRoots: z.array(z.string()).optional(),
@@ -237,6 +240,7 @@ export function buildClaudeSessionParams(
       workflowsEnabled: providerOptions.workflowsEnabled ?? false,
       idleQueryReleaseEnabled: providerOptions.idleQueryReleaseEnabled ?? false,
       chromeEnabled: providerOptions.chromeEnabled ?? false,
+      sandboxEnabled: providerOptions.sandboxEnabled ?? true,
       memoryEnabled: providerOptions.memoryEnabled,
       providerSubagentsEnabled: providerOptions.providerSubagentsEnabled,
       skillAllowlist: providerOptions.skillAllowlist,
@@ -319,6 +323,7 @@ export function buildClaudeTurnParams(
     workflowsEnabled: providerOptions.workflowsEnabled,
     idleQueryReleaseEnabled: providerOptions.idleQueryReleaseEnabled,
     chromeEnabled: providerOptions.chromeEnabled,
+    sandboxEnabled: providerOptions.sandboxEnabled,
     memoryEnabled: providerOptions.memoryEnabled,
     providerSubagentsEnabled: providerOptions.providerSubagentsEnabled,
     ...(config ? { config } : {}),

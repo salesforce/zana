@@ -300,7 +300,7 @@ export function SettingsView() {
         ) : tab === 'composer' ? (
           <ComposerSettingsView
             config={config}
-            onUpdate={patch => update(patch, { throwOnError: 'defaultThreadPermissionMode' in patch })}
+            onUpdate={patch => update(patch, { throwOnError: 'defaultThreadPermissionMode' in patch || 'defaultThreadProviderId' in patch })}
           />
         ) : tab === 'keyboard' ? (
           <KeyboardSettingsSection />
@@ -327,7 +327,7 @@ export function SettingsView() {
         ) : tab === 'personas' ? (
           <PersonasPanel />
         ) : tab === 'squads' ? (
-          <SquadsPanel />
+          <SquadsPanel config={config} onConfigDraft={setConfig} onUpdate={update} />
         ) : tab === 'usage' ? (
           <UsagePanel />
         ) : tab === 'performance' ? (

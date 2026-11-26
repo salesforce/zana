@@ -77,7 +77,7 @@ describe('onTerminal', () => {
     expect(deps.appendInbox).toHaveBeenCalledWith(expect.objectContaining({
       projectId: 'p1', subject: 'Squad completed: Ship it', executionId: 'e1', dedupeKey: 'squad-proposal-result:e1:1', report: true,
       squadNotice: 'proposal-result',
-      comments: expect.stringContaining('[Squad report] "Ship it" completed')
+      comments: expect.stringContaining('"Ship it" completed')
     }));
     expect(deps.reply).toHaveBeenCalledOnce();
     expect(deps.reply).toHaveBeenCalledWith('s1', expect.stringContaining('[Squad report]'));
@@ -721,7 +721,7 @@ describe('owner report target (agent-owned execution.start)', () => {
   it('types the terminal report into the owner PTY and marks it reported, with no Inbox result entry', async () => {
     const { deps, notifier } = setup({}, ownerPty);
     await notifier.onTerminal(ownerPty());
-    expect(deps.reply).toHaveBeenCalledWith('s1', expect.stringContaining('[Squad report] "Ship it" completed'));
+    expect(deps.reply).toHaveBeenCalledWith('s1', expect.stringContaining('"Ship it" completed'));
     expect(deps.reply).toHaveBeenCalledWith('s1', expect.stringContaining('Tell the user what it did; execution.snapshot has the details.'));
     expect(deps.appendInbox).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(0);
@@ -787,10 +787,11 @@ describe('Inbox fallback when the report target is gone', () => {
     expect(deps.reply).not.toHaveBeenCalled();
     expect(deps.appendInbox).toHaveBeenCalledOnce();
     expect(deps.appendInbox).toHaveBeenCalledWith(expect.objectContaining({
-      projectId: 'p1', executionId: 'e1', comments: expect.stringContaining('[Squad report] "Ship it" completed'),
+      projectId: 'p1', executionId: 'e1', comments: expect.stringContaining('"Ship it" completed'),
       dedupeKey: 'squad-proposal-result:e1:1', report: true
     }));
     expect(deps.markReported).toHaveBeenCalledWith('e1', 1);
+    expect((deps.appendInbox.mock.calls[0][0] as { comments: string }).comments).not.toContain('Tell the user');
   });
 
   it('posts the owner report to the Inbox when its thread is gone', async () => {
@@ -1076,5 +1077,96 @@ describe('local Composer runs (no reportTo, no proposal)', () => {
     await owned.notifier.onTerminal(record());
     expect(owned.deps.appendInbox).toHaveBeenCalledWith(expect.objectContaining({ dedupeKey: 'squad-proposal-result:e1:1' }));
     expect(owned.deps.markReported).toHaveBeenCalledWith('e1', 1);
+  });
+});
+
+describe('sendToConversation', () => {
+  it('queues text to a live PTY', async () => {
+    const { deps, notifier } = setup();
+    await expect(notifier.sendToConversation({ kind: 'pty', id: 's1' }, 'p1', 'hello')).resolves.toEqual({ ok: true });
+    expect(deps.ptyLive).toHaveBeenCalledWith('s1');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.reply).toHaveBeenCalledWith('s1', expect.stringContaining('hello'));
+  });
+
+  it('reports gone for a PTY that is not live', async () => {
+    const { deps, notifier } = setup({ ptyLive: vi.fn(() => false) });
+    await expect(notifier.sendToConversation({ kind: 'pty', id: 's1' }, 'p1', 'hi')).resolves.toEqual({ ok: false, reason: 'gone' });
+    expect(deps.reply).not.toHaveBeenCalled();
+  });
+
+  it('queues a turn into a live thread', async () => {
+    const { deps, notifier } = setup();
+    await expect(notifier.sendToConversation({ kind: 'thread', id: 't1' }, 'p1', 'hi')).resolves.toEqual({ ok: true });
+    expect(deps.queueThreadTurn).toHaveBeenCalledWith('t1', 'p1', 'hi');
+  });
+
+  it('reports gone for a thread that is not live', async () => {
+    const { deps, notifier } = setup({ threadLive: vi.fn(async () => false) });
+    await expect(notifier.sendToConversation({ kind: 'thread', id: 't1' }, 'p1', 'hi')).resolves.toEqual({ ok: false, reason: 'gone' });
+    expect(deps.queueThreadTurn).not.toHaveBeenCalled();
+  });
+
+  it('passes through the queue refusal reason, defaulting to not-queued', async () => {
+    const a = setup({ queueThreadTurn: vi.fn(async () => ({ ok: false, reason: 'x' })) });
+    await expect(a.notifier.sendToConversation({ kind: 'thread', id: 't1' }, 'p1', 'hi')).resolves.toEqual({ ok: false, reason: 'x' });
+    const b = setup({ queueThreadTurn: vi.fn(async () => ({ ok: false })) });
+    await expect(b.notifier.sendToConversation({ kind: 'thread', id: 't1' }, 'p1', 'hi')).resolves.toEqual({ ok: false, reason: 'not-queued' });
+  });
+
+  it('reports failed and logs when a dep throws', async () => {
+    const { deps, notifier } = setup({ queueThreadTurn: vi.fn(async () => { throw new Error('boom'); }) });
+    await expect(notifier.sendToConversation({ kind: 'thread', id: 't1' }, 'p1', 'hi')).resolves.toEqual({ ok: false, reason: 'failed' });
+    expect(deps.log).toHaveBeenCalled();
+  });
+
+  it('is unavailable after dispose', async () => {
+    const { deps, notifier } = setup();
+    notifier.dispose();
+    await expect(notifier.sendToConversation({ kind: 'pty', id: 's1' }, 'p1', 'hi')).resolves.toEqual({ ok: false, reason: 'unavailable' });
+    expect(deps.ptyLive).not.toHaveBeenCalled();
+  });
+});
+
+describe('onRunWarning', () => {
+  it('posts one deduped SIGNAL Inbox row naming the run and the warning', async () => {
+    const { deps, notifier } = setup();
+    await notifier.onRunWarning(record(), { slotId: 'slot-1', summary: 'Worker slot-1 exited with code 1', kind: 'worker-exit' });
+    expect(deps.appendInbox).toHaveBeenCalledOnce();
+    expect(deps.appendInbox).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'p1', executionId: 'e1', subject: 'Squad worker needs attention: Ship it', comments: 'Worker slot-1 exited with code 1',
+      dedupeKey: 'squad-worker-warning:e1:1:slot-1:worker-exit', report: true, squadNotice: 'proposal-result'
+    }));
+  });
+
+  it('titles a blocker reminder as a question and keys each unit and blocker on its own row', async () => {
+    const { deps, notifier } = setup();
+    await notifier.onRunWarning(record(), { slotId: 'slot-1', summary: 'waited 30 minutes', kind: 'blocker-reminder', ref: 'u1:b1' });
+    await notifier.onRunWarning(record(), { slotId: 'slot-1', summary: 'idle', kind: 'worker-idle', ref: 'u1:0' });
+    expect(deps.appendInbox).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      subject: 'Squad still needs your answer: Ship it', dedupeKey: 'squad-worker-warning:e1:1:slot-1:blocker-reminder:u1:b1', notify: 'loud'
+    }));
+    expect(deps.appendInbox).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      subject: 'Squad worker needs attention: Ship it', dedupeKey: 'squad-worker-warning:e1:1:slot-1:worker-idle:u1:0'
+    }));
+    expect(deps.appendInbox.mock.calls[1][0]).not.toHaveProperty('notify');
+  });
+
+  it('gives a unit checkpoint warning its own subject and a per-unit dedupe key', async () => {
+    const { deps, notifier } = setup();
+    await notifier.onRunWarning(record(), { slotId: 'slot-1', summary: 'Checkpoint for unit "u1: Build" is partial', kind: 'unit-checkpoint', ref: 'u1:2' });
+    expect(deps.appendInbox).toHaveBeenCalledWith(expect.objectContaining({
+      subject: 'Squad checkpoint needs review: Ship it', dedupeKey: 'squad-worker-warning:e1:1:slot-1:unit-checkpoint:u1:2'
+    }));
+  });
+
+  it('logs and survives an Inbox failure, and does nothing after dispose', async () => {
+    const { deps, notifier } = setup({ appendInbox: vi.fn(async () => { throw new Error('inbox down'); }) });
+    await expect(notifier.onRunWarning(record(), { slotId: 's', summary: 'x', kind: 'worker-no-turn' })).resolves.toBeUndefined();
+    expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('warning entry failed'), expect.any(Error));
+    notifier.dispose();
+    deps.appendInbox.mockClear();
+    await notifier.onRunWarning(record(), { slotId: 's', summary: 'x', kind: 'worker-no-turn' });
+    expect(deps.appendInbox).not.toHaveBeenCalled();
   });
 });

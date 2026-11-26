@@ -189,6 +189,7 @@ export const threadEventScopeDefinitionByType = {
     rationale:
       "Legacy persisted user-visible system messages may be thread-scoped for general updates or turn-scoped for in-turn updates.",
   },
+  "system/plugin/message": { policy: "thread", rationale: "A plugin posts a display message outside provider turns." },
   "system/thread/interrupted": {
     policy: "thread",
     rationale:

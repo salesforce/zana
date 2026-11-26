@@ -62,6 +62,8 @@ export const MODERN_OWNER_EXECUTION_TOOL_NAMES = [
   'execution_snapshot',
   'execution_status',
   'execution_respond',
+  'execution_slot_restart',
+  'execution_unit_release',
   'execution_resume_binding',
   'squad_propose',
   'squad_launch',

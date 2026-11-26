@@ -12,6 +12,10 @@ export interface ThreadLastExecution {
   serviceTier?: string;
 }
 
+export function preparedThreadEvent(ctx: Pick<ProductHttpContext, 'db'>, threadId: string) {
+  return listConversationThreadEventsWindow(ctx.db, threadId, { limit: 1, type: 'thread/prepared' })[0];
+}
+
 export function readLastThreadExecution(
   ctx: Pick<ProductHttpContext, 'db'>,
   threadId: string
@@ -22,6 +26,10 @@ export function readLastThreadExecution(
     limit: LAST_EXECUTION_SCAN_CAP,
     type: 'client/turn/requested'
   });
+  if (!rows.length) {
+    const prepared = preparedThreadEvent(ctx, threadId);
+    if (prepared) rows.push(prepared);
+  }
   // model/reasoning come from the NEWEST turn. acpMode comes from the newest turn
   // that actually RECORDED a role: a follow-up carrying no role (e.g. an agent
   // tell or plan resume) doesn't change the running mode, so it must not blank
@@ -33,7 +41,7 @@ export function readLastThreadExecution(
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     const payload = rows[index]?.payload;
     if (!payload || typeof payload !== 'object' || !('type' in payload)) continue;
-    if ((payload as { type?: unknown }).type !== 'client/turn/requested') continue;
+    if (payload.type !== 'client/turn/requested' && payload.type !== 'thread/prepared') continue;
     const execution = (payload as { execution?: unknown }).execution;
     if (!execution || typeof execution !== 'object') continue;
     if (!newest) {

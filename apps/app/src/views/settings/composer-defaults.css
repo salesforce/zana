@@ -1,0 +1,22 @@
+/* Keep the current value close to the edge on both settings pages. Long model
+   names may use the whole value column, including on a narrow window. */
+.settings-panel--preferences :is(.composer-defaults, .registered-harness-preferences, #settings-anchor-harness-defaults)
+  .settings-field--row .launch-model-picker-trigger {
+  justify-self: end;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--settings-divider);
+  background: var(--bg-elevated);
+}
+.settings-panel--preferences .composer-defaults .settings-section-body,
+.settings-panel--preferences #settings-anchor-harness-defaults .settings-section-body {
+  border-radius: 12px;
+}
+.settings-panel--preferences .composer-defaults .settings-section-body > .settings-field {
+  padding-block: 10px;
+}
+.composer-defaults .settings-help .settings-btn { margin-inline-start: 8px; }

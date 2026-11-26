@@ -8,7 +8,7 @@ New to Squads? Start with [Your first Squad](/docs/squads-start/). To follow a r
 
 Every path asks how the Squad gets its plan. The labels are the same everywhere.
 
-- **Plan provided in goal.** The goal, or a file you attach, contains the plan. The host registers it and dispatches work before the Orchestrator starts. This is the path to learn first.
+- **Plan provided in goal.** The goal, or a file you attach, contains the plan (see [Squad plans](/docs/squads-plans/)). The host registers it and dispatches work before the Orchestrator starts. This is the path to learn first.
 - **Infer plan from goal.** The Orchestrator writes the plan from your goal. See [Customizing a Squad](/docs/squads-customize/) for how it works.
 
 Where the choice appears:
@@ -38,11 +38,14 @@ This is the main path.
 3. Pick the Squad.
 4. Choose **Squad planning**.
 5. Pick the Project.
-6. Optionally add a Title and a Summary. The title placeholder is "Defaults from goal".
-7. Optionally attach files, images or sources.
-8. Press **Launch squad**, or use the keyboard shortcut shown in the text box.
+6. Optionally choose **Squad launch mode**: **Use Squad default**, **CLI Agent** or **Modern**. The picker is disabled when the Squad pins a mode.
+7. Optionally add a Title and a Summary. The title placeholder is "Defaults from goal".
+8. Optionally attach files, images or sources.
+9. Press **Launch squad**, or use the keyboard shortcut shown in the text box.
 
 When the Squad starts, a toast says "Squad launched. Open Agents board to monitor it." Then follow the run in [Squad details](/docs/squads-watch/).
+
+**Squad launch mode.** The picker beats the Squad's own **Use default** or **Follow caller** setting, but not a pinned **CLI Agent** or **Modern**. When an agent launches a Squad through MCP, **Follow caller** matches that agent's session. See [Squad launch mode](/docs/squads-customize/#squad-launch-mode) for the full order. Modern needs a local Project. If Modern was inherited and the Project is remote, the Squad runs as CLI Agent and a notice says so. An explicit Modern pick or pin on a remote Project is refused. The mode is fixed when the run starts and resume does not change it.
 
 If something blocks the launch, the composer says why.
 

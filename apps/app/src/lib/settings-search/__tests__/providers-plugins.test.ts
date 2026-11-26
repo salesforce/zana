@@ -7,6 +7,7 @@ vi.mock('../../../plugins/plugin-slots.js', () => ({ listSettingsSections: () =>
 vi.mock('../../product-client.js', () => ({ product: { pluginApps: {} } }));
 
 import { searchSettings } from '../index';
+import { SETTLE_MAX_MS } from '../reveal-settle';
 import { getSettingsSearchProviders, getSettingsSearchSourcesVersion } from '../registry';
 import { findSecretValueViolations } from '../secrets';
 import {
@@ -65,6 +66,20 @@ describe('plugin settings provider', () => {
     expect(entries.find((e) => e.id === 'plugin.p1.flag')!.value?.(config)).toBe('On');
     expect(entries.find((e) => e.id === 'plugin.p1.mode')!.options).toEqual(['fast', 'thorough']);
     expect(entries.find((e) => e.id === 'plugin.p1.empty')!.value).toBeUndefined();
+  });
+
+  it('finds an experimental switch even while the plugin is off', async () => {
+    const plugin = { ...app('sample', 'Sample', false), experimental: true as const };
+    const a = api([plugin]);
+    await prefetchPluginSettings(a);
+    const toggle = () => pluginSettingsSearchProvider(config).find(entry => entry.id === 'experimental.plugin.sample');
+    expect(toggle()).toMatchObject({ section: 'experimental', anchor: 'experimental-features', label: 'Sample' });
+    expect(toggle()?.value?.(config)).toBe('Off');
+    expect(a.getSettings).not.toHaveBeenCalled();
+    await prefetchPluginSettings(api([{ ...plugin, enabled: true }]));
+    expect(toggle()?.value?.(config)).toBe('On');
+    await prefetchPluginSettings(api([]));
+    expect(toggle()).toBeUndefined();
   });
 
   it('never reads or stores a secret descriptor value', async () => {
@@ -210,7 +225,11 @@ describe('ExtensionsHub revealPluginSetting', () => {
     document.querySelector('#plugin-configure')!.innerHTML = rowsHtml;
     await Promise.resolve(); // MutationObserver callbacks are microtasks
     expect(rows()[0].classList.contains('settings-search-flash')).toBe(true);
-    expect(vi.getTimerCount()).toBe(1); // only the flash-removal timer is left
+    // The wait is over: only the flash-removal timer and the settle watch's
+    // next frame are left, and the settle watch ends on its own.
+    expect(vi.getTimerCount()).toBe(2);
+    vi.advanceTimersByTime(SETTLE_MAX_MS);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('gives up at the cap and on cancel, leaving no timers or observers behind', async () => {

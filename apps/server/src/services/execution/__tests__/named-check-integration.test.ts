@@ -321,10 +321,9 @@ describe('named-check execution integration', () => {
     expect(await ctx.service.completeWork(ctx.binding, 'a', 'done', { ...fence, claimGeneration: 999 }, true)).toMatchObject({ ok: false });
     expect(ctx.runNamedCheck).not.toHaveBeenCalled();
   }));
-  it('rejects role alias collision before spawn', async () => fixture(async ctx => {
+  it('accepts a shared role alias (matching is by union; ranking picks one slot)', async () => fixture(async ctx => {
     const input = { ...request, workUnits: [{ ...work, checks: [], routing: { version: 1 as const, requiredRole: 'alias' } }], resolvedModels: [{ slotId: 's1', personaId: 'persona', label: 'alias', provider: 'p' }, { slotId: 's2', personaId: 'alias', provider: 'p' }] };
-    expect(await ctx.service.start('owner', 'p', input)).toMatchObject({ ok: false });
-    expect(ctx.launchTeam).not.toHaveBeenCalled();
+    expect(await ctx.service.start('owner', 'p', input)).toMatchObject({ ok: true });
   }, { resolveTeamModelSnapshots: () => [{ slotId: 's1', personaId: 'persona', label: 'alias', provider: 'p' }, { slotId: 's2', personaId: 'alias', provider: 'p' }] }));
   it('names-only discovery rejects objects and missing hook', async () => fixture(async ctx => {
     await expect(ctx.service.listNamedChecks('p')).rejects.toThrow('discovery');

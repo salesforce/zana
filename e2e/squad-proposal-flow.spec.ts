@@ -95,6 +95,7 @@ async function closeAgentModal(window: Page): Promise<void> {
 async function openInboxCard(window: Page, subject: string) {
   await closeAgentModal(window);
   await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
+  await window.getByRole('button', { name: 'Split view', exact: true }).click();
   const row = window.locator('.inbox-row').filter({ hasText: subject }).first();
   await expect(row).toBeVisible({ timeout: 30_000 });
   await row.click();
@@ -116,6 +117,8 @@ async function reviewAndLaunch(
   // A CLI Agent proposer is named by its session title; a fallback to the generic name would fail here.
   await expect(modal.locator('.team-composer-origin-banner')).toContainText(proposerTitle ? `Prepared by “${proposerTitle}”` : 'Prepared by');
   await expect(modal.locator('.team-composer-origin-banner')).toContainText('Plan checked: 4 steps.');
+  // The composer's Review plan disclosure carries the plan check; a clean plan leaves Launch enabled.
+  await expect(modal.getByTestId('team-composer-plan-review')).toContainText('Review plan: No problems found');
   const sources = modal.getByLabel('Attached sources');
   await expect(sources).toContainText('e2e-design.md');
   await expect(sources).toContainText('e2e-plan.md');
@@ -211,7 +214,7 @@ async function setUpModernProject(window: Page, projectDir: string, agentPath: s
   }));
   await window.evaluate(() => window.cc.teams.save({
     id: 'e2e-job-team', name: 'E2E Job Team', description: 'Modern proposer team',
-    slots: [{ personaId: 'e2e-worker', quantity: 2 }], orchestratorPersonaId: 'e2e-orchestrator', defaultPlanning: 'provided'
+    slots: [{ personaId: 'e2e-worker', quantity: 2 }], orchestratorPersonaId: 'e2e-orchestrator', defaultPlanning: 'provided', transport: 'CLI'
   }));
   return window.evaluate(async (path) => {
     const result = await window.cc.projects.add(path);
@@ -537,7 +540,7 @@ test.describe('CLI Agent proposer', () => {
       await closeAgentModal(window);
       await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
       await expect(window.locator('.inbox-view')).toBeVisible();
-      await expect(window.locator('.inbox-row').filter({ hasText: 'Squad launch ready' })).toHaveCount(0);
+      await expect(window.getByRole('button', { name: /Squad launch ready/ })).toHaveCount(0);
     } catch (error) {
       throw jobTeamFailure(ctx, error);
     } finally {
@@ -606,6 +609,120 @@ test.describe('Modern proposer', () => {
     } finally {
       await removeModernProject(window, projectId);
       rmSync(projectDir, { recursive: true, force: true });
+      agent.cleanup();
+    }
+  });
+
+  test('squad_plan_check explains an empty plan and warns about a serial chain and a mixed contract-and-UI step', async ({ app, home }) => {
+    const { window } = app;
+    const agent = makeJobTeamCoordinatorBinary();
+    const projectDir = mkdtempSync(join(tmpdir(), 'zcc-squad-plan-lint-'));
+    let projectId: string | null = null;
+    try {
+      projectId = await setUpModernProject(window, projectDir, agent.path);
+      const threadId = await startModernThread(window, projectId);
+      const callTool = hostToolCaller(window, home, threadId);
+      const check = async (text: string) => {
+        const result = await callTool('squad_plan_check', { text, teamId: 'e2e-job-team' });
+        expect(result.success, result.text).toBe(true);
+        return JSON.parse(result.text) as { ok: boolean; reason?: string; findings?: Array<{ severity: string; requirement: string; stepId?: string; detail?: string }> };
+      };
+      const step = (id: string, body: string) => `### ${id}: Step ${id} <!-- executable-step -->\n- **Mode:** read-only\n${body}\n- **Verification:** done\n`;
+
+      // No steps: the stable reason plus a plain-language diagnosis.
+      const empty = await check('## Notes\n### Idea\nJust prose, no steps.');
+      expect(empty).toMatchObject({ ok: false, reason: 'no executable steps found' });
+      expect(empty.findings?.map((f) => f.detail).join(' ')).toContain('"## Execution Plan"');
+
+      // A 16-step chain against a 2-worker Squad: width 1 is flagged as a warning in the shared finding shape.
+      const chain = Array.from({ length: 16 }, (_, i) => step(`s${i + 1}`, `${i ? `- **Depends on:** s${i}\n` : ''}- **Work:** do ${i + 1}`)).join('\n');
+      const serial = await check(chain);
+      expect(serial.ok).toBe(true);
+      const width = serial.findings?.find((f) => f.requirement === 'plan' && /width is 1 across 16 steps/.test(f.detail ?? ''));
+      expect(width, JSON.stringify(serial.findings)).toMatchObject({ severity: 'warning' });
+
+      // One unit spanning apps/server and apps/app: a warning on that unit, the plan still passes.
+      const mixed = await check([
+        step('contract-and-ui', '- **Write scope:** `apps/server/src/http/routes.ts, apps/app/src/panel.tsx`\n- **Work:** wire both'),
+        step('other', '- **Write scope:** `docs/notes.md`\n- **Work:** write notes')
+      ].join('\n'));
+      expect(mixed.ok).toBe(true);
+      expect(mixed.findings?.filter((f) => f.requirement === 'plan' && f.severity === 'warning').map((f) => f.stepId)).toContain('contract-and-ui');
+      expect(mixed.findings?.some((f) => /width is/.test(f.detail ?? ''))).toBe(false);
+    } finally {
+      await removeModernProject(window, projectId);
+      rmSync(projectDir, { recursive: true, force: true });
+      agent.cleanup();
+    }
+  });
+
+  test('a doc:// Design Doc plan launches without writing a copy into the project, and another project\'s doc is refused', async ({ app, home }, testInfo) => {
+    const { window } = app;
+    const diagnostics: string[] = [];
+    window.on('console', (message) => diagnostics.push(`[renderer:${message.type()}] ${message.text()}`));
+    const agent = makeJobTeamCoordinatorBinary();
+    const projectDir = mkdtempSync(join(tmpdir(), 'zcc-squad-doc-source-'));
+    const otherDir = mkdtempSync(join(tmpdir(), 'zcc-squad-doc-other-'));
+    let projectId: string | null = null;
+    let otherId: string | null = null;
+    try {
+      projectId = await setUpModernProject(window, projectDir, agent.path);
+      // Design Docs is a bundled plugin: install it so main can read doc:// sources through its RPC.
+      const install = await window.evaluate(() => window.cc.extensions.install({ kind: 'bundled', id: 'design-docs' }));
+      expect(install).toMatchObject({ ok: true });
+      await expect.poll(() => window.evaluate(async () =>
+        (await window.cc.pluginApps.list()).find((p) => p.id === 'design-docs')?.status
+      ), { timeout: 30_000 }).toBe('running');
+      otherId = await window.evaluate(async (path) => {
+        const result = await window.cc.projects.add(path);
+        if (!result.ok) throw new Error(result.message ?? 'projects.add failed');
+        return result.value.id;
+      }, otherDir);
+      const makeDoc = (title: string, owner: string, plan: string) => window.evaluate(async (a) => {
+        const doc = await window.cc.pluginApps.callRpc('design-docs', 'create', { title: a.title, template: 'technical', projectId: a.owner }) as { id: string };
+        await window.cc.pluginApps.callRpc('design-docs', 'writeFile', { doc: doc.id, path: 'plan.md', content: a.plan });
+        return doc.id;
+      }, { title, owner, plan });
+      const ownDoc = await makeDoc('Atlas plan doc', projectId, PLAN_MD);
+      const foreignDoc = await makeDoc('Other project plan doc', otherId, PLAN_MD);
+
+      const listing = () => (readdirSync(projectDir, { recursive: true }) as string[]).map(String).sort();
+      const before = listing();
+
+      const threadId = await startModernThread(window, projectId);
+      const callTool = hostToolCaller(window, home, threadId);
+      const refused = await callTool('squad_propose', {
+        teamId: 'e2e-job-team', goal: GOAL, planning: 'provided', sources: [`doc://${foreignDoc}/plan.md`], title: 'Foreign doc attempt'
+      });
+      expect(refused.text, diagnostics.join('\n')).toContain('SOURCE_NOT_FILE');
+      // Same answer as a missing doc: a foreign Project's doc must not be confirmed to exist.
+      expect(refused.text).toContain('no design doc with that id was found');
+
+      const proposed = await callTool('squad_propose', {
+        teamId: 'e2e-job-team', goal: GOAL, planning: 'provided', sources: [`doc://${ownDoc}/plan.md`], title: TITLE
+      });
+      expect(proposed.success, `${proposed.text}\n${diagnostics.join('\n')}`).toBe(true);
+      await openInboxCard(window, `Squad launch ready: ${TITLE}`);
+      await window.getByRole('button', { name: 'Review Squad launch' }).click();
+      const modal = window.getByTestId('launch-modal');
+      await expect(modal).toBeVisible();
+      await expect(modal.getByLabel('Attached sources')).toContainText(`design-doc-${ownDoc}-plan.md`);
+      const send = modal.getByTestId('team-command-send');
+      await expect(send).toBeEnabled({ timeout: 15_000 });
+      await send.click();
+      await expect(modal).toBeHidden({ timeout: 30_000 });
+      expect(await findJobExecutionId(window, projectId, TITLE)).toBeTruthy();
+      await captureElectronScreenshot(app.electron, window, testInfo.outputPath('doc-source-launched.png'));
+
+      // AC10: the snapshot lives in the proposal staging area, never as an untracked file in the checkout.
+      expect(listing().filter((entry) => entry.includes('design-doc-'))).toEqual([]);
+      const added = listing().filter((entry) => !before.includes(entry) && !/^(home|about|result)\.txt$|^\.fake-coordinator/.test(entry));
+      expect(added, 'no copy of the design doc plan in the project checkout').toEqual([]);
+    } finally {
+      await removeModernProject(window, projectId);
+      await removeModernProject(window, otherId);
+      rmSync(projectDir, { recursive: true, force: true });
+      rmSync(otherDir, { recursive: true, force: true });
       agent.cleanup();
     }
   });

@@ -45,6 +45,13 @@ setInterval(() => {}, 1000);
   await expect(rail.getByTestId('project-thread-row')).toHaveCount(2);
   await captureElectronScreenshot(app.electron, window, testInfo.outputPath('sidebar-projects-view.png'), projectsSection);
 
+  const search = rail.getByRole('textbox', { name: 'Filter machines, projects or chats' });
+  await search.fill('AUTO-FORWARD');
+  await expect(rail.getByTestId('project-thread-row')).toHaveCount(1);
+  await expect(rail.getByTestId('project-thread-row')).toContainText('Check my auto-forward ticket');
+  await expect(rail.getByRole('button', { name: 'Open local-core', exact: true })).toBeVisible();
+  await search.clear();
+
   await rail.getByRole('button', { name: 'Organize projects', exact: true }).click();
   await rail.getByRole('menuitemradio', { name: 'Agents only', exact: true }).click();
   const agents = rail.getByRole('list', { name: 'Agents', exact: true });

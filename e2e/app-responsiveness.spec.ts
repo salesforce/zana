@@ -71,7 +71,9 @@ test('large documents stay bounded and recursive deletion yields at the Electron
   writeFileSync(join(home, '.zcc/inbox/entries.jsonl'), JSON.stringify({ id: 'large-report', projectId: 'large-preview', ts: Date.now(), subject: 'Large document regression', comments: 'Attached document', docs: [{ path: 'large.md' }] }) + '\n');
   const app = await launchApp(home, { e2e: true, env: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { sponsorPromptDismissed: true, tmuxScope: 'off' } });
   try {
-    const page = app.window; await page.getByTestId('nav-inbox').click(); await page.locator('.inbox-row').filter({ hasText: 'Large document regression' }).click();
+    const page = app.window;
+    await page.getByTestId('nav-inbox').click();
+    await page.getByRole('button', { name: /Large document regression/ }).click();
     await expect(page.getByText('Preview shortened. Copy full text to read the complete content.')).toBeVisible();
     expect(await page.locator('.inbox-doc-body pre').evaluate(node => node.textContent!.length)).toBeLessThanOrEqual(64_000);
     await page.getByRole('button', { name: 'Copy full text', exact: true }).click(); await expect(page.getByRole('button', { name: 'Copied full text' })).toBeVisible();
@@ -128,7 +130,11 @@ test('plugin service returns survive worker transport and a blocking callback ca
     await page.waitForTimeout(200);
     const latency = await page.evaluate(async () => { const start = performance.now(); const response = await fetch('/api/v1/plugins'); if (!response.ok) throw Error('Product request failed'); await response.json(); return performance.now() - start; });
     expect(latency).toBeLessThan(500);
-    await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'plugin-worker-regression')?.status), { timeout: 10_000 }).toBe('degraded');
+    // The worker heartbeat watchdog allows 20 seconds before reporting a stall.
+    await expect.poll(() => page.evaluate(async () => (await window.cc.pluginApps.list()).find(p => p.id === 'plugin-worker-regression')?.status), {
+      timeout: 30_000,
+      intervals: [250]
+    }).toBe('degraded');
     const rejected = await page.evaluate(() => (globalThis as any).busyReply); expect(rejected.status).toBeGreaterThanOrEqual(400); expect(rejected.body.error).toContain('stopped responding');
   } finally { await app.electron.close(); }
 });

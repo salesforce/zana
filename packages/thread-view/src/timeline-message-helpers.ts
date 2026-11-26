@@ -3,7 +3,7 @@ import type { EventProjectionMessage } from "./event-projection-types.js";
 export function isTimelineTerminalMessage(
   message: EventProjectionMessage,
 ): boolean {
-  return message.kind === "assistant-text" || message.kind === "error";
+  return (message.kind === "assistant-text" && !message.pluginId) || message.kind === "error";
 }
 
 export function isTimelineSummaryGroupableSteerMessage(
@@ -23,7 +23,7 @@ export function isTimelineUngroupableMessage(
     return !isTimelineSummaryGroupableSteerMessage(message);
   }
   if (message.kind === "assistant-text") {
-    return message.isLegacyUserMessage === true;
+    return message.isLegacyUserMessage === true || message.pluginId !== undefined;
   }
   return message.kind === "debug/raw-event";
 }

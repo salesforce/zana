@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures/app.js';
+import { composerSettingsPill } from './fixtures/composer-settings.js';
 
 test('Home Thread composer uses the TipTap editor and provider controls', async ({ app }) => {
   const { window } = app;
@@ -8,9 +9,9 @@ test('Home Thread composer uses the TipTap editor and provider controls', async 
   await expect(homeComposer).toBeVisible();
   await expect(homeComposer.locator('[data-testid="thread-command-input"], .ui-command-composer-input')).toBeVisible();
   await expect(homeComposer.getByLabel('Provider')).toBeVisible();
-  await expect(homeComposer.getByLabel('Permission mode')).toBeVisible();
+  await expect(composerSettingsPill(homeComposer)).toBeVisible();
   await expect(homeComposer.getByTestId('thread-command-send')).toBeVisible();
-  await expect(homeComposer.getByTestId('composer-mode-picker-trigger')).toBeVisible();
+  await expect(homeComposer.getByTestId('model-reasoning-picker-trigger')).toBeVisible();
   const launchMode = window.getByRole('group', { name: 'Launch mode' });
   await expect(launchMode.getByRole('button', { name: 'Modern' })).toBeVisible();
   await expect(launchMode.getByRole('button', { name: 'CLI Agent' })).toBeVisible();

@@ -9,7 +9,11 @@ import { findLinkedLibraryDocument } from './library-document-link.js';
 /** Keep the tree mounted so returning from a mobile document preserves its filters and folders. */
 export function useLibraryNavigation(docs: readonly LibraryDoc[] = []) {
   const pushToast = useUi(s => s.pushToast);
-  const compact = useCompactLayout();
+  const mobile = useCompactLayout();
+  const [narrow, setNarrow] = useState<boolean | null>(null);
+  // Show the tree first until the host is measured. A desktop dock can be
+  // narrower than a phone even when the outer window is wide.
+  const compact = mobile || narrow !== false;
   const [selectedDoc, setSelection] = useState<LibraryDoc | null>(null);
   const [readerOpen, setReaderOpen] = useState(false);
   const [fragment, setFragment] = useState('');
@@ -17,6 +21,21 @@ export function useLibraryNavigation(docs: readonly LibraryDoc[] = []) {
   const backRef = useRef<HTMLButtonElement>(null);
   const treeScroll = useRef(0);
   const restoringTree = useRef(false);
+
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const measure = () => {
+      const width = root.clientWidth;
+      // A retained tab has no width while hidden. Keep its last layout.
+      if (width > 0) setNarrow(width < 640);
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, []);
 
   const setSelectedDoc = useCallback((doc: LibraryDoc | null) => {
     const tree = rootRef.current?.querySelector<HTMLElement>('.library-tree');

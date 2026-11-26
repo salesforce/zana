@@ -203,9 +203,8 @@ export function LibraryView({ project, deepLink = null }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docs]);
 
-  // Expanded tree nodes (bucket roots + folders), by node key. Global bucket
-  // starts open; the rest starts collapsed — the user opens what they want.
-  const [expanded, setExpanded] = useState<Set<string>>(new Set(['global']));
+  // Show the current project’s documents on first open, including in a narrow thread pane.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set(['global', libraryBucketKey('project', project.id)]));
   const toggleNode = (key: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);

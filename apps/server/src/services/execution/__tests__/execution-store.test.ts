@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createExecutionStore, EXECUTION_RECOVERY_TTL_MS, isTerminalExecutionState, isUserOwnedSquadWorktree, KICKOFF_FAILURE_BLOCK_THRESHOLD } from '../store.js';
+import { boundReason, createExecutionStore, EXECUTION_RECOVERY_TTL_MS, isTerminalExecutionState, isUserOwnedSquadWorktree, KICKOFF_FAILURE_BLOCK_THRESHOLD } from '../store.js';
 import { usageRollup } from '../contracts.js';
 import { MAX_TEAM_INITIAL_TASK_BYTES } from '../../launch/team-lifecycle-store.js';
 
@@ -38,6 +38,17 @@ async function accumulateKickoffFailures(store: ReturnType<typeof createExecutio
 }
 
 describe('isTerminalExecutionState', () => {
+  it('keeps normalized roles on registered model snapshots and loads snapshots without roles', async () => {
+    await fixture(async (file) => {
+      const store = createExecutionStore({ filePath: file });
+      const withRoles = (await store.claim({ ...request(), resolvedModels: [
+        { slotId: 'a', provider: 'p', roles: ['Reviewer', 'reviewer'] }, { slotId: 'b', provider: 'p' }
+      ] })).record;
+      expect(withRoles.resolvedModels[0]?.roles).toEqual(['reviewer']);
+      expect('roles' in withRoles.resolvedModels[1]!).toBe(false);
+    });
+  });
+
   it('treats only completed, stopped and failed as terminal', () => {
     expect((['COMPLETED', 'STOPPED', 'FAILED'] as const).every(isTerminalExecutionState)).toBe(true);
     expect((['READY', 'STARTING', 'RUNNING', 'BLOCKED'] as const).some(isTerminalExecutionState)).toBe(false);
@@ -826,7 +837,7 @@ describe('execution store', () => {
     expect(blocked.state).toBe('BLOCKED');
     const blocker = blocked.blockers?.find((entry) => entry.workUnitId === 'unit');
     expect(blocker).toMatchObject({ audience: 'human', resolved: false });
-    expect(blocker?.question).toContain('never started a turn');
+    expect(blocker?.question).toContain('started a turn');
     // Idempotent: escalating an already-blocked unit refuses (no dup blocker / no churn).
     await expect(store.blockKickoffFailure(record.id, 'unit')).rejects.toThrow('work unit is not blockable for kickoff failure');
   }));
@@ -2199,8 +2210,8 @@ describe('execution store dispatchReady (engine-cascade auto-assign)', () => {
     { slotId: 'slot-2', personaId: 'worker', authorizationIdDigest: 'w2-d' }
   ];
 
-  async function running(store: ReturnType<typeof createExecutionStore>, slots: Slot[], units: unknown[]) {
-    const claimed = await store.claim(request());
+  async function running(store: ReturnType<typeof createExecutionStore>, slots: Slot[], units: unknown[], routingPolicy?: { version: 1; hardRequirements: boolean }) {
+    const claimed = await store.claim({ ...request(), ...(routingPolicy ? { routingPolicy } : {}) });
     if (claimed.outcome !== 'claimed') throw new Error('expected claim');
     let record = await store.transition(claimed.record.id, 0, 'STARTING', 'info', 'start');
     record = await store.transition(record.id, record.stateVersion, 'RUNNING', 'info', 'run');
@@ -2325,6 +2336,20 @@ describe('execution store dispatchReady (engine-cascade auto-assign)', () => {
     expect(assignments).toMatchObject([{ workUnitId: 'a', slotId: 'slot-2' }]);
   }));
 
+  it('round-trips preferRoles and excludeSameWorkerAs on routing and rejects malformed values on load', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = await running(store, TWO_WORKERS, [
+      { id: 'a', title: 'A', task: 'do a', dependencies: [], files: ['a.txt'], routing: { version: 1, preferRoles: ['review'] } },
+      { id: 'b', title: 'B', task: 'do b', dependencies: ['a'], files: ['b.txt'], routing: { version: 1, preferRoles: ['review'], excludeSameWorkerAs: ['a'] } }
+    ], { version: 1, hardRequirements: true });
+    const reloaded = await createExecutionStore({ filePath }).get(record.id);
+    expect(reloaded?.workUnits?.[1].routing).toMatchObject({ preferRoles: ['review'], excludeSameWorkerAs: ['a'] });
+    const raw = JSON.parse(await readFile(filePath, 'utf8')) as { records?: Array<{ workUnits?: Array<{ routing?: Record<string, unknown> }> }> };
+    for (const entry of raw.records ?? []) for (const unit of entry.workUnits ?? []) if (unit.routing) unit.routing.excludeSameWorkerAs = [42];
+    await writeFile(filePath, JSON.stringify(raw));
+    await expect(createExecutionStore({ filePath }).get(record.id)).rejects.toThrow('invalid shape');
+  }));
+
   it('records one idempotent shadow recommendation without changing legacy assignment', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const record = await running(store, TWO_WORKERS, [
@@ -2337,7 +2362,7 @@ describe('execution store dispatchReady (engine-cascade auto-assign)', () => {
     expect(second.record.routingDecisions).toHaveLength(1);
   }));
 
-  it('enforcement selects only recommended qualified free slot and fails impossible work', async () => fixture(async (filePath) => {
+  it('enforcement selects only recommended qualified free slot and escalates impossible work', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution-1' });
     const record = await running(store, [
       { slotId: 'orchestrator:lead', personaId: 'lead', authorizationIdDigest: 'lead-d' },
@@ -2349,7 +2374,8 @@ describe('execution store dispatchReady (engine-cascade auto-assign)', () => {
     ]);
     const { assignments, record: updated } = await store.dispatchReady(record.id, { enforceRouting: true });
     expect(assignments).toMatchObject([{ workUnitId: 'qualified', slotId: 'beta' }]);
-    expect(updated.workUnits?.find((unit) => unit.id === 'impossible')).toMatchObject({ state: 'FAILED', failureCode: 'NO_QUALIFIED_ROUTE' });
+    expect(updated.workUnits?.find((unit) => unit.id === 'impossible')).toMatchObject({ state: 'BLOCKED' });
+    expect(updated.blockers).toMatchObject([{ workUnitId: 'impossible', audience: 'coordinator', noRoute: true }]);
   }));
 
   it('enforcement recomputes free qualified slots after an earlier claim', async () => fixture(async (filePath) => {
@@ -2457,6 +2483,46 @@ describe('local Composer durable report mark', () => {
     await store.claim(local() as never);
     const durable = JSON.parse(await readFile(filePath, 'utf8'));
     durable.records[0].localReport = false;
+    await writeFile(filePath, JSON.stringify(durable));
+    await expect(createExecutionStore({ filePath }).get('e-1')).rejects.toThrow('corrupt execution store');
+  }));
+});
+
+describe('failure reason', () => {
+  it('strips control characters, shortens absolute paths and caps length', () => {
+    expect(boundReason('boom\u0000\n\tat /Users/me/secret/dir/file.ts:10 and C:\\Users\\me\\x\\y.txt')).toBe('boom at file.ts:10 and y.txt');
+    expect(boundReason('see https://example.com/a/b and ./rel/path')).toBe('see https://example.com/a/b and ./rel/path');
+    expect(boundReason('naïve 日本語 ✓')).toBe('naïve 日本語 ✓');
+    expect(boundReason('x'.repeat(5000))).toHaveLength(2048);
+    expect(boundReason('x'.repeat(50), 10)).toHaveLength(10);
+    expect(boundReason('\u0001\u0002')).toBe('');
+    expect(boundReason(undefined as unknown as string)).toBe('');
+  });
+
+  it('records a sanitized reason on FAILED only and survives reload', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'e-1' });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'STARTING', 'info', 'start');
+    expect(record.failureReason).toBeUndefined();
+    record = await store.transition(record.id, record.stateVersion, 'FAILED', 'error', `Team launch error: ENOENT /Users/me/proj/file.ts\n${'y'.repeat(1900)}`);
+    expect(record.failureReason!.startsWith('Team launch error: ENOENT file.ts ')).toBe(true);
+    expect(record.failureReason!.length).toBeLessThanOrEqual(2048);
+    expect((await createExecutionStore({ filePath }).get('e-1'))?.failureReason).toBe(record.failureReason);
+  }));
+
+  it('leaves the reason unset when the summary has only control characters', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath });
+    let record = (await store.claim(request())).record;
+    record = await store.transition(record.id, record.stateVersion, 'FAILED', 'error', '\u0001');
+    expect(record.failureReason).toBeUndefined();
+  }));
+
+  it('rejects a persisted record whose reason is over the cap, and loads records without one', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'e-1' });
+    const record = (await store.claim(request())).record;
+    expect(record.failureReason).toBeUndefined();
+    const durable = JSON.parse(await readFile(filePath, 'utf8'));
+    durable.records[0].failureReason = 'z'.repeat(2049);
     await writeFile(filePath, JSON.stringify(durable));
     await expect(createExecutionStore({ filePath }).get('e-1')).rejects.toThrow('corrupt execution store');
   }));

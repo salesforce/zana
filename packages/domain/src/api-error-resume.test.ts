@@ -161,3 +161,11 @@ describe('buildApiErrorMatchText', () => {
     expect(buildApiErrorMatchText('x'.repeat(5000), 'y')).toHaveLength(D.maxMatchTextChars);
   });
 });
+
+describe('suggestion hints', () => {
+  it('only labels suggestions that exist', async () => {
+    const { API_ERROR_RESUME_SUGGESTIONS, API_ERROR_RESUME_SUGGESTION_HINTS } = await import('./api-error-resume.js');
+    const matches = new Set(API_ERROR_RESUME_SUGGESTIONS.map((s) => s.match));
+    for (const key of Object.keys(API_ERROR_RESUME_SUGGESTION_HINTS)) expect(matches.has(key)).toBe(true);
+  });
+});

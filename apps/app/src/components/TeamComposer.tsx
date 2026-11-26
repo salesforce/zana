@@ -1,3 +1,4 @@
+import { PlanReviewDisclosure, planHasMustFix, type PlanRecheck } from './PlanReviewDisclosure.js';
 import { product } from '../lib/product-client.js';
 import { SquadLaunchPolicyFields, SquadResolvedLaunchDetails } from './SquadLaunchSettings.js';
 import { launchOptionsSchema, type LaunchOptions, type ExecutionResolvedLaunchV1 } from '@zana-ai/zcc-domain/launch-options';
@@ -35,6 +36,8 @@ import { useComposerPromptField } from './composer/use-composer-prompt-field.js'
 import { useComposerSession, useComposerSetting } from './composer/ComposerDraft.js';
 import { applyRenewedSources } from './team-composer-sources.js';
 import { PopoverPicklist } from './ui/PopoverPicklist.js';
+import { resolveSquadTransportView, SQUAD_TRANSPORT_SOURCE_TEXT, useSquadTransportConfig } from '../lib/squad-transport.js';
+import { SQUAD_TRANSPORT_LABELS } from '@zana-ai/zcc-domain/squad-transport';
 import { squadPicklistOption } from './SquadTransportChip.js';
 import { defaultAutonomousTeamId } from './autonomous-team-composer.js';
 import {
@@ -53,6 +56,8 @@ type ComposerSource = ExecutionSourceCapabilityView & { path?: string; outsidePr
 type PreviewSnapshot = { resolved?: ExecutionResolvedLaunchV1; preview?: SquadLaunchPrefill['launchPreview'] };
 const previewSnapshot = (value: PreviewSnapshot | undefined) => JSON.stringify({ resolved: value?.resolved, location: value?.preview?.location, path: value?.preview?.path, branch: value?.preview?.branch, head: value?.preview?.head });
 
+const LAUNCH_PICK_KEY = 'squad.launchModePick';
+
 /** One durable Team launch surface for inferred and user-provided plans. */
 export function TeamComposer({
   project: pinnedProject,
@@ -60,6 +65,7 @@ export function TeamComposer({
   onComposerProjectIdChange,
   initialText,
   prefill,
+  initialTeamId,
   resolveLaunchPreview,
   onClose
 }: {
@@ -67,10 +73,15 @@ export function TeamComposer({
   initialText?: string;
   /** A reviewed proposal from a conversation; seeds the form and tags the launch with its id. */
   prefill?: SquadLaunchPrefill;
+  /** Preselect this Squad when no proposal is pre-filled (Settings > Squads Launch). */
+  initialTeamId?: string;
   resolveLaunchPreview?: (input: { teamId: string; projectId: string; goal: string; coordinationMode: 'structured' | 'freeform'; sourceCapabilityIds: string[] } & LaunchOptions) => Promise<ExecutionResolvedLaunchV1>;
   onClose?: () => void;
 } & ComposerProjectSelectionProps) {
   const session = useComposerSession();
+  // A re-check replaces the plan review wholesale, so a fixed plan can clear its Must fix without a new proposal.
+  const [recheck, setRecheck] = useState<{ proposalId: string; plan: PlanRecheck } | null>(null);
+  const livePlan = prefill ? (recheck?.proposalId === prefill.proposalId ? recheck.plan : prefill) : undefined;
   const reviewedBound = Boolean(prefill?.launchPreview || prefill?.launchOptions);
   const projects = useData((s) => s.projects);
   const loadProjects = useData((s) => s.loadProjects);
@@ -89,7 +100,7 @@ export function TeamComposer({
     onComposerProjectIdChange?.(resolved);
   };
   const preferredProjectId = preferredComposerProjectId({ projects, lastProjectId, selectedProjectId });
-  const [draftTeamId, setTeamId] = useComposerSetting(session, 'team.id', prefill?.teamId ?? '');
+  const [draftTeamId, setTeamId] = useComposerSetting(session, 'team.id', prefill?.teamId ?? initialTeamId ?? '');
   const teamId = reviewedBound ? prefill!.teamId : draftTeamId;
   const [coordinationMode, setCoordinationMode] = useComposerSetting<Extract<TeamCoordinationMode, 'structured' | 'freeform'>>(session, 'team.coordination',
     () => prefill?.coordinationMode ?? useData.getState().teamDefaultCoordinationMode
@@ -105,7 +116,7 @@ export function TeamComposer({
   const [targetValue, setTargetValue] = useState(NO_TARGET);
   const [launchOptions, setLaunchOptions] = useState<LaunchOptions>(() => prefill?.launchOptions ?? {});
   const [customizeOpen, setCustomizeOpen] = useState(false);
-  const [reviewOpen, setReviewOpen] = useState(reviewedBound);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [previewGeneration, setPreviewGeneration] = useState(0);
   const [previewState, setPreviewState] = useState<{ key: string; generation: number; resolved?: ExecutionResolvedLaunchV1; preview?: SquadLaunchPrefill['launchPreview']; error?: string }>();
   const launchBusyRef = useRef(false);
@@ -122,6 +133,20 @@ export function TeamComposer({
   const project = pinnedProject ?? launchProjects.find((candidate) => candidate.id === projectId);
   const sortedTeams = useMemo(() => sortCatalogueByName(teams), [teams]);
   const selectedTeam = teams.find((team) => team.id === teamId);
+  // New Agent launch picker: renderer-only remembered choice. Main re-resolves and authorizes at launch.
+  const transportConfig = useSquadTransportConfig();
+  const [launchPickRaw, setLaunchPickRaw] = useState<string>(() => {
+    try { return window.localStorage.getItem(LAUNCH_PICK_KEY) ?? 'default'; } catch { return 'default'; }
+  });
+  const squadPinned = selectedTeam?.transport === 'CLI' || selectedTeam?.transport === 'MODERN';
+  const launchPick: 'CLI' | 'MODERN' | undefined = !squadPinned && (launchPickRaw === 'CLI' || launchPickRaw === 'MODERN') ? launchPickRaw : undefined;
+  const transportView = resolveSquadTransportView(selectedTeam, transportConfig, { remote: Boolean(project?.remote), ...(launchPick ? { pick: launchPick } : {}) });
+  /** What the Squad resolves to with no launch-dialog pick: the picker's own default row. */
+  const noPickView = launchPick ? resolveSquadTransportView(selectedTeam, transportConfig, { remote: Boolean(project?.remote) }) : transportView;
+  const setLaunchPick = (value: string) => {
+    setLaunchPickRaw(value);
+    try { window.localStorage.setItem(LAUNCH_PICK_KEY, value); } catch { /* storage unavailable */ }
+  };
   const target = squadTargetSelector(targetValue);
   const { target: _storedTarget, ...policyOptions } = launchOptions;
   const effectiveOptions = reviewedBound ? prefill?.launchOptions ?? prefill?.launchPreview?.launchOptions ?? {} : { ...policyOptions, ...(target ? { target } : {}) };
@@ -266,8 +291,9 @@ export function TeamComposer({
     : summaryView.over
       ? squadSummaryTooLongMessage(summaryLength)
       : null;
-   const canLaunch = Boolean(teamId && project && goalReady && !launching && !textOverMessage && optionsValid.success && previewReady);
-  const sendLabel = launching ? 'Launching squad' : goalView.over ? 'Goal is too long for a Squad' : summaryView.over ? 'Summary is too long for a Squad' : 'Launch squad';
+   const mustFix = planHasMustFix(livePlan);
+   const canLaunch = Boolean(teamId && project && goalReady && !launching && !textOverMessage && optionsValid.success && previewReady && !mustFix);
+  const sendLabel = launching ? 'Launching squad' : mustFix ? 'Fix the plan first' : goalView.over ? 'Goal is too long for a Squad' : summaryView.over ? 'Summary is too long for a Squad' : 'Launch squad';
 
   const pickSources = async () => {
     if (!project) return;
@@ -391,6 +417,7 @@ export function TeamComposer({
         coordinationMode,
         ...(prefill?.projectId === project.id ? { proposalId: prefill.proposalId } : {}),
         ...effectiveOptions,
+        ...(!reviewedBound && launchPick ? { launchModePick: launchPick } : {}),
         ...(!reviewedBound && launchPreview && 'previewToken' in launchPreview && typeof launchPreview.previewToken === 'string'
           ? { previewToken: launchPreview.previewToken } : {}),
         ...(title.trim() ? { title: title.trim() } : {}),
@@ -517,6 +544,20 @@ export function TeamComposer({
           ) : null}
         </section>
       ) : null}
+      {prefill && livePlan ? (
+        <PlanReviewDisclosure prefill={livePlan} proposalId={prefill.proposalId} proposerTitle={prefill.proposerTitle}
+          planFiles={prefill.sources.filter((source) => !source.attachment).map((source) => source.path ?? source.name)}
+          onRechecked={(plan) => setRecheck({ proposalId: prefill.proposalId, plan })}
+          onSent={() => {
+            pushToast(`Sent to ${prefill.proposerTitle ?? 'the conversation'}. A new Squad launch will appear in your Inbox when it is ready.`);
+            onClose?.();
+          }} />
+      ) : null}
+      {prefill ? (
+        <p className="team-composer-goal-hint" data-testid="team-composer-goal-hint">
+          <strong>Squad goal.</strong> Sent to the Squad when you press Launch. Not a message to {prefill.proposerTitle ?? 'the conversation'}.
+        </p>
+      ) : null}
       {error ? (
         <p className="thread-command-error" data-testid="team-command-error">{error}</p>
       ) : null}
@@ -585,6 +626,21 @@ export function TeamComposer({
                       planningTouchedRef.current = true;
                       setCoordinationMode(value as typeof coordinationMode);
                     }}
+                  />
+                </div>
+                <div className="thread-command-chip" data-testid="team-launch-mode-chip" title={`${SQUAD_TRANSPORT_SOURCE_TEXT[transportView.source]}${transportView.fallbackReason ? ` — ${transportView.fallbackReason}` : ''}`}>
+                  <PopoverPicklist
+                    id="team-launch-mode"
+                    value={squadPinned ? 'default' : launchPickRaw === 'CLI' || launchPickRaw === 'MODERN' ? launchPickRaw : 'default'}
+                    ariaLabel="Squad launch mode"
+                    searchable={false}
+                    disabled={reviewedBound || squadPinned}
+                    options={[
+                      { value: 'default', label: `${squadPinned ? 'Pinned' : 'Default'}: ${noPickView.label}` },
+                      { value: 'CLI', label: SQUAD_TRANSPORT_LABELS.CLI },
+                      { value: 'MODERN', label: projectIsRemote ? `${SQUAD_TRANSPORT_LABELS.MODERN} (needs a local Project)` : SQUAD_TRANSPORT_LABELS.MODERN }
+                    ]}
+                    onChange={(value) => { if (!reviewedBound && !squadPinned) setLaunchPick(value); }}
                   />
                 </div>
                 {!projectIsRemote && targetOptions.length > 2 ? (
@@ -667,6 +723,7 @@ export function TeamComposer({
       <div className="launch-job-details" role="group" aria-label="Squad details">
         {reviewedBound ? <p role="note">Reviewed launch policies and target are fixed. Prepare a new proposal to change them.</p> : null}
         <div aria-label="Effective launch settings" role="status">
+          {selectedTeam && (launchPick === 'MODERN' && projectIsRemote ? <p className="team-launch-mode-note" role="alert" data-testid="team-launch-mode-note">Modern Squads need a local Project</p> : transportView.fallbackReason ? <p className="team-launch-mode-note" data-testid="team-launch-mode-note">{transportView.fallbackReason}</p> : null)}
           {currentPreview?.preview ? <p>Location: {currentPreview.preview.location.kind === 'new-worktree'
             ? `New worktree from ${currentPreview.preview.location.baseBranch} — isolation: ${currentPreview.preview.location.isolationSource}; path assigned at launch`
             : `${currentPreview.preview.branch} — ${currentPreview.preview.path}${currentPreview.preview.location.kind === 'worktree' ? ' (user-owned)' : ' (Project)'}`}</p> : null}

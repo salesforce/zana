@@ -11,6 +11,8 @@ import { MAX_QUOTE_LENGTH } from '../shared/limits.js';
  * it opens web links only from a click.
  */
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
+import { DomFindBar } from '../../../../apps/app/src/components/DomFindBar.js';
+import { usePageFind } from './use-page-find.js';
 import { AlertTriangle, CornerDownRight, ExternalLink, MessageSquarePlus, Monitor, Smartphone, Sparkles, Tablet, X } from 'lucide-react';
 import type { DesignDocFileMeta } from '../shared/contract.js';
 import {
@@ -29,6 +31,7 @@ import { escapeAttribute, prependToHead } from '../shared/html-scan.js';
 import { MAX_FILES_PER_DOC } from '../shared/limits.js';
 import { MAX_RPC_PAYLOAD_BYTES, renderIsStale, scriptJson, withFetched, type PageRenderReport, type RenderedPage } from '../shared/page.js';
 import { errorMessage, toast, useApi, type DocKind } from './api.js';
+import { useOpenInBrowser } from './hooks.js';
 import { readThemeTokens, themedHtml } from './content.js';
 import type { PreviewFile, PreviewHandle } from './FilePreview.js';
 import { IconButton, Popover, Spinner } from './ui.js';
@@ -279,6 +282,9 @@ export function PageFrame({
     }
   };
 
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const find = usePageFind(send, stageRef);
+
   const addProblem = (problem: PageProblem) => {
     setProblems((list) => (list.length >= MAX_PAGE_PROBLEMS || list.some((entry) => sameProblem(entry, problem)) ? list : [...list, problem]));
     scheduleReport();
@@ -368,6 +374,7 @@ export function PageFrame({
     switch (message.type) {
       case 'ready':
         readyRef.current = true;
+        find.onPageReady();
         send({ type: 'highlight', quotes: [...quotesRef.current] }, port);
         if (pendingFocus.current !== null) send({ type: 'focus', quote: pendingFocus.current }, port);
         pendingFocus.current = null;
@@ -408,6 +415,13 @@ export function PageFrame({
         break;
       case 'focused':
         if (!message.found) toast('That passage is no longer on this page');
+        break;
+      case 'find-result':
+        find.onResult({ index: message.index, count: message.count });
+        break;
+      case 'find-key':
+        // Only a key the reader pressed in the frame counts: a page cannot move focus on its own.
+        if (document.activeElement === frameRef.current) find.onPageKey(message.key);
         break;
       case 'scroll':
         view.current.scroll = { x: message.x, y: message.y };
@@ -464,6 +478,7 @@ export function PageFrame({
   useEffect(() => {
     if (!handleRef) return;
     const handle: PreviewHandle = {
+      openFind: find.openBar,
       focusQuote(quote) {
         if (readyRef.current && portRef.current) send({ type: 'focus', quote });
         else pendingFocus.current = quote;
@@ -474,7 +489,7 @@ export function PageFrame({
     return () => {
       if (handleRef.current === handle) handleRef.current = null;
     };
-  }, [handleRef]);
+  }, [handleRef, find.openBar]);
 
   const renderProblems = useMemo<PageProblem[]>(
     () =>
@@ -488,14 +503,7 @@ export function PageFrame({
   );
   const allProblems = [...renderProblems, ...problems];
 
-  const openInBrowser = async () => {
-    try {
-      const { url } = await api.pageLink(docId, path);
-      globalThis.open(url, '_blank', 'noopener,noreferrer');
-    } catch (failure) {
-      toast(errorMessage(failure), 'error');
-    }
-  };
+  const openInBrowser = useOpenInBrowser(docId, path);
 
   const applyChip = (handler: ((text: string) => void) | undefined) => {
     if (!chip || !handler) return;
@@ -508,10 +516,24 @@ export function PageFrame({
   return (
     <div
       className="dd-html-stage"
+      ref={stageRef}
+      {...find.hostProps}
       onMouseDown={(event) => {
         if (!(event.target as Element).closest?.('.dd-selection-chip')) setChip(null);
       }}
     >
+      {find.open ? (
+        <DomFindBar
+          value={find.query}
+          onChange={find.setQuery}
+          onStep={find.step}
+          onClose={find.close}
+          matchIndex={find.matchIndex}
+          matchCount={find.matchCount}
+          focusRequest={find.focusRequest}
+          label="Find in doc"
+        />
+      ) : null}
       <div className="dd-html-toolbar">
         <div className="dd-html-status">
           {busy ? <Spinner size={12} label="Rendering page" /> : null}

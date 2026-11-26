@@ -68,6 +68,7 @@ export async function launchJobTeamCliOwner(ctx: JobTeamContext, opts: {
   prompt?: string;
   /** Extra fields merged into the orchestrator persona / the team (e.g. deniedTools, defaultPlanning). */
   orchestratorExtra?: Record<string, unknown>;
+  workerExtra?: Record<string, unknown>;
   teamExtra?: Record<string, unknown>;
 }): Promise<string> {
   const prompt = opts.prompt ?? 'E2E start Job Team';
@@ -75,6 +76,7 @@ export async function launchJobTeamCliOwner(ctx: JobTeamContext, opts: {
 
   await window.evaluate((bin) => window.cc.config.set({
     teamJobLaunchEnabled: true,
+    squadDefaultTransport: 'CLI',
     sponsorPromptDismissed: true,
     claudeBinary: bin,
     defaultHarness: 'claude'
@@ -83,10 +85,10 @@ export async function launchJobTeamCliOwner(ctx: JobTeamContext, opts: {
     id: 'e2e-orchestrator', name: 'E2E Orchestrator', description: 'Durable test coordinator',
     baseProfile: 'claude', permissionMode: 'default', systemPrompt: '', ...extra
   }), opts.orchestratorExtra ?? {});
-  await window.evaluate(() => window.cc.personas.save({
+  await window.evaluate((extra) => window.cc.personas.save({
     id: 'e2e-worker', name: 'E2E Worker', description: 'Durable test worker',
-    baseProfile: 'claude', permissionMode: 'default', systemPrompt: ''
-  }));
+    baseProfile: 'claude', permissionMode: 'default', systemPrompt: '', ...extra
+  }), opts.workerExtra ?? {});
   await window.evaluate(({ quantity, extra }) => window.cc.teams.save({
     id: 'e2e-job-team', name: 'E2E Job Team', description: 'CLI owner durable team',
     slots: [{ personaId: 'e2e-worker', quantity }], orchestratorPersonaId: 'e2e-orchestrator', ...extra
@@ -228,6 +230,7 @@ export async function openSquadReview(ctx: JobTeamContext, title: string) {
   const ownerModal = window.getByRole('dialog', { name: /^Agent / }).first();
   if (await ownerModal.count()) await ownerModal.getByRole('button', { name: 'Close' }).click();
   await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
+  await window.getByRole('button', { name: 'Split view', exact: true }).click();
   const row = window.locator('.inbox-row').filter({ hasText: `Squad launch ready: ${title}` }).first();
   await expect(row).toBeVisible({ timeout: 30_000 });
   await row.click();
@@ -326,6 +329,7 @@ export async function answerJobBlockerThroughUi(args: {
   await expect(details.getByText('About · About Atlas', { exact: true })).toBeVisible();
 
   await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
+  await window.getByRole('button', { name: 'Split view', exact: true }).click();
   const pinned = window.locator('.inbox-questions-pinned');
   await expect(pinned.getByText('Needs your answer', { exact: true })).toBeVisible({ timeout: 15_000 });
   await pinned.getByText(jobTitle, { exact: true }).click();

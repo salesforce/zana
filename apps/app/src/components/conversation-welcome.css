@@ -1,0 +1,46 @@
+.conversation-welcome {
+  text-align: center;
+  padding: 0 12px 28px;
+}
+
+.conversation-welcome .zana-brand-icon {
+  margin: 0 auto 28px;
+  color: var(--accent-blue);
+}
+
+.conversation-welcome :is(h1, h2) {
+  margin: 0 0 16px;
+  font-size: clamp(26px, 3vw, 40px);
+  font-weight: 450;
+  letter-spacing: -1.4px;
+  line-height: 1.2;
+  text-wrap: balance;
+}
+
+.conversation-welcome p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-muted);
+  line-height: 1.7;
+  text-wrap: balance;
+}
+
+/* Center the welcome and the existing composer together until the first message. */
+.thread-detail-column > .thread-detail-timeline-shell.is-welcoming {
+  flex: 0 1 auto;
+  margin-block-start: auto;
+}
+
+.thread-detail-timeline-shell.is-welcoming + .thread-composer-dock {
+  margin-block-end: auto;
+}
+
+.thread-detail-timeline-shell.is-welcoming + .thread-composer-dock .thread-command-editor p.is-editor-empty:first-child::before {
+  content: 'Send your first message…';
+}
+
+@media (max-width: 700px) {
+  .conversation-welcome { padding-bottom: 25px; }
+  .conversation-welcome p { font-size: 13px; }
+  .conversation-welcome .zana-brand-icon { margin-bottom: 23px; }
+}

@@ -33,6 +33,7 @@ import { SquadEditor } from './SquadEditor.js';
 
 const team: Team = {
   id: 'user:dirty',
+  transport: 'CLI',
   name: 'Dirty Squad',
   source: 'user',
   orchestratorPersonaId: 'orch',
@@ -130,7 +131,7 @@ describe('SquadEditor unsaved drafts', () => {
     render(<SquadEditor team={team} mode="edit" onClose={onClose} />);
     makeDirty();
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: team.name } });
-    const onDemand = screen.getAllByRole('checkbox', { name: /Start only when its first unit is ready/ })[0]!;
+    const onDemand = screen.getAllByRole('button', { name: /Start only when its first unit is ready/ })[1]!;
     fireEvent.click(onDemand);
     fireEvent.click(onDemand);
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));

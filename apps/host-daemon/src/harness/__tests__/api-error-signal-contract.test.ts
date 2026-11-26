@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { apiErrorResumeSupport, registeredAdapters } from '../registry.js';
+import { API_ERROR_FAILURE_FIXTURES } from './fixtures/api-error-failures.js';
 
 // #649 A1/F1: the declaration must be one a code path can honour, for every registered adapter.
-const NON_HOOK_SOURCES_EXIST = false; // no SDK-event or screen-scan API-error path exists yet
 const EVENT_NAMES = ['Stop', 'StopFailure', 'Notification', 'PermissionRequest', 'PostToolUse', 'PreToolUse', 'SessionStart', 'UserPromptSubmit'];
 const ERROR_FIELDS = { error: 'rate_limit', error_details: '429 too many requests', last_assistant_message: 'API Error: 529' };
 
@@ -16,11 +16,45 @@ const payloads = (): string[] => [
 describe('API-error signal contract across registered adapters', () => {
   const adapters = registeredAdapters().map(({ adapter }) => adapter).filter((adapter) => adapter.status);
 
-  it('accepts sdk-events and screen-scan only once a source for them exists', () => {
-    for (const adapter of adapters) {
-      const signal = adapter.status!.apiErrorSignal;
-      if (signal === 'sdk-events' || signal === 'screen-scan') {
-        expect(NON_HOOK_SOURCES_EXIST, `${adapter.descriptor.id} declares ${signal} with no source`).toBe(true);
+  const nonHook = adapters.filter((a) => a.status!.apiErrorSignal === 'sdk-events' || a.status!.apiErrorSignal === 'screen-scan');
+
+  it('requires a producer and a failing-turn fixture for every sdk-events and screen-scan adapter', () => {
+    for (const adapter of nonHook) {
+      const id = adapter.descriptor.id;
+      expect(adapter.status!.apiErrorProducer, `${id} declares ${adapter.status!.apiErrorSignal} with no producer`).toBeDefined();
+      expect(API_ERROR_FAILURE_FIXTURES[id], `${id} has no failing-turn fixture`).toBeTypeOf('function');
+    }
+  });
+
+  it('has no fixture for an adapter that does not use a non-hook source', () => {
+    const ids = new Set(nonHook.map((a) => a.descriptor.id));
+    for (const id of Object.keys(API_ERROR_FAILURE_FIXTURES)) expect(ids.has(id as never), `stale fixture ${id}`).toBe(true);
+  });
+
+  it('each non-hook producer reports a failed turn and stays silent on a good one', async () => {
+    for (const adapter of nonHook) {
+      const producer = adapter.status!.apiErrorProducer!;
+      for (const failed of [true, false]) {
+        const fixture = API_ERROR_FAILURE_FIXTURES[adapter.descriptor.id]!();
+        const { session, cleanup } = fixture.prepare();
+        try {
+          const marker = await producer.markTurnStart(session);
+          if (failed) fixture.appendFailedTurn(); else fixture.appendSuccessfulTurn();
+          const event = await producer.check(session, marker);
+          if (failed) expect(event?.kind, adapter.descriptor.id).toBe('api-error-stop');
+          else expect(event, adapter.descriptor.id).toBeNull();
+        } finally {
+          producer.release(session.id);
+          cleanup();
+        }
+      }
+    }
+  });
+
+  it('keeps an adapter with a producer from also claiming hook-sourced errors', () => {
+    for (const adapter of nonHook.filter((a) => a.status!.interactionHook)) {
+      for (const body of payloads()) {
+        expect(adapter.status!.interactionHook!(body)?.kind, `${adapter.descriptor.id}: ${body}`).not.toBe('api-error-stop');
       }
     }
   });

@@ -1211,12 +1211,14 @@ describe('normalizeConfig — onboarding', () => {
   it('preserves bounded progress across unrelated config writes', () => {
     const onboarding = { version: 1, profileId: 'employees', audience: 'organization', step: 'connections',
       marketplaceSource: 'path:/fixture', packId: 'starter', pluginIds: ['fixture-tool'] } as const;
-    expect(normalizeConfig({ onboarding: { ...onboarding, pluginIds: [...onboarding.pluginIds] } }).onboarding).toEqual(onboarding);
-    store.setConfig({ onboarding: { ...onboarding, pluginIds: [...onboarding.pluginIds] } });
+    const migrated = { version: 2, profileId: 'employees', audience: 'organization', marketplaceSource: 'path:/fixture', packId: 'starter',
+      pluginIds: ['fixture-tool'], steps: { harness: 'todo', workplace: 'done', bundle: 'todo', advanced: 'todo' } };
+    expect(normalizeConfig({ onboarding: { ...onboarding, pluginIds: [...onboarding.pluginIds] } as never }).onboarding).toEqual(migrated);
+    store.setConfig({ onboarding: { ...onboarding, pluginIds: [...onboarding.pluginIds] } as never });
     store.setConfig({ theme: 'dark' });
-    expect(store.getConfig().onboarding).toEqual(onboarding);
+    expect(store.getConfig().onboarding).toEqual(migrated);
   });
-  it.each([null, {}, { version: 2 }, { version: 1, profileId: 'employees', audience: 'general', step: 'bundles' }])(
+  it.each([null, {}, { version: 3 }, { version: 1, profileId: 'employees', audience: 'general', step: 'bundles' }])(
     'drops malformed or inconsistent progress %j', onboarding => {
       expect(normalizeConfig({ onboarding: onboarding as never }).onboarding).toBeUndefined();
     });
@@ -1271,5 +1273,76 @@ describe('normalizeConfig — thread peer consent', () => {
   it.each([undefined, -1, 1.5, Number.NaN, '2'])('rejects invalid generations %s', value => {
     expect(normalizeConfig({ threadCommunicationEnabled: 'true' as never, threadCommunicationGeneration: value as never }))
       .not.toHaveProperty('threadCommunicationGeneration');
+  });
+});
+
+describe('normalizeConfig — dismissedWorkerExits', () => {
+  it('keeps valid unique ids, drops malformed ones, and retains only the newest 200', () => {
+    const many = Array.from({ length: 250 }, (_, i) => `s${i}`);
+    const out = normalizeConfig({ dismissedWorkerExits: ['a', 'a', '', 5 as never, 'x'.repeat(129), ...many] }).dismissedWorkerExits!;
+    expect(out).toHaveLength(200);
+    expect(out[199]).toBe('s249');
+    expect(out).not.toContain('a');
+    expect(normalizeConfig({ dismissedWorkerExits: ['a', 'a', '', 5 as never] }).dismissedWorkerExits).toEqual(['a']);
+  });
+  it('ignores a non-array value', () => {
+    expect(normalizeConfig({ dismissedWorkerExits: 'a' as never })).not.toHaveProperty('dismissedWorkerExits');
+  });
+});
+
+describe('normalizeConfig onboarding v2', () => {
+  it('migrates v1 onboarding to v2 and keeps v2', () => {
+    const v1 = { version: 1 as const, profileId: 'p', audience: 'general' as const, step: 'complete' as const };
+    expect(normalizeConfig({ onboarding: v1 as never }).onboarding).toMatchObject({ version: 2, profileId: 'p', audience: 'general' });
+    const v2 = { version: 2 as const, audience: 'undecided' as const, steps: { harness: 'todo', workplace: 'todo', bundle: 'todo', advanced: 'todo' } };
+    expect(normalizeConfig({ onboarding: v2 as never }).onboarding).toEqual(v2);
+    expect(normalizeConfig({ onboarding: { version: 9 } as never })).not.toHaveProperty('onboarding');
+  });
+});
+
+describe('normalizeConfig — executionBlockerReminderMs', () => {
+  it('keeps 0 (disabled) and collapses a negative value to 0', () => {
+    expect(normalizeConfig({ executionBlockerReminderMs: 0 }).executionBlockerReminderMs).toBe(0);
+    expect(normalizeConfig({ executionBlockerReminderMs: -1 }).executionBlockerReminderMs).toBe(0);
+  });
+
+  it('clamps to one minute..one day and rounds', () => {
+    expect(normalizeConfig({ executionBlockerReminderMs: 1_000 }).executionBlockerReminderMs).toBe(60_000);
+    expect(normalizeConfig({ executionBlockerReminderMs: 999_999_999 }).executionBlockerReminderMs).toBe(86_400_000);
+    expect(normalizeConfig({ executionBlockerReminderMs: 120_000.4 }).executionBlockerReminderMs).toBe(120_000);
+  });
+
+  it('leaves it unset when absent or not a number, so old files keep the default', () => {
+    expect(normalizeConfig({}).executionBlockerReminderMs).toBeUndefined();
+    expect(normalizeConfig({ executionBlockerReminderMs: 'x' as unknown as number }).executionBlockerReminderMs).toBeUndefined();
+  });
+});
+
+describe('normalizeConfig — squadUnitCheckpointsEnabled', () => {
+  it('keeps booleans and drops anything else', () => {
+    expect(normalizeConfig({ squadUnitCheckpointsEnabled: false }).squadUnitCheckpointsEnabled).toBe(false);
+    expect(normalizeConfig({ squadUnitCheckpointsEnabled: true }).squadUnitCheckpointsEnabled).toBe(true);
+    expect(normalizeConfig({ squadUnitCheckpointsEnabled: 'no' as unknown as boolean }).squadUnitCheckpointsEnabled).toBeUndefined();
+    expect(normalizeConfig({}).squadUnitCheckpointsEnabled).toBeUndefined();
+  });
+});
+
+describe('normalizeConfig — squad transport defaults and launch-mode mirror', () => {
+  it.each(['follow', 'caller', 'CLI', 'MODERN'] as const)('keeps squadDefaultTransport %s', value => {
+    expect(normalizeConfig({ squadDefaultTransport: value })).toMatchObject({ squadDefaultTransport: value });
+  });
+  it.each(['CALLER', 'x', 1, null])('drops invalid squadDefaultTransport %s', value => {
+    expect(normalizeConfig({ squadDefaultTransport: value as never })).not.toHaveProperty('squadDefaultTransport');
+  });
+  it.each(['agent', 'thread', 'team'] as const)('keeps composerDefaultLaunchMode %s', value => {
+    expect(normalizeConfig({ composerDefaultLaunchMode: value })).toMatchObject({ composerDefaultLaunchMode: value });
+  });
+  it('drops an invalid launch mode', () => {
+    expect(normalizeConfig({ composerDefaultLaunchMode: 'bogus' as never })).not.toHaveProperty('composerDefaultLaunchMode');
+  });
+  it('keeps only agent and thread as the last transport mode', () => {
+    expect(normalizeConfig({ composerLastTransportMode: 'agent' })).toMatchObject({ composerLastTransportMode: 'agent' });
+    expect(normalizeConfig({ composerLastTransportMode: 'thread' })).toMatchObject({ composerLastTransportMode: 'thread' });
+    expect(normalizeConfig({ composerLastTransportMode: 'team' as never })).not.toHaveProperty('composerLastTransportMode');
   });
 });

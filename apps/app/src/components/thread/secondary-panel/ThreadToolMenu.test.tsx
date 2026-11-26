@@ -44,6 +44,23 @@ describe('ThreadToolMenu', () => {
     expect(onClose).toHaveBeenCalledWith(true); expect(rows[2].run).toHaveBeenCalledOnce();
     expect(rows[0].run).not.toHaveBeenCalled();
   });
+  it('keeps the popup in a modal so its focus trap includes the actions', () => {
+    const dialog = document.createElement('div');
+    dialog.setAttribute('aria-modal', 'true');
+    const anchor = document.createElement('button');
+    dialog.append(anchor);
+    document.body.append(dialog);
+    const onDrawerKey = vi.fn();
+    dialog.addEventListener('keydown', onDrawerKey);
+    const onClose = vi.fn();
+    render(<ThreadToolMenu anchor={anchor} label="Conversation actions" items={items()} onClose={onClose} hideTitle />);
+    const menu = screen.getByRole('menu', { name: 'Conversation actions' });
+    expect(menu.parentElement).toBe(dialog);
+    expect(screen.queryByText('Conversation actions')).toBeNull();
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledWith(true);
+    expect(onDrawerKey).not.toHaveBeenCalled();
+  });
   it.each(['Escape', 'Tab'])('returns focus through the owner on %s', key => {
     const { onClose } = setup(); fireEvent.keyDown(document.activeElement!, { key });
     expect(onClose).toHaveBeenCalledWith(true);

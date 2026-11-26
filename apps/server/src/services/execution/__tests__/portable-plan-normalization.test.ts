@@ -103,7 +103,7 @@ describe('portable plan id normalization', () => {
 describe('portable plan execution class pinning', () => {
   const withClass = (value: string) => step('a', `- **Execution class:** ${value}\n- **Work:** Do it.`);
 
-  it.each(['Wizard', 'low', 'constructor', 'toString', '`high`x'])('fails loudly on unmapped class %s', (value) => {
+  it.each(['Wizard', 'constructor', 'toString', '`high`x'])('fails loudly on unmapped class %s', (value) => {
     const parsed = parsePortablePlan(withClass(value));
     expect(parsed.ok).toBe(false);
     if (!parsed.ok) {
@@ -162,11 +162,12 @@ describe('portable plan near-miss label indent', () => {
     }
   });
 
-  it('fails a nested bold near-miss under Work with the unrecognised-label reason', () => {
+  it('keeps a nested bold near-miss of a non-safety label as Work text with a warning', () => {
     const parsed = parsePortablePlan(step('a', '- **Work:**\n  Do it.\n  - **Completion criterion:** tests pass\n- **Verification:** Read it.'));
-    expect(parsed.ok).toBe(false);
-    if (!parsed.ok) {
-      expect(parsed.reason).toBe('step a has unrecognised label "completion criterion" (did you mean "completion criteria"?)');
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.units[0].task).toBe('Do it.\n\ncompletion criterion: tests pass');
+      expect(parsed.findings).toEqual([expect.objectContaining({ severity: 'warning', stepId: 'a' })]);
     }
   });
 
@@ -200,6 +201,7 @@ describe('portable plan digest stability', () => {
     const parsed = parsePortablePlan(step('a-b', '- **Depends on:** None\n- **Write scope:** `x.md`\n- **Work:** Do it.\n- **Verification:** Read x.'));
     expect(parsed).toEqual({
       ok: true,
+      parserVersion: 1,
       units: [{
         id: 'a-b',
         title: 'Title a-b',

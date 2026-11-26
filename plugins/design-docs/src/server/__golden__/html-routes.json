@@ -1,0 +1,98 @@
+{
+  "page:entry": {
+    "status": 200,
+    "headers": {
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+      "cross-origin-resource-policy": "same-origin",
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy": "sandbox allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox; default-src 'none'; script-src 'unsafe-inline' blob:; style-src 'unsafe-inline'; img-src data: blob: https:; font-src data:; connect-src https:; form-action 'none'; base-uri https://doc.invalid; frame-ancestors 'none'"
+    },
+    "body": "<!doctype html><html><head><script type=\"application/json\" id=\"dd-page\">{\"mode\":\"standalone\",\"docId\":\"<DOC>\",\"path\":\"index.html\",\"endpoint\":\"/x\",\"files\":[\"app.js\",\"data.json\",\"index.html\",\"logo.png\",\"style.css\",\"runs/r1.md\"],\"missing\":[],\"warnings\":[]}</script><script type=\"application/json\" id=\"dd-files\">{\"data.json\":{\"kind\":\"code\",\"encoding\":\"utf8\",\"content\":\"{\\\"runs\\\":[\\\"\\u003c/script>\\\"]}\"},\"runs/r1.md\":{\"kind\":\"markdown\",\"encoding\":\"utf8\",\"content\":\"# Run 1\"}}</script><script>/*runtime*/</script><base href=\"https://doc.invalid/\"><style data-dd-href=\"style.css\">h1 { margin: 0 }</style></head><body><img src=\"data:image/png;base64,iVBORw0KGgo=\"><script type=\"text/x-dd-script\" data-dd-src=\"app.js\">fetch(\"data.json\")</script><a href=\"runs/r1.md\">r1</a><a href=\"data.json\">d</a></body></html>"
+  },
+  "page:index.html": {
+    "status": 200,
+    "headers": {
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+      "cross-origin-resource-policy": "same-origin",
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy": "sandbox allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox; default-src 'none'; script-src 'unsafe-inline' blob:; style-src 'unsafe-inline'; img-src data: blob: https:; font-src data:; connect-src https:; form-action 'none'; base-uri https://doc.invalid; frame-ancestors 'none'"
+    },
+    "body": "<!doctype html><html><head><script type=\"application/json\" id=\"dd-page\">{\"mode\":\"standalone\",\"docId\":\"<DOC>\",\"path\":\"index.html\",\"endpoint\":\"/x\",\"files\":[\"app.js\",\"data.json\",\"index.html\",\"logo.png\",\"style.css\",\"runs/r1.md\"],\"missing\":[],\"warnings\":[]}</script><script type=\"application/json\" id=\"dd-files\">{\"data.json\":{\"kind\":\"code\",\"encoding\":\"utf8\",\"content\":\"{\\\"runs\\\":[\\\"\\u003c/script>\\\"]}\"},\"runs/r1.md\":{\"kind\":\"markdown\",\"encoding\":\"utf8\",\"content\":\"# Run 1\"}}</script><script>/*runtime*/</script><base href=\"https://doc.invalid/\"><style data-dd-href=\"style.css\">h1 { margin: 0 }</style></head><body><img src=\"data:image/png;base64,iVBORw0KGgo=\"><script type=\"text/x-dd-script\" data-dd-src=\"app.js\">fetch(\"data.json\")</script><a href=\"runs/r1.md\">r1</a><a href=\"data.json\">d</a></body></html>"
+  },
+  "file:index.html": {
+    "status": 200,
+    "headers": {
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+      "cross-origin-resource-policy": "same-origin",
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy": "sandbox allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox; default-src 'none'; script-src 'unsafe-inline' blob:; style-src 'unsafe-inline'; img-src data: blob: https:; font-src data:; connect-src https:; form-action 'none'; base-uri https://doc.invalid; frame-ancestors 'none'"
+    },
+    "body": "<!doctype html><html><head><script type=\"application/json\" id=\"dd-page\">{\"mode\":\"standalone\",\"docId\":\"<DOC>\",\"path\":\"index.html\",\"endpoint\":\"/x\",\"files\":[\"app.js\",\"data.json\",\"index.html\",\"logo.png\",\"style.css\",\"runs/r1.md\"],\"missing\":[],\"warnings\":[]}</script><script type=\"application/json\" id=\"dd-files\">{\"data.json\":{\"kind\":\"code\",\"encoding\":\"utf8\",\"content\":\"{\\\"runs\\\":[\\\"\\u003c/script>\\\"]}\"},\"runs/r1.md\":{\"kind\":\"markdown\",\"encoding\":\"utf8\",\"content\":\"# Run 1\"}}</script><script>/*runtime*/</script><base href=\"https://doc.invalid/\"><style data-dd-href=\"style.css\">h1 { margin: 0 }</style></head><body><img src=\"data:image/png;base64,iVBORw0KGgo=\"><script type=\"text/x-dd-script\" data-dd-src=\"app.js\">fetch(\"data.json\")</script><a href=\"runs/r1.md\">r1</a><a href=\"data.json\">d</a></body></html>"
+  },
+  "file:logo.png": {
+    "status": 200,
+    "headers": {
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+      "cross-origin-resource-policy": "same-origin",
+      "content-type": "image/png",
+      "content-security-policy": "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'; frame-ancestors 'none'"
+    },
+    "body": "bytes:iVBORw0KGgo="
+  },
+  "file:app.js": {
+    "status": 200,
+    "headers": {
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+      "cross-origin-resource-policy": "same-origin",
+      "content-type": "text/plain; charset=utf-8",
+      "content-security-policy": "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'; frame-ancestors 'none'"
+    },
+    "body": "fetch(\"data.json\")"
+  },
+  "file:style.css": {
+    "status": 200,
+    "headers": {
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+      "cross-origin-resource-policy": "same-origin",
+      "content-type": "text/plain; charset=utf-8",
+      "content-security-policy": "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'; frame-ancestors 'none'"
+    },
+    "body": "h1 { margin: 0 }"
+  },
+  "page:style.css": {
+    "status": 400,
+    "headers": {
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+      "cross-origin-resource-policy": "same-origin",
+      "content-type": "text/plain; charset=utf-8",
+      "content-security-policy": "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'; frame-ancestors 'none'"
+    },
+    "body": "style.css is not an HTML page\n"
+  },
+  "file:gone": {
+    "status": 404,
+    "headers": {
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+      "cross-origin-resource-policy": "same-origin",
+      "content-type": "text/plain; charset=utf-8",
+      "content-security-policy": "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'; frame-ancestors 'none'"
+    },
+    "body": "gone.txt not found in golden\n"
+  }
+}

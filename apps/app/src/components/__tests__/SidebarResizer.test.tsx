@@ -36,7 +36,8 @@ describe('SidebarResizer', () => {
     const files = [
       readFileSync(new URL('../SidebarRail.tsx', import.meta.url), 'utf8'),
       readFileSync(new URL('../listpane/SettingsPane.tsx', import.meta.url), 'utf8'),
-      readFileSync(new URL('../listpane/ExtensionsPane.tsx', import.meta.url), 'utf8')
+      readFileSync(new URL('../listpane/ExtensionsPane.tsx', import.meta.url), 'utf8'),
+      readFileSync(new URL('../basic/BasicShellChrome.tsx', import.meta.url), 'utf8')
     ];
     for (const source of files) {
       expect(source).toContain('<SidebarResizer />');

@@ -1,9 +1,10 @@
 import { COMPOSER_LAUNCH_SURFACES_REV } from '@zana-ai/zcc-domain/product';
+import { DEFAULT_LAUNCH_MODE as SHARED_DEFAULT_LAUNCH_MODE } from '@zana-ai/zcc-domain/squad-transport';
 
 export const LAUNCH_MODES = ['agent', 'thread', 'team'] as const;
 export type LaunchMode = (typeof LAUNCH_MODES)[number];
 
-export const DEFAULT_LAUNCH_MODE: LaunchMode = 'thread';
+export const DEFAULT_LAUNCH_MODE: LaunchMode = SHARED_DEFAULT_LAUNCH_MODE;
 export const LAUNCH_MODE_PREF_KEY = 'zcc.defaultLaunchMode';
 
 const PREFS_EVENT = 'zcc-prefs';
@@ -11,7 +12,7 @@ const PREFS_EVENT = 'zcc-prefs';
 export const LAUNCH_MODE_LABELS: Record<LaunchMode, string> = {
   thread: 'Modern',
   agent: 'CLI Agent',
-  team: 'Team'
+  team: 'Squad'
 };
 
 export const LAUNCH_MODE_PICKLIST_OPTIONS = LAUNCH_MODES.map((value) => ({
@@ -180,4 +181,27 @@ export function resolveAvailableLaunchMode(
     if (isSurfaceOffered(candidate, surfaces)) return candidate;
   }
   return 'agent';
+}
+
+/**
+ * Config patch that mirrors the Composer launch mode into AppConfig so main and
+ * the server can resolve Squad transport. `composerLastTransportMode` only moves
+ * on `agent`/`thread`, so choosing Team never erases the last transport.
+ */
+export function launchModeMirrorPatch(mode: LaunchMode): {
+  composerDefaultLaunchMode: LaunchMode;
+  composerLastTransportMode?: 'agent' | 'thread';
+} {
+  const parsed = parseLaunchMode(mode);
+  return parsed === 'team'
+    ? { composerDefaultLaunchMode: parsed }
+    : { composerDefaultLaunchMode: parsed, composerLastTransportMode: parsed };
+}
+
+/** Seed-once patch: only when the config has never been mirrored. */
+export function launchModeSeedPatch(
+  config: { composerDefaultLaunchMode?: unknown },
+  stored: LaunchMode
+): ReturnType<typeof launchModeMirrorPatch> | null {
+  return config.composerDefaultLaunchMode === undefined ? launchModeMirrorPatch(stored) : null;
 }

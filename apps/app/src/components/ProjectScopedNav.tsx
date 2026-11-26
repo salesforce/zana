@@ -1,3 +1,4 @@
+import { FIXED_NAV_SHORTCUT_KEYS } from '../lib/keyboard-shortcut-settings.js';
 import { History } from 'lucide-react';
 import { useConversationHistory } from './history/history-store.js';
 import { product } from '../lib/product-client.js';
@@ -11,7 +12,6 @@ import {
   MessageCircleQuestion,
   Activity,
   ArrowLeft,
-  AppWindow,
   SquarePen,
   Sparkles,
   Bot,
@@ -75,7 +75,7 @@ import {
  *
  * Two variants, same rail:
  * - `'window'` — a PER-PROJECT WINDOW (opened "in a new window"). The window is
- *   hard-locked to the project (URL scope); there is no "back".
+ *   scoped by URL until Back returns this same window to the global shell.
  * - `'focus'` — the MAIN WINDOW drilled into a project (`focusedProjectId`).
  *   History back returns to the cross-project home; Settings stays one click
  *   away in the utility dock.
@@ -100,12 +100,15 @@ const MODE_ITEMS: ModeItem[] = [
 export function ProjectScopedNav({
   project,
   variant = 'window',
+  railVariant = 'expanded',
   onBack
 }: {
   project: Project;
   /** `'window'` for a per-project window, `'focus'` for the main window drilled
    *  into a project. `'focus'` shows the back control + Settings dock. */
   variant?: 'window' | 'focus';
+  /** Icon-only 52px rail form. */
+  railVariant?: 'expanded' | 'rail';
   /** Return to the cross-project home. Only used in the `'focus'` variant. */
   onBack?: () => void;
 }) {
@@ -148,6 +151,10 @@ export function ProjectScopedNav({
   }, [mode, goalsEnabled, followUpsEnabled, project.id, setProjectView]);
 
   const handleBack = () => {
+    if (!isFocus) {
+      void product.windows.leaveProject(route.isProjectSettings ? 'settings' : 'projects');
+      return;
+    }
     useUi.getState().exitProjectFocus(
       route.isProjectSettings ? getSettingsRoutePath() : routeMemory.projectBackRoutePath
     );
@@ -166,6 +173,7 @@ export function ProjectScopedNav({
       active: route.isNewThread,
       mobileGroup: 'featured',
       title: `New chat in ${project.name}`,
+      command: 'thread.new',
       splitContent: { kind: 'new-thread', projectId: project.id }
     },
     { kind: 'row', id: 'conversation-history', label: 'History', icon: <History size={16} />,
@@ -180,6 +188,7 @@ export function ProjectScopedNav({
       testId: 'project-nav-inbox',
       active: nav === 'inbox',
       title: 'Inbox for this project',
+      fixedShortcutKey: FIXED_NAV_SHORTCUT_KEYS.inbox,
       splitContent: { kind: 'inbox', projectId: project.id },
       badge:
         unreadInbox > 0 ? (
@@ -271,6 +280,8 @@ export function ProjectScopedNav({
         to: getProjectModeRoutePath(project.id, item.mode),
         testId: `project-nav-${item.mode}`,
         active,
+        command: item.mode === 'explorer' ? 'sidebar.toggle' : undefined,
+        fixedShortcutKey: item.mode === 'agents' || item.mode === 'scheduler' ? FIXED_NAV_SHORTCUT_KEYS[item.mode] : undefined,
         mobileGroup: item.mode === 'agents' ? undefined : 'tools',
         running: agentsLive || goalsActive || followupsOpen || terminalsRunning,
         badge,
@@ -328,33 +339,22 @@ export function ProjectScopedNav({
       pinnedIds={PINNED_PROJECT_NAV_IDS}
       trailingIds={TRAILING_PROJECT_NAV_IDS}
       items={items}
+      railVariant={railVariant}
       settingsRoutePath={getProjectSettingsRoutePath(project.id)}
       header={
-        isFocus ? (
-          <button
-            type="button"
-            className="settings-app-back"
-            onClick={handleBack}
-            aria-label={backLabel}
-          >
-            <ArrowLeft size={17} aria-hidden="true" />
-            Back
-          </button>
-        ) : null
+        <button
+          type="button"
+          className="settings-app-back"
+          data-testid="project-nav-back"
+          onClick={handleBack}
+          aria-label={backLabel}
+          title={backLabel}
+        >
+          <ArrowLeft size={17} aria-hidden="true" />
+          Back
+        </button>
       }
-      utilityStart={
-        isFocus ? (
-          <button
-            type="button"
-            className="sidebar-utility-button"
-            title="Open this project in a new window"
-            aria-label="Open this project in a new window"
-            onClick={() => void product.windows.openProject(project.id)}
-          >
-            <AppWindow size={18} />
-          </button>
-        ) : null
-      }
+      newWindowProjectId={project.id}
     />
   );
 }

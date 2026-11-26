@@ -1,0 +1,14 @@
+name: Zana CodeQL config
+
+# Test code, end-to-end suites and fixtures are not shipped. Alerts there
+# (hard-coded credentials, loopback URLs, throwaway servers) are noise that
+# hides findings in product code. Applies to JavaScript, TypeScript and Python.
+paths-ignore:
+  - e2e/**
+  - "**/__tests__/**"
+  - "**/__mocks__/**"
+  - "**/__fixtures__/**"
+  - "**/fixtures/**"
+  - "**/*.test.*"
+  - "**/*.spec.*"
+  - docs/media/**

@@ -11,6 +11,7 @@ import {
   type ReactElement,
   type ReactNode
 } from 'react';
+import type { AppCommandId } from '@zana-ai/zcc-domain/thread-runtime';
 import { DndContext } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { Link } from 'react-router-dom';
@@ -23,8 +24,11 @@ import { resolveIcon } from '../lib/resolveIcon.js';
 import { listSidebarFooterActions, subscribePluginSlots } from '../plugins/plugin-slots.js';
 import { hrefForPluginNavPanel } from '../plugins/plugin-nav-href.js';
 import { getPluginSettingsRoutePath } from '../lib/route-paths.js';
+import { titleWithFixedShortcut, titleWithShortcut } from '../lib/keyboard-shortcut-settings.js';
 import { appNavigate } from '../lib/app-navigate.js';
 import { SidebarResizer } from './SidebarResizer.js';
+import { NewWindowButton } from './sidebar/NewWindowButton.js';
+import { SidebarFooterSlot } from './sidebar/SidebarFooterSlot.js';
 import {
   SortableNavItem,
   SortableSidebarSection,
@@ -38,6 +42,8 @@ import { SplitPaneMiniMap } from './sidebar/SplitPaneMiniMap.js';
 import type { PaneContent } from '../lib/split-layout/types.js';
 import './sidebar/sidebar-appearance.css';
 import { useMobileNavDismiss } from './mobile-nav-context.js';
+import { RailProjects } from './sidebar/RailProjects.js';
+import { PROJECTS_SECTION_SORT_ID } from './sidebarNavOrder.js';
 import { MobileSidebarNav } from './MobileSidebarNav.js';
 
 export interface SidebarRailRow {
@@ -51,11 +57,17 @@ export interface SidebarRailRow {
   testId: string;
   active: boolean;
   title?: string;
+  /** App command whose current shortcut is appended to the tooltip (never to the accessible name). */
+  command?: AppCommandId;
+  /** Key of a fixed (non-remappable) Mod+key shortcut, for rows with no command. */
+  fixedShortcutKey?: string;
   badge?: ReactNode;
   running?: boolean;
   onClick?: (event: { preventDefault: () => void; metaKey?: boolean; ctrlKey?: boolean }) => void;
   /** When set, cmd-click and drag-to-edge open this content in the split workspace. */
   splitContent?: PaneContent;
+  /** Use a collection at this position while the desktop rail is expanded. */
+  expandedSection?: ReactElement;
   /** Row stays visible with navigation suppressed; `disabledReason` replaces the title tooltip. */
   disabled?: boolean;
   disabledReason?: string;
@@ -68,6 +80,15 @@ export interface SidebarRailSection {
 }
 
 export type SidebarRailItem = SidebarRailRow | SidebarRailSection;
+
+/** Tooltip text for a row: its title (or label) plus the bound shortcut, if any. */
+export function railRowTitle(
+  item: Pick<SidebarRailRow, 'title' | 'label' | 'command' | 'fixedShortcutKey'>
+): string | undefined {
+  if (item.command) return titleWithShortcut(item.title ?? item.label, item.command);
+  if (item.fixedShortcutKey) return titleWithFixedShortcut(item.title ?? item.label, item.fixedShortcutKey);
+  return item.title;
+}
 
 /**
  * Shared sortable rail chrome for the global Sidebar and the project rail.
@@ -83,8 +104,9 @@ export function SidebarRail({
   trailingIds = [],
   items,
   header,
-  utilityStart,
-  settingsRoutePath
+  newWindowProjectId,
+  settingsRoutePath,
+  railVariant = 'expanded'
 }: {
   className: string;
   navAriaLabel: string;
@@ -93,16 +115,20 @@ export function SidebarRail({
   trailingIds?: readonly string[];
   items: readonly SidebarRailItem[];
   header?: ReactNode;
-  utilityStart?: ReactNode;
+  newWindowProjectId?: string;
   /** Overrides remembered global settings for a project-scoped rail. */
   settingsRoutePath?: string;
+  /** Icon-only 52px rail. Ignored in the mobile drawer. */
+  railVariant?: 'expanded' | 'rail';
 }): ReactElement {
   const savedCollapsed = useUi((s) => s.sidebarCollapsed);
   const dismissMobileNav = useMobileNavDismiss();
-  const collapsed = savedCollapsed && !dismissMobileNav;
+  const rail = railVariant === 'rail' && !dismissMobileNav;
+  const collapsed = (savedCollapsed && !dismissMobileNav) || rail;
   const hiddenIds = useUi((s) => storageKey === PROJECT_NAV_ORDER_KEY ? s.projectSidebarNavHidden : s.sidebarNavHidden);
   const hidden = new Set(hiddenIds ?? []);
   const moreButton = useRef<HTMLButtonElement>(null);
+  const collapseBehavior = useUi((s) => s.sidebarCollapseBehavior);
   const [popup, setPopup] = useState<SidebarNavigationPopupState | null>(null);
   const [saveError, setSaveError] = useState(false);
   const closePopup = useCallback(() => setPopup(null), []);
@@ -138,6 +164,7 @@ export function SidebarRail({
   const orderedIds = [...pinnedNavIds, ...sortableNavIds, ...trailingNavIds];
   const rows = orderedIds.map((id) => itemsById.get(id)!).filter((item): item is SidebarRailRow => item.kind === 'row');
   const hiddenRows = rows.filter((row) => hidden.has(row.id));
+  const hasExpandedCollection = !rail && rows.some((row) => row.expandedSection && !hidden.has(row.id));
   const visibleIds = (ids: readonly string[]) => ids.filter((id) => itemsById.get(id)?.kind === 'section' || !hidden.has(id));
   const openContextMenu = (event: ReactMouseEvent<HTMLElement>) => {
     const target = event.target as HTMLElement;
@@ -155,9 +182,15 @@ export function SidebarRail({
   const renderItem = (id: string, sortable: boolean, inMenu = false) => {
     const item = itemsById.get(id);
     if (!item) return null;
-    if (item.kind === 'section') {
+    if (item.kind === 'section' && rail) {
+      // Projects collapse to an icon switcher; the Sessions tree has no icon form.
+      return id === PROJECTS_SECTION_SORT_ID ? <RailProjects key={id} /> : null;
+    }
+    const collection = item.kind === 'section' ? item.node
+      : !rail && !dismissMobileNav && !inMenu ? item.expandedSection : undefined;
+    if (collection) {
       const section = cloneElement(
-        item.node as ReactElement<{
+        collection as ReactElement<{
           dragHandle?: HTMLAttributes<HTMLElement>;
           onNavigate?: (event: { preventDefault: () => void }) => void;
         }>,
@@ -176,6 +209,7 @@ export function SidebarRail({
         </SortableSidebarSection>
       );
     }
+    if (item.kind === 'section') return null;
     const row = item.splitContent && !dismissMobileNav && !inMenu ? (
       <SplitEnabledNavRow
         item={item}
@@ -188,7 +222,7 @@ export function SidebarRail({
         icon={item.icon}
         active={item.active}
         collapsed={inMenu ? false : collapsed}
-        title={item.title}
+        title={railRowTitle(item)}
         testId={item.testId}
         badge={item.badge}
         running={item.running}
@@ -220,7 +254,7 @@ export function SidebarRail({
   };
 
   return (
-    <aside className={className}>
+    <aside className={`${className}${rail ? ' sidebar--rail' : ''}`}>
       {header}
       {dismissMobileNav ? (
         <MobileSidebarNav
@@ -237,7 +271,7 @@ export function SidebarRail({
       >
         <div className="sidebar-sections" onContextMenu={openContextMenu}>
           <nav
-            className="sidebar-nav sidebar-nav--sortable"
+            className={`sidebar-nav sidebar-nav--sortable${hasExpandedCollection ? ' sidebar-nav--with-collection' : ''}`}
             aria-label={navAriaLabel}
             data-testid="sidebar-navigation"
             onKeyDown={(event) => {
@@ -262,16 +296,22 @@ export function SidebarRail({
         returnFocus={moreButton} onClose={closePopup}
         onCustomize={() => setPopup({ ...popup, kind: 'customize' })}
         onVisibleChange={(id, visible) => saveHidden(visible ? (hiddenIds ?? []).filter((key) => key !== id) : [...(hiddenIds ?? []), id])}
-        onReset={() => saveHidden([], items.map((item) => item.id))}
-        renderHiddenItem={(id) => renderItem(id, false, true)} />}
+        onReset={() => {
+          useUi.getState().setSidebarCollapseBehavior('two-state');
+          saveHidden([], items.map((item) => item.id));
+        }}
+        renderHiddenItem={(id) => renderItem(id, false, true)}
+        collapseBehavior={collapseBehavior}
+        onCollapseBehaviorChange={(b) => useUi.getState().setSidebarCollapseBehavior(b)} />}
+      {storageKey !== PROJECT_NAV_ORDER_KEY && <SidebarFooterSlot />}
       <div className="sidebar-utility-bar" aria-label="Sidebar utilities">
-        {utilityStart}
+        <NewWindowButton projectId={newWindowProjectId} />
         <Link
           to={settingsRoutePath ?? routeMemory.settingsRoutePath}
           className={`sidebar-utility-button sidebar-utility-button--settings ${nav === 'settings' ? 'active' : ''}`}
           aria-label="Settings"
           aria-current={nav === 'settings' ? 'page' : undefined}
-          title="Settings"
+          title={titleWithShortcut('Settings', 'settings.open')}
           onClick={() => dismissMobileNav?.()}
         >
           <Settings size={16} strokeWidth={1.7} aria-hidden="true" />
@@ -332,7 +372,7 @@ export function SidebarRail({
           );
         })}
       </div>
-      {!dismissMobileNav && <SidebarResizer />}
+      {!dismissMobileNav && !rail && <SidebarResizer />}
     </aside>
   );
 }
@@ -364,7 +404,7 @@ function SplitEnabledNavRow({
       icon={item.icon}
       active={item.active}
       collapsed={collapsed}
-      title={item.title}
+      title={railRowTitle(item)}
       testId={item.testId}
       badge={item.badge}
       running={item.running}

@@ -1,7 +1,9 @@
+import { fixedNavShortcutKey } from '../lib/keyboard-shortcut-settings.js';
 import { History } from 'lucide-react';
 import { useConversationHistory } from './history/history-store.js';
-import { navPanelListsInSidebar } from '@zana-ai/zcc-plugin-sdk';
+import { navPanelListsInSidebar, type PluginNavPanelRegistration, type PluginSidebarSectionProps } from '@zana-ai/zcc-plugin-sdk';
 import { useMemo, useSyncExternalStore, type ReactNode } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Blocks,
   Bot,
@@ -22,7 +24,7 @@ import {
   type NavId
 } from '../store.js';
 import { resolveIcon } from '../lib/resolveIcon.js';
-import { DEFAULT_PLUGIN_PANEL_PATH, getNavRoutePath } from '../lib/route-paths.js';
+import { DEFAULT_PLUGIN_PANEL_PATH, getNavRoutePath, getThreadRoutePath } from '../lib/route-paths.js';
 import { hrefForPluginNavPanel } from '../plugins/plugin-nav-href.js';
 import { useMergedModules } from '../modules/index.js';
 import { useAppSettingsRouteMemory } from '../hooks/useAppSettingsRouteMemory.js';
@@ -79,12 +81,33 @@ const NON_SPLITTABLE_NAV_IDS = new Set<string>([
   'goals'
 ]);
 
-export function Sidebar() {
+function PluginSidebarSection({ panel, Section, active, to, id, ...sectionProps }: {
+  panel: PluginNavPanelRegistration;
+  Section: NonNullable<PluginNavPanelRegistration['experimental_sidebarSection']>;
+  active: boolean;
+  to: string;
+  id: string;
+} & Pick<PluginSidebarSectionProps, 'dragHandle' | 'onNavigate'>) {
+  const { threadId } = useRouteState();
+  const navigate = useNavigate();
+  const label = `Open ${panel.title} panel`;
+  return <PluginSlotBoundary pluginId={panel.pluginId} generation={panel.generation}>
+    <Section {...sectionProps} activeThreadId={threadId} openThread={(id) => navigate(getThreadRoutePath(id))}
+      panelLink={<Link to={to}
+        aria-current={active ? 'page' : undefined}
+        data-sidebar-nav-id={id} onClick={sectionProps.onNavigate}>
+        {label}
+      </Link>} />
+  </PluginSlotBoundary>;
+}
+
+export function Sidebar({ railVariant = 'expanded' }: { railVariant?: 'expanded' | 'rail' } = {}) {
   const route = useRouteState();
   const { nav, pluginPanelPath } = route;
   const savedCollapsed = useUi((s) => s.sidebarCollapsed);
   const mobile = !!useMobileNavDismiss();
   const collapsed = savedCollapsed && !mobile;
+  const rail = railVariant === 'rail' && !mobile;
   const unreadInbox = useUnreadInboxCount();
   const enabledSchedules = useEnabledSchedulerCount();
   const runningSchedules = useRunningSchedulerCount();
@@ -99,7 +122,9 @@ export function Sidebar() {
     [navPanels]
   );
   const pluginPanels = useMemo(
-    () => navPanels.filter((panel) => navPanelListsInSidebar(panel.placement)),
+    () => navPanels.filter((panel) => navPanelListsInSidebar(panel.placement)).sort(
+      (a, b) => Number(!!a.experimental_sidebarSection) - Number(!!b.experimental_sidebarSection)
+    ),
     [navPanels]
   );
   const extraItems = useMemo(() => {
@@ -197,7 +222,9 @@ export function Sidebar() {
       running,
       badge,
       splitContent,
-      title: collapsed
+      command: item.id === 'home' ? 'thread.new' : undefined,
+      fixedShortcutKey: fixedNavShortcutKey(item.id),
+      title: collapsed || rail
         ? running
           ? `${item.label} — ${isAgents ? agentsTitle : scheduleTitle}`
           : item.label
@@ -220,7 +247,9 @@ export function Sidebar() {
       const path = panel.path ?? panel.id;
       const Icon = resolveIcon(panel.icon);
       const Accessory = panel.experimental_sidebarAccessory;
+      const Section = panel.experimental_sidebarSection;
       const id = `${panel.pluginId}/${path}`;
+      const to = hrefForPluginNavPanel(panel.pluginId, path);
       const active = nav === panel.pluginId && (pluginPanelPath === path || pluginPanelPath === null);
       return {
         kind: 'row',
@@ -228,10 +257,11 @@ export function Sidebar() {
         label: panel.title,
         mobileGroup: 'tools',
         icon: <Icon size={16} strokeWidth={1.7} aria-hidden="true" />,
-        to: hrefForPluginNavPanel(panel.pluginId, path),
+        to,
         testId: `nav-${id}`,
         active,
-        title: collapsed ? panel.title : undefined,
+        expandedSection: Section ? <PluginSidebarSection key={panel.generation} panel={panel} Section={Section} active={active} to={to} id={id} /> : undefined,
+        title: collapsed || rail ? panel.title : undefined,
         badge: Accessory ? (
           <PluginSlotBoundary pluginId={panel.pluginId} generation={panel.generation}>
             <Accessory />
@@ -264,6 +294,7 @@ export function Sidebar() {
       storageKey={GLOBAL_NAV_ORDER_KEY}
       pinnedIds={PINNED_SIDEBAR_NAV_IDS}
       items={items}
+      railVariant={railVariant}
     />
   );
 }

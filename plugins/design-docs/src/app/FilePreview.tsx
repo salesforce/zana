@@ -2,14 +2,18 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEven
 import { copyContextSelection, MAX_CONTEXT_REFERENCE_TEXT, useZccNavigate } from '@zana-ai/zcc-plugin-sdk/app';
 import { passageContext } from '../shared/passage-context.js';
 import { Markdown } from '@zana-ai/zcc-plugin-sdk/app';
-import { MessageSquarePlus, Sparkles } from 'lucide-react';
+import { ExternalLink, MessageSquarePlus, Sparkles } from 'lucide-react';
 import type { DesignDocFileMeta } from '../shared/contract.js';
 import { MAX_QUOTE_LENGTH } from '../shared/limits.js';
-import { isCrossDocScheme, parseCrossDocLink, shieldCrossDocLinks, unshieldCrossDocHref, type FileKind } from '../shared/paths.js';
+import { isCrossDocScheme, isRenderableMarkdownPath, parseCrossDocLink, shieldCrossDocLinks, unshieldCrossDocHref, type FileKind } from '../shared/paths.js';
 import { toast, useApi, type DocKind } from './api.js';
 import { codeFence, fenced, fileDataUrl, formatSubPath, inlineImages, referencedImages, resolveDocLink } from './content.js';
 import { COMMENT_HIGHLIGHT, FOCUS_HIGHLIGHT, findQuoteRanges, paintRanges } from './highlight.js';
+import { useOpenInBrowser } from './hooks.js';
+import { DomFindBar } from '../../../../apps/app/src/components/DomFindBar.js';
+import { useDomFind } from '../../../../apps/app/src/lib/use-dom-find.js';
 import { PageFrame } from './PageFrame.js';
+import { IconButton } from './ui.js';
 import { findHeading, onAnchorRequest, requestAnchor, takeAnchor } from './anchors.js';
 
 export interface PreviewFile {
@@ -22,6 +26,8 @@ export interface PreviewFile {
 export interface PreviewHandle {
   /** Scroll to and flash a quoted passage; false when it is not on screen. */
   focusQuote(quote: string): boolean;
+  /** Open the find bar over the rendered doc (Ctrl+F from elsewhere in the panel). */
+  openFind(): void;
 }
 
 /** The nav panel's route segment; mirrors NAV_PATH in slots.tsx (which imports this module's tree). */
@@ -130,6 +136,14 @@ export function FilePreview({
   const navigate = useZccNavigate();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  // Ctrl+F in the rendered text. An html page is a sandboxed frame with its own find (PageFrame).
+  const find = useDomFind(contentRef, scrollRef, `${file.path}
+${file.content}`);
+  const ownFind = file.kind !== 'html';
+  const openFindBar = find.openBar;
+  const openInBrowser = useOpenInBrowser(docId, file.path);
+  // The standalone view serves saved docs only: not a draft or old revision, not a template.
+  const canOpenInBrowser = file.kind === 'markdown' && isRenderableMarkdownPath(file.path) && !draft && kind !== 'template';
   const owner = useRef({});
   const [chip, setChip] = useState<SelectionChip | null>(null);
   // HTML pages are bundled by the server, images included.
@@ -200,6 +214,7 @@ export function FilePreview({
   useEffect(() => {
     if (!handleRef || !ownsHandle) return;
     handleRef.current = {
+      openFind: openFindBar,
       focusQuote(quote) {
         const root = contentRef.current;
         const range = root ? findQuoteRanges(root, [quote]).get(quote) : undefined;
@@ -214,7 +229,7 @@ export function FilePreview({
     return () => {
       handleRef.current = null;
     };
-  }, [handleRef, ownsHandle]);
+  }, [handleRef, ownsHandle, openFindBar]);
 
   const onClickCapture = (event: ReactMouseEvent) => {
     const anchor = (event.target as Element | null)?.closest?.('a');
@@ -341,6 +356,7 @@ export function FilePreview({
     <div
       className={`dd-preview dd-preview-${file.kind}`}
       ref={scrollRef}
+      {...(ownFind ? find.hostProps : {})}
       onCopy={(event) => {
         if (contentRef.current) copyContextSelection(event, contentRef.current, passageContext(docId, file.path, ''));
       }}
@@ -349,6 +365,27 @@ export function FilePreview({
         if (!(event.target as Element).closest?.('.dd-selection-chip')) setChip(null);
       }}
     >
+      {ownFind && find.open ? (
+        <DomFindBar
+          label="Find in doc"
+          value={find.query}
+          onChange={find.setQuery}
+          onStep={find.step}
+          onClose={find.close}
+          matchIndex={find.matchIndex}
+          matchCount={find.matchCount}
+          focusRequest={find.focusRequest}
+        />
+      ) : null}
+      {canOpenInBrowser ? (
+        <div className="dd-html-toolbar dd-md-toolbar">
+          <span />
+          <span />
+          <div className="dd-html-actions">
+            <IconButton icon={ExternalLink} label="Open in browser" onClick={() => void openInBrowser()} />
+          </div>
+        </div>
+      ) : null}
       {body}
       {chip ? (
         <div className="dd-selection-chip" style={{ top: chip.top, left: chip.left }}>

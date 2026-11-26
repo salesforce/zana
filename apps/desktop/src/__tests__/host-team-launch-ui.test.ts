@@ -146,7 +146,7 @@ const persona = (id: string, extra: Record<string, unknown> = {}) => ({ id, name
 
 beforeEach(() => {
   h.projects = [{ id: 'p1', name: 'Proj', path: projectDir }];
-  h.config = { version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null, autoRenameTabs: false };
+  h.config = { squadDefaultTransport: 'CLI', version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null, autoRenameTabs: false };
   h.personas = [persona('orch'), persona('w1')];
   h.teams = [{ id: 'team1', name: 'Team One', orchestratorPersonaId: 'orch', slots: [{ personaId: 'w1', quantity: 2 }] }];
   h.creates.length = 0;
@@ -243,6 +243,13 @@ describe('startTeamJobFromUi launches', () => {
     const second = await resolveSquadComposerPreview(previewInput, { kind: 'window', windowId: 41 });
     expect(await startTeamJobFromUi({ ...previewInput, goal: 'Changed goal', previewToken: second.previewToken }, { windowId: 41 }))
       .toMatchObject({ ok: false, code: 'LAUNCH_CHANGED' });
+  });
+
+  it('accepts a preview token when planText has surrounding whitespace', async () => {
+    const previewInput = input({ coordinationMode: 'freeform', planText: '  1. do the thing\n' });
+    const preview = await resolveSquadComposerPreview(previewInput, { kind: 'window', windowId: 41 });
+    expect(await startTeamJobFromUi({ ...previewInput, planText: '1. do the thing', previewToken: preview.previewToken }, { windowId: 41 }))
+      .not.toMatchObject({ code: 'LAUNCH_CHANGED' });
   });
 
   it('rejects remote preview options that cannot be reviewed on this host', async () => {
@@ -549,5 +556,60 @@ describe('startTeamJobFromUi proposed launches', () => {
     } finally {
       start.mockRestore();
     }
+  });
+});
+
+describe('separately supplied planText', () => {
+  const owner = { kind: 'shared-owner' as const };
+  const namingFile = () => {
+    writeFileSync(join(projectDir, 'named.md'), 'notes');
+    return `Context file: ${join(projectDir, 'named.md')}\n\n${PLAN}`;
+  };
+
+  it('previews a plan from planText with a prose goal and never scans it for source paths', async () => {
+    const planText = namingFile();
+    // The same text as the goal needs a trusted window; as planText it is plan content only.
+    await expect(startTeamJobFromUi(input({ goal: planText }))).resolves.toMatchObject({ ok: false, code: 'INVALID_CAPABILITY' });
+    const preview = await resolveSquadComposerPreview(input({ goal: 'Ship it', planText, coordinationMode: 'structured' }), owner);
+    expect(preview.previewToken).toEqual(expect.any(String));
+  });
+
+  it('refuses a prose goal without planText and reports the parser reason to non-window callers', async () => {
+    await expect(resolveSquadComposerPreview(input({ goal: 'Ship it', coordinationMode: 'structured' }), owner)).rejects.toThrow(/no executable steps found/);
+  });
+
+  it('refuses an invalid planText with the plan error', async () => {
+    await expect(resolveSquadComposerPreview(input({ goal: 'Ship it', planText: BAD_PLAN, coordinationMode: 'structured' }), owner)).rejects.toThrow();
+  });
+
+  it('ignores planText for freeform mode', async () => {
+    const preview = await resolveSquadComposerPreview(input({ goal: 'Ship it', planText: 'not a plan', coordinationMode: 'freeform' }), owner);
+    expect(preview.previewToken).toEqual(expect.any(String));
+  });
+
+  it('rejects over-cap or non-string planText on preview and launch', async () => {
+    const tooLong = 'x'.repeat(64_001);
+    await expect(resolveSquadComposerPreview(input({ planText: tooLong, coordinationMode: 'freeform' }), owner)).rejects.toThrow(/planText must be a string/);
+    await expect(resolveSquadComposerPreview(input({ planText: 5, coordinationMode: 'freeform' }), owner)).rejects.toThrow(/planText must be a string/);
+    expect(await startTeamJobFromUi(input({ planText: tooLong }))).toMatchObject({ ok: false, code: 'INVALID' });
+    expect(await startTeamJobFromUi(input({ planText: 5 }))).toMatchObject({ ok: false, code: 'INVALID' });
+    expect(h.creates).toHaveLength(0);
+  });
+
+  it('launches structured work units from planText for a non-window caller without a source-path refusal', async () => {
+    const planText = namingFile();
+    const result = await startTeamJobFromUi(input({ goal: 'Ship it', planText, coordinationMode: 'structured' }));
+    expect(result.ok).toBe(true);
+    expect(h.creates.at(-1).cohort.coordinationMode).toBe('structured');
+  });
+
+  it('binds a preview token to the planText it was issued for', async () => {
+    const planText = namingFile();
+    const previewInput = input({ goal: 'Ship it', planText, coordinationMode: 'structured' });
+    const preview = await resolveSquadComposerPreview(previewInput, owner);
+    expect(await startTeamJobFromUi({ ...previewInput, planText: `${planText}\n`.replace('Write output', 'Write other'), previewToken: preview.previewToken }))
+      .toMatchObject({ ok: false, code: 'LAUNCH_CHANGED' });
+    const again = await resolveSquadComposerPreview(previewInput, owner);
+    expect(await startTeamJobFromUi({ ...previewInput, previewToken: again.previewToken })).toMatchObject({ ok: true });
   });
 });

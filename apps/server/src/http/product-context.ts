@@ -6,7 +6,8 @@ import { closeThreadReads } from '../services/threads/thread-reads.js';
 import { closeQueuedMessages } from '../services/threads/queued-messages.js';
 import { previewService, disposePreviews } from '../services/previews/preview-service.js';
 import { disposeThreadWrapUps } from '../services/threads/thread-wrap-up.js';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { disposeThreadApiErrorResume, startThreadApiErrorResume } from '../services/followups/thread-api-error-resume.js';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readProductInstanceId } from '../instance-identity.js';
@@ -148,6 +149,7 @@ export interface ProductHttpContext {
   peerChannels: EnrolledPeerChannels;
   peerControlReplay: PeerReplayWindow;
   /** App-level per-plugin storage epochs outside plugin folders; absent in contexts built without one. */
+  pluginDeviceKey?: (pluginId: string) => Promise<Uint8Array>;
   pluginStorageEpochs?: PluginStorageEpochs;
   /** Present only with a real peer key: turns approved introductions into forward-only mutual enrollment. */
   peerInstaller?: PeerIntroductionInstaller;
@@ -688,6 +690,13 @@ export function createProductHttpContext(
     peerActiveUse,
     ...(peerUseRequests ? { peerUseRequests, peerConnectionUses: peerUseRequests } : {}),
     peerControlReplay: new PeerReplayWindow({ directory: join(realpathSync(dataDir), 'peer-control-replay'), localInstanceId: productInstanceId, keyProvider }),
+    pluginDeviceKey: async pluginId => {
+      const root = await keyProvider.getKey().catch(() => null);
+      if (!root || root.length !== 32) throw new Error('Device secure storage is unavailable.');
+      try {
+        return createHmac('sha256', root).update(JSON.stringify(['plugin-device-storage/v1', pluginId])).digest();
+      } finally { root.fill(0); }
+    },
     pluginStorageEpochs: new PluginStorageEpochs({ directory: join(realpathSync(dataDir), 'plugin-storage-epochs'), instanceId: productInstanceId, keyProvider }),
     verifyUiSend,
     verifyPluginApproval,
@@ -730,6 +739,7 @@ export function createProductHttpContext(
       closeThreadReads(dataDir); closeQueuedMessages(dataDir);
       disposePreviews(ctx);
       disposeThreadWrapUps(ctx);
+      disposeThreadApiErrorResume(ctx);
       disposeEnvironmentRetireTimers(ctx);
       stopHistoryMaintenance();
       ctx.cliCallbacks?.dispose();
@@ -786,5 +796,6 @@ export function createProductHttpContext(
   peerInvitations?.start();
   if (peerLinks) void peerLinks.start().catch(warnPeer('links start'));
   void remoteProjectReconciler.request();
+  startThreadApiErrorResume(ctx);
   return ctx;
 }

@@ -10,6 +10,8 @@ export const SECONDARY_PANEL_MIN_WIDTH_PX = 288;
 export const SECONDARY_PANEL_MAX_WIDTH_RATIO = 0.7;
 export const SECONDARY_PANEL_OPEN_WIDTH_RATIO = 0.5;
 export const SECONDARY_PANEL_MODAL_OPEN_WIDTH_RATIO = 0.33;
+/** Largest JSON size of a plugin tab's persisted `tabState`. */
+export const MAX_TAB_STATE_BYTES = 8 * 1024;
 
 export type PinnedSecondaryView = 'info' | 'diff' | 'plan';
 
@@ -51,6 +53,11 @@ export interface ClosableSecondaryTab {
   actionId?: string;
   pluginId?: string;
   params?: JsonValue | null;
+  /**
+   * Plugin tab: small view state the plugin saved with the tab. Kept apart from
+   * `params` because tab reuse matches on `params`; cleared when `params` change.
+   */
+  tabState?: JsonValue | null;
   layout?: 'padded' | 'flush';
   openerKey?: string | null;
   automationTargetId?: string | null;
@@ -111,6 +118,14 @@ function parseJsonValue(value: unknown): JsonValue | null {
   }
 }
 
+function tabStateWithinCap(value: JsonValue | null): boolean {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value ?? null) ?? 'null').length <= MAX_TAB_STATE_BYTES;
+  } catch {
+    return false;
+  }
+}
+
 function isTabKind(value: unknown): value is ClosableSecondaryTabKind {
   return (
     value === 'new-tab'
@@ -123,6 +138,11 @@ function isTabKind(value: unknown): value is ClosableSecondaryTabKind {
     || value === 'plugin'
     || value === 'agent'
   );
+}
+
+function parseTabState(value: unknown): { tabState: JsonValue } | Record<string, never> {
+  const parsed = parseJsonValue(value);
+  return parsed !== null && tabStateWithinCap(parsed) ? { tabState: parsed } : {};
 }
 
 function parseTab(value: unknown): ClosableSecondaryTab | null {
@@ -147,7 +167,11 @@ function parseTab(value: unknown): ClosableSecondaryTab | null {
     ...(typeof value.lineNumber === 'number' && value.lineNumber > 0
       ? { lineNumber: Math.floor(value.lineNumber) }
       : {}),
-    ...('params' in value ? { params: parseJsonValue(value.params) } : {})
+    ...(typeof value.previewRevision === 'number' && Number.isSafeInteger(value.previewRevision) && value.previewRevision >= 0
+      ? { previewRevision: value.previewRevision }
+      : {}),
+    ...('params' in value ? { params: parseJsonValue(value.params) } : {}),
+    ...(value.kind === 'plugin' && value.tabState != null ? parseTabState(value.tabState) : {})
   };
 }
 
@@ -278,9 +302,18 @@ function mintTabId(kind: ClosableSecondaryTabKind): string {
   return `${kind}:${uniqueTabSuffix(globalThis.crypto?.randomUUID?.bind(globalThis.crypto))}`;
 }
 
-function stableParams(value: unknown): string {
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeys);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortKeys((value as Record<string, unknown>)[key])]));
+  }
+  return value;
+}
+
+/** JSON text of a value with object keys sorted, so key order never makes equal values differ. */
+export function stableParams(value: unknown): string {
   try {
-    return JSON.stringify(value ?? null);
+    return JSON.stringify(sortKeys(value ?? null)) ?? 'null';
   } catch {
     return 'null';
   }
@@ -459,9 +492,33 @@ export function patchClosableTab(
 ): ThreadSecondaryPanelState {
   const tab = state.tabs.find((candidate) => candidate.id === tabId);
   if (!tab || patchAlreadyApplied(tab, patch)) return state;
+  const paramsChanged = patch.params !== undefined && stableParams(tab.params) !== stableParams(patch.params);
   return {
     ...state,
-    tabs: state.tabs.map((candidate) => (candidate.id === tabId ? { ...candidate, ...patch } : candidate))
+    tabs: state.tabs.map((candidate) => {
+      if (candidate.id !== tabId) return candidate;
+      const { tabState: _dropped, ...rest } = candidate;
+      return { ...(paramsChanged ? rest : candidate), ...patch };
+    })
+  };
+}
+
+/**
+ * Save a plugin tab's view state. Never touches `params`, so tab identity and
+ * reuse are unchanged. Oversized, unknown-tab and non-plugin writes are ignored.
+ */
+export function setClosableTabState(
+  state: ThreadSecondaryPanelState,
+  tabId: string,
+  value: JsonValue | null
+): ThreadSecondaryPanelState {
+  const tab = state.tabs.find((candidate) => candidate.id === tabId);
+  if (!tab || tab.kind !== 'plugin') return state;
+  if (!tabStateWithinCap(value)) return state;
+  if (stableParams(tab.tabState) === stableParams(value)) return state;
+  return {
+    ...state,
+    tabs: state.tabs.map((candidate) => (candidate.id === tabId ? { ...candidate, tabState: value } : candidate))
   };
 }
 

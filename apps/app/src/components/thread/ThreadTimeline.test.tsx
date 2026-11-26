@@ -542,12 +542,21 @@ describe('ThreadTimeline', () => {
     expect(html).not.toContain(workingCopy);
   });
 
-  it('shows the empty waiting state', () => {
-    const html = renderToStaticMarkup(
-      <ThreadTimeline rows={[]} status="idle" thinking={null} />
-    );
-    expect(html).toContain('Waiting for the first turn…');
+  it.each(['idle', 'pending'])('welcomes a first message in an empty %s thread', (status) => {
+    const html = renderToStaticMarkup(<ThreadTimeline rows={[]} status={status} thinking={null} />);
+    expect(html).toContain('<h2>What shall we work on today?</h2>');
+    expect(html).toContain('Bring a question, a rough idea, or something to get done.');
+    expect(html).toContain('is-welcoming');
     expect(html).not.toContain('data-testid="thread-loading"');
+  });
+
+  it.each([
+    { status: 'active' }, { status: 'starting' }, { status: 'error' }, { status: 'waiting-for-host' },
+    { status: 'idle', archived: true }, { status: 'idle', waitingOnUser: true }
+  ])('only invites a message when the empty thread is ready for one (%j)', (state) => {
+    const html = renderToStaticMarkup(<ThreadTimeline rows={[]} thinking={null} {...state} />);
+    expect(html).not.toContain('is-welcoming');
+    expect(html).not.toContain('What shall we work on today?');
   });
 
   it('shows an illustrated loading state instead of waiting or agent activity during hydration', () => {
@@ -557,7 +566,7 @@ describe('ThreadTimeline', () => {
     expect(html).toContain('data-testid="thread-loading"');
     expect(html).toContain('Loading conversation…');
     expect(html).toContain('aria-busy="true"');
-    expect(html).not.toContain('Waiting for the first turn…');
+    expect(html).not.toContain('What shall we work on today?');
     expect(html).not.toContain(workingCopy);
   });
 
@@ -569,6 +578,7 @@ describe('ThreadTimeline', () => {
       }]} status="idle" thinking={null} loading />
     );
     expect(html).toContain('Already loaded.');
+    expect(html).not.toContain('What shall we work on today?');
     expect(html).not.toContain('data-testid="thread-loading"');
     expect(html).toContain('aria-busy="false"');
   });
@@ -584,7 +594,7 @@ describe('ThreadTimeline', () => {
         onRetryLoad={() => {}}
       />
     );
-    expect(html).not.toContain('Waiting for the first turn…');
+    expect(html).not.toContain('What shall we work on today?');
     expect(html).not.toContain('data-testid="thread-loading"');
     expect(html).toContain('timeline-failed');
     expect(html).toContain('Retry');

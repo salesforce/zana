@@ -69,6 +69,15 @@ describe('sidebar split drag', () => {
     expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-2');
   });
 
+  it('reveals both panes when splitting at the edge of a maximized view', () => {
+    const layout = splitPane(createSinglePaneLayout({ kind: 'home' }), 'pane-1', 'right', { kind: 'agents' });
+    useSplitWorkspace.setState({ layout, maximizedPaneId: 'pane-2' });
+    const { config } = start();
+    act(() => config.onDrop({ paneId: 'pane-2', zone: 'bottom' }));
+    expect(useSplitWorkspace.getState().maximizedPaneId).toBeNull();
+    expect(useSplitWorkspace.getState().layout?.focusedPaneId).toBe('pane-3');
+  });
+
   it('replaces a target and falls back to focus if the target disappeared', () => {
     useSplitWorkspace.setState({ layout: createSinglePaneLayout({ kind: 'home' }) });
     const { config } = start();

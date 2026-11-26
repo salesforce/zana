@@ -7,6 +7,7 @@ import { PEER_STATE_CHANNEL } from '../shared/contract.js';
 import { syncResultMessage } from './sync-status.js';
 import { errorMessage, toast, useApi, type ConnectionView, type PeerStatus } from './api.js';
 import { IconButton, Spinner } from './ui.js';
+import { AutoConvergeToggle } from './AutoConvergeToggle.js';
 import { SyncDiagnosticsPanel } from './SyncDiagnosticsPanel.js';
 
 export interface PeerSync {
@@ -350,8 +351,8 @@ export function PeerSettings() {
   const lifecycle = !status || status.lifecycleAvailable;
   return (
     <section className="dd-peers" aria-label="Database sync peers">
+      <AutoConvergeToggle />
       {/* Core owns connections; this panel only points at them and lists what Design Docs may use. */}
-      <a className="dd-peers-core-link" href="/settings/peers">Add or remove computers in Settings → Peers</a>
       {connections ? (
         list.length ? (
           <section className="dd-peers-block dd-peers-computers" aria-label="Computers">
@@ -365,12 +366,14 @@ export function PeerSettings() {
             </ul>
           </section>
         ) : (
-          <div className="dd-peers-block" role="status">
-            <p>No computers are connected. Connect a computer first to enable Design Docs sync with it.</p>
+          <section className="dd-peers-block dd-peers-computers" aria-label="Computers">
+            <h4>Computers</h4>
+            <p role="status">No computers are connected. Connect a computer first to enable Design Docs sync with it.</p>
             <button type="button" className="btn primary dd-peers-connect" onClick={() => window.location.assign('/settings/peers')}>Connect a computer</button>
-          </div>
+          </section>
         )
       ) : null}
+      <a className="dd-peers-core-link" href="/settings/peers">Add or remove computers in Settings → Peers</a>
       {groupSize > 1 ? (
         <div className="dd-peers-summary">
           <span>{`Sync group: ${groupSize} of 8 computers`}</span>

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { useThreads, type ThreadListItem } from '../../thread-store.js';
 import { useData, useUi } from '../../store.js';
@@ -12,6 +12,8 @@ const threads = vi.hoisted(() => ({
   notificationLevel: vi.fn(() => new Promise(() => undefined))
 }));
 vi.mock('../../lib/product-client.js', () => ({ product: { threads } }));
+const layout = vi.hoisted(() => ({ compact: false }));
+vi.mock('../../hooks/useCompactLayout.js', () => ({ useCompactLayout: () => layout.compact }));
 
 import { ThreadDetailOverflow } from './ThreadDetailOverflow.js';
 
@@ -45,6 +47,7 @@ function stubConfirm(answer: boolean) {
 
 afterEach(() => {
   cleanup();
+  layout.compact = false;
   vi.restoreAllMocks();
   threads.archive.mockClear();
   threads.closeFollowup.mockClear();
@@ -57,6 +60,24 @@ function choose(item: string) {
   fireEvent.click(screen.getByTestId('thread-overflow-trigger'));
   fireEvent.click(screen.getByRole('menuitem', { name: item }));
 }
+
+it('opens tools from the first action in the mobile sheet and dismisses the sheet', () => {
+  layout.compact = true;
+  const onOpenTools = vi.fn();
+  render(<MemoryRouter><div className="app-shell">
+    <ThreadDetailOverflow threadId={id} title="hello" status="idle" projectId={null} onOpenTools={onOpenTools} />
+  </div></MemoryRouter>);
+
+  const more = screen.getByTestId('thread-overflow-trigger');
+  fireEvent.click(more);
+  const sheet = screen.getByRole('dialog', { name: 'Agent actions' });
+  const actions = within(sheet).getAllByRole('menuitem');
+  expect(actions[0]).toBe(within(sheet).getByRole('menuitem', { name: 'Thread tools', exact: true }));
+  fireEvent.click(actions[0]);
+  expect(onOpenTools).toHaveBeenCalledOnce();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(document.activeElement).toBe(more);
+});
 
 describe('ThreadDetailOverflow running-process warning', () => {
   it('warns before archiving a thread that still runs a background process', () => {

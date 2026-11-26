@@ -3,6 +3,7 @@
  * with follow-ups must finish before queued messages run, without an Error or
  * user bubbles stuck on Pending. Exercise both Enter and the send button.
  */
+import { pickComposerSetting } from './fixtures/composer-settings.js';
 import type { Locator } from '@playwright/test';
 import { test, expect } from './fixtures/app.js';
 import { stubNativeDialogs } from './sdk/native-dialog.js';
@@ -152,8 +153,7 @@ test('Enter and Send queue follow-ups until the active response finishes', async
   await expect(timeline.getByTestId('thread-user-text').filter({ hasText: 'An explicit steer' })).toBeVisible();
   await expect(queued).toHaveCount(0);
 
-  await composer.getByTestId('composer-send-mode-picker').click();
-  await window.getByRole('option', { name: /^Steer/ }).click();
+  await pickComposerSetting(window, composer, 'send-mode', 'Steer');
   await expect(followSend).toHaveAttribute('aria-label', 'Steer');
   await followInput.fill('delay:1000 Queue with modifier');
   await followInput.press(modifierEnter);

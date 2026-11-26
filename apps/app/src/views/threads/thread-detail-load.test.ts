@@ -4,7 +4,6 @@ import {
   loadThreadDetailProgressively,
   resolveThreadDetailStatus,
   resolveTimelinePollRows,
-  shouldClearPlaceholderStartingStatus,
   THREAD_DETAIL_LOAD_ERROR,
   threadDetailLoadError
 } from './thread-detail-load.js';
@@ -104,19 +103,12 @@ function row(id: string, sourceSeqStart: number): TimelineRow {
 }
 
 describe('thread detail hydrate', () => {
-  it('starts from Agent + starting + empty unless get applies a real record', () => {
+  it('uses a reported status from metadata or the timeline and leaves an unknown status empty', () => {
     expect(resolveThreadDetailStatus(undefined)).toBe('');
     expect(resolveThreadDetailStatus({ status: 'active', runtime: { displayStatus: 'host-reconnecting' } }))
       .toBe('host-reconnecting');
     expect(resolveThreadDetailStatus({ status: 'active' }, 'idle')).toBe('active');
     expect(resolveThreadDetailStatus(undefined, 'idle')).toBe('idle');
-  });
-
-  it('keeps get status when timeline failed and drops placeholder starting only when both fail', () => {
-    expect(shouldClearPlaceholderStartingStatus(false, true, false)).toBe(false);
-    expect(shouldClearPlaceholderStartingStatus(false, false, true)).toBe(false);
-    expect(shouldClearPlaceholderStartingStatus(true, true, true)).toBe(false);
-    expect(shouldClearPlaceholderStartingStatus(false, true, true)).toBe(true);
   });
 
   it('surfaces a retryable load error instead of swallowing the failure', () => {

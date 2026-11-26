@@ -123,6 +123,20 @@ export function registerConfigIpc(namedChecks?: NamedChecksSettingsService): voi
     }
   );
 
+  // Append-only dismissal: the renderer sends one id; the read-modify-write below is synchronous
+  // (no await between read and write), so it is serialized on the main event loop and two windows
+  // cannot overwrite each other. The config normalizer applies the retention cap and dedupes.
+  productHandle<[string], AppConfig>(IPC.config.dismissWorkerExit, (sessionId) => {
+    if (typeof sessionId !== 'string' || sessionId.length === 0 || sessionId.length > 128) {
+      throw new Error('Invalid session id');
+    }
+    const current = store.getConfig().dismissedWorkerExits ?? [];
+    if (current.includes(sessionId)) return presentAppConfig(store.getConfig());
+    const next = presentAppConfig(store.setConfig({ dismissedWorkerExits: [...current, sessionId] }));
+    ctx.safeSend(IPC.config.onChanged, next);
+    return next;
+  });
+
   // Preview trust is a local-desktop grant. These are plain IPC handlers, not
   // shared product handlers, so the product server and plugins cannot invoke
   // them, and the renderer never supplies the path that gets trusted.

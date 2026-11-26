@@ -14,6 +14,8 @@ import {
   type RestoreLaunchInput
 } from '../terminal-restore-launch.js';
 import { app } from 'electron';
+import { isTerminalExecutionState } from '@zana-ai/zcc-server/services/execution/store';
+import { restartSquadWorkerCard } from '../squad-worker-card-restart.js';
 import type { SessionStats } from '@zana-ai/zcc-host-daemon/harness/claude/transcript-reader';
 import type { CatchUpSummaryResult, CreateTerminalRequest, LaunchProfileId, MenubarReplyResult, Result, TerminalSession } from '@zana-ai/zcc-domain/product';
 
@@ -23,7 +25,7 @@ interface MenubarFocusDeps {
   ensureMainWindowReady(): Promise<boolean>;
   openMenubarThread(agentId: string, projectId: string): Promise<{ ok: boolean; reason?: string } | null | undefined>;
   logMainError(context: string, error: unknown): void;
-  safeSend(channel: string, ...args: unknown[]): void;
+  sendToMainWindow(channel: string, ...args: unknown[]): Promise<boolean>;
   menubar?: { hide(): void } | null;
 }
 
@@ -51,7 +53,7 @@ export async function focusMenubarAgent(
   if (!session || session.projectId !== projectId) return;
   deps.menubar?.hide();
   deps.showMainWindow();
-  deps.safeSend('app:focusSession', agentId, projectId);
+  await deps.sendToMainWindow('app:focusSession', agentId, projectId);
 }
 
 /** Maps the named launch input onto `launchAuthorizedTerminal`'s positional signature. */
@@ -139,6 +141,18 @@ export function registerTerminalsIpc(): void {
   productHandle(
     IPC.terminals.restore,
     async (input: { capabilityId?: string; legacyRequest?: CreateTerminalRequest }): Promise<Result<TerminalSession>> => {
+      // A Squad worker seat is only ever relaunched by main's restarter (it rebinds slot and run);
+      // a renderer-driven restore would make a cohort-carrying lookalike the run ignores.
+      // Fails closed: a store without `get` cannot prove the capability is not a worker seat.
+      if (input.capabilityId && typeof ctx.restoreCapabilities.get !== 'function') {
+        return { ok: false, code: 'DENIED', message: 'restore capability unavailable or already reserved' };
+      }
+      const wanted = input.capabilityId
+        ? ctx.restoreCapabilities.get(input.capabilityId)?.request?.cohort
+        : input.legacyRequest?.cohort;
+      if (wanted?.role === 'worker' && wanted.executionId) {
+        return { ok: false, code: 'DENIED', message: 'a Squad worker cannot be restored outside its run' };
+      }
       const reserved = input.capabilityId ? ctx.restoreCapabilities.reserve(input.capabilityId) : undefined;
       if (reserved) {
         return restoreCapabilityLaunch({
@@ -275,6 +289,28 @@ export function registerTerminalsIpc(): void {
     // Mirror the renderer's other failure reasons so a thrown handler still
     // toasts something sensible rather than a generic IPC error.
     () => ({ ok: false as const, reason: 'summary-failed' as const })
+  );
+  safeProductHandle(
+    IPC.terminals.restartSquadWorker,
+    // Rule 1: the renderer sends only a session id; slot, run and authorization come from main.
+    (sessionId: string) => restartSquadWorkerCard({
+      getSession: (id) => ctx.ptys.getSession(id),
+      listLifecycleRecords: () => ctx.teamLifecycle.list(),
+      launchIsClosing: (recordId) => ctx.teamLifecycle.launchIsClosing(recordId),
+      getExecution: async (projectId, executionId) => {
+        const record = await ctx.executionStore.getInProject(projectId, executionId);
+        return record && {
+          state: record.state, callerPrincipalId: record.callerPrincipalId, teamLaunchRequestId: record.teamLaunchRequestId
+        };
+      },
+      isTerminalExecutionState: (state) => isTerminalExecutionState(state),
+      respawnExited: async (recordId, slotId) => {
+        const result = await ctx.squadWorkerRespawner.respawn(recordId, slotId);
+        return result.ok ? { ok: true as const } : { ok: false as const, message: result.message };
+      },
+      restart: (id, opts) => ctx.squadWorkerRestarter.restart(id, opts)
+    }, sessionId),
+    () => ({ ok: false as const, reason: 'restart-failed' })
   );
   safeProductHandle(
     IPC.terminals.sessionStats,
@@ -478,12 +514,12 @@ export function registerTerminalsIpc(): void {
   );
   safeProductHandle(
     IPC.menubar.open,
-    (view: 'dashboard' | 'agents' | 'settings' | 'scheduler') => {
+    async (view: 'dashboard' | 'agents' | 'settings' | 'scheduler') => {
       ctx.menubar?.hide();
       ctx.showMainWindow();
-      if (view === 'agents') ctx.safeSend('app:openAgents');
-      else if (view === 'settings') ctx.safeSend('app:openSettings');
-      else if (view === 'scheduler') ctx.safeSend('app:openScheduler');
+      if (view === 'agents') await ctx.sendToMainWindow('app:openAgents');
+      else if (view === 'settings') await ctx.sendToMainWindow('app:openSettings');
+      else if (view === 'scheduler') await ctx.sendToMainWindow('app:openScheduler');
       // 'dashboard' just shows the window (its default view).
     },
     () => undefined

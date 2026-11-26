@@ -30,13 +30,14 @@ import {
 } from '@zana-ai/zcc-domain/thread-runtime';
 import type { HostDaemonInteractiveRequestResponse } from '@zana-ai/zcc-host-daemon-contract';
 import type { InteractionActor } from '@zana-ai/zcc-domain';
+import type { PluginRelayedHumanActor } from '@zana-ai/zcc-plugin-sdk';
 import { HostUnavailableError } from '../../http/host-hub.js';
 import type { ProductHub } from '../../http/product-hub.js';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import { humanGateRefusal, type RequireHuman } from './human-gate.js';
 import { toPendingInteraction } from './pending-interaction-serialization.js';
 import { snapshotApprovedPlan } from '../threads/conversation-plan.js';
-import { appendPendingInteractionTimelineEvent } from './pending-interaction-timeline.js';
+import { appendPendingInteractionTimelineEvent, appendPluginRelayedInteractionAudit } from './pending-interaction-timeline.js';
 import {
   pendingInteractionResolutionEquals,
   validatePendingInteractionResolution
@@ -399,6 +400,8 @@ export class PendingInteractionLifecycle {
     threadId: string;
     interactionId: string;
     resolution: PendingInteractionResolution;
+    /** Validated by the plugin SDK boundary. Never confers native human authority. */
+    actor?: PluginRelayedHumanActor;
   }): Promise<PendingInteraction> {
     const current = this.getThreadInteraction(args);
     if (current.status !== 'pending') {
@@ -418,9 +421,15 @@ export class PendingInteractionLifecycle {
         'Plugin interactions must be submitted through the respond endpoint'
       );
     }
-    const resolving = setPendingInteractionResolving(this.deps.db, {
-      id: current.id,
-      resolution: JSON.stringify(args.resolution)
+    const resolving = this.deps.db.transaction(() => {
+      const row = setPendingInteractionResolving(this.deps.db, {
+        id: current.id,
+        resolution: JSON.stringify(args.resolution)
+      });
+      if (row && args.actor) {
+        appendPluginRelayedInteractionAudit(this.deps.db, this.deps.hub, toPendingInteraction(row), args.actor);
+      }
+      return row;
     });
     if (!resolving) throw conflict(this.requireInteraction(current.id));
     const queued = toPendingInteraction(resolving);

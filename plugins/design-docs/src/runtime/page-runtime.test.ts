@@ -262,11 +262,14 @@ describe('scripts', () => {
     violation({ blockedURI: `${PAGE_ORIGIN}/a.png`, effectiveDirective: 'img-src' });
     violation({ blockedURI: 'eval', effectiveDirective: 'script-src', lineNumber: 2, sourceFile: 'dd:app.js' });
     violation({ violatedDirective: 'style-src' });
+    // A host that merely starts with the page origin is a different origin and must be reported.
+    violation({ blockedURI: `${PAGE_ORIGIN}.example/x.png`, effectiveDirective: 'img-src' });
     reject('plain');
     expect(ofType('problem').map((message) => message.problem)).toEqual([
       { kind: 'error', message: 'Unhandled promise rejection: nope', source: 'index.html' },
       { kind: 'blocked', message: "The preview's sandbox blocked eval (script-src)", source: 'app.js', line: 2 },
       { kind: 'blocked', message: "The preview's sandbox blocked inline code (style-src)", source: 'index.html' },
+      { kind: 'blocked', message: `The preview's sandbox blocked ${PAGE_ORIGIN}.example/x.png (img-src)`, source: 'index.html' },
       { kind: 'error', message: 'Unhandled promise rejection: plain', source: 'index.html' }
     ]);
   });
@@ -572,6 +575,17 @@ describe('links', () => {
     ]);
   });
 
+  it('ignores data: and vbscript: links', async () => {
+    const { doc, ofType, scripts } = setup(
+      '<a id="d" href="data:text/html,<script>1</script>">d</a><a id="v" href="vbscript:msgbox(1)">v</a><a id="ok" href="https://example.com/a">e</a>'
+    );
+    const before = scripts.length;
+    for (const id of ['d', 'v', 'ok']) click(doc.getElementById(id)!);
+    await wait();
+    expect(ofType('open')).toEqual([{ type: 'open', url: 'https://example.com/a' }]);
+    expect(scripts).toHaveLength(before);
+  });
+
   it('follows links between standalone pages through the plugin endpoint', async () => {
     const warn = vi.fn();
     const { doc, go } = setup(
@@ -838,6 +852,25 @@ describe('comments', () => {
     ]);
     deliver({ type: 'bogus' } as never);
     deliver(null as never);
+  });
+
+  it('finds text for the app, ignores malformed find messages, and hands find keys back', () => {
+    stubHighlights();
+    const { win, doc, ofType, deliver } = setup('<p>Runs and more runs</p>');
+    vi.stubGlobal('document', doc);
+    deliver({ type: 'find', query: 'runs', step: 0 });
+    deliver({ type: 'find', query: 'runs', step: 1 });
+    deliver({ type: 'find', query: 7 as never, step: 0 });
+    deliver({ type: 'find', query: 'runs', step: 5 as never });
+    expect(ofType('find-result')).toEqual([
+      { type: 'find-result', index: 0, count: 2 },
+      { type: 'find-result', index: 1, count: 2 }
+    ]);
+    const key = new win.KeyboardEvent('keydown', { key: 'f', ctrlKey: true, cancelable: true });
+    doc.dispatchEvent(key);
+    expect(key.defaultPrevented).toBe(true);
+    expect(ofType('find-key')).toEqual([{ type: 'find-key', key: 'open' }]);
+    vi.unstubAllGlobals();
   });
 
   it('reports selections, and clears them on request', async () => {

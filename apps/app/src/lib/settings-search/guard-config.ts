@@ -20,7 +20,7 @@ export const SETTINGS_SOURCE_DIRS = ['views/settings', 'components/settings'] as
  */
 export const SECTION_SOURCES: Record<SearchSection, readonly string[]> = {
   global: ['views/settings/GlobalView.tsx', 'views/settings/CliSkillsSettings.tsx', 'components/settings/DoctorSection.tsx', 'views/settings/TrustedPreviewFoldersSection.tsx', 'components/settings/NamedChecksSettings.tsx'],
-  composer: ['views/settings/ComposerSettingsView.tsx', 'views/settings/DefaultThreadPermissionsField.tsx'],
+  composer: ['views/settings/ComposerSettingsView.tsx', 'views/settings/ComposerHarnessFields.tsx', 'views/settings/HarnessModelPreferences.tsx', 'views/settings/DefaultThreadPermissionsField.tsx'],
   keyboard: ['views/settings/KeyboardSettingsSection.tsx'],
   inbox: ['views/settings/InboxSettingsView.tsx'],
   browser: ['components/settings/BrowserSettingsSection.tsx', 'components/settings/BrowserImportDialog.tsx'],
@@ -42,7 +42,7 @@ export const SECTION_SOURCES: Record<SearchSection, readonly string[]> = {
   notifications: ['views/settings/NotificationsSettingsView.tsx', 'views/settings/AgentSoundSettings.tsx'],
   agents: ['views/settings/AgentsSettingsView.tsx', 'views/settings/AgentGuidanceSettings.tsx', 'components/settings/OverseerRecentPane.tsx', 'components/settings/ApiErrorResumeSection.tsx'],
   personas: ['views/settings/PersonasView.tsx'],
-  squads: ['views/settings/SquadsView.tsx'],
+  squads: ['views/settings/SquadsView.tsx', 'components/settings/SquadAdvancedSettings.tsx', 'components/settings/SquadDefaultsSettings.tsx', 'components/settings/SquadBlockerReminderRow.tsx'],
   usage: ['views/settings/UsageView.tsx'],
   experimental: ['views/settings/ExperimentalView.tsx'],
   development: ['views/settings/DevelopmentView.tsx'],

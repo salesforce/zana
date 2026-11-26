@@ -35,9 +35,49 @@ export interface WorkflowArgument {
   defaultValue?: string;
 }
 
-/** Matches a triple-brace escape first, then a plain double-brace slot. Ordering
- *  the escape alternative first means it wins at any given position. */
-const TOKEN_RE = /\{\{\{([\s\S]*?)\}\}\}|\{\{([\s\S]*?)\}\}/g;
+/** One `{{{escaped}}}` literal or `{{slot}}` span found in a template. */
+interface Token {
+  start: number;
+  end: number;
+  /** Body of a triple-brace escape; undefined for a slot. */
+  escaped?: string;
+  /** Body of a double-brace slot; undefined for an escape. */
+  slot?: string;
+}
+
+/**
+ * Find every token, left to right. A triple-brace escape wins over a slot at
+ * the same position, and each body ends at the first closing run (`}}}` or
+ * `}}`), so a body may contain braces and newlines.
+ *
+ * This is the hand-written form of
+ * `/\{\{\{([\s\S]*?)\}\}\}|\{\{([\s\S]*?)\}\}/g`, whose lazy body rescans to
+ * the end of the string from every `{{` when there is no closer (quadratic on
+ * "{{{{{{…"). Here `lastIndexOf` rules out a missing closer up front, so each
+ * `indexOf` that runs finds its match and the scan never revisits text.
+ */
+function scanTokens(template: string): Token[] {
+  const tokens: Token[] = [];
+  const lastTriple = template.lastIndexOf('}}}');
+  const lastDouble = template.lastIndexOf('}}');
+  let i = 0;
+  for (;;) {
+    i = template.indexOf('{{', i);
+    if (i === -1) break;
+    if (template.startsWith('{{{', i) && lastTriple >= i + 3) {
+      const close = template.indexOf('}}}', i + 3);
+      tokens.push({ start: i, end: close + 3, escaped: template.slice(i + 3, close) });
+      i = close + 3;
+      continue;
+    }
+    // No `}}` after this point means none after any later `{{` either.
+    if (lastDouble < i + 2) break;
+    const close = template.indexOf('}}', i + 2);
+    tokens.push({ start: i, end: close + 2, slot: template.slice(i + 2, close) });
+    i = close + 2;
+  }
+  return tokens;
+}
 
 /** A trimmed placeholder body is a valid argument name only if it's a single
  *  token of word-ish chars — keeps `{{ oops here }}` or `{{}}` from becoming
@@ -58,9 +98,9 @@ function argName(raw: string): string | null {
 export function parseArgumentNames(template: string): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const m of template.matchAll(TOKEN_RE)) {
-    if (m[1] !== undefined) continue; // escaped literal — not an argument
-    const name = m[2] !== undefined ? argName(m[2]) : null;
+  for (const token of scanTokens(template)) {
+    if (token.escaped !== undefined) continue; // escaped literal — not an argument
+    const name = token.slot !== undefined ? argName(token.slot) : null;
     if (name && !seen.has(name)) {
       seen.add(name);
       out.push(name);
@@ -159,12 +199,23 @@ export function substituteArguments(
   for (const a of resolveArguments(template, declared)) {
     if (a.defaultValue !== undefined) defaults.set(a.name, a.defaultValue);
   }
-  return template.replace(TOKEN_RE, (whole, escaped?: string, slot?: string) => {
-    if (escaped !== undefined) return `{{${escaped}}}`;
-    const name = slot !== undefined ? argName(slot) : null;
-    if (!name) return whole; // malformed — leave verbatim
+  let out = '';
+  let position = 0;
+  for (const token of scanTokens(template)) {
+    out += template.slice(position, token.start);
+    position = token.end;
+    if (token.escaped !== undefined) {
+      out += `{{${token.escaped}}}`;
+      continue;
+    }
+    const name = token.slot !== undefined ? argName(token.slot) : null;
+    if (!name) {
+      out += template.slice(token.start, token.end); // malformed — leave verbatim
+      continue;
+    }
     const provided = values[name];
-    if (provided !== undefined && provided !== '') return provided;
-    return defaults.get(name) ?? '';
-  });
+    if (provided !== undefined && provided !== '') out += provided;
+    else out += defaults.get(name) ?? '';
+  }
+  return out + template.slice(position);
 }

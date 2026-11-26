@@ -8,7 +8,9 @@ import {
   REMAPPABLE_COMMANDS,
   setCommandShortcutOverride,
   shortcutLabelForCommand,
-  titleWithShortcut
+  titleWithShortcut,
+  titleWithFixedShortcut,
+  fixedNavShortcutKey
 } from './keyboard-shortcut-settings.js';
 import { NAMED_PANE_COMMANDS, PANE_FOCUS_INDEX_COMMANDS } from './split-layout/paneCommands.js';
 
@@ -18,6 +20,16 @@ function key(init: KeyboardEventInit): KeyboardEvent {
 
 afterEach(() => {
   localStorage.removeItem('zcc.keyboard-overrides');
+});
+
+describe('rail toggle binding', () => {
+  it('is remappable, bound to Mod+Shift+B, and does not collide with the explorer toggle', () => {
+    expect(REMAPPABLE_COMMANDS.some((row) => row.command === 'sidebar.rail.toggle')).toBe(true);
+    const rail = DEFAULT_APP_KEYBINDINGS.find((row) => row.command === 'sidebar.rail.toggle');
+    const explorer = DEFAULT_APP_KEYBINDINGS.find((row) => row.command === 'sidebar.toggle');
+    expect(rail?.shortcut).toMatchObject({ key: 'b', mod: true, shift: true });
+    expect(explorer?.shortcut).toMatchObject({ key: 'b', mod: true, shift: false });
+  });
 });
 
 describe('split pane default bindings', () => {
@@ -135,5 +147,20 @@ describe('shortcut labels and titles', () => {
     setCommandShortcutOverride('pane.close', null);
     expect(shortcutLabelForCommand('pane.close', 'MacIntel')).toBeNull();
     expect(titleWithShortcut('Close pane', 'pane.close')).toBe('Close pane');
+  });
+});
+
+describe('fixed navigation shortcuts', () => {
+  it('formats Mod+key per platform', () => {
+    expect(titleWithFixedShortcut('Inbox', 'i', 'Win32')).toBe('Inbox (Ctrl + I)');
+    expect(titleWithFixedShortcut('Inbox', 'i', 'MacIntel')).toBe('Inbox (⌘ I)');
+  });
+
+  it('knows only the rows wired in shortcuts.ts', () => {
+    expect(fixedNavShortcutKey('inbox')).toBe('i');
+    expect(fixedNavShortcutKey('agents')).toBe('o');
+    expect(fixedNavShortcutKey('scheduler')).toBe('j');
+    expect(fixedNavShortcutKey('extensions')).toBeUndefined();
+    expect(fixedNavShortcutKey('constructor')).toBeUndefined();
   });
 });

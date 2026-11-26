@@ -19,6 +19,7 @@ import {
   ControlError,
   ProductHttpClient,
   spawnThread as sdkSpawnThread,
+  callerThreadId,
   exitCodeForControlError,
   waitForThreadStatus,
   type PermissionMode
@@ -339,10 +340,11 @@ export async function runThreadCommand(
     const id = rest[0];
     const message = rest.slice(1).join(' ').trim();
     if (!id || !message) return errResult('thread tell requires a <threadId> and a message', 2);
+    const fromThreadId = callerThreadId();
     const sent = await productRequest<{ thread?: ThreadRow }>(
       'POST',
       `/api/v1/threads/${encodeURIComponent(id)}/send`,
-      { deps, body: { text: message, mode: 'auto' } }
+      { deps, body: { text: message, mode: 'auto', ...(fromThreadId ? { fromThreadId } : {}) } }
     );
     if (!sent.ok) return sent.result;
     const row = sent.data.thread;

@@ -20,7 +20,7 @@
  * they must be the byte-exact sequence `extractLastOscTitle` parses. This is the
  * load-bearing detail; a wrong byte yields a title the classifier ignores.
  */
-import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -267,7 +267,8 @@ function presetBody(opts: FakeAgentOptions): string {
  * no re-asking the human. The test answers the question out-of-band via
  * `executionBoard.respond`.
  */
-export type JobTeamScenario = 'success' | 'unattended' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'kickoff-churn' | 'peer-handoff' | 'plan-correction' | 'plan-correction-silent' | 'api-error-nudge' | 'api-error-restart' | 'api-error-permanent';
+export type JobTeamScenario = 'success' | 'unattended' | 'failed-dag' | 'stalled-worker' | 'streaming-worker' | 'streaming-worker-ceiling' | 'kickoff-churn' | 'kickoff-churn-single-seat' | 'peer-handoff' | 'plan-correction' | 'plan-correction-silent' | 'api-error-nudge' | 'api-error-restart' | 'api-error-permanent' | 'no-route'
+  | 'worker-exit-1' | 'respawn-after-kill' | `spawn-throw-slot-${number}`;
 
 /** The behavior gates the generated coordinator script keys its behavior off. */
 interface JobTeamScenarioFlags {
@@ -275,13 +276,24 @@ interface JobTeamScenarioFlags {
   failedDag: boolean;
   stalled: boolean;
   streaming: boolean;
+  /** Streaming worker whose owner sets a short output-only ceiling, so the ceiling (not the lease) reclaims it. */
+  streamingCeiling: boolean;
   churn: boolean;
+  /** Kickoff churn with ONE worker seat (#789: same-seat retry before the human block). */
+  churnSingleSeat: boolean;
   handoff: boolean;
   planCorrection: boolean;
   planCorrectionSilent: boolean;
   apiErrorNudge: boolean;
   apiErrorRestart: boolean;
   apiErrorPermanent: boolean;
+  noRoute: boolean;
+  /** Worker exits 1 on its first assignment. */
+  workerExit1: boolean;
+  /** First worker process holds its claim forever (so a spec can kill it); a respawned process completes normally. */
+  respawnAfterKill: boolean;
+  /** 1-based worker launch ordinal that dies at boot with 127 (exec-failure analogue); 0 = off. */
+  spawnThrowSlot: number;
 }
 
 /** Map a scenario name to the script's behavior flags (exactly one true, or none for 'success'). */
@@ -290,14 +302,20 @@ function resolveScenarioFlags(scenario?: JobTeamScenario): JobTeamScenarioFlags 
     unattended: scenario === 'unattended',
     failedDag: scenario === 'failed-dag',
     stalled: scenario === 'stalled-worker',
-    streaming: scenario === 'streaming-worker',
-    churn: scenario === 'kickoff-churn',
+    streaming: scenario === 'streaming-worker' || scenario === 'streaming-worker-ceiling',
+    streamingCeiling: scenario === 'streaming-worker-ceiling',
+    churn: scenario === 'kickoff-churn' || scenario === 'kickoff-churn-single-seat',
+    churnSingleSeat: scenario === 'kickoff-churn-single-seat',
     handoff: scenario === 'peer-handoff',
     planCorrection: scenario === 'plan-correction',
     planCorrectionSilent: scenario === 'plan-correction-silent',
     apiErrorNudge: scenario === 'api-error-nudge',
     apiErrorRestart: scenario === 'api-error-restart',
-    apiErrorPermanent: scenario === 'api-error-permanent'
+    apiErrorPermanent: scenario === 'api-error-permanent',
+    noRoute: scenario === 'no-route',
+    workerExit1: scenario === 'worker-exit-1',
+    respawnAfterKill: scenario === 'respawn-after-kill',
+    spawnThrowSlot: Number(/^spawn-throw-slot-(\d+)$/.exec(scenario ?? '')?.[1] ?? 0)
   };
 }
 
@@ -382,6 +400,8 @@ const STALLED = ${JSON.stringify(flags.stalled)};
 // reclaim this live worker. This is the discriminator vs STALLED (silent → reclaimed):
 // a streaming worker is healthy-long, not hung, so lease expiry must not fire.
 const STREAMING = ${JSON.stringify(flags.streaming)};
+// Past-ceiling variant: the same streaming worker, but the owner sets a 4s output-only ceiling.
+const STREAMING_CEILING = ${JSON.stringify(flags.streamingCeiling)};
 // Kickoff-churn repro (WS1 reassign + WS3 human block): a two-WORKER team whose
 // sole unit lands on a worker that CLAIMS but never turns (turnCount stays 0,
 // identical stall behavior to STALLED). Each wall-clock reclaim bumps the unit's
@@ -391,6 +411,7 @@ const STREAMING = ${JSON.stringify(flags.streaming)};
 // path forever. Reuses stalledWorker(); the only differences from STALLED are the
 // 2-worker slot count (so a fresh peer exists) and the distinct jobTitle.
 const CHURN = ${JSON.stringify(flags.churn)};
+const CHURN_SINGLE_SEAT = ${JSON.stringify(flags.churnSingleSeat)};
 // Peer-handoff repro (workflow-testing manual test): a TWO-worker team with ONE
 // unit. Whichever worker takes the FIRST claim (claimGeneration 1) holds it
 // NON-restful forever — no wall-clock ceiling and the lease far outlasts the
@@ -415,6 +436,18 @@ const PLAN_CORRECTION_SILENT = ${JSON.stringify(flags.planCorrectionSilent)};
 const API_ERROR_NUDGE = ${JSON.stringify(flags.apiErrorNudge)};
 const API_ERROR_RESTART = ${JSON.stringify(flags.apiErrorRestart)};
 const API_ERROR_PERMANENT = ${JSON.stringify(flags.apiErrorPermanent)};
+// No-route repro: the last step must not run on the workers that ran its two parents (a, c), and there are only two. The engine blocks it behind a
+// coordinator blocker and wakes this coordinator, which logs the wake and EXITS without answering, so the
+// stale-blocker sweep escalates to the human (Inbox). A worker never receives the step.
+const NO_ROUTE = ${JSON.stringify(flags.noRoute)};
+// worker-exit-1: the worker takes its first assignment then exits 1 (crash mid-unit).
+const WORKER_EXIT_1 = ${JSON.stringify(flags.workerExit1)};
+// respawn-after-kill: the FIRST worker process holds its claim forever (a spec kills it and calls
+// respawn); any later process (marker file present) behaves as a normal completing worker.
+const RESPAWN_AFTER_KILL = ${JSON.stringify(flags.respawnAfterKill)};
+// spawn-throw-slot-N: the Nth worker process launched (counted via exclusive marker files beside this
+// script) dies at boot with 127, the observable shape of a failed exec. 0 = off.
+const SPAWN_THROW_SLOT = ${JSON.stringify(flags.spawnThrowSlot)};
 // Optional execution.start idle deadline (ms); null = engine default. Used by the blocked-wait E2E.
 const DEADLINE_MS = ${JSON.stringify(deadlineMs ?? null)};
 const APIERR = API_ERROR_NUDGE || API_ERROR_RESTART || API_ERROR_PERMANENT;
@@ -514,7 +547,14 @@ const HANDOFF_PLAN = [
 const API_ERROR_PLAN = [
   { id: 'api-error-unit', title: 'API Error Unit', task: 'Write api-error.txt containing RECOVERED: ready', dependencies: [], files: ['api-error.txt'], verification: ['api-error.txt present'] }
 ];
-const PLAN = APIERR ? API_ERROR_PLAN : FAILED_DAG ? FAILED_DAG_PLAN : (STALLED || CHURN) ? STALLED_PLAN : STREAMING ? STREAMING_PLAN : HANDOFF ? HANDOFF_PLAN : SUCCESS_PLAN;
+// Launch preflight rejects a plan whose hard requirement is unmeetable up front, so the dead end must appear at
+// runtime: a and c run in parallel on the two workers, then review-step may use neither of them.
+const NO_ROUTE_PLAN = [
+  { id: 'a', title: 'Step A', task: 'Complete step A', dependencies: [], readOnly: true, verification: ['a done'] },
+  { id: 'c', title: 'Step C', task: 'Complete step C', dependencies: [], readOnly: true, verification: ['c done'] },
+  { id: 'review-step', title: 'Review Step', task: 'Review both (no remaining worker may take it)', dependencies: ['a', 'c'], readOnly: true, verification: ['review recorded'], routing: { version: 1, excludeSameWorkerAs: ['a', 'c'] } }
+];
+const PLAN = NO_ROUTE ? NO_ROUTE_PLAN : APIERR ? API_ERROR_PLAN : FAILED_DAG ? FAILED_DAG_PLAN : (STALLED || CHURN) ? STALLED_PLAN : STREAMING ? STREAMING_PLAN : HANDOFF ? HANDOFF_PLAN : SUCCESS_PLAN;
 
 async function owner() {
   log('owner start');
@@ -522,7 +562,7 @@ async function owner() {
     version: 1,
     teamId: 'e2e-job-team',
     launchRequestId: 'e2e-cli-agent-job-' + process.pid,
-    jobTitle: ANSWERS_REPORTS ? 'CLI Agent reporting job' : APIERR ? 'CLI Agent API error job' : CHURN ? 'CLI Agent kickoff churn job' : STALLED ? 'CLI Agent stalled job' : STREAMING ? 'CLI Agent streaming job' : HANDOFF ? 'CLI Agent handoff job' : 'CLI Agent durable job',
+    jobTitle: ANSWERS_REPORTS ? 'CLI Agent reporting job' : APIERR ? 'CLI Agent API error job' : CHURN ? 'CLI Agent kickoff churn job' : NO_ROUTE ? 'CLI Agent no-route job' : STALLED ? 'CLI Agent stalled job' : STREAMING ? 'CLI Agent streaming job' : HANDOFF ? 'CLI Agent handoff job' : 'CLI Agent durable job',
     summary: 'Full Job Team route started by a CLI Agent owner.',
     workUnits: PLAN,
     ...(ANSWERS_REPORTS ? { notify: true } : {}),
@@ -536,10 +576,11 @@ async function owner() {
     // that the output-activity lease heartbeat keeps a live worker from being reclaimed,
     // so no wall-clock ceiling may pre-empt it during the test window.
     ...((STALLED || CHURN) ? { maxClaimWallClockMs: 1000 } : {}),
+    ...(STREAMING_CEILING ? { maxClaimOutputOnlyMs: 4000 } : {}),
     // CHURN and HANDOFF deliberately fall to the else branch below (1 coordinator
     // + 2 WORKER slots): the second worker slot is the untried peer that WS1
     // reassigns onto (CHURN) or that completes the re-dispatched unit (HANDOFF).
-    slots: STALLED || STREAMING || APIERR
+    slots: STALLED || STREAMING || CHURN_SINGLE_SEAT || APIERR || WORKER_EXIT_1 || RESPAWN_AFTER_KILL
       ? [
           { initialTask: 'Coordinate the durable execution.' },
           { initialTask: 'Run assigned work from the durable execution.' }
@@ -615,11 +656,11 @@ async function proposer() {
       log('snapshot[' + entry.label + ']', JSON.stringify({ ok: snap.ok, state: snap.ok && snap.value && snap.value.execution ? snap.value.execution.state : snap.error }));
       if (spec.observeExecutions) {
         const id = proposed.value.executionId;
-        const initial = await tryMcp('execution.status', { executionId: id });
+        const initial = await tryMcp('execution.status', { executionId: id, mode: 'full' });
         log('initial[' + entry.label + ']', JSON.stringify(initial));
         (async function () {
           for (let i = 0; i < 600; i++) {
-            const current = await tryMcp('execution.status', { executionId: id });
+            const current = await tryMcp('execution.status', { executionId: id, mode: 'full' });
             if (current.ok && ['COMPLETED', 'FAILED', 'STOPPED'].includes(current.value.state)) {
               log('terminal[' + entry.label + ']', JSON.stringify(current));
               return;
@@ -633,7 +674,21 @@ async function proposer() {
   }
   setIdle();
   log('proposer idle');
-  await new Promise(function () {});
+  // Owner calls: the spec drops .e2e-owner-call.json ({label, tool, input}) once it knows the executionId/slot; this
+  // launcher IS the run's owner, so the call is made with owner authority. Result is logged as owner-call[label].
+  const callFile = path.join(CWD, '.e2e-owner-call.json');
+  for (;;) {
+    if (fs.existsSync(callFile)) {
+      let req = null;
+      try { req = JSON.parse(fs.readFileSync(callFile, 'utf8')); } catch (e) { req = null; }
+      if (req) {
+        fs.unlinkSync(callFile);
+        const out = await tryMcp(req.tool, req.input);
+        log('owner-call[' + req.label + ']', JSON.stringify(out));
+      }
+    }
+    await sleep(250);
+  }
 }
 
 async function orchestrator() {
@@ -660,8 +715,37 @@ async function orchestrator() {
   // Stalled repro: the sole unit's worker never completes, so there is nothing to
   // finalize. Hand off to the engine's reclaim sweep and hold — the E2E asserts
   // the wall-clock backstop reclaims + re-dispatches (claimGeneration climbs).
+  // respawn-after-kill: the spec drops .e2e-respawn.json ({slotId}) in the run folder after killing the
+  // first worker; the coordinator calls execution.worker.respawn and logs respawn[<slotId>] with the result.
+  if (RESPAWN_AFTER_KILL) {
+    log('respawn: dispatched, waiting for respawn requests');
+    const reqFile = path.join(CWD, '.e2e-respawn.json');
+    for (;;) {
+      if (fs.existsSync(reqFile)) {
+        const req = JSON.parse(fs.readFileSync(reqFile, 'utf8'));
+        fs.unlinkSync(reqFile);
+        const out = await tryMcp('execution.worker.respawn', { executionId: EXECUTION_ID, slotId: req.slotId });
+        log('respawn[' + req.slotId + ']', JSON.stringify(out));
+      }
+      await sleep(250);
+    }
+  }
   if (STALLED || CHURN) { log((CHURN ? 'churn' : 'stalled') + ': dispatched, holding for reclaim/escalation'); await hold(); }
   if (STREAMING) { log('streaming: dispatched, holding while worker streams'); await hold(); }
+  if (NO_ROUTE) {
+    // The engine wakes the coordinator through its PTY once the step is blocked. Log it, then exit unanswered.
+    let wakeBuf = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', function (chunk) {
+      wakeBuf += String(chunk);
+      if (!/has no qualified worker/.test(wakeBuf)) return;
+      log('no-route wake received; exiting without answering');
+      setTimeout(function () { process.exit(0); }, 300);
+    });
+    process.stdin.resume();
+    setIdle();
+    await hold();
+  }
   // Deliberately do NOT call execution.complete. This models a real orchestrator
   // (e.g. an external skill-driven coordinator) that dispatches the DAG but never
   // finalizes — the observed stall. The engine's auto-finalize safety net must
@@ -722,14 +806,17 @@ async function planCorrectionOrchestrator() {
     })();
   });
   process.stdin.resume();
-  setIdle(); // rest so the host sees an idle edge and reviews the rejected plan
+  // Finish an initial turn so the host can distinguish this idle edge from startup idle.
+  setWorking();
+  await sleep(600);
+  setIdle();
   await new Promise(function () {});
 }
 
-async function handleNavigationLabel(outcomeFence) {
-  const blockerId = 'blk-navigation-label';
+async function handleNavigationLabel(outcomeFence, blockedUnitId, blockedBlockerId) {
+  const blockerId = blockedBlockerId || 'blk-navigation-label';
   const r = await tryMcp('execution.work.block', {
-    executionId: EXECUTION_ID, workUnitId: 'navigation-label', blockerId: blockerId,
+    executionId: EXECUTION_ID, workUnitId: blockedUnitId || 'navigation-label', blockerId: blockerId,
     question: 'Which label should result.txt use?', options: ['About', 'About Atlas'], ...outcomeFence
   });
   log('block', r.ok ? 'ok' : r.error);
@@ -826,6 +913,10 @@ async function doUnit(unitId) {
     } else if (unitId === 'about') {
       fs.writeFileSync(path.join(CWD, 'about.txt'), 'ABOUT: ready\n');
       await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: 'about', result: 'ABOUT: ready', ...outcomeFence });
+    } else if (NO_ROUTE && (unitId === 'a' || unitId === 'c')) {
+      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: unitId + ' done', ...outcomeFence });
+    } else if (NO_ROUTE && unitId === 'review-step') {
+      throw new Error('review-step was dispatched to a worker it must never run on');
     } else if (unitId === 'api-error-unit') {
       fs.writeFileSync(path.join(CWD, 'api-error.txt'), 'RECOVERED: ready\n');
       await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: 'recovered', ...outcomeFence });
@@ -854,6 +945,35 @@ async function doUnit(unitId) {
       const about = fs.readFileSync(path.join(CWD, 'about.txt'), 'utf8').trim();
       fs.writeFileSync(path.join(CWD, 'result.txt'), home + '\n' + about + '\nLABEL: ' + chosenLabel + '\n');
       await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: 'assemble', result: 'assembled', ...outcomeFence });
+    } else if (unitId === 'unit-a' || unitId === 'unit-b') {
+      const file = unitId === 'unit-a' ? 'a.txt' : 'b.txt';
+      fs.writeFileSync(path.join(CWD, file), unitId + ' done\n');
+      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: unitId + ' done', ...outcomeFence });
+    } else if (unitId === 'scope-parent') {
+      // Scope re-split: park on a durable question; the owner's answer names a file outside this unit's scope.
+      const answer = await handleNavigationLabel(outcomeFence, 'scope-parent', 'blk-scope-parent');
+      log('scope-parent answer', JSON.stringify(answer));
+      fs.writeFileSync(path.join(CWD, 'parent.txt'), 'parent done\n');
+      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: 'parent done', ...outcomeFence });
+    } else if (unitId.indexOf('scope-parent-split-') === 0) {
+      fs.mkdirSync(path.join(CWD, 'server'), { recursive: true });
+      fs.writeFileSync(path.join(CWD, 'server', 'contract.ts'), 'export const contract = 1;\n');
+      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: 'child done', ...outcomeFence });
+    } else if (unitId === 'ckpt-fail' || unitId === 'ckpt-pass') {
+      // Unit checkpoints: write through the same PostToolUse hook commands a real Claude worker runs, so main
+      // attributes each path to this claim; the failing unit then fails and main restores it from the git baseline.
+      const hooks = apiErrorHooks();
+      log('ckpt hooks PostToolUse=' + hooks.has('PostToolUse'));
+      const wrote = unitId === 'ckpt-fail' ? { 'tracked.txt': 'worker edit\n', 'owned.txt': 'worker created\n', 'predirty.txt': 'worker overwrote predirty\n' } : { 'sibling.txt': 'sibling done\n' };
+      Object.keys(wrote).forEach(function (name) {
+        fs.writeFileSync(path.join(CWD, name), wrote[name]);
+        hooks.run('PostToolUse', { hook_event_name: 'PostToolUse', tool_name: 'Write', tool_input: { file_path: path.join(CWD, name) }, tool_response: { success: true }, cwd: CWD });
+      });
+      if (unitId === 'ckpt-fail') {
+        await mcp('execution.work.fail', { executionId: EXECUTION_ID, workUnitId: unitId, failureCode: 'VALIDATION_FAILED', failure: 'Deterministic checkpoint failure', ...outcomeFence });
+      } else {
+        await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: 'sibling done', ...outcomeFence });
+      }
     } else {
       log('unknown unit', unitId);
       return;
@@ -1091,7 +1211,37 @@ async function apiErrorWorker() {
   await new Promise(function () {});
 }
 
+// Claim an ordinal among worker launches; exclusive-create makes concurrent boots race-safe.
+function workerLaunchOrdinal() {
+  for (let n = 1; n < 1000; n++) {
+    try { fs.closeSync(fs.openSync(path.join(__dirname, 'worker-launch-' + n), 'wx')); return n; } catch (e) { if (e.code !== 'EEXIST') throw e; }
+  }
+  return 1000;
+}
+
 async function worker() {
+  if (SPAWN_THROW_SLOT) {
+    const ordinal = workerLaunchOrdinal();
+    log('worker launch ordinal', ordinal);
+    if (ordinal === SPAWN_THROW_SLOT) { log('spawn-throw: dying at boot'); process.exit(127); }
+  }
+  if (RESPAWN_AFTER_KILL) {
+    const marker = path.join(__dirname, 'respawn-first-worker');
+    let first = false;
+    try { fs.closeSync(fs.openSync(marker, 'wx')); first = true; } catch (e) { if (e.code !== 'EEXIST') throw e; }
+    log('respawn-after-kill: first=' + first);
+    if (first) return stalledWorker();
+  }
+  if (WORKER_EXIT_1) {
+    const ASSIGN = new RegExp('assigned work unit ' + BT + '([^' + BT + ']+)' + BT);
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', function (chunk) {
+      if (ASSIGN.test(String(chunk))) { log('worker-exit-1: exiting 1'); process.exit(1); }
+    });
+    process.stdin.resume();
+    setIdle();
+    await new Promise(function () {});
+  }
   if (HANDOFF) return handoffWorker();
   if (APIERR) return apiErrorWorker();
   if (STALLED || CHURN) return stalledWorker();
@@ -1221,6 +1371,37 @@ async function worker() {
   } catch (e) { log('fatal', String((e && e.stack) || e)); await hold(); }
 })();
 `;
+}
+
+/**
+ * Drop a persona JSON file into the isolated HOME's global persona store
+ * (`<home>/.zcc/personas/<id>.json`). Call before app launch, or follow with a reload,
+ * so the store picks it up. Pass `raw` to write a deliberately malformed file.
+ */
+export function dropPersonaFile(home: string, persona: { id: string } & Record<string, unknown>, raw?: string): string {
+  const dir = join(home, '.zcc', 'personas');
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${persona.id}.json`);
+  writeFileSync(file, raw ?? JSON.stringify({ name: persona.id, description: '', baseProfile: 'claude', permissionMode: 'default', systemPrompt: '', ...persona }, null, 2));
+  return file;
+}
+
+/**
+ * A fixture binary that cannot be exec'd (bad shebang interpreter, mode 0755), so a PTY spawn
+ * of it fails the way a missing/broken harness binary does. Caller owns cleanup.
+ */
+export function makeUnexecutableBinary(): FakeAgentBinary {
+  const dir = mkdtempSync(join(tmpdir(), 'zcc-unexec-'));
+  const path = join(dir, 'claude-unexec');
+  writeFileSync(path, '#!/nonexistent/zcc-interpreter\n');
+  chmodSync(path, 0o755);
+  return {
+    path,
+    dir,
+    cleanup() {
+      try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
+  };
 }
 
 export function makeJobTeamCoordinatorBinary(options: { scenario?: JobTeamScenario; deadlineMs?: number } = {}): FakeAgentBinary {

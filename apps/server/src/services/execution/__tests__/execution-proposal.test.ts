@@ -370,8 +370,21 @@ describe('onHumanBlocker', () => {
     await svc.dispatchReady(coordinator);
     clock.t += 700_000;
     await svc.redispatchStalled();
+    expect(onHumanBlocker).not.toHaveBeenCalled(); // #789: the lone seat is retried first
+    clock.t += 700_000;
+    await svc.redispatchStalled();
     expect(onHumanBlocker).toHaveBeenCalledOnce();
     expect(onHumanBlocker).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ audience: 'human', workUnitId: 'a' }));
+  }));
+});
+
+describe('board projection resolvedTransport', () => {
+  it('exposes the pinned launch mode and omits it for older runs', async () => fixture(async (filePath) => {
+    const store = createExecutionStore({ filePath, id: () => 'execution-1' });
+    const record = (await store.claim(claimInput({}) as never)).record;
+    expect('resolvedTransport' in executionBoardProjection(record)).toBe(false);
+    const pinned = { ...record, resolvedTransport: { transport: 'MODERN' as const, source: 'global' as const } };
+    expect(executionBoardProjection(pinned as ExecutionRecord).resolvedTransport).toEqual({ transport: 'MODERN', source: 'global' });
   }));
 });
 

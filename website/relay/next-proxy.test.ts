@@ -1,6 +1,6 @@
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
-import { nextOriginFromEnv, proxyToNext, shouldSpawnNext } from './next-proxy.mjs';
+import { nextOriginFromEnv, proxyToNext, resolveNextTarget, shouldSpawnNext } from './next-proxy.mjs';
 
 let upstream: ReturnType<typeof createServer> | null = null;
 let door: ReturnType<typeof createServer> | null = null;
@@ -27,6 +27,85 @@ describe('next-proxy helpers', () => {
     );
     expect(nextOriginFromEnv({ ZCC_NEXT_PORT: '9999' } as NodeJS.ProcessEnv)).toBe('http://127.0.0.1:9999');
     expect(nextOriginFromEnv({} as NodeJS.ProcessEnv)).toBe('http://127.0.0.1:4322');
+  });
+
+  describe('resolveNextTarget', () => {
+    const origin = 'http://127.0.0.1:4322';
+
+    it('keeps origin-form paths and queries on the Next origin', () => {
+      expect(resolveNextTarget('/docs/?a=1', origin)?.href).toBe('http://127.0.0.1:4322/docs/?a=1');
+      expect(resolveNextTarget(undefined, origin)?.href).toBe('http://127.0.0.1:4322/');
+      expect(resolveNextTarget('/a/../b', origin)?.pathname).toBe('/b');
+    });
+
+    it.each([
+      ['protocol-relative', '//evil.example/x'],
+      ['backslash host', '/\\evil.example/x'],
+      ['absolute-form http', 'http://evil.example/x'],
+      ['absolute-form other scheme', 'file:///etc/passwd'],
+      ['authority-form', 'evil.example:443'],
+      ['bare path without slash', 'docs']
+    ])('rejects %s request targets', (_label, target) => {
+      expect(resolveNextTarget(target, origin)).toBeNull();
+    });
+
+    it('never resolves to a different origin, even after dot-segment normalization', () => {
+      const expected: Array<[string, string]> = [
+        ['/.//evil.example/x', '//evil.example/x'],
+        ['/a/..//evil.example/x', '//evil.example/x'],
+        ['/%2F%2Fevil.example/x', '/%2F%2Fevil.example/x']
+      ];
+      for (const [target, pathname] of expected) {
+        const resolved = resolveNextTarget(target, origin);
+        expect(resolved).not.toBeNull();
+        expect(resolved?.origin).toBe(origin);
+        expect(resolved?.pathname).toBe(pathname);
+      }
+    });
+  });
+
+  it('answers 400 and never contacts another host for a protocol-relative target', async () => {
+    let evilHits = 0;
+    const evil = createServer((_request, response) => {
+      evilHits += 1;
+      response.end('evil');
+    });
+    await new Promise<void>((resolve) => evil.listen(0, '127.0.0.1', () => resolve()));
+    const evilAddress = evil.address();
+    if (!evilAddress || typeof evilAddress === 'string') throw new Error('evil did not bind');
+
+    upstream = createServer((_request, response) => response.end('next'));
+    await new Promise<void>((resolve) => upstream!.listen(0, '127.0.0.1', () => resolve()));
+    const upstreamAddress = upstream.address();
+    if (!upstreamAddress || typeof upstreamAddress === 'string') throw new Error('upstream did not bind');
+    const origin = `http://127.0.0.1:${upstreamAddress.port}`;
+
+    door = createServer((request, response) => proxyToNext(request, response, origin));
+    await new Promise<void>((resolve) => door!.listen(0, '127.0.0.1', () => resolve()));
+    const doorAddress = door.address();
+    if (!doorAddress || typeof doorAddress === 'string') throw new Error('door did not bind');
+
+    try {
+      const statuses = await Promise.all(
+        [`//127.0.0.1:${evilAddress.port}/x`, `/.//127.0.0.1:${evilAddress.port}/x`].map(
+          (path) =>
+            new Promise<number>((resolve, reject) => {
+              const req = httpRequest({ host: '127.0.0.1', port: doorAddress.port, path }, (res) => {
+                res.resume();
+                resolve(res.statusCode ?? 0);
+              });
+              req.on('error', reject);
+              req.end();
+            })
+        )
+      );
+      expect(statuses[0]).toBe(400);
+      // Dot-segment form is origin-form: proxied to Next, never to the other host.
+      expect(statuses[1]).toBe(200);
+      expect(evilHits).toBe(0);
+    } finally {
+      await new Promise<void>((resolve) => evil.close(() => resolve()));
+    }
   });
 
   it('proxies marketing HTTP to Next without a 308', async () => {

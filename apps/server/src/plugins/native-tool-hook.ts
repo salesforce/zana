@@ -40,6 +40,21 @@ const validId = (value: unknown): value is string =>
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
+/** Deepest nesting a tool input may have; real tool inputs are far shallower. */
+const MAX_INPUT_DEPTH = 64;
+
+/** True when `value` nests deeper than `limit`. Iterative, so hostile depth cannot overflow the stack. */
+function nestsDeeperThan(value: unknown, limit: number): boolean {
+  const stack: Array<[unknown, number]> = [[value, 0]];
+  while (stack.length > 0) {
+    const [node, depth] = stack.pop() as [unknown, number];
+    if (typeof node !== 'object' || node === null) continue;
+    if (depth >= limit) return true;
+    for (const child of Object.values(node)) stack.push([child, depth + 1]);
+  }
+  return false;
+}
+
 /**
  * Parse one PreToolUse event into the call a policy judges, or null (deny).
  * Claude Code's PreToolUse carries no `turn_id`; Codex's does, and a present
@@ -59,6 +74,8 @@ export function parseNativeToolHookEvent(sessionId: string, body: string): Nativ
     const toolName = event.tool_name;
     const input = event.tool_input ?? {};
     if ((turnId !== null && !validId(turnId)) || !validId(toolUseId) || !validId(toolName) || !isObject(input)) return null;
+    // Deterministic across V8 versions: newer engines no longer overflow while re-serialising.
+    if (nestsDeeperThan(input, MAX_INPUT_DEPTH)) return null;
     const invocationId = createHash('sha256')
       .update(JSON.stringify([sessionId, turnId, toolUseId, toolName, input]))
       .digest('hex');

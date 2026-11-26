@@ -624,13 +624,29 @@ function processEnvRecord(): Record<string, string> {
   return env;
 }
 
+// Same names as agent-process-utils; the desktop does not depend on that package.
+const PROTECTED_PIDS_ENV = 'ZANA_PROTECTED_PIDS';
+const TREE_KILL_AUDIT_ENV = 'ZANA_TREE_KILL_AUDIT';
+
+/** Add `pid` to the list of Zana PIDs a Windows tree kill must refuse; children inherit it. */
+export function exportProtectedPid(pid: number, env: NodeJS.ProcessEnv = process.env): void {
+  const known = new Set((env[PROTECTED_PIDS_ENV] ?? '').split(',').filter(Boolean));
+  known.add(String(pid));
+  env[PROTECTED_PIDS_ENV] = [...known].join(',');
+}
+
 function startUtility(
+  auditDir: string | undefined,
   entry: string,
   startMessage: unknown,
   extraEnv?: Record<string, string>,
   peerBootKey?: Uint8Array | null
 ): Promise<{ child: UtilityChild; url: string; hostId?: string; instanceId?: string }> {
   return new Promise((resolveReady, rejectReady) => {
+    // Children inherit this list, so a tree kill in any of them refuses Zana's
+    // own desktop PID and the siblings forked before it.
+    exportProtectedPid(process.pid);
+    if (auditDir) process.env[TREE_KILL_AUDIT_ENV] = join(auditDir, 'logs', 'tree-kill.log');
     const env = { ...processEnvRecord(), ...extraEnv };
     delete env[PEER_BOOT_KEY_ENV];
     const child = utilityProcess.fork(entry, [], {
@@ -678,6 +694,7 @@ function startUtility(
       }
     });
     child.once('spawn', () => {
+      if (child.pid) exportProtectedPid(child.pid);
       if (settled) return;
       try {
         // Electron structured-clones bytes; unlike env, this payload is not exposed by process listings.
@@ -691,7 +708,7 @@ function startUtility(
 
 async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { token: string; signingKey: string; hostId: string }): Promise<RuntimeSupervisor> {
   const runtimeDir = options.runtimeDir!;
-  const host = await startUtility(join(runtimeDir, 'host-runtime.js'), {
+  const host = await startUtility(options.dataDir, join(runtimeDir, 'host-runtime.js'), {
     dataDir: options.dataDir,
     type: 'start',
     protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
@@ -725,7 +742,7 @@ async function startUtilityRuntime(options: StartRuntimeSupervisorOptions & { to
     const peerEnv = { ...options.extraEnv,
       [PEER_KEY_REASON_ENV]: peerKeyReason };
     try {
-      renderer = await startUtility(join(runtimeDir, 'server-runtime.js'), {
+      renderer = await startUtility(options.dataDir, join(runtimeDir, 'server-runtime.js'), {
         type: 'start',
         protocolVersion: SERVER_RUNTIME_PROTOCOL_VERSION,
         rendererRoot: options.rendererRoot,

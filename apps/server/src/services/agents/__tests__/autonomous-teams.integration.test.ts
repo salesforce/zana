@@ -20,6 +20,7 @@ const PROJECT_PATH = mkdtempSync(join(tmpdir(), 'zana-autonomous-team-'));
 const PROJECT: Project = { id: 'p1', name: 'Proj', path: PROJECT_PATH } as Project;
 
 const CONFIG: AppConfig = {
+  squadDefaultTransport: 'CLI',
   version: 1,
   theme: 'dark',
   shell: '/bin/zsh',
@@ -152,6 +153,7 @@ vi.mock('@zana-ai/zcc-server/services/agents/team-store', async (importOriginal)
       start() {}
       stop() {}
       rebindProjects() {}
+      setPersonaRoleLookup() {}
     }
   };
 });

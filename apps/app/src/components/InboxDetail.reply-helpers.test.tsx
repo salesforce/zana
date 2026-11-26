@@ -8,7 +8,7 @@ const project = vi.hoisted(() => ({ id: 'p', name: 'My project', path: '/project
 const state = vi.hoisted(() => ({
   compact: false, structured: false, action: null as unknown, selected: 'one', answered: {} as Record<string, boolean>, blocker: 'actionable', terminals: {} as Record<string, unknown[]>, reply: vi.fn(), reopenAnswer: vi.fn(), saved: false, kept: false, missing: false,
   entries: [] as InboxEntry[],
-  readFile: vi.fn(), readDataUrl: vi.fn(), resolveDoc: vi.fn(), copy: vi.fn(), openIn: vi.fn(), save: vi.fn(), keep: vi.fn(), remove: vi.fn(), exportPdf: vi.fn(), select: vi.fn(), markRead: vi.fn()
+  stopFix: vi.fn(), readFile: vi.fn(), readDataUrl: vi.fn(), resolveDoc: vi.fn(), copy: vi.fn(), openIn: vi.fn(), save: vi.fn(), keep: vi.fn(), remove: vi.fn(), exportPdf: vi.fn(), select: vi.fn(), markRead: vi.fn()
 }));
 vi.mock('../hooks/useCompactLayout.js', () => ({ useCompactLayout: () => state.compact }));
 vi.mock('../store.js', () => ({
@@ -39,6 +39,7 @@ vi.mock('./AgentLauncher.js', () => ({ AgentLauncher: ({ initialPrompt }: { init
 vi.mock('./InboxQuestionBlock.js', () => ({ QuestionBlock: () => <div data-testid="question">Question</div> }));
 vi.mock('./MarkdownContent.js', () => ({ MarkdownContent: ({ text }: { text: string }) => <p>{text}</p>, DocContent: ({ content }: { content: string }) => <p>{content}</p> }));
 vi.mock('../lib/renderReportHtml.js', () => ({ renderReportHtml: vi.fn(async () => '<p>Report</p>') }));
+vi.mock('../lib/inboxBlockerRespond.js', async (orig) => ({ ...(await orig<typeof import('../lib/inboxBlockerRespond.js')>()), stopAndFixPlanFromInbox: (...args: unknown[]) => state.stopFix(...args) }));
 vi.mock('../lib/executionInboxBlockerState.js', () => ({ useExecutionInboxBlockerState: () => state.blocker }));
 import { InboxDetail } from './InboxDetail.js';
 import { composeSeqFor, useInboxReplyDrafts } from '../stores/inbox-reply-drafts.js';
@@ -274,6 +275,25 @@ describe('InboxDetail reply helpers', () => {
     await ready();
     press('r');
     expect(document.activeElement).toBe(input());
+  });
+
+  it('offers Stop and fix the plan only on a no-route blocker, and stops the run when pressed', async () => {
+    live();
+    state.stopFix.mockResolvedValue(true);
+    state.entries = [entry('one', { executionId: 'exec', blockerId: 'no-route:a' } as Partial<InboxEntry>)];
+    await ready();
+    const button = screen.getByTestId('inbox-stop-and-fix-plan') as HTMLButtonElement;
+    await act(async () => { fireEvent.click(button); });
+    expect(state.stopFix).toHaveBeenCalledTimes(1);
+    expect(state.stopFix.mock.calls[0][0]).toMatchObject({ id: 'one', blockerId: 'no-route:a' });
+    expect(button.disabled).toBe(false);
+  });
+
+  it('does not offer Stop and fix the plan on an ordinary blocker', async () => {
+    live();
+    state.entries = [entry('one', { executionId: 'exec', blockerId: 'b' } as Partial<InboxEntry>)];
+    await ready();
+    expect(screen.queryByTestId('inbox-stop-and-fix-plan')).toBeNull();
   });
 
   it('restores the scroller tabindex on unmount', async () => {

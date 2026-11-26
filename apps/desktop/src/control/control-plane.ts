@@ -57,6 +57,7 @@ import {
   ProductTeamOps,
   TeamSummary,
   TEAM_GOAL_MAX_CHARS,
+  TEAM_PLAN_TEXT_MAX_CHARS,
   TEAM_ID_MAX_CHARS,
   TEAM_REPLY_MAX_CHARS,
   TEAM_TITLE_MAX_CHARS
@@ -66,7 +67,7 @@ import { parseProfile } from '@zana-ai/zcc-domain/launch-provider';
 import { scheduleSummary } from '@zana-ai/zcc-domain/schedule-spec';
 import { scheduleRunQuerySchema, scheduleRunRefsSchema } from '@zana-ai/zcc-server/services/scheduler/schedule-run-schemas';
 import { scheduleDefinitionPatchSchema } from '@zana-ai/zcc-server/services/scheduler/schedule-manage-mcp-tools';
-import { parsePluginToolApprovalRequest, type PluginApprovalResult } from '@zana-ai/zcc-server/http/plugin-approval-proof';
+import { PLUGIN_APPROVAL_TTL_MS, parsePluginToolApprovalRequest, type PluginApprovalResult } from '@zana-ai/zcc-server/http/plugin-approval-proof';
 
 /** Caps a single request line so a malformed/hostile client can't balloon memory. */
 const MAX_REQUEST_BYTES = 256 * 1024;
@@ -74,6 +75,13 @@ const MAX_REQUEST_BYTES = 256 * 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
 /** Authenticated plugin scripts/install preparation may take several minutes. */
 const PLUGIN_CLI_TIMEOUT_MS = 300_000;
+
+/** Approval timer length: the parser already bounds it; clamp again where the timer is armed. */
+export function boundedApprovalTimerMs(requested: number | undefined): number {
+  if (requested === undefined || !(requested >= 1)) return requested === undefined || Number.isNaN(requested) ? PLUGIN_APPROVAL_TTL_MS : 1;
+  if (requested > PLUGIN_APPROVAL_TTL_MS) return PLUGIN_APPROVAL_TTL_MS;
+  return Math.trunc(requested);
+}
 /**
  * Ceiling on simultaneous in-flight connections (CLAUDE.md #5 — bound unbounded
  * work on the main event loop). The CLI is one-request-per-connection and short;
@@ -799,17 +807,21 @@ export async function dispatchOp(
       const mode = args.mode === 'structured' || args.mode === 'freeform' ? args.mode : undefined;
       const title = str(args.title);
       const summary = str(args.summary);
+      if (args.planText !== undefined && typeof args.planText !== 'string') {
+        return { ok: false, code: 'BAD_ARGS', message: 'planText must be a string' };
+      }
+      const planText = str(args.planText);
       if (!teamId || teamId.length > TEAM_ID_MAX_CHARS || !projectId || projectId.length > TEAM_ID_MAX_CHARS || !goal || !mode) {
         return { ok: false, code: 'BAD_ARGS', message: 'teamId, projectId, goal, and mode are required' };
       }
-      if (goal.length > TEAM_GOAL_MAX_CHARS || (title?.length ?? 0) > TEAM_TITLE_MAX_CHARS || (summary?.length ?? 0) > TEAM_GOAL_MAX_CHARS) {
+      if (goal.length > TEAM_GOAL_MAX_CHARS || (title?.length ?? 0) > TEAM_TITLE_MAX_CHARS || (summary?.length ?? 0) > TEAM_GOAL_MAX_CHARS || (planText?.length ?? 0) > TEAM_PLAN_TEXT_MAX_CHARS) {
         return { ok: false, code: 'BAD_ARGS', message: 'Team launch input exceeds size limits' };
       }
       if (!deps.teamOps) return { ok: false, code: 'host_disconnected', message: 'Host is not connected' };
       const { launchOptionsSchema } = await import('@zana-ai/zcc-domain/launch-options');
       const options = launchOptionsSchema.safeParse(Object.fromEntries(['worktree', 'onComplete', 'push', 'checks', 'failurePolicyDefault', 'target'].filter(key => key in args).map(key => [key, args[key]])));
       if (!options.success || args.previewToken !== undefined && (typeof args.previewToken !== 'string' || args.previewToken.length > 256)) return { ok: false, code: 'BAD_ARGS', message: 'Invalid launch options or preview token' };
-      const input: import('@zana-ai/zcc-domain/product').ProductTeamLaunchInput = { teamId, projectId, goal, mode, ...options.data, ...(typeof args.previewToken === 'string' ? { previewToken: args.previewToken } : {}), ...(title ? { title } : {}), ...(summary ? { summary } : {}) };
+      const input: import('@zana-ai/zcc-domain/product').ProductTeamLaunchInput = { teamId, projectId, goal, ...(planText ? { planText } : {}), mode, ...options.data, ...(typeof args.previewToken === 'string' ? { previewToken: args.previewToken } : {}), ...(title ? { title } : {}), ...(summary ? { summary } : {}) };
       if (op === 'team.preview') return deps.teamOps.preview ? deps.teamOps.preview(input) : { ok: false, code: 'UNAVAILABLE', message: 'Trusted launch preview unavailable' };
       return deps.teamOps.launch(input);
     }
@@ -1156,7 +1168,7 @@ async function handleConnection(
       const request = parsePluginToolApprovalRequest(authd.args);
       if (request.ok) {
         clearTimeout(timer);
-        timer = setTimeout(() => finish({ ok: true, value: { approved: false, reason: 'timeout' } }), request.value.timeoutMs!);
+        timer = setTimeout(() => finish({ ok: true, value: { approved: false, reason: 'timeout' } }), boundedApprovalTimerMs(request.value.timeoutMs));
       }
     }
     try {

@@ -27,7 +27,7 @@ import {
   type DeferredThreadMessageRow
 } from '@zana-ai/zcc-db';
 import type { ProductHttpContext } from '../../http/product-context.js';
-import type { PermissionMode, ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
+import type { MessageSource, PermissionMode, ReasoningLevel } from '@zana-ai/zcc-domain/thread-runtime';
 import { ThreadCreateError } from '../../http/thread-create.js';
 import type { ThreadSendMode } from './conversation-dispatch-checkpoint.js';
 import { canDispatch } from './conversation-dispatch-checkpoint.js';
@@ -41,6 +41,7 @@ export interface DeferredSendPayload {
   mode: ThreadSendMode;
   execution?: { permissionMode?: PermissionMode; model?: string; reasoningLevel?: ReasoningLevel; serviceTier?: string; acpMode?: string };
   senderThreadId?: string;
+  messageSource?: MessageSource;
   peerReviewId?: string;
   admission?: { generation: number; overrideable: boolean; reason: string; pluginId?: string };
 }
@@ -75,6 +76,7 @@ export function deferConversationSend(
     mode: ThreadSendMode;
     execution?: { permissionMode?: PermissionMode; model?: string; reasoningLevel?: ReasoningLevel; serviceTier?: string; acpMode?: string };
     senderThreadId?: string;
+    messageSource?: MessageSource;
     peerReviewId?: string;
     sendAfter?: number | null;
     paused?: boolean;
@@ -98,6 +100,7 @@ export function deferConversationSend(
       mode: args.mode,
       ...(args.execution ? { execution: args.execution } : {}),
       ...(args.senderThreadId ? { senderThreadId: args.senderThreadId } : {}),
+      ...(args.messageSource ? { messageSource: args.messageSource } : {}),
       ...(args.peerReviewId ? { peerReviewId: args.peerReviewId } : {}),
       ...(args.admission ? { admission: args.admission } : {})
     } satisfies DeferredSendPayload),

@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,6 +27,8 @@ const h = vi.hoisted(() => {
     teams: [] as any[],
     personas: [] as any[],
     creates: [] as any[],
+    closed: [] as string[],
+    admit: null as null | ((...args: unknown[]) => unknown),
     createImpl: null as null | ((opts: any) => any),
     sessions: new Map<string, any>(),
     dispatchReady: null as null | ((...args: any[]) => any),
@@ -71,7 +73,7 @@ vi.mock('@zana-ai/zcc-host-daemon/pty', () => ({
     setRestoreCapabilityId() {}
     async waitForReady(id: string) { return h.sessions.get(id); }
     on() { return this; }
-    closeExpected() {}
+    closeExpected(id: string) { h.closed.push(id); return !(h as { closeFails?: boolean }).closeFails; }
     close() { return true; }
   },
   isClaudeProfile: (p: string) => p === 'claude'
@@ -127,6 +129,19 @@ vi.mock('@zana-ai/zcc-server/services/launch/team-lifecycle-store', async (impor
         await h.afterModernAck?.(recordId, slotId, acknowledged);
         return acknowledged;
       };
+      const getRecord = store.get;
+      // Test seam: a read failure after the launch was recorded as complete.
+      const completeRecord = store.complete;
+      const gate = h as { readFails?: 'armed' | 'fire' };
+      store.complete = async (...completeArgs: Parameters<typeof completeRecord>) => {
+        const out = await completeRecord(...completeArgs);
+        if (gate.readFails === 'armed') gate.readFails = 'fire';
+        return out;
+      };
+      store.get = async (...getArgs: Parameters<typeof getRecord>) => {
+        if (gate.readFails === 'fire') throw new Error('lifecycle read failed');
+        return getRecord(...getArgs);
+      };
       const reserve = store.reserveModernWorker;
       // Test seam: let a test reshape the reservation main receives (e.g. a fenced, non-creatable one).
       store.reserveModernWorker = async (...reserveArgs: Parameters<typeof reserve>) => {
@@ -155,7 +170,7 @@ vi.mock('@zana-ai/zcc-server/services/execution/execution-delivery-drain', async
 });
 
 // These suites drive launches, not plugin admission (covered in dispatch-admission tests): admit everything.
-vi.mock('../runtime/dispatch-admission.js', async (importOriginal) => ({ ...(await importOriginal<typeof import('../runtime/dispatch-admission.js')>()), createMainDispatchAdmission: () => async () => null }));
+vi.mock('../runtime/dispatch-admission.js', async (importOriginal) => ({ ...(await importOriginal<typeof import('../runtime/dispatch-admission.js')>()), createMainDispatchAdmission: () => async (...args: unknown[]) => (h.admit ? h.admit(...args) : null) }));
 vi.mock('electron', () => ({
   safeStorage: { isEncryptionAvailable: () => false },
   app: {
@@ -207,13 +222,15 @@ beforeEach(() => {
   ];
   seq += 1;
   h.projects = [{ id: 'p1', name: 'Proj', path: projectDir }];
-  h.config = { version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null };
+  h.config = { squadDefaultTransport: 'CLI', version: 1, theme: 'dark', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13, lastProjectId: null };
   h.personas = [persona('orch'), persona('w1'), persona('w2')];
   h.teams = [{
     id: 'team1', name: 'Team One', orchestratorPersonaId: 'orch',
     slots: [{ personaId: 'w1', quantity: 2 }, { personaId: 'w2', label: 'Second' }]
   }];
   h.creates.length = 0;
+  h.closed.length = 0;
+  h.admit = null;
   h.sessions.clear();
   h.createImpl = null;
   h.afterModernAck = null;
@@ -298,6 +315,21 @@ describe('authorizeTeamLaunch', () => {
   it('revokes already issued slots and denies when the principal concurrency limit is below the slot count', () => {
     const result = authorizeTeamLaunch('c', 'team1', 'p1', reqId(), { maxConcurrent: 2 }, tasks());
     expect(result).toMatchObject({ ok: false, code: 'DENIED', message: 'principal concurrent launch limit reached' });
+  });
+
+  it('caps an agent-driven launch at the saved Squad maxConcurrent even when the caller asks for more or nothing', () => {
+    h.teams[0].limits = { maxConcurrent: 2 };
+    expect(authorizeTeamLaunch('c', 'team1', 'p1', reqId(), {}, tasks()))
+      .toMatchObject({ ok: false, code: 'DENIED', message: 'principal concurrent launch limit reached' });
+    expect(authorizeTeamLaunch('c', 'team1', 'p1', reqId(), { maxConcurrent: 32 }, tasks()))
+      .toMatchObject({ ok: false, code: 'DENIED', message: 'principal concurrent launch limit reached' });
+  });
+
+  it('re-sanitizes the saved Squad limits: a hand-edited out-of-range value never widens or breaks a launch', () => {
+    h.teams[0].limits = { maxConcurrent: 9_999 };
+    expect(authorizeTeamLaunch('c', 'team1', 'p1', reqId(), {}, tasks())).toMatchObject({ ok: true });
+    h.teams[0].limits = 'junk';
+    expect(authorizeTeamLaunch('c', 'team1', 'p1', reqId(), {}, tasks())).toMatchObject({ ok: true });
   });
 
   it('autonomous-team and freeform+teamLaunchEnabled mark bindings autonomous; same request id is idempotent', () => {
@@ -401,18 +433,31 @@ describe('launchTeam legacy (goal) path', () => {
     expect(h.creates[0].cohort.coordinationMode).toBe('interactive-team');
   });
 
-  it('records unknown worker personas and unknown standalone orchestrator as failed slots', async () => {
+  it('refuses an unstructured CLI launch when any worker persona is unknown, naming the slot', async () => {
+    h.personas = [persona('orch'), persona('w2')];
+    const result = await launchTeam('team1', 'p1');
+    expect(result).toMatchObject({ ok: false, code: 'TEAM_LAUNCH_FAILED' });
+    if (!result.ok) expect(result.message).toContain('0:w1:0: unknown persona: w1');
+    expect(h.creates).toHaveLength(0);
+  });
+
+  it('records an unknown standalone orchestrator as a failed slot when every worker resolves', async () => {
     h.personas = [persona('w1'), persona('w2')];
     const result = await launchTeam('team1', 'p1');
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.failedSlots.map((s) => s.reason)).toContain('unknown persona');
+      expect(result.value.failedSlots.map((s) => s.reason)).toContain('unknown persona: orch');
       expect(result.value.orchestratorSessionId).toBeUndefined();
     }
-    h.personas = [persona('orch'), persona('w2')];
-    const second = await launchTeam('team1', 'p1');
-    expect(second.ok).toBe(true);
-    if (second.ok) expect(second.value.failedSlots.some((s) => s.slotId === '0:w1:0' && s.reason === 'unknown persona')).toBe(true);
+  });
+
+  it('refuses a structured CLI launch when every worker persona is unresolved, before opening anything', async () => {
+    h.personas = [persona('orch')];
+    const slots = SLOT_IDS.map((slotId) => ({ slotId, initialTask: 'x' }));
+    const result = await launchTeam('team1', 'p1', { callerPrincipalId: 'c', launchRequestId: reqId(), slots });
+    expect(result).toMatchObject({ ok: false, code: 'TEAM_LAUNCH_FAILED' });
+    if (!result.ok) expect(result.message).toContain('0:w1:0: unknown persona: w1');
+    expect(h.creates).toHaveLength(0);
   });
 
   it('surfaces worker and orchestrator spawn failures', async () => {
@@ -423,6 +468,116 @@ describe('launchTeam legacy (goal) path', () => {
       expect(result.value.launched).toBe(0);
       expect(result.value.failedSlots.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('launchTeam throw hardening', () => {
+  it('records one throwing worker as a failed slot and launches the rest', async () => {
+    let n = 0;
+    h.createImpl = (opts: any) => {
+      n += 1;
+      if (n === 2) throw new Error('worker two exploded');
+      const session = { id: opts.preallocatedSessionId ?? opts.sessionId ?? `s${n}`, status: 'running', projectId: opts.projectId, cohort: opts.cohort };
+      h.sessions.set(session.id, session);
+      return session;
+    };
+    const result = await launchTeam('team1', 'p1', { goal: 'g' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.failedSlots).toHaveLength(1);
+    expect(result.value.failedSlots[0]).toMatchObject({ slotId: '0:w1:1' });
+    expect(result.value.launched).toBe(3);
+    expect(result.value.orchestratorSessionId).toBeTruthy();
+  });
+
+  it('turns an orchestrator rejection before the spawn into a failed slot', async () => {
+    // Only the orchestrator carries an opening prompt, so it is the seat that reaches admission.
+    h.admit = () => { throw new Error(`/Users/someone/secret/path ${'z'.repeat(5000)}`); };
+    const result = await launchTeam('team1', 'p1', { goal: 'g' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.failedSlots).toHaveLength(1);
+    expect(result.value.failedSlots[0]).toMatchObject({ slotId: 'orchestrator:orch' });
+    expect(result.value.failedSlots[0].reason.length).toBeLessThanOrEqual(500);
+    expect(result.value.failedSlots[0].reason).not.toContain('/Users/');
+    expect(result.value.launched).toBe(3);
+    expect(result.value.orchestratorSessionId).toBeUndefined();
+  });
+
+  it('bounds an over-long reason and the joined failure message', async () => {
+    h.createImpl = () => { throw new Error(`x${'y'.repeat(5000)}`); };
+    const result = await launchTeam('team1', 'p1', { goal: 'g' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.failedSlots.length).toBeGreaterThan(0);
+    for (const slot of result.value.failedSlots) expect(slot.reason.length).toBeLessThanOrEqual(500);
+  });
+
+  it('bounds the joined message of a structured launch that opens nothing', async () => {
+    h.createImpl = () => { throw new Error(`x${'y'.repeat(5000)}`); };
+    const result = await launchTeam('team1', 'p1', {
+      callerPrincipalId: 'owner', launchRequestId: reqId(), coordinationMode: 'structured', jobContext: { objective: 'obj' },
+      slots: SLOT_IDS.map((slotId) => ({ slotId, initialTask: `task ${slotId}` }))
+    } as never);
+    expect(result).toMatchObject({ ok: false, code: 'TEAM_LAUNCH_FAILED' });
+    if (!result.ok) expect(result.message!.length).toBeLessThanOrEqual(2048);
+  });
+
+  describe('when the lifecycle write cannot complete', () => {
+    afterEach(() => { vi.unstubAllGlobals(); delete process.env.ZCC_TEST_FAULT; });
+
+    it('logs the ids of sessions that could not be confirmed closed', async () => {
+      vi.stubGlobal('__ZCC_TEST_FAULTS__', true);
+      process.env.ZCC_TEST_FAULT = 'launch-complete-throw';
+      (h as { closeFails?: boolean }).closeFails = true;
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        await expect(launchTeam('team1', 'p1', { goal: 'g' })).rejects.toThrow('injected launch completion fault');
+        expect(errorSpy.mock.calls.some((call) => String(call[0]).includes('survived cleanup') && String(call[0]).includes('could not confirm closed'))).toBe(true);
+      } finally {
+        delete (h as { closeFails?: boolean }).closeFails;
+        errorSpy.mockRestore();
+      }
+    });
+
+    it('closes every started session by id and surfaces the original error', async () => {
+      vi.stubGlobal('__ZCC_TEST_FAULTS__', true);
+      process.env.ZCC_TEST_FAULT = 'launch-complete-throw';
+      await expect(launchTeam('team1', 'p1', { goal: 'g' })).rejects.toThrow('injected launch completion fault');
+      expect(h.creates).toHaveLength(4);
+      expect(new Set(h.closed)).toEqual(new Set(h.creates.map((c) => c.preallocatedSessionId ?? c.sessionId ?? [...h.sessions.keys()][h.creates.indexOf(c)])));
+    });
+
+    it('does not fire without the compile-time switch', async () => {
+      process.env.ZCC_TEST_FAULT = 'launch-complete-throw';
+      const result = await launchTeam('team1', 'p1', { goal: 'g' });
+      expect(result.ok).toBe(true);
+      expect(h.closed).toHaveLength(0);
+    });
+  });
+
+  it('launchTeam stays consistent with authorizeTeamLaunch under a saved Squad maxConcurrent that fits the roster', async () => {
+    h.teams[0].limits = { maxConcurrent: 4 };
+    const result = await launchTeam('team1', 'p1', { goal: 'g' });
+    expect(result.ok).toBe(true);
+    expect(h.creates).toHaveLength(4);
+  });
+
+  it('keeps a completed launch alive when the post-completion read fails', async () => {
+    (h as { readFails?: 'armed' | 'fire' }).readFails = 'armed';
+    try {
+      const result = await launchTeam('team1', 'p1', { goal: 'g' });
+      expect(result.ok).toBe(true);
+      expect(h.closed).toHaveLength(0);
+    } finally {
+      delete (h as { readFails?: 'armed' | 'fire' }).readFails;
+    }
+  });
+
+  it('closeStartedSessionsById reports sessions that stay alive and tolerates close errors', async () => {
+    h.sessions.set('live-1', { id: 'live-1', status: 'running', projectId: 'p1' });
+    expect(await host.closeStartedSessionsById(['live-1', 'live-1', 'ghost'])).toEqual([]);
+    expect(h.closed).toEqual(['live-1']);
   });
 });
 
@@ -1164,7 +1319,7 @@ describe('launchTeam Modern structured path', () => {
 
   describe('Modern preflight refusals and permission mapping', () => {
     it.each([
-      ['a remote project', () => { h.projects[0].remote = { host: 'ssh-box' }; h.projects[0].hostId = 'other-host'; }, {}, /requires a local project/],
+      ['a remote project', () => { h.projects[0].remote = { host: 'ssh-box' }; h.projects[0].hostId = 'other-host'; }, {}, /local project/i],
       ['a CLI-shaped native-recovery slot', () => {}, { nativeRecovery: true }, /no restorable native session/],
       ['persona tool overrides', () => { h.personas[1] = persona('w1', { allowedTools: ['Bash'] }); }, {}, /tool or sandbox overrides/],
       ['plan-only personas', () => { h.personas[1] = persona('w1', { permissionMode: 'plan' }); }, {}, /plan-only execution/]
@@ -1175,7 +1330,8 @@ describe('launchTeam Modern structured path', () => {
         ? { ...slot, nativeRecovery: { role: 'worker', slotId: slot.slotId, personaId: 'w1', profileId: 'claude', nativeConversationId: 'native-1' } }
         : slot);
       const result = await launchTeam('team1', 'p1', { ...req, slots } as never);
-      expect(result).toMatchObject({ ok: false, code: 'UNSUPPORTED', message: expect.stringMatching(message) });
+      // A pinned Modern Squad on a remote Project is refused by the transport resolver before preflight.
+      expect(result).toMatchObject({ ok: false, code: _label === 'a remote project' ? 'TRANSPORT_UNAVAILABLE' : 'UNSUPPORTED', message: expect.stringMatching(message) });
       // The CLI-shaped recovery fence runs after preflight (it needs the resolved host); nothing is created.
       if (!/no restorable native session/.test(String(message))) expect(h.runtime.preflightSquadRuntime).not.toHaveBeenCalled();
       expect(h.runtime.createSquadMember).not.toHaveBeenCalled();

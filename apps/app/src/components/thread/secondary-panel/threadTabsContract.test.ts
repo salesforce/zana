@@ -89,6 +89,14 @@ describe('thread tabs contract mapping', () => {
     expect(next.tabs[0]).toMatchObject({ kind: 'file-preview', path: 'src/a.ts', lineNumber: 2 });
   });
 
+  it('keeps local tabState through a server echo, even with reordered params, and drops it when params change', () => {
+    const local = { id: 'p', kind: 'plugin' as const, title: 'Doc', moduleId: 'm', actionId: 'a', params: { a: 1, b: 2 }, tabState: { docId: 'd' } };
+    const state = { ...emptySecondaryPanelState(), tabs: [local] };
+    const echo = (params: Record<string, number>) => ({ ...closableTabToContract({ ...local, params })!, params });
+    expect(applyContractTabs(state, [echo({ b: 2, a: 1 })]).tabs[0].tabState).toEqual({ docId: 'd' });
+    expect(applyContractTabs(state, [echo({ a: 9, b: 2 })]).tabs[0].tabState).toBeUndefined();
+  });
+
   it('keeps local preview refresh state through server echoes, but not a different file', () => {
     const local = { id: 'preview', kind: 'file-preview' as const, title: 'Report', path: 'report.md', previewRevision: 2 };
     const state = { ...emptySecondaryPanelState(), tabs: [local] };

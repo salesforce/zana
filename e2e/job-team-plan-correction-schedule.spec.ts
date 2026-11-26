@@ -39,7 +39,7 @@ interface Setup {
   agent: ReturnType<typeof makeJobTeamCoordinatorBinary>;
 }
 
-async function setup(window: Page, scenario: 'plan-correction' | 'plan-correction-silent'): Promise<Setup> {
+async function setup(window: Page, scenario: 'plan-correction' | 'plan-correction-silent', prompt: string = DEFECTIVE_PLAN): Promise<Setup> {
   const agent = makeJobTeamCoordinatorBinary({ scenario });
   const projectDir = mkdtempSync(join(tmpdir(), 'zcc-plan-correction-'));
   await window.evaluate((bin) => window.cc.config.set({
@@ -60,7 +60,7 @@ async function setup(window: Page, scenario: 'plan-correction' | 'plan-correctio
   }));
   await window.evaluate(() => window.cc.teams.save({
     id: 'e2e-job-team', name: 'E2E Job Team', description: 'Plan correction team',
-    slots: [{ personaId: 'e2e-worker', quantity: 2 }], orchestratorPersonaId: 'e2e-orchestrator'
+    slots: [{ personaId: 'e2e-worker', quantity: 2 }], orchestratorPersonaId: 'e2e-orchestrator', transport: 'CLI'
   }));
   const projectId = await window.evaluate(async (path) => {
     const res = await window.cc.projects.add(path);
@@ -71,7 +71,7 @@ async function setup(window: Page, scenario: 'plan-correction' | 'plan-correctio
     projectId: input.projectId, scope: { projectId: input.projectId }, name: 'Scheduled correction squad',
     every: '1d', profile: 'claude', kind: 'team', teamId: 'e2e-job-team', planSource: 'provided',
     prompt: input.prompt, enabled: false, inboxLevel: 'silent'
-  }), { projectId, prompt: DEFECTIVE_PLAN });
+  }), { projectId, prompt });
   expect(created).toMatchObject({ ok: true });
   const scheduleId = (created as { value: { id: string } }).value.id;
   return { projectId, projectDir, projectName: basename(projectDir), scheduleId, agent };
@@ -89,6 +89,7 @@ async function readExecution(window: Page, projectId: string, executionId: strin
 /** Open the (single) "Plan correction required" Inbox card whose body contains `text`. */
 async function openCorrectionCard(window: Page, text: string): Promise<void> {
   await window.getByTestId('nav-inbox').or(window.getByTestId('project-nav-inbox')).click();
+  await window.getByRole('button', { name: 'Split view', exact: true }).click();
   await expect.poll(async () => {
     const rows = window.locator('.inbox-row').filter({ hasText: 'Plan correction required' });
     const count = await rows.count();
@@ -166,7 +167,7 @@ test('scheduled defective plan parks, is corrected, approved, completes, and the
     await openCorrectionCard(window, 'Plan requires revisions to proceed');
     expect(await readExecution(window, s.projectId, executionId)).toMatchObject({ workTotal: 0 });
     expect(coordinatorLog(s.projectDir)).not.toContain('assigned');
-    await choose(window, 'Request changes');
+    await choose(window, 'Ask the agent to revise');
 
     const correctedRel = `.zana/execution-plan-corrected-${executionId}.md`;
     await expect.poll(() => coordinatorLog(s!.projectDir), { timeout: 30_000, intervals: [500] })
@@ -174,7 +175,7 @@ test('scheduled defective plan parks, is corrected, approved, completes, and the
 
     await openCorrectionCard(window, 'Review the proposed corrected plan');
     expect(await readExecution(window, s.projectId, executionId)).toMatchObject({ workTotal: 0 });
-    await choose(window, 'Approve');
+    await choose(window, 'Use the corrected plan');
 
     await expect.poll(async () => (await readExecution(window, s!.projectId, executionId))?.state, {
       timeout: 60_000, intervals: [1_000]
@@ -214,15 +215,44 @@ test('scheduled run with a silent coordinator stalls, Cancel stops it, and the s
     const executionId = await runNow(window, s);
 
     await openCorrectionCard(window, 'Plan requires revisions to proceed');
-    await choose(window, 'Request changes');
+    await choose(window, 'Ask the agent to revise');
     await openCorrectionCard(window, 'finished its turn without writing a corrected plan');
     expect(existsSync(join(s.projectDir, '.zana', `execution-plan-corrected-${executionId}.md`))).toBe(false);
-    await choose(window, 'Cancel');
+    await choose(window, 'Cancel the run');
 
     await expect.poll(() => readExecution(window, s!.projectId, executionId), { timeout: 60_000, intervals: [1_000] })
       .toMatchObject({ state: 'STOPPED', timeoutReason: 'plan-correction-cancelled' });
     expect(coordinatorLog(s.projectDir)).not.toContain('assigned');
     expect(storedPrompt(s)).toBe(DEFECTIVE_PLAN);
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\n${s ? coordinatorLog(s.projectDir) : ''}`);
+  } finally {
+    await teardown(window, s);
+  }
+});
+
+test('scheduled prose with no plan steps still parks for correction and never infers a plan', async ({ app }) => {
+  const { window } = app;
+  let s: Setup | null = null;
+  const prose = 'Write the output file for this project.';
+  try {
+    s = await setup(window, 'plan-correction', prose);
+    const executionId = await runNow(window, s);
+
+    // Unattended: card, nothing registered or dispatched, no infer-plan fallback.
+    await openCorrectionCard(window, 'Plan requires revisions to proceed');
+    expect(await readExecution(window, s.projectId, executionId)).toMatchObject({ workTotal: 0 });
+    expect(coordinatorLog(s.projectDir)).not.toContain('assigned');
+    expect(coordinatorLog(s.projectDir)).not.toContain('plan registered');
+    expect(coordinatorLog(s.projectDir)).toContain('plan-correction orchestrator parked');
+
+    await choose(window, 'Ask the agent to revise');
+    await openCorrectionCard(window, 'Review the proposed corrected plan');
+    await choose(window, 'Use the corrected plan');
+    await expect.poll(async () => (await readExecution(window, s!.projectId, executionId))?.state, {
+      timeout: 60_000, intervals: [1_000]
+    }).toBe('COMPLETED');
+    expect(readFileSync(join(s.projectDir, 'output.txt'), 'utf8')).toContain('output ready');
   } catch (error) {
     throw new Error(`${error instanceof Error ? error.message : String(error)}\n${s ? coordinatorLog(s.projectDir) : ''}`);
   } finally {

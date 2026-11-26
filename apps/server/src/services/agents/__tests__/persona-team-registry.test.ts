@@ -119,6 +119,26 @@ describe('PersonaTeamRegistry — personas', () => {
   });
 });
 
+describe('PersonaTeamRegistry — roles', () => {
+  it('setPersonas normalises roles (trim, lowercase, dedupe) and omits malformed roles', () => {
+    const reg = new PersonaTeamRegistry(() => []);
+    const [p, q] = reg.setPersonas('acme', [
+      { id: 'a', name: 'A', roles: ['  Reviewer ', 'reviewer', 'QA'] },
+      { id: 'b', name: 'B', roles: 'reviewer' as never }
+    ]);
+    expect(p.roles).toEqual(['reviewer', 'qa']);
+    expect(q).not.toHaveProperty('roles');
+  });
+
+  it('setTeams normalises slot roles (trim, lowercase, dedupe)', () => {
+    const reg = new PersonaTeamRegistry(() => []);
+    const [team] = reg.setTeams('acme', [
+      { id: 'squad', name: 'Squad', slots: [{ personaId: 'ext:acme:rev', quantity: 1, roles: [' Engineer ', 'engineer', 'REVIEWER'] }] }
+    ]);
+    expect(team.slots[0].roles).toEqual(['engineer', 'reviewer']);
+  });
+});
+
 describe('PersonaTeamRegistry — teams', () => {
   it('namespaces + stamps team source and clamps slot quantity to TEAM_SLOT_MAX', () => {
     const reg = new PersonaTeamRegistry(() => entries(['acme', 'Acme Co']));

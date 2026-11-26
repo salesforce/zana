@@ -40,8 +40,9 @@ test('a server-side push appears live and Refresh reloads entries written behind
     }, projectDir);
 
     await win.getByTestId('nav-inbox').click();
-    const list = win.locator('.inbox-list-pane');
-    await expect(list.getByRole('button', { name: 'Refresh inbox' })).toBeVisible();
+    const inbox = win.locator('.inbox-view');
+    const refresh = inbox.getByRole('button', { name: 'Refresh inbox' });
+    await expect(refresh).toBeVisible();
 
     // The plugin's utility process may still be starting, so retry the push
     // (not the assertion) until it lands. No reload: the row must arrive live.
@@ -51,7 +52,7 @@ test('a server-side push appears live and Refresh reloads entries written behind
         .then(() => 'ok', (err: unknown) => String(err)),
       { pid: projectId, text: live }
     ), { timeout: 15_000, intervals: [500, 1000] }).toBe('ok');
-    await expect(win.locator('.inbox-row').filter({ hasText: live }).first()).toBeVisible({ timeout: 10_000 });
+    await expect(inbox.getByRole('button', { name: new RegExp(live) })).toBeVisible({ timeout: 10_000 });
 
     // Written straight to disk, so neither process emits; only Refresh finds it.
     const quiet = `E2EREFRESHMARKER${Date.now()}`;
@@ -60,11 +61,11 @@ test('a server-side push appears live and Refresh reloads entries written behind
     appendFileSync(join(inboxDir, 'entries.jsonl'), `${JSON.stringify({
       id: `refresh-${Date.now()}`, ts: Date.now(), projectId, subject: quiet, comments: quiet, report: true
     })}\n`);
-    const quietRow = win.locator('.inbox-row').filter({ hasText: quiet });
+    const quietRow = inbox.getByRole('button', { name: new RegExp(quiet) });
     await expect(quietRow).toHaveCount(0);
-    await list.getByRole('button', { name: 'Refresh inbox' }).click();
-    await expect(quietRow.first()).toBeVisible({ timeout: 10_000 });
-    await expect(list.getByRole('button', { name: 'Refresh inbox' })).toHaveAttribute('aria-busy', 'false');
+    await refresh.click();
+    await expect(quietRow).toBeVisible({ timeout: 10_000 });
+    await expect(refresh).toHaveAttribute('aria-busy', 'false');
   } finally {
     rmSync(projectDir, { recursive: true, force: true });
   }

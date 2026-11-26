@@ -508,6 +508,41 @@ describe('creating docs', () => {
 });
 
 describe('doc list', () => {
+  it('keeps the list, count and filter buttons mounted while a search reloads', async () => {
+    let harness: Harness | null = null;
+    let release: (() => void) | null = null;
+    const queryCalls: string[] = [];
+    const slowList = (args: { query?: string; status?: string; projectId?: string; excludeUnassigned?: boolean }) => {
+      const result = harness!.store.list({ projectId: args.projectId, excludeUnassigned: args.excludeUnassigned, query: args.query, status: (args.status ?? 'all') as never });
+      if (!args.query) return result;
+      queryCalls.push(args.query);
+      return new Promise((resolve) => {
+        release = () => resolve(result);
+      });
+    };
+    harness = createHarness({ rpcOverrides: { list: slowList } });
+    seed(harness.store, { title: 'Payments API', projectId: 'p1' });
+    seed(harness.store, { title: 'Glossary', projectId: 'p1' });
+    harness.render(<ProjectTab pluginId="design-docs" projectId="p1" />);
+    expect(await screen.findByText('Glossary')).toBeTruthy();
+    const statusPicker = screen.getByRole('button', { name: 'Filter by status' });
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search design docs' }), { target: { value: 'Pay' } });
+    await waitFor(() => expect(queryCalls).toEqual(['Pay']));
+
+    // The reload is in flight: the previous rows stay, with no spinner and no blank list.
+    expect(screen.getByText('Glossary')).toBeTruthy();
+    expect(screen.getByText('Payments API')).toBeTruthy();
+    expect(screen.queryByLabelText('Loading design docs')).toBeNull();
+    expect(screen.getByTitle('2 docs')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Filter by status' })).toBe(statusPicker);
+
+    await act(async () => release!());
+    await waitFor(() => expect(screen.queryByText('Glossary')).toBeNull());
+    expect(screen.getByText('Payments API')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Filter by status' })).toBe(statusPicker);
+  });
+
   it("lists a project's docs plus global ones, and searches and filters them", async () => {
     const harness = createHarness();
     seed(harness.store, { title: 'Payments API', projectId: 'p1', summary: 'Charge flow', tags: ['billing'] });

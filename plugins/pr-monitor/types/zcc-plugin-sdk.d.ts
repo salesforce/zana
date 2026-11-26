@@ -6,8 +6,11 @@
 
 declare module '@zana-ai/zcc-plugin-sdk' {
   export type { PluginProviderUsageResult, ZccPluginApi, PluginSettingValue, PluginProviderDeclaration, PluginProviderHandle, PluginProviderCapabilities, PluginProviderReasoningLevel, PluginProviderStrings } from '@zana-ai/zcc-plugin-sdk/server';
+  export type { PluginSshConnections, PluginSshConnectionProvider, PluginSshIdentity } from '@zana-ai/zcc-plugin-sdk/server';
 
   export type { PluginSdk, PluginSdkInbox, PluginSdkInboxEntry, PluginSdkInboxSearchArgs, PluginSdkInboxSearchResult, PluginSdkInboxReport, PluginSdkAssistant } from '@zana-ai/zcc-plugin-sdk/server';
+  export { PluginThreadInteractionError } from '@zana-ai/zcc-plugin-sdk/server';
+  export type { PluginRelayedHumanActor, PluginThreadInteraction, PluginThreadInteractionErrorCode, PluginThreadInteractionResolution, PluginThreadInteractions } from '@zana-ai/zcc-plugin-sdk/server';
   export type { PluginNotificationSoundProviderRegistration, PluginAgentsViewProps, PluginFleetMember, PluginFleetSchedule, PluginFleetExecution } from '@zana-ai/zcc-plugin-sdk/app';
 
 /** A JSON-safe path segment reported by a Standard Schema validation issue. */
@@ -542,6 +545,56 @@ export type PluginSdkInbox = PluginSdk['inbox'];
     cancel(request: { interactionId: string; generation: number }): Promise<PluginInteractionContract>;
   }
 
+  /** Plugin-authenticated external human action; never native human proof. */
+  export interface PluginRelayedHumanActor {
+    kind: 'plugin-relayed-human';
+    pluginId: string;
+    externalUser: string;
+  }
+  export type PluginThreadInteractionErrorCode =
+    | 'invalid_request' | 'not_found' | 'forbidden' | 'conflict'
+    | 'native_confirmation_required' | 'unsupported_interaction' | 'unavailable';
+  /** Match name/code across workers, where Error prototypes are not preserved. */
+  export class PluginThreadInteractionError extends Error {
+    readonly name: 'PluginThreadInteractionError';
+    readonly code: PluginThreadInteractionErrorCode;
+    readonly status: number;
+    constructor(code: PluginThreadInteractionErrorCode, message: string, status: number);
+  }
+  export type PluginThreadInteractionResolution =
+    | { decision: 'deny' }
+    | { decision: 'allow_once' | 'allow_for_session'; grantedPermissions: {
+        network: { enabled: boolean | null } | null;
+        fileSystem: { read: string[]; write: string[] } | null;
+      } | null };
+  export interface PluginThreadInteraction {
+    id: string;
+    threadId: string;
+    kind: string;
+    subjectKind: string | null;
+    summary: string;
+    summaryTruncated: boolean;
+    tool: string | null;
+    allowedDecisions: Array<'allow_once' | 'allow_for_session' | 'deny'>;
+    grantPermissions: {
+      network: { enabled: boolean | null } | null;
+      fileSystem: { read: string[]; write: string[] } | null;
+    } | null;
+    status: 'pending' | 'resolving' | 'resolved' | 'interrupted';
+    createdAt: number;
+    resolvedAt: number | null;
+    resolution: PluginThreadInteractionResolution | null;
+    refusalReason: 'native_confirmation_required' | 'unsupported_interaction' | null;
+  }
+  export interface PluginThreadInteractions {
+    list(args: { threadId: string }): Promise<PluginThreadInteraction[]>;
+    resolve(args: {
+      threadId: string; interactionId: string;
+      resolution: PluginThreadInteractionResolution;
+      actor: PluginRelayedHumanActor;
+    }): Promise<PluginThreadInteraction>;
+  }
+
   /** Live descriptor from main's registered wiring; an unwired surface reports `available: false` with a reason. */
   export interface PluginCapabilityDescriptor { id: string; available: boolean; reason?: string }
   export interface PluginCapabilityIntrospection {
@@ -553,7 +606,20 @@ export type PluginSdkInbox = PluginSdk['inbox'];
   export type PluginPersonaInput = { id?: string; [key: string]: unknown };
   export type PluginTeamInput = { id?: string; [key: string]: unknown };
 
+  export interface PluginSshIdentity {
+    readonly host: string;
+    readonly user?: string;
+    readonly proxyJump?: string;
+  }
+  export interface PluginSshConnectionProvider {
+    owns(remote: PluginSshIdentity, signal: AbortSignal): boolean | Promise<boolean>;
+    prepare(remote: PluginSshIdentity, signal: AbortSignal): Promise<{ status: 'ready' } | { status: 'blocked'; message: string }>;
+  }
+  export interface PluginSshConnections {
+    register(provider: PluginSshConnectionProvider): void;
+  }
   export interface ZccPluginApi {
+    readonly sshConnections: PluginSshConnections;
     readonly pluginId: string;
     readonly log: { debug(m: string): void; info(m: string): void; warn(m: string): void; error(m: string): void };
     readonly settings: {
@@ -592,6 +658,8 @@ export type PluginSdkInbox = PluginSdk['inbox'];
       ): void;
     };
     readonly storage: {
+      /** Server-only, scoped to this plugin and protected by this device. */
+      deviceKey(): Promise<Uint8Array>;
       kv: {
         get<T>(key: string): Promise<T | undefined>;
         set(key: string, value: unknown): Promise<void>;
@@ -745,10 +813,14 @@ export type PluginSdkInbox = PluginSdk['inbox'];
     readonly sdk: {
       system: { defaultHost(): Promise<{ id: string } | null> };
       threads: {
+        /** Detect support using sdk.capabilities.forThread and the thread-interactions descriptor. */
+        readonly interactions: PluginThreadInteractions;
         search(args: { query: string; archived?: boolean; limit?: number }): Promise<Array<NonNullable<Awaited<ReturnType<ZccPluginApi['sdk']['threads']['get']>>>>>;
         spawn(args: {
           projectId: string;
-          prompt: string;
+          /** Required unless deferFirstTurn creates an empty conversation. */
+          prompt?: string;
+          deferFirstTurn?: boolean;
           /** Exact thread provider id; wins over `harness`. With neither, the host's first provider is used (legacy). */
           providerId?: string;
           /**
@@ -846,7 +918,7 @@ export type PluginSdkInbox = PluginSdk['inbox'];
       inbox: {
         search(args: PluginSdkInboxSearchArgs): Promise<PluginSdkInboxSearchResult>;
         read(args: { projectIds: string[]; entryId: string; documentIndex?: number }): Promise<PluginSdkInboxReport>;
-        push(args: { projectId: string; comments: string }): Promise<{ id: string }>;
+        push(args: { projectId: string; comments: string; offerAgentFix?: true }): Promise<{ id: string }>;
       };
       capabilities: PluginCapabilityIntrospection;
       projects: {
@@ -873,6 +945,30 @@ export type PluginSdkInbox = PluginSdk['inbox'];
 }
 
 declare module '@zana-ai/zcc-plugin-sdk/app' {
+  export interface MarkdownProps {
+    content: string;
+    className?: string;
+    editor?: { label: string; onChange(markdown: string): void; disabled?: boolean; placeholder?: string };
+  }
+  export function Markdown(props: MarkdownProps): import('react').ReactElement | null;
+  export interface PluginOwnedThreadIconProps {
+    threadId: string;
+    size: number;
+    fallback: import('react').ReactNode;
+  }
+  export interface PluginOwnedThreadTitleProps {
+    threadId: string;
+    title: string;
+    openPanel(): void;
+  }
+  export interface BasicSidebarSectionProps {
+    searchQuery: string;
+    activeThreadId: string | null;
+    projectIds: readonly string[];
+    openThread(threadId: string): void;
+    registerThreads(threadIds: readonly string[]): () => void;
+  }
+
   export function useRpc(): { call<T = unknown>(method: string, input?: unknown): Promise<T> };
   export function useRealtime(channel: string, handler: (payload: unknown) => void): void;
   export interface PluginAgentActivity {

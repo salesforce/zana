@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { link, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   EXECUTION_SOURCE_LIMITS,
   ExecutionSourceError,
-  createExecutionSourceRegistry
+  createExecutionSourceRegistry,
+  snapshotKeyForLaunch
 } from '../source-registry.js';
 
 async function fixture(run: (dir: string) => Promise<void>): Promise<void> {
@@ -332,6 +333,49 @@ describe('execution source registry', () => {
     await expect(registry.read(snapshot.contentRef, snapshot.sources[0].id, { offset: 2, maxBytes: 4 })).resolves.toEqual({ content: '2345', nextOffset: 6, totalBytes: 10 });
     await expect(registry.read('../outside.json', snapshot.sources[0].id, { offset: 0, maxBytes: 4 })).rejects.toMatchObject({ code: 'INVALID_CONTENT_REF' });
     await expect(registry.read('/tmp/outside.json', snapshot.sources[0].id, { offset: 0, maxBytes: 4 })).rejects.toMatchObject({ code: 'INVALID_CONTENT_REF' });
+  }));
+
+  it('refuses snapshot keys that are not valid Windows folder names, before writing anything', async () => fixture(async (dir) => {
+    const path = join(dir, 'source.txt'); await writeFile(path, 'safe');
+    const rootDir = join(dir, 'store');
+    const registry = createExecutionSourceRegistry({ rootDir });
+    for (const snapshotKey of ['ui:124d771e-b1e0-4ecc-b550-8b40c6e58a69', 'a|b', 'a"b', 'a<b', 'a?b', 'a*b', 'tab\tkey', 'trailing.', 'trailing ', 'CON', 'nul.txt', 'com1', 'LPT9']) {
+      const [capability] = await issue(registry, [path]);
+      await expect(registry.resolve({ windowId: 7, projectId: 'project-1', capabilityIds: [capability.id], snapshotKey }), snapshotKey)
+        .rejects.toMatchObject({ code: 'INVALID_CONTENT_REF' });
+    }
+    await expect(readdir(rootDir).catch(() => [])).resolves.toEqual([]);
+  }));
+
+  it('maps a launch request id to a key that the registry stores as one folder', async () => fixture(async (dir) => {
+    expect(snapshotKeyForLaunch('ui:124d771e-b1e0-4ecc-b550-8b40c6e58a69')).toBe('ui_124d771e-b1e0-4ecc-b550-8b40c6e58a69');
+    expect(snapshotKeyForLaunch('agent:x/y\\z.')).toBe('agent_x_y_z_');
+    const path = join(dir, 'source.txt'); await writeFile(path, 'safe');
+    const rootDir = join(dir, 'store');
+    const registry = createExecutionSourceRegistry({ rootDir });
+    const [capability] = await issue(registry, [path]);
+    const snapshot = await registry.resolve({ windowId: 7, projectId: 'project-1', capabilityIds: [capability.id], snapshotKey: snapshotKeyForLaunch('ui:launch-1') });
+    expect(snapshot.contentRef).toBe('ui_launch-1/sources.json');
+    expect(await readdir(rootDir)).toEqual(['ui_launch-1']);
+  }));
+
+  // A snapshot written before the fix on macOS/Linux keeps its `ui:<uuid>` folder and stored
+  // contentRef. Windows can't create such a folder, so this runs on POSIX only.
+  it.skipIf(process.platform === 'win32')('still reads, removes and prunes a snapshot stored under a legacy colon key', async () => fixture(async (dir) => {
+    const path = join(dir, 'source.txt'); await writeFile(path, 'legacy');
+    const rootDir = join(dir, 'store');
+    const registry = createExecutionSourceRegistry({ rootDir });
+    const stored = await registry.resolve({ windowId: 7, projectId: 'project-1', capabilityIds: [(await issue(registry, [path]))[0].id], snapshotKey: 'stored' });
+    for (const legacyKey of ['ui:kept', 'ui:removed', 'ui:expired']) {
+      await mkdir(join(rootDir, legacyKey));
+      await writeFile(join(rootDir, legacyKey, 'sources.json'), await readFile(join(rootDir, 'stored', 'sources.json')));
+    }
+    await expect(registry.read('ui:kept/sources.json', stored.sources[0].id, {}, stored.sources)).resolves.toMatchObject({ content: 'legacy' });
+    await registry.removeSnapshot('ui:removed/sources.json');
+    const old = new Date(Date.now() - 31 * 24 * 60 * 60 * 1_000);
+    await utimes(join(rootDir, 'ui:expired', 'sources.json'), old, old);
+    await registry.pruneSnapshots(new Set(['ui:kept/sources.json', stored.contentRef]), 30 * 24 * 60 * 60 * 1_000);
+    expect((await readdir(rootDir)).sort()).toEqual(['stored', 'ui:kept']);
   }));
 
   it('rejects a durable snapshot replaced by a symlink at read time', async () => fixture(async (dir) => {

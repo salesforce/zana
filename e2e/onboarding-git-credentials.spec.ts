@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect, launchApp, closeApp } from './fixtures/app.js';
+import { snap } from './fixtures/onboarding-snap.js';
 import { startGitHttpServer } from './fixtures/git-http.js';
 
 const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
@@ -88,26 +89,35 @@ if [ "$1" = get ] && [ "$ZCC_FIXTURE_EXISTING_CREDENTIALS" = 1 ]; then printf 'u
       }
       app = await launchApp(home, { env, initialConfig: { onboarding: undefined, sponsorPromptDismissed: true, theme: 'light' } });
       const win = app.window;
-      const wizard = win.getByRole('dialog', { name: 'Set up Zana', exact: true });
-      await wizard.getByRole('button', { name: 'Yes, set up Example tools' }).click();
+      const wizard = win.getByRole('complementary', { name: 'Set up Zana', exact: true });
+      await wizard.locator('[data-step="harness"]').getByRole('button', { name: 'Skip for now', exact: true }).click();
+      await wizard.getByRole('button', { name: /Yes, I.m an employee/ }).click();
       await wizard.getByRole('button', { name: 'Check access and continue' }).click();
       if (!workingCredentials) {
         await expect(wizard).toContainText('Signed in as fixture-user, but the marketplace download failed.');
         await expect(wizard).toContainText('Could not access the repository');
         await expect(wizard).not.toContainText('this account can’t read');
         await expect(wizard).not.toContainText('Ask your marketplace administrator');
-        await testInfo.attach('recoverable-git-auth-failure', { body: await win.screenshot(), contentType: 'image/png' });
+        await snap(app!.electron, win, testInfo, 'recoverable-git-auth-failure');
         expect(readFileSync(config, 'utf8')).toBe(originalConfig);
         writeFileSync(activePassword, 'fixture-good');
         await wizard.getByRole('button', { name: 'Retry access check' }).click();
       }
-      await expect(wizard).toContainText('Choose your starting bundle');
+      await expect(wizard.locator('[data-step="workplace"]')).toHaveAttribute('data-state', 'done');
+      await expect(wizard).toContainText('Fixture Starter');
       // Refresh uses the same credentials after a successful initial add.
-      await wizard.getByRole('button', { name: 'Back to access check' }).click();
+      await wizard.locator('[data-step="workplace"] .onb-sh').click();
       await wizard.getByRole('button', { name: 'Check access and continue' }).click();
-      await expect(wizard).toContainText('Choose your starting bundle');
-      await wizard.getByRole('button', { name: 'Install and continue', exact: true }).click();
-      await expect(wizard).toContainText('Finish connecting your tools');
+      await expect(wizard.locator('[data-step="workplace"]')).toHaveAttribute('data-state', 'done');
+      // A finished workplace step opens the bundle step on its own; only expand it if it is still collapsed.
+      const install = wizard.getByRole('button', { name: 'Install and continue', exact: true });
+      const collapsedBundle = wizard.locator('[data-step="bundle"] .onb-sh[aria-expanded="false"]');
+      await expect(async () => {
+        if (await collapsedBundle.isVisible()) await collapsedBundle.click({ timeout: 2_000 });
+        await expect(install).toBeVisible({ timeout: 2_000 });
+      }).toPass({ timeout: 20_000 });
+      await install.click();
+      await expect(wizard.locator('[data-step="bundle"]')).toHaveAttribute('data-state', 'done');
       expect(JSON.parse(readFileSync(join(home, '.zcc/plugins/installed.json'), 'utf8')).plugins)
         .toEqual(expect.arrayContaining([expect.objectContaining({ id, version: '1.0.0' })]));
       // Updates exercise ls-remote and the exact-commit fetch path, using the
@@ -129,9 +139,9 @@ if [ "$1" = get ] && [ "$ZCC_FIXTURE_EXISTING_CREDENTIALS" = 1 ]; then printf 'u
       expect(calls).not.toContain('auth login');
       expect(calls.includes('auth git-credential get')).toBe(!workingCredentials);
       expect(readFileSync(config, 'utf8')).toBe(originalConfig);
-      await expect(wizard).not.toContainText('fixture-good');
-      await expect(wizard).not.toContainText('fixture-bad');
-      await testInfo.attach('https-git-onboarding-complete', { body: await win.screenshot(), contentType: 'image/png' });
+      await expect(win.locator('body')).not.toContainText('fixture-good');
+      await expect(win.locator('body')).not.toContainText('fixture-bad');
+      await snap(app!.electron, win, testInfo, 'https-git-onboarding-complete');
     } finally { if (app) await closeApp(app.electron); await git.close(); }
   });
 }

@@ -172,14 +172,15 @@ describe('advisory dispatch respects routing and skill reach', () => {
     expect(await pick(`${filePath}.b`, roster, { requires: { skills: ['review'] }, routing: { version: 1 } })).toBe('w2');
     expect(await pick(`${filePath}.c`, roster, {})).toBe('w0');
   }));
-  it('fails a skill-requiring unit NO_QUALIFIED_ROUTE when no worker slot at all reaches the skill, even without routing', async () => fixture(async (filePath) => {
+  it('escalates a skill-requiring unit (BLOCKED) when no worker slot at all reaches the skill, even without routing', async () => fixture(async (filePath) => {
     const roster = [{ slotId: 'w0', model: HAIKU, skillAllowlist: ['zcc-inbox'] }];
     const store = createExecutionStore({ filePath: `${filePath}.a`, id: () => 'execution', now: () => 1_000 });
     const record = await running(store, roster, { requires: { skills: ['review'] } });
     const { record: after, assignments } = await store.dispatchReady(record.id);
     expect(assignments).toEqual([]);
-    expect(after.workUnits![0]).toMatchObject({ state: 'FAILED', failureCode: 'NO_QUALIFIED_ROUTE', failure: 'no authorized worker slot allows every required skill' });
-    expect((await store.get(record.id))!.workUnits![0].state).toBe('FAILED');
+    expect(after.workUnits![0]).toMatchObject({ state: 'BLOCKED' });
+    expect(after.blockers).toMatchObject([{ audience: 'coordinator', noRoute: true, question: expect.stringContaining('skill unreachable: review') }]);
+    expect((await store.get(record.id))!.workUnits![0].state).toBe('BLOCKED');
   }));
   it('keeps a skill-requiring unit READY (not failed) while the only capable slot is busy', async () => fixture(async (filePath) => {
     const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });
@@ -196,7 +197,8 @@ describe('advisory dispatch respects routing and skill reach', () => {
     const store = createExecutionStore({ filePath, id: () => 'execution', now: () => 1_000 });
     const record = await running(store, [{ slotId: 'w0', model: HAIKU, skillAllowlist: ['zcc-inbox'] }], { requires: { skills: ['review'] }, routing: { version: 1 } });
     const { record: after } = await store.dispatchReady(record.id, { enforceRouting: true });
-    expect(after.workUnits![0]).toMatchObject({ state: 'FAILED', failureCode: 'NO_QUALIFIED_ROUTE' });
+    expect(after.workUnits![0]).toMatchObject({ state: 'BLOCKED' });
+    expect(after.blockers).toMatchObject([{ noRoute: true }]);
     expect(after.routingDecisions![0].candidates[0].reasons).toContain('skill unreachable: review');
   }));
 });

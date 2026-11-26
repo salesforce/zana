@@ -143,6 +143,11 @@ export type {
 } from './server.js';
 
 export type { JsonValue } from './json-value.js';
+export { PluginThreadInteractionError } from './contracts.js';
+export type {
+  PluginRelayedHumanActor, PluginThreadInteraction, PluginThreadInteractionErrorCode,
+  PluginThreadInteractionResolution, PluginThreadInteractions
+} from './contracts.js';
 export type {
   CapabilityIntrospectionContract,
   DispatchAdmissionContract,
@@ -208,6 +213,7 @@ export type {
   PluginRegistrationSet,
   PluginNavPanelPlacement,
   PluginNavPanelRegistration,
+  PluginSidebarSectionProps,
   PluginSettingsSectionRegistration,
   PluginNotificationSoundProviderRegistration,
   PluginHomepageSectionRegistration,
@@ -232,6 +238,8 @@ export type {
   PluginQuestionForm,
   PluginPendingInteractionView,
   PluginThreadPanelActionRegistration,
+  PluginOwnedThreadIconProps,
+  PluginOwnedThreadTitleProps,
   PluginThreadPanelPage,
   PluginThreadPanelScope,
   PluginNewThreadPanelActionRegistration,
@@ -250,6 +258,7 @@ export type {
   PluginThreadCardActionRegistration,
   PluginAgentsBoardActionContext,
   PluginAgentsBoardActionRegistration,
+  PluginAgentsBoardThreadToggleRegistration,
   PluginAgentsViewRegistration,
   PluginAgentsViewProps,
   PluginFleetMember,

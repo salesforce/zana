@@ -3,10 +3,9 @@
  *
  * Read-only and identity-free: a Team is a named bundle of personas that, when
  * launched, opens one terminal tab per slot. This tool exposes only its
- * NON-SENSITIVE metadata — id, name, description, slot count, source — via the
- * main-side {@link toTeamSummary} projection. It deliberately omits the launch
- * internals (`slots`, `initialPrompt`, `orchestratorPersonaId`): a discovery
- * caller picks a team by id/name, it does not need the slot list.
+ * NON-SENSITIVE metadata — id, name, description, slot count, roster summary,
+ * and source — via the main-side {@link toTeamSummary} projection. Slots expose
+ * labels, persona ids, levels and routing roles, never prompts or launch grants.
  *
  * Mirrors {@link registerListPersonasTool}. Like every tool it's registered
  * per-request and gated on its dep being wired in {@link McpServerOptions}
@@ -21,7 +20,7 @@ export const LIST_TEAMS_DESCRIPTION = [
   'List the Teams available to launch. A Team is a named bundle of personas;',
   'launching it opens one terminal tab per slot (an orchestrator plus workers).',
   '',
-  'Returns non-sensitive metadata only: id, name, description, slot count, and',
+  'Returns non-sensitive metadata only: id, name, description, slot count, roster, and',
   'source. Use the `id` when an operator launches the team. Read-only; takes no',
   'arguments.',
   '',

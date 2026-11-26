@@ -390,7 +390,7 @@ export function evaluateRouteFit(record: ExecutionRecord, evaluatedAt: number): 
   let reason = hasWork ? 'Complete usage and at least two immutable routing samples are required.' : 'No work units were available to evaluate.';
   if (hasWork && usage.completeness === 'complete' && decisions.length >= 2 && selected.every((item) => item.slotId && item.provider)) {
     const illegal = decisions.some((decision) => decision.candidates.find((candidate) => candidate.slotId === decision.recommendedSlotId)?.status === 'FAIL');
-    const routeFailures = (record.workUnits ?? []).some((unit) => unit.failureCode === 'NO_QUALIFIED_ROUTE' || unit.failureCode === 'ROUTE_FACTS_UNAVAILABLE');
+    const routeFailures = (record.workUnits ?? []).some((unit) => unit.failureCode === 'NO_QUALIFIED_ROUTE' || unit.failureCode === 'ROUTE_FACTS_UNAVAILABLE') || (record.blockers ?? []).some((blocker) => blocker.noRoute === true);
     const ranks = ['low', 'medium', 'high', 'extra-high'] as const;
     const overpowered = outcome === 'success' && (record.workUnits ?? []).length > 0 && (record.workUnits ?? []).every((unit) => {
       if (!unit.routing?.minimumLevel || !unit.assignedSlotId) return false;

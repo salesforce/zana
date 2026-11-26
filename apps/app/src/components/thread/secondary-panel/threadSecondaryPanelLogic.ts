@@ -1,3 +1,4 @@
+import type { JsonValue } from '@zana-ai/zcc-domain/thread-runtime';
 import { copyText } from '../../../lib/copy-text.js';
 import { imageContentTypeFromPath, imagePreviewSrc } from '../timeline/work-row-helpers.js';
 import {
@@ -11,6 +12,7 @@ import {
   openSecondaryPanel,
   patchClosableTab,
   selectPinnedView,
+  setClosableTabState,
   setSecondaryPanelWidth,
   toggleSecondaryPanelMaximized,
   type ClosableSecondaryTab,
@@ -300,6 +302,9 @@ export function createSecondaryPanelCommands(
     activateTab: (tabId: string) => update((current) => activateClosableTab(current, tabId)),
     patchTab: (tabId: string, patch: Partial<Omit<ClosableSecondaryTab, 'id' | 'kind'>>) => (
       update((current) => patchClosableTab(current, tabId, patch))
+    ),
+    setTabState: (tabId: string, value: JsonValue | null) => (
+      update((current) => setClosableTabState(current, tabId, value))
     ),
     setWidth: (widthPx: number, containerWidthPx?: number) => (
       update((current) => setSecondaryPanelWidth(current, widthPx, containerWidthPx))

@@ -48,6 +48,44 @@
   color: var(--text-muted);
 }
 
+@media (hover: hover) and (pointer: fine) {
+  .sidebar--global .sidebar-projects-header > .list-header-actions {
+    opacity: 0;
+  }
+
+  .sidebar--global .sidebar-projects-header:is(:hover, :has(:focus-visible)) > .list-header-actions,
+  .sidebar--global .sidebar-projects-header > .list-header-actions:has([aria-expanded='true']) {
+    opacity: 1;
+  }
+}
+
+.sidebar .sidebar-nav--with-collection {
+  gap: 1px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.sidebar .sidebar-nav--with-collection > .sidebar-section-sortable:has(> .sidebar-projects:not(.sidebar-projects--collapsed)) {
+  min-height: min(224px, 65dvh);
+}
+
+.sidebar .sidebar-nav--with-collection .nav-item {
+  min-height: 29px;
+  padding-block: 4px;
+}
+
+.sidebar .sidebar-nav--with-collection .sidebar-projects-header {
+  padding-block: 4px 3px;
+}
+
+.sidebar .sidebar-nav--with-collection .sidebar-projects {
+  margin-top: 4px;
+}
+
+.sidebar .sidebar-nav--with-collection .project-terminal-row {
+  padding-block: 2px;
+}
+
 .sidebar .sidebar-projects .sidebar-projects-filter {
   display: flex;
   flex: 0 0 auto;
@@ -65,6 +103,14 @@
   background: transparent;
   color: var(--text-primary);
   font-size: 12px;
+}
+
+.sidebar .sidebar-nav--with-collection .sidebar-projects .sidebar-projects-filter {
+  margin-bottom: 5px;
+}
+
+.sidebar .sidebar-nav--with-collection .sidebar-projects-filter input {
+  height: 26px;
 }
 
 .sidebar .sidebar-projects-filter .list-filter-icon {
@@ -138,6 +184,18 @@
 .sidebar .sidebar-utility-bar {
   flex-wrap: wrap;
   gap: 4px;
+}
+
+.sidebar:has(.sidebar-nav--with-collection) .sidebar-utility-bar {
+  min-height: 36px;
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.sidebar:has(.sidebar-nav--with-collection) .onb-pill {
+  width: auto;
+  margin: 4px 6px 0;
+  padding-block: 5px;
 }
 
 .sidebar .sidebar-utility-button--settings {
@@ -292,3 +350,56 @@
     min-height: 44px;
   }
 }
+
+.sidebar-collapse-behavior {
+  margin: 8px 0 0;
+  padding: 8px 0 0;
+  border: 0;
+  border-top: 1px solid var(--border-subtle, var(--border));
+  display: grid;
+  gap: 4px;
+}
+
+.sidebar-collapse-behavior legend {
+  padding: 0 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  float: left;
+  width: 100%;
+}
+
+.sidebar-collapse-behavior label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.sidebar-collapse-behavior label:hover {
+  background: var(--bg-hover, rgba(127, 127, 127, 0.12));
+}
+
+.sidebar-collapse-behavior input {
+  margin-top: 3px;
+}
+
+.sidebar-collapse-behavior-label {
+  display: block;
+  font-size: 13px;
+}
+
+.sidebar-collapse-behavior-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Feature mount point above the sidebar footer (e.g. the onboarding resume pill). */
+.sidebar-footer-slot:empty { display: none; }
+.sidebar-footer-slot { padding: 0 8px 6px; }
+.basic-ui-sidebar .sidebar-footer-slot { padding: 6px 0 0; }

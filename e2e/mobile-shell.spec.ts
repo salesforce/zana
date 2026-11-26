@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
@@ -12,6 +12,18 @@ import {
 
 // The composer mic only renders once Settings → Experimental → voice input is on (#377).
 test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, initialConfig: { voiceInputEnabled: true } });
+test.beforeEach(({ home }) => {
+  const dataDir = join(home, '.zcc');
+  mkdirSync(dataDir, { recursive: true });
+  const projects = Array.from({ length: 18 }, (_, index) => {
+    const name = 'scroll-project-' + String(index + 1).padStart(2, '0');
+    const path = join(home, name);
+    mkdirSync(path);
+    return { id: name, name, path, createdAt: 1, lastActiveAt: 1 };
+  });
+  writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects }));
+});
+
 test('Mobile pairs to built Electron, uses phone navigation, reads and sends a live thread', async ({
   app
 }, testInfo) => {
@@ -27,11 +39,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
   git('add', '.');
   git('commit', '-m', 'Seed mobile diff');
   writeFileSync(join(directory, 'theme-example.ts'), source.replace('value20 = 20', 'value20 = 42'));
-  const scrollProjects = Array.from({ length: 18 }, (_, index) =>
-    join(app.home, `scroll-project-${String(index + 1).padStart(2, '0')}`)
-  );
-  for (const path of scrollProjects) mkdirSync(path);
-  const threadId = await app.window.evaluate(async ({ path, scrollProjects }) => {
+  const threadId = await app.window.evaluate(async path => {
     const projectResponse = await fetch('/api/v1/projects', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -39,14 +47,6 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
     });
     const { project } = await projectResponse.json();
     if (!project?.id) throw new Error('Project creation failed');
-    for (const scrollPath of scrollProjects) {
-      const response = await fetch('/api/v1/projects', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ path: scrollPath })
-      });
-      if (!response.ok) throw new Error('Scroll project creation failed');
-    }
     const response = await fetch('/api/v1/threads', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -60,7 +60,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
     const result = await response.json();
     if (!response.ok) throw new Error(JSON.stringify(result));
     return (result.thread ?? result.value).id as string;
-  }, { path: directory, scrollProjects });
+  }, directory);
   await expect(app.window.locator('.mobile-sticky-search').first()).toHaveCSS('display', 'contents');
   await expect(app.window.locator('.mobile-settings-back')).toHaveCount(0);
   const reservation = createServer();
@@ -211,7 +211,9 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
       await expect(shellTitle).toHaveText(headerTitle);
       await expect(phone.locator('.titlebar-title')).toBeHidden();
       await expect(threadHeader.locator('h1')).toHaveCount(0);
-      await expect(phone.getByTestId('thread-detail-status')).toBeVisible();
+      await expect(phone.getByTestId('thread-detail-status')).toHaveCount(0);
+      await expect(phone.locator('.titlebar .basic-ui-mode-switch')).toHaveCount(0);
+      await expect(phone.getByRole('button', { name: 'Show right panel', exact: true })).toHaveCount(0);
       const shellBox = (await phone.locator('.titlebar').boundingBox())!;
       await expect(threadHeader).toBeHidden();
       // Wait for the mobile search/header styles to settle after resize and hydration.
@@ -222,17 +224,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
       expect(shellBox.height).toBe(48);
       expect((await phone.getByTestId('thread-timeline').boundingBox())!.y).toBeLessThanOrEqual(56);
       const searchToggle = phone.getByRole('menuitem', { name: 'Search in thread', exact: true });
-      const panelToggle = phone.getByRole('button', { name: 'Show right panel', exact: true });
       const overflow = phone.getByTestId('thread-overflow-trigger');
-      const controls = [panelToggle];
-      for (const button of controls) {
-        const box = (await button.boundingBox())!;
-        expect(box.height).toBeGreaterThanOrEqual(44);
-        expect(box.width).toBeGreaterThanOrEqual(44);
-        expect(box.y).toBeGreaterThanOrEqual(shellBox.y);
-        expect(box.y + box.height).toBeLessThanOrEqual(shellBox.y + shellBox.height);
-        expect(box.x + box.width).toBeLessThanOrEqual(width);
-      }
       await expect(phone.locator('.mobile-thread-controls-slot').getByTestId('thread-overflow-trigger')).toBeVisible();
       await expect(threadHeader.getByTestId('thread-overflow-trigger')).toHaveCount(0);
       const overflowBox = (await overflow.boundingBox())!;
@@ -241,41 +233,35 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
       expect(overflowBox.height).toBeGreaterThanOrEqual(44);
       expect(overflowBox.y).toBeGreaterThanOrEqual(shellBox.y);
       expect(overflowBox.y + overflowBox.height).toBeLessThanOrEqual(shellBox.y + shellBox.height);
-      const statusBox = (await phone.getByTestId('thread-detail-status').boundingBox())!;
       await phone.screenshot({ path: testInfo.outputPath(`mobile-header-controls-${width}.png`) });
       // The direct Agents return uses one additional 44px target in this same row.
       const agentsBackBox = (await phone.getByRole('link', { name: 'Back to agents', exact: true }).boundingBox())!;
       expect(agentsBackBox.width).toBeGreaterThanOrEqual(44);
       expect(agentsBackBox.x + agentsBackBox.width).toBeLessThanOrEqual(titleBox.x);
-      expect(titleBox.width).toBeGreaterThan(60);
-      expect(titleBox.x + titleBox.width).toBeLessThanOrEqual(statusBox.x);
-      expect(statusBox.width).toBeLessThanOrEqual(20);
-      const panelToggleBox = (await panelToggle.boundingBox())!;
-      expect(panelToggleBox.x + panelToggleBox.width).toBeLessThanOrEqual(overflowBox.x);
+      expect(titleBox.width).toBeGreaterThanOrEqual(width - 120);
+      expect(titleBox.x + titleBox.width).toBeLessThanOrEqual(overflowBox.x);
       expect(overflowBox.x + overflowBox.width).toBe(width - 4);
-      await panelToggle.focus();
-      await phone.keyboard.press('Tab');
-      await expect(overflow).toBeFocused();
       await overflow.click();
+      const menu = phone.getByRole('menu', { name: 'Agent actions', exact: true });
+      await expect(menu.getByRole('menuitem').first()).toHaveText('Thread tools');
+      await expect(menu.getByRole('menuitem', { name: 'Stop', exact: true })).toBeVisible();
       await searchToggle.tap();
       const search = phone.getByRole('searchbox', { name: 'Search in thread', exact: true });
       await expect(search).toBeFocused();
+      await expect(phone.getByRole('group', { name: 'Interface view' })).toBeHidden();
       await expect(searchToggle).toBeHidden();
       await search.fill('desktop');
       await expect(threadHeader).toBeHidden();
       expect((await phone.locator('.titlebar').boundingBox())!.height).toBe(48);
       const searchBox = (await search.boundingBox())!;
-      const panelBox = (await panelToggle.boundingBox())!;
       expect(searchBox.width).toBeGreaterThan(60);
-      const searchStatus = (await phone.getByTestId('thread-detail-status').boundingBox())!;
-      expect(searchBox.x).toBeGreaterThanOrEqual(searchStatus.x + searchStatus.width);
       const searchOverflowBox = (await overflow.boundingBox())!;
       expect(searchBox.x + searchBox.width).toBeLessThanOrEqual(searchOverflowBox.x);
-      expect(panelBox.x + panelBox.width).toBeLessThanOrEqual(searchOverflowBox.x);
       expect(searchOverflowBox.x + searchOverflowBox.width).toBe(width - 4);
       await phone.getByRole('button', { name: 'Close search', exact: true }).click();
       await expect(shellTitle).toBeVisible();
       await expect(search).toHaveCount(0);
+      await expect(phone.getByRole('group', { name: 'Interface view' })).toHaveCount(0);
       await expect(phone.getByRole('button', { name: 'Close search', exact: true })).toBeHidden();
       await overflow.click();
       await expect(phone.getByRole('menuitem', { name: 'Rename', exact: true })).toBeVisible();
@@ -307,6 +293,19 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
       expect((await prompt.boundingBox())!.height).toBeLessThanOrEqual(140);
       await phone.screenshot({ path: testInfo.outputPath(`mobile-single-row-header-${width}.png`) });
     }
+    await phone.setViewportSize({ width: 390, height: 844 });
+    const scrollback = phone.getByTestId('thread-timeline');
+    // Follow mode intentionally tracks the latest reply within 64px of the bottom.
+    await expect.poll(() => scrollback.evaluate((element) => element.scrollHeight - element.clientHeight)).toBeGreaterThan(250);
+    await scrollback.evaluate((element) => { element.scrollTop = 120; });
+    await expect.poll(() => scrollback.evaluate((element) => element.scrollTop)).toBe(120);
+    await agentMenu.click();
+    await phone.getByRole('menuitem', { name: 'Thread tools', exact: true }).click();
+    const tools = phone.getByTestId('thread-secondary-panel');
+    await expect(tools).toBeVisible();
+    await tools.getByRole('button', { name: 'Close panel', exact: true }).click();
+    await expect(scrollback).toBeVisible();
+    await expect.poll(() => scrollback.evaluate((element) => element.scrollTop)).toBe(120);
     await phone.setViewportSize({ width: 1280, height: 844 });
     await expect(shellTitle).toHaveCount(0);
     await expect(threadHeader.getByRole('heading', { name: headerTitle, exact: true })).toBeVisible();
@@ -338,9 +337,12 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
       JSON.parse(localStorage.getItem(`zcc.secondaryPanel.${id}`) ?? 'null')?.tabs
     ), threadId)).toEqual([expect.objectContaining({ id: 'mobile-saved-tab' })]);
     const sidePanel = phone.getByTestId('thread-secondary-panel');
-    const showPanel = phone.getByRole('button', { name: 'Show right panel', exact: true });
+    const openThreadTools = async () => {
+      await agentMenu.click();
+      await phone.getByRole('menuitem', { name: 'Thread tools', exact: true }).click();
+    };
     await expect(sidePanel).toBeHidden();
-    await expect(showPanel).toBeVisible();
+    await expect(agentMenu).toBeVisible();
     await expect(
       phone.getByText('Hello from the desktop delay:500', { exact: true }).first()
     ).toBeVisible();
@@ -474,7 +476,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
       await expect(drawer.getByRole('list', { name: 'Sessions in mobile-project' })).toBeVisible();
       const menuScroll = drawer.locator('.mobile-tools-section');
       const search = drawer.locator('.mobile-sticky-search');
-      const filter = drawer.getByPlaceholder('Filter machines or projects');
+      const filter = drawer.getByPlaceholder('Filter machines, projects or chats');
       await expect(filter).toBeVisible();
       await menuScroll.evaluate(element => { element.scrollTop = 250; });
       const menuTop = (await menuScroll.boundingBox())!.y;
@@ -491,7 +493,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
       await expect(drawer.getByRole('button', { name: 'Project actions for scroll-project-18', exact: true })).toBeVisible();
       await expect(drawer.getByRole('button', { name: 'Project actions for scroll-project-17', exact: true })).toHaveCount(0);
       await filter.fill('no-such-mobile-project');
-      await expect(drawer.getByRole('status')).toContainText('No machines or projects match');
+      await expect(drawer.getByRole('status')).toContainText('No machines, projects or chats match');
       await drawer.getByRole('button', { name: 'Clear filter', exact: true }).click();
       await menuScroll.evaluate(element => { element.scrollTop = 0; });
       const collapseProject = drawer.getByRole('button', { name: /Collapse sessions for mobile-project/ });
@@ -589,6 +591,42 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
     await drawer.getByTestId('nav-conversation-history').click();
     await expect(drawer).toBeHidden();
     await phone.keyboard.press('Escape');
+    // Switch views from navigation on both sides of the Basic/Advanced boundary.
+    await openNavigation();
+    await drawer.getByRole('button', { name: 'Interface view Advanced', exact: true }).click();
+    const interfaceSheet = phone.getByRole('dialog', { name: 'Interface view', exact: true });
+    await expect(interfaceSheet.getByRole('button', { name: 'Advanced', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await interfaceSheet.getByRole('button', { name: 'Basic', exact: true }).click();
+    await expect(phone.locator('.app-shell')).toHaveAttribute('data-ui-mode', 'basic');
+    await expect(drawer).toHaveCount(0);
+    await phone.goto(`${serverUrl}/agents`);
+    await expect(phone.getByRole('heading', { name: 'Continue in Advanced' })).toBeVisible();
+    const advancedActions = phone.locator('.titlebar .mobile-page-actions');
+    await expect(advancedActions).toHaveCount(1);
+    await expect(advancedActions).toBeHidden();
+    await expect(phone.getByRole('button', { name: 'Open conversations' })).toBeVisible();
+    await phone.goto(`${serverUrl}/threads/${threadId}`);
+    await expect(shellTitle).toBeVisible();
+    await phone.getByRole('button', { name: 'Conversation actions', exact: true }).click();
+    await phone.getByRole('button', { name: 'Thread tools', exact: true }).click();
+    await expect(sidePanel).toBeVisible();
+    await sidePanel.getByRole('button', { name: 'Back to chat', exact: true }).click();
+    await expect(sidePanel).toBeHidden();
+    await phone.getByRole('button', { name: 'Open conversations', exact: true }).click();
+    const basicRow = drawer.getByTestId(`basic-chat-row-${threadId}`).locator('..');
+    const rowActions = basicRow.getByRole('button', { name: /^Actions for / });
+    await rowActions.tap();
+    const basicRowMenu = drawer.getByRole('menu', { name: /^Actions for / });
+    await expect(basicRowMenu.getByRole('menuitem', { name: 'Archive' })).toBeInViewport();
+    await phone.keyboard.press('Escape');
+    await expect(basicRowMenu).toHaveCount(0);
+    await expect(rowActions).toBeFocused();
+    await drawer.getByRole('button', { name: 'Interface view Basic', exact: true }).click();
+    await expect(interfaceSheet.getByRole('button', { name: 'Basic', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await interfaceSheet.getByRole('button', { name: 'Advanced', exact: true }).click();
+    await expect(phone.locator('.app-shell')).toHaveAttribute('data-ui-mode', 'advanced');
+    await expect(drawer).toHaveCount(0);
+    await expect(phone).toHaveURL(`${serverUrl}/threads/${threadId}`);
     await phone.goto(`${serverUrl}/threads/${threadId}`);
     const composer = phone.getByTestId('thread-detail').getByLabel('Message', { exact: true });
     const send = phone.getByRole('button', { name: /^(Send|Send message)$/ }).first();
@@ -629,7 +667,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
       await expandedComposer.getByRole('button', { name: 'Done', exact: true }).press('Escape');
       await expect(expandedComposer).toHaveCount(0);
       await expect(composer).toHaveText('Draft survives mobile options');
-      await showPanel.click();
+      await openThreadTools();
       await expect(sidePanel).toBeVisible();
       await expect(phone.locator('.thread-detail-main')).toBeHidden();
       await expect(composer).toBeHidden();
@@ -785,28 +823,63 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
     await send.click();
     await expect(phone.getByText('Hello from the phone', { exact: true }).first()).toBeVisible();
     await phone.screenshot({ path: testInfo.outputPath('zana-mobile-thread.png') });
-    await showPanel.click();
+    await openThreadTools();
     await expect(sidePanel).toBeVisible();
     await expect.poll(() => phone.evaluate((id) => (
       JSON.parse(localStorage.getItem(`zcc.secondaryPanel.${id}`) ?? 'null')?.isOpen
     ), threadId)).toBe(true);
     await phone.reload();
-    await expect(showPanel).toBeVisible();
+    await expect(agentMenu).toBeVisible();
     await expect(sidePanel).toBeHidden();
     await expect(composer).toBeVisible();
     await expect.poll(() => phone.evaluate((id) => (
       JSON.parse(localStorage.getItem(`zcc.secondaryPanel.${id}`) ?? 'null')?.tabs
     ), threadId)).toEqual([expect.objectContaining({ id: 'mobile-saved-tab' })]);
+    // A real pending interaction belongs on the roster and in the conversation.
+    await expect(phone.getByTestId('thread-timeline')).toContainText('Response to: Hello from the phone');
+    const auth = JSON.parse(readFileSync(join(app.home, '.zcc', 'auth.json'), 'utf8'));
+    const request = await fetch(new URL('/internal/hosts/interactive-request', app.window.url()), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-zcc-host-id': auth.hostId, authorization: `Bearer ${auth.hostKey}` },
+      body: JSON.stringify({
+        sessionId: threadId,
+        interaction: {
+          threadId, turnId: 'mobile-review', providerId: 'fake', providerThreadId: 'mobile-thread', providerRequestId: 'mobile-approval',
+          payload: {
+            kind: 'approval', reason: 'Review before continuing', availableDecisions: ['allow_once', 'deny'],
+            subject: { kind: 'command', itemId: 'mobile-command', command: 'pwd', cwd: directory, actions: [], sessionGrant: null }
+          }
+        }
+      })
+    });
+    expect(request.ok).toBe(true);
+    expect((await request.json()).outcome).not.toBe('rejected');
+    await phone.getByRole('link', { name: 'Back to agents', exact: true }).click();
+    await phone.getByRole('button', { name: 'Agents actions', exact: true }).click();
+    await phone.getByRole('button', { name: 'Board view', exact: true }).click();
+    const board = phone.getByTestId('mobile-agent-board');
+    await board.getByRole('button', { name: /^Needs you 1$/ }).click();
+    await board.getByRole('region', { name: 'Needs you' }).locator('.agent-card[data-kind="thread"]').click();
+    await expect(phone.getByTestId('thread-pending-banner').getByTestId('thread-pending-decision-deny')).toBeVisible();
+    await expect(phone.getByTestId('thread-detail-status')).toHaveCount(0);
+    // Clear the fixture without sending a decision to the fake provider.
+    const interrupted = await fetch(new URL('/internal/hosts/interactive-request/interrupt', app.window.url()), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-zcc-host-id': auth.hostId, authorization: `Bearer ${auth.hostKey}` },
+      body: JSON.stringify({ sessionId: threadId, providerId: 'fake', threadIds: [threadId], reason: 'Mobile fixture finished' })
+    });
+    expect(interrupted.ok).toBe(true);
+    await expect(phone.getByTestId('thread-pending-banner')).toHaveCount(0);
     await phone.setViewportSize({ width: 1280, height: 1180 });
     await expect(phone.locator('.app-shell')).toHaveAttribute('data-mobile', 'false');
     await expect(composerOptions).toBeHidden();
-    await expect(phone.getByTestId('composer-mode-picker-trigger')).toBeVisible();
-    await showPanel.click();
+    await expect(phone.getByRole('button', { name: 'Composer settings', exact: true })).toBeVisible();
+    await phone.getByRole('button', { name: 'Show right panel', exact: true }).click();
     await expect(sidePanel).toBeVisible();
     await expect(composer).toBeVisible();
     await expect(phone.getByTestId('thread-secondary-maximize')).toBeVisible();
     await phone.setViewportSize({ width: 390, height: 844 });
-    await expect(showPanel).toBeVisible();
+    await expect(agentMenu).toBeVisible();
     await expect(sidePanel).toBeHidden();
     await expect(composer).toBeVisible();
     await phone.setViewportSize({ width: 1280, height: 1180 });

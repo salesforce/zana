@@ -446,3 +446,130 @@ describe('relaunchSquadWorker', () => {
     expect(deps.launchAuthorizedTerminal.mock.calls[0][2]).toMatchObject({ coordinationMode: 'interactive-team', autonomous: false, suppressPersonaInitialPrompt: false });
   });
 });
+
+describe('launch fence (Stop racing Restart)', () => {
+  it('does not relaunch when the run is closing before the relaunch and runs the held-back exit', async () => {
+    vi.useFakeTimers();
+    const deps = makeDeps();
+    const restarter = createSquadWorkerRestarter(deps);
+    const result = restarter.restart('w1', { maySpawn: async () => false });
+    const finalize = vi.fn(async () => {});
+    restarter.onSessionExit('w1', finalize);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await result).toMatchObject({ ok: false, reason: 'run-closing' });
+    expect(deps.launchAuthorizedTerminal).not.toHaveBeenCalled();
+    expect(finalize).toHaveBeenCalledTimes(1);
+    expect(deps.onRelaunched).not.toHaveBeenCalled();
+  });
+  it('closes the new session when the run closed while the relaunch was in flight', async () => {
+    vi.useFakeTimers();
+    const deps = makeDeps();
+    const fence = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const restarter = createSquadWorkerRestarter(deps);
+    const result = restarter.restart('w1', { maySpawn: fence });
+    restarter.onSessionExit('w1', vi.fn(async () => {}));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await result).toMatchObject({ ok: false, reason: 'run-closing' });
+    expect(deps.launchAuthorizedTerminal).toHaveBeenCalledTimes(1);
+    expect(deps.closeSession).toHaveBeenCalledTimes(2); // the old session, then the unbound new one
+    expect(deps.onRelaunched).not.toHaveBeenCalled();
+  });
+  it('treats a fence that throws as closed', async () => {
+    vi.useFakeTimers();
+    const deps = makeDeps();
+    const restarter = createSquadWorkerRestarter(deps);
+    const result = restarter.restart('w1', { maySpawn: async () => { throw new Error('x'); } });
+    restarter.onSessionExit('w1', vi.fn(async () => {}));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await result).toMatchObject({ ok: false, reason: 'run-closing' });
+    expect(deps.launchAuthorizedTerminal).not.toHaveBeenCalled();
+  });
+  it('retries closing the unbound new session once and succeeds quietly', async () => {
+    vi.useFakeTimers();
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const closeSession = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('tmux busy')).mockResolvedValue(undefined);
+    const deps = makeDeps({ closeSession });
+    const restarter = createSquadWorkerRestarter(deps);
+    const result = restarter.restart('w1', { maySpawn: vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false) });
+    restarter.onSessionExit('w1', vi.fn(async () => {}));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await result).toMatchObject({ ok: false, reason: 'run-closing' });
+    expect(closeSession).toHaveBeenCalledTimes(3);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+  it('logs run and session ids when the unbound new session cannot be closed after a retry', async () => {
+    vi.useFakeTimers();
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const closeSession = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValue(new Error('tmux gone'));
+    const deps = makeDeps({ closeSession });
+    const restarter = createSquadWorkerRestarter(deps);
+    const result = restarter.restart('w1', { maySpawn: vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false) });
+    restarter.onSessionExit('w1', vi.fn(async () => {}));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await result).toMatchObject({ ok: false, reason: 'run-closing' });
+    expect(closeSession).toHaveBeenCalledTimes(3);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(String(spy.mock.calls[0][0])).toContain('e1');
+    expect(String(spy.mock.calls[0][0])).toContain('w1');
+    spy.mockRestore();
+  });
+  it('logs an unknown run when the unbound session has no execution id', async () => {
+    vi.useFakeTimers();
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const closeSession = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValue(new Error('tmux gone'));
+    // Admission sees a worker; the session captured for the attempt has lost its execution id.
+    const getSession = vi.fn().mockReturnValueOnce(session()).mockReturnValue(session({ cohort: { ...cohort, executionId: undefined } as never }));
+    const deps = makeDeps({ closeSession, getSession });
+    const restarter = createSquadWorkerRestarter(deps);
+    const result = restarter.restart('w1', { maySpawn: vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false) });
+    restarter.onSessionExit('w1', vi.fn(async () => {}));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await result).toMatchObject({ ok: false, reason: 'run-closing' });
+    expect(String(spy.mock.calls[0]?.[0])).toContain('run unknown');
+    spy.mockRestore();
+  });
+  it('closes the new session when the attempt timed out while the fence was being read', async () => {
+    vi.useFakeTimers();
+    let open!: (value: boolean) => void;
+    const fence = vi.fn().mockResolvedValueOnce(true).mockReturnValueOnce(new Promise<boolean>((resolve) => { open = resolve; }));
+    const deps = makeDeps({ restartTimeoutMs: 1_000 });
+    const restarter = createSquadWorkerRestarter(deps);
+    const result = restarter.restart('w1', { maySpawn: fence });
+    restarter.onSessionExit('w1', vi.fn(async () => {}));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fence).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await result).toMatchObject({ ok: false, reason: 'restart-timeout' });
+    open(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.closeSession).toHaveBeenCalledTimes(2); // the old session, then the late unbound one
+    expect(deps.onRelaunched).not.toHaveBeenCalled();
+  });
+  it('leaves the new session to shutdown when disposed while the fence was being read', async () => {
+    vi.useFakeTimers();
+    let open!: (value: boolean) => void;
+    const fence = vi.fn().mockResolvedValueOnce(true).mockReturnValueOnce(new Promise<boolean>((resolve) => { open = resolve; }));
+    const deps = makeDeps();
+    const restarter = createSquadWorkerRestarter(deps);
+    const result = restarter.restart('w1', { maySpawn: fence });
+    restarter.onSessionExit('w1', vi.fn(async () => {}));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fence).toHaveBeenCalledTimes(2);
+    restarter.dispose();
+    expect(await result).toMatchObject({ ok: false, reason: 'relaunch-failed', message: 'disposed' });
+    open(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.closeSession).toHaveBeenCalledTimes(1); // only the old session
+    expect(deps.onRelaunched).not.toHaveBeenCalled();
+  });
+  it('relaunches normally while the fence stays open', async () => {
+    vi.useFakeTimers();
+    const deps = makeDeps();
+    const restarter = createSquadWorkerRestarter(deps);
+    const result = restarter.restart('w1', { maySpawn: async () => true });
+    restarter.onSessionExit('w1', vi.fn(async () => {}));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await result).toEqual({ ok: true });
+  });
+});

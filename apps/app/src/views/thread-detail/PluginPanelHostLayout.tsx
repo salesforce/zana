@@ -2,10 +2,12 @@ import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import { Bot, PanelRight } from 'lucide-react';
 import { useCompactLayout } from '../../hooks/useCompactLayout.js';
 import { getBrowserUrlHost } from '../../lib/browser-url.js';
+import { useBasicUi } from '../../lib/basic-ui.js';
 import { ThreadSecondaryPanel } from '../../components/thread/secondary-panel/ThreadSecondaryPanel.js';
 import { ThreadNewTabPage } from '../../components/thread/secondary-panel/ThreadNewTabPage.js';
 import { BrowserTabDeck } from '../../components/thread/secondary-panel/BrowserTabDeck.js';
 import { PanelAgentTab } from '../../components/thread/secondary-panel/PanelAgentTab.js';
+import { PluginTabDeck } from '../../components/thread/secondary-panel/PluginTabDeck.js';
 import { ThreadPluginTab } from '../../components/thread/secondary-panel/ThreadPluginTab.js';
 import { onPluginPanelAgentRequest, type PanelAgentTarget } from '../../plugins/plugin-panel-agent.js';
 import { getPluginPageContext, onPluginPanelToolRequest, onPluginPanelScopeRequest, getPluginPanelScope, type PanelToolTarget, PLUGIN_PAGE_PANEL_OWNER_PREFIX, PluginPagePanelProvider, type PluginPanelScope } from '../../plugins/plugin-page-panel.js';
@@ -157,6 +159,7 @@ function PluginResourceSidePanel({
   connect: (controller: PanelController) => () => void;
   onPresentation: (state: { isOpen: boolean; isMaximized: boolean; widthPx: number }) => void;
 }) {
+  const basicUi = useBasicUi();
   const panel = useSecondaryPanel(ownerId, {
     getContainerWidthPx: () => viewRef.current?.clientWidth ?? 0
   });
@@ -230,21 +233,6 @@ function PluginResourceSidePanel({
         }}
       />
     );
-  } else if (closable?.kind === 'plugin' && closable.moduleId === pluginId && closable.actionId) {
-    // Only this page's plugin; a stored tab naming another plugin is not mounted here.
-    panelBody = (
-      <ThreadPluginTab
-        key={closable.id}
-        moduleId={pluginId}
-        projectId={scopeId ?? null}
-        actionId={closable.actionId}
-        params={closable.params}
-        layout={closable.layout}
-        surface="plugin-page"
-        page={page}
-        tabId={closable.id}
-      />
-    );
   } else if (closable?.kind === 'new-tab') {
     panelBody = (
       <ThreadNewTabPage
@@ -309,10 +297,32 @@ function PluginResourceSidePanel({
           onResize={panel.setWidth}
         >
           {panelBody}
+          <PluginTabDeck
+            tabs={panel.state.tabs}
+            activeId={panel.state.activeId}
+            ownerId={ownerId}
+            // Only this page's plugin; a stored tab naming another plugin is not mounted here.
+            accepts={(tab) => tab.moduleId === pluginId && !!tab.actionId}
+            render={(tab, active) => (
+              <ThreadPluginTab
+                moduleId={pluginId}
+                projectId={scopeId ?? null}
+                actionId={tab.actionId}
+                params={tab.params}
+                layout={tab.layout}
+                surface="plugin-page"
+                page={page}
+                tabId={tab.id}
+                active={active}
+                tabState={tab.tabState}
+                onTabStateChange={(next) => panel.setTabState(tab.id, next)}
+              />
+            )}
+          />
           <BrowserTabDeck
             browserTabs={panel.state.tabs.filter((tab) => tab.kind === 'browser')}
             activeBrowserTabId={closable?.kind === 'browser' ? closable.id : null}
-            canShowNativeBrowserView={panelOpen}
+            canShowNativeBrowserView={!basicUi && panelOpen}
             threadId={ownerId}
             onUpdate={({ tabId, url, title }) => {
               const nextTitle = title && title.length > 0 ? title : getBrowserUrlHost(url) || 'Browser';

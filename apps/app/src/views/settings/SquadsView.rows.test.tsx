@@ -12,7 +12,7 @@ vi.mock('@/store', () => ({
     selector({
       teams: [
         { id: 'user:zebra', name: 'Zebra 10', description: 'Last', source: 'user', slots: [] },
-        { id: 'builtin:core', name: 'Core squad', description: 'Core', source: 'builtin', slots: [] },
+        { id: 'builtin:core', name: 'Core squad', description: 'Core', source: 'builtin', slots: [], transport: 'CLI' },
         { id: 'user:alpha-10', name: 'Alpha 10', description: 'Ten', source: 'user', slots: [] },
         { id: 'user:accent', name: 'Álpha 1', description: 'Accent', source: 'user', slots: [] },
         { id: 'user:alpha-2', name: 'alpha 2', description: 'Two', source: 'user', slots: [] },
@@ -173,5 +173,27 @@ describe('SquadsView default squad', () => {
     expect(labels).toEqual(['Edit', 'Reveal folder', 'Duplicate', 'Set as default', 'Delete']);
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'End' });
     expect(document.activeElement?.textContent?.trim()).toBe('Delete');
+  });
+});
+
+describe('SquadsView unit checkpoint toggle', () => {
+  it('is hidden without config, defaults on, and writes the flag through onUpdate/onConfigDraft', () => {
+    const { container, unmount } = render(<SquadsView />);
+    expect(screen.queryByRole('switch', { name: 'Checkpoint each unit' })).toBeNull();
+    unmount();
+    const onUpdate = vi.fn();
+    const onConfigDraft = vi.fn();
+    render(<SquadsView config={{} as never} onUpdate={onUpdate} onConfigDraft={onConfigDraft} />);
+    const toggle = screen.getByRole('switch', { name: 'Checkpoint each unit' });
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(toggle);
+    expect(onUpdate).toHaveBeenCalledWith({ squadUnitCheckpointsEnabled: false });
+    expect(onConfigDraft).toHaveBeenCalledWith({ squadUnitCheckpointsEnabled: false });
+    void container;
+  });
+
+  it('shows off when the flag is false', () => {
+    render(<SquadsView config={{ squadUnitCheckpointsEnabled: false } as never} onUpdate={vi.fn()} />);
+    expect(screen.getByRole('switch', { name: 'Checkpoint each unit' }).getAttribute('aria-checked')).toBe('false');
   });
 });

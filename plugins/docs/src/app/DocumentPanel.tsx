@@ -15,7 +15,10 @@ import {
 export function DocumentPanel(props: PluginThreadPanelProps) {
   const rpc = useRpc();
   const navigate = useZccNavigate();
-  const parsed = useMemo(() => parseDocumentPanelParams(props.params), [props.params]);
+  const explicitDocument = useMemo(() => parseDocumentPanelParams(props.params), [props.params]);
+  const ownerProjectId = explicitDocument ? undefined : props.projectId;
+  // A late thread record supplies a missing owner without reloading already scoped drafts.
+  const parsed = useMemo(() => explicitDocument ?? parseDocumentPanelParams(props.params, ownerProjectId), [explicitDocument, props.params, ownerProjectId]);
   const revision = useMemo(() => ({ value: undefined as string | undefined }), [parsed]);
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

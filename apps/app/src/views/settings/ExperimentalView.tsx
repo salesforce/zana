@@ -1,6 +1,7 @@
 import { DEFAULT_CLOSE_WRAP_UP_INSTRUCTIONS } from '@zana-ai/zcc-domain/product';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { Section, Field, CheckboxField } from '@/components/settings/FormFields';
+import { ExperimentalPluginToggles } from './ExperimentalPluginToggles';
 import { PopoverPicklist } from '@/components/ui/PopoverPicklist';
 
 /**
@@ -30,6 +31,7 @@ export function ExperimentalView({
         title="Experimental features"
         help="Features under active evaluation. Defaults vary by feature; you can switch any experiment off. They may change or be removed."
       >
+        <ExperimentalPluginToggles />
         <CheckboxField
           searchId="experimental.dockable-thread-tools"
           label="Dockable thread tools"

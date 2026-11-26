@@ -54,7 +54,7 @@ export interface ThreadMenuContext {
   remove: (id: string) => void;
 }
 
-function upsertReturnedThread(value: unknown): void {
+export function upsertReturnedThread(value: unknown): void {
   if (!value || typeof value !== 'object' || !('thread' in value)) return;
   const thread = value.thread;
   if (!thread || typeof thread !== 'object' || !('id' in thread) || typeof thread.id !== 'string') return;
@@ -149,7 +149,8 @@ export async function runThreadMenuAction(
 
 export async function archiveThreadWithoutConfirm(
   thread: Pick<ThreadListItem, 'id' | 'title'>,
-  ctx: ThreadMenuContext
+  ctx: Pick<ThreadMenuContext, 'archive' | 'remove' | 'navigate' | 'pathname' | 'projectId'>,
+  fallbackPath?: string
 ): Promise<void> {
   const result = await ctx.archive(thread.id);
   if (result && result.ok === false) return;
@@ -164,7 +165,7 @@ export async function archiveThreadWithoutConfirm(
   }
   if (viewingThread(ctx.pathname, thread.id)) {
     const projectId = ctx.projectId || projectIdFromThreadPath(ctx.pathname) || undefined;
-    ctx.navigate(projectId ? getProjectRoutePath(projectId) : getAgentsRoutePath());
+    ctx.navigate(fallbackPath ?? (projectId ? getProjectRoutePath(projectId) : getAgentsRoutePath()));
   }
 }
 
@@ -416,16 +417,7 @@ export function ThreadArchiveQuickAction({ thread }: { thread: ThreadListItem })
           navigate,
           pathname: location.pathname,
           projectId,
-          confirm: () => true,
-          stop: (id) => product.threads.stop(id),
-          fork: (id) => product.threads.fork(id),
           archive: (id) => product.threads.archive(id),
-          closeFollowup: (id) => product.threads.closeFollowup(id),
-          pin: (id) => product.threads.pin(id),
-          unpin: (id) => product.threads.unpin(id),
-          read: (id) => product.threads.read(id),
-          unread: (id) => product.threads.unread(id),
-          rename: (id, title) => product.threads.rename(id, title),
           remove: (id) => useThreads.getState().remove(id)
         });
       }}

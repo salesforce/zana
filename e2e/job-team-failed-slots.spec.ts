@@ -1,0 +1,142 @@
+/**
+ * AC3/AC4/AC5 through the built app: a worker slot that cannot launch is reported when the
+ * launch settles. A structured (provided-plan) Squad fails with the slot reason and leaves no
+ * live workers; a freeform Squad continues with a visible run warning; a Squad whose every
+ * worker slot is unresolved is refused at admission.
+ *
+ * The failing seat comes from the build-gated test fault `ZCC_TEST_FAULT=worker-spawn-throw`
+ * (apps/desktop/src/test-faults.ts): the second seat of each row throws instead of spawning.
+ * The fault exists only in `pnpm test:e2e` builds (ZCC_E2E_BUILD=1), so run this spec with
+ * `pnpm test:e2e -- e2e/job-team-failed-slots.spec.ts`, not `:only` against a production build.
+ */
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { test, expect } from './fixtures/app.js';
+import {
+  coordinatorResult, createJobTeamContext, findJobExecutionId, jobTeamFailure, launchJobTeamCliOwner,
+  teardownJobTeam, SQUAD_WRITE_PLAN, type JobTeamContext
+} from './sdk/job-team-scenario.js';
+
+test.use({
+  e2e: true,
+  initialConfig: { teamJobLaunchEnabled: true, sponsorPromptDismissed: true, tmuxScope: 'off' },
+  launchEnv: {
+    ZCC_WORK_CLAIM_LEASE_MS: '60000', ZCC_EXECUTION_RECONCILE_INTERVAL_MS: '60000',
+    ZCC_TEST_FAULT: 'worker-spawn-throw'
+  }
+});
+test.setTimeout(180_000);
+// CI's affected-boundary shards reuse a production artifact; the dedicated test-fault job covers this spec.
+test.skip(process.env.ZCC_E2E_BUILD !== '1', 'needs a `pnpm test:e2e` build with test faults compiled in');
+
+const GHOST = { personaId: 'ghost-persona-not-on-disk', quantity: 1 };
+
+async function workerSessions(ctx: JobTeamContext): Promise<string[]> {
+  return ctx.window.evaluate(async (projectId) =>
+    (await window.cc.terminals.list(projectId)).filter((s) => s.cohort?.role === 'worker').map((s) => s.id), ctx.projectId!);
+}
+
+async function runLaunch(ctx: JobTeamContext, title: string, planning: 'provided' | 'infer', slots: unknown[],
+  extra: { plan?: string; workerExtra?: Record<string, unknown> } = {}) {
+  writeFileSync(join(ctx.projectDir, '.e2e-plan.md'), extra.plan ?? SQUAD_WRITE_PLAN);
+  writeFileSync(join(ctx.projectDir, '.e2e-proposal.json'), JSON.stringify({
+    planPath: '.e2e-plan.md', observeExecutions: true,
+    proposals: [{ tool: 'squad_launch', label: 'slots', input: {
+      teamId: 'e2e-job-team', goal: 'Execute fixture plan.', planning, mode: 'now', title,
+      ...(planning === 'provided' ? { sources: ['.e2e-plan.md'] } : {})
+    } }]
+  }));
+  const projectId = await launchJobTeamCliOwner(ctx, {
+    workerQuantity: 1, prompt: 'E2E launch Squad', teamExtra: { slots, defaultPlanning: planning },
+    ...(extra.workerExtra ? { workerExtra: extra.workerExtra } : {})
+  });
+  await expect.poll(() => coordinatorResult(ctx, 'propose[slots]'), { timeout: 60_000, intervals: [500] }).not.toBeNull();
+  return { projectId, result: coordinatorResult<{ executionId?: string }>(ctx, 'propose[slots]')! };
+}
+
+test('structured Squad with a worker that fails to spawn fails with the slot reason and leaves no live workers', async ({ app }) => {
+  const ctx = createJobTeamContext(app, { tmpPrefix: 'failed-slots-structured-', scenario: 'stalled-worker' });
+  try {
+    const { projectId } = await runLaunch(ctx, 'Structured failed slot', 'provided', [{ personaId: 'e2e-worker', quantity: 2 }]);
+    const executionId = await findJobExecutionId(ctx.window, projectId, 'Structured failed slot');
+    // The run is failed when the launch settles; no status read is needed to trigger it.
+    await expect.poll(() => ctx.window.evaluate(async ({ projectId, executionId }) => {
+      const snap = await window.cc.executionBoard.snapshot(projectId, executionId, 0);
+      return { state: snap?.execution.state, reason: (snap?.execution as { failureReason?: string } | undefined)?.failureReason ?? '' };
+    }, { projectId, executionId }), { timeout: 30_000, intervals: [250] }).toMatchObject({
+      state: 'FAILED', reason: expect.stringContaining('injected worker spawn fault')
+    });
+    await expect.poll(() => workerSessions(ctx), { timeout: 30_000 }).toEqual([]);
+  } catch (error) { throw jobTeamFailure(ctx, error); }
+  finally { await teardownJobTeam(ctx); }
+});
+
+test('freeform Squad with a worker that fails to spawn keeps running with a launch warning naming the slot', async ({ app }) => {
+  const ctx = createJobTeamContext(app, { tmpPrefix: 'failed-slots-freeform-', scenario: 'stalled-worker' });
+  try {
+    const { projectId } = await runLaunch(ctx, 'Freeform failed slot', 'infer', [{ personaId: 'e2e-worker', quantity: 2 }]);
+    const executionId = await findJobExecutionId(ctx.window, projectId, 'Freeform failed slot');
+    await expect.poll(() => ctx.window.evaluate(async ({ projectId, executionId }) => {
+      const snap = await window.cc.executionBoard.snapshot(projectId, executionId, 0);
+      return (snap?.events ?? []).some((e: { summary?: string }) => (e.summary ?? '').includes('e2e-worker:1'));
+    }, { projectId, executionId }), { timeout: 30_000, intervals: [250] }).toBe(true);
+    const state = await ctx.window.evaluate(async ({ projectId, executionId }) =>
+      (await window.cc.executionBoard.snapshot(projectId, executionId, 0))?.execution.state, { projectId, executionId });
+    expect(state).not.toBe('FAILED');
+    expect(await workerSessions(ctx)).toHaveLength(1);
+    // The failed slot is retained on the projection and rendered on the Squad board card with its reason.
+    const failedWorkers = await ctx.window.evaluate(async ({ projectId, executionId }) =>
+      (await window.cc.executionBoard.snapshot(projectId, executionId, 0))?.execution.failedWorkers, { projectId, executionId });
+    expect(failedWorkers).toEqual([expect.objectContaining({ slotId: expect.stringContaining('e2e-worker'), reason: expect.stringContaining('injected worker spawn fault') })]);
+    const owner = ctx.window.getByRole('dialog', { name: /^Agent / }).first();
+    if (await owner.count()) await owner.getByRole('button', { name: 'Close' }).click();
+    const projectRow = ctx.window.locator('.project-item').filter({ hasText: ctx.projectName }).first();
+    if (await projectRow.count()) await projectRow.click();
+    await ctx.window.getByTestId('nav-agents').or(ctx.window.getByTestId('project-nav-agents')).click();
+    await expect(ctx.window.locator('.agent-card').filter({ hasText: 'Freeform failed slot' }).first()).toBeVisible({ timeout: 30_000 });
+    const failedRow = ctx.window.getByTestId('squad-failed-worker-0:e2e-worker:1');
+    await expect(failedRow).toBeVisible({ timeout: 30_000 });
+    await expect(ctx.window.getByTestId(`squad-failed-workers-${executionId}`)).toContainText('injected worker spawn fault');
+  } catch (error) { throw jobTeamFailure(ctx, error); }
+  finally { await teardownJobTeam(ctx); }
+});
+
+test('a Squad whose every worker slot is unresolved is refused at admission and nothing launches', async ({ app }) => {
+  const ctx = createJobTeamContext(app, { tmpPrefix: 'failed-slots-refuse-all-', scenario: 'stalled-worker' });
+  try {
+    const { projectId, result } = await runLaunch(ctx, 'All ghost slots', 'provided', [GHOST]);
+    expect(result.ok).toBe(false);
+    expect(result.error ?? '').toMatch(/ADMISSION_FAILED/);
+    expect(result.error ?? '').toContain('ghost-persona-not-on-disk');
+    expect((await ctx.window.evaluate((id) => window.cc.executionBoard.listProject(id), projectId)).executions).toHaveLength(0);
+    expect(await workerSessions(ctx)).toEqual([]);
+  } catch (error) { throw jobTeamFailure(ctx, error); }
+  finally { await teardownJobTeam(ctx); }
+});
+
+test('a provided plan step with Required role routes at launch to an unlabeled slot whose persona offers that role', async ({ app }) => {
+  const ctx = createJobTeamContext(app, { tmpPrefix: 'failed-slots-persona-role-', scenario: 'stalled-worker' });
+  try {
+    // One seat only: the build-gated fault throws on the second seat of a row.
+    const plan = SQUAD_WRITE_PLAN.replace('- Work: Create output.txt.', '- Required role: engineer\n- Work: Create output.txt.');
+    const { projectId, result } = await runLaunch(ctx, 'Persona role route', 'provided', [{ personaId: 'e2e-worker', quantity: 1 }],
+      { plan, workerExtra: { roles: ['engineer'] } });
+    expect(result.ok, JSON.stringify(result)).not.toBe(false);
+    expect(JSON.stringify(result)).not.toContain('no qualified route');
+    await findJobExecutionId(ctx.window, projectId, 'Persona role route');
+  } catch (error) { throw jobTeamFailure(ctx, error); }
+  finally { await teardownJobTeam(ctx); }
+});
+
+test('a freeform Squad with any unresolved worker persona is refused at admission, as Modern does, and nothing launches', async ({ app }) => {
+  const ctx = createJobTeamContext(app, { tmpPrefix: 'failed-slots-freeform-ghost-', scenario: 'stalled-worker' });
+  try {
+    const { projectId, result } = await runLaunch(ctx, 'Freeform ghost slot', 'infer', [{ personaId: 'e2e-worker', quantity: 1 }, GHOST]);
+    expect(result.ok).toBe(false);
+    expect(result.error ?? '').toMatch(/ADMISSION_FAILED/);
+    expect(result.error ?? '').toContain('ghost-persona-not-on-disk');
+    expect((await ctx.window.evaluate((id) => window.cc.executionBoard.listProject(id), projectId)).executions).toHaveLength(0);
+    expect(await workerSessions(ctx)).toEqual([]);
+  } catch (error) { throw jobTeamFailure(ctx, error); }
+  finally { await teardownJobTeam(ctx); }
+});

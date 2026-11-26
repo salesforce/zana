@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { load } from 'js-yaml';
 import { spawnSync } from 'node:child_process';
 import { planVerification, previewAffected, runPlan } from './ci-plan.mjs';
@@ -97,13 +97,13 @@ it('plans only populated Electron shards with no install and agrees with actual 
 it('writes explicit outputs, handles initial push bases and propagates planning failures', () => {
   const io = { execute: vi.fn().mockReturnValue('docs/help.md\0'), append: vi.fn(), log: vi.fn() };
   expect(runPlan({ GITHUB_OUTPUT: '/outputs' }, io).preview).toBe(false);
-  expect(io.execute.mock.calls[0][1]).toContain('HEAD^');
+  expect(io.execute.mock.calls[0][1]).toContain('HEAD^...HEAD');
   expect(io.append).toHaveBeenCalledWith('/outputs', 'preview=false\n');
   expect(io.append).toHaveBeenCalledWith('/outputs', 'e2e_matrix=[1]\n');
   runPlan({ CI_BASE_SHA: '0000', CI_FORCE_PREVIEW: 'true' }, io);
   expect(io.append).toHaveBeenCalledWith(undefined, 'preview=true\n');
   runPlan({ CI_BASE_SHA: 'base' }, io);
-  expect(io.execute.mock.calls.at(-1)![1]).toContain('base');
+  expect(io.execute.mock.calls.at(-1)![1]).toContain('base...HEAD');
   io.execute.mockImplementation(() => { throw new Error('bad base'); });
   expect(() => runPlan({}, io)).toThrow('bad base');
 });
@@ -148,11 +148,12 @@ it('accepts only planned skips and rejects failed, cancelled or missing required
   const workflow = load(readFileSync('.github/workflows/ci.yml', 'utf8')) as any;
   const script = workflow.jobs.verify.steps[0].run;
   const green = { PLAN_RESULT: 'success', UNIT_RESULT: 'success', PACKAGES_RESULT: 'success', COVERAGE_RESULT: 'success',
-    BUILD_RESULT: 'success', BOUNDARY_RESULT: 'success', PREVIEW_MATRIX_RESULT: 'success', POSTGRES_RESULT: 'success', WINDOWS_ADMISSION_RESULT: 'success', E2E_REQUIRED: 'true', PREVIEW_REQUIRED: 'true' };
+    BUILD_RESULT: 'success', BOUNDARY_RESULT: 'success', TEST_FAULTS_RESULT: 'success', PREVIEW_MATRIX_RESULT: 'success', POSTGRES_RESULT: 'success', WINDOWS_ADMISSION_RESULT: 'success', E2E_REQUIRED: 'true', PREVIEW_REQUIRED: 'true' };
   const run = (overrides = {}) => spawnSync('bash', ['-e', '-c', script], { env: { ...process.env, ...green, ...overrides } }).status;
   expect(run()).toBe(0);
-  expect(run({ E2E_REQUIRED: 'false', PREVIEW_REQUIRED: 'false', BUILD_RESULT: 'skipped', BOUNDARY_RESULT: 'skipped', PREVIEW_MATRIX_RESULT: 'skipped' })).toBe(0);
-  for (const key of ['PLAN_RESULT', 'UNIT_RESULT', 'PACKAGES_RESULT', 'COVERAGE_RESULT', 'BUILD_RESULT', 'BOUNDARY_RESULT', 'PREVIEW_MATRIX_RESULT', 'POSTGRES_RESULT', 'WINDOWS_ADMISSION_RESULT']) {
+  expect(run({ E2E_REQUIRED: 'false', PREVIEW_REQUIRED: 'false', BUILD_RESULT: 'skipped', BOUNDARY_RESULT: 'skipped', TEST_FAULTS_RESULT: 'skipped', PREVIEW_MATRIX_RESULT: 'skipped' })).toBe(0);
+  expect(run({ E2E_REQUIRED: 'false', PREVIEW_REQUIRED: 'false', BUILD_RESULT: 'skipped', BOUNDARY_RESULT: 'skipped', TEST_FAULTS_RESULT: 'failure', PREVIEW_MATRIX_RESULT: 'skipped' })).not.toBe(0);
+  for (const key of ['PLAN_RESULT', 'UNIT_RESULT', 'PACKAGES_RESULT', 'COVERAGE_RESULT', 'BUILD_RESULT', 'BOUNDARY_RESULT', 'TEST_FAULTS_RESULT', 'PREVIEW_MATRIX_RESULT', 'POSTGRES_RESULT', 'WINDOWS_ADMISSION_RESULT']) {
     for (const result of ['failure', 'cancelled', 'skipped', '']) expect(run({ [key]: result }), `${key}=${result}`).not.toBe(0);
   }
   expect(run({ PREVIEW_REQUIRED: '', PREVIEW_MATRIX_RESULT: 'skipped' })).not.toBe(0);
@@ -164,8 +165,27 @@ it('runs native Windows Squad admission on every PR and includes it in required 
   const job = workflow.jobs['squad-windows-admission'];
   expect(job['runs-on']).toBe('windows-2025');
   expect(job.if).toBeUndefined();
-  expect(job.steps.some((step: any) => step.run === 'pnpm test:e2e -- e2e/windows-squad-named-check-admission.spec.ts')).toBe(true);
+  expect(job.steps.some((step: any) => step.run === 'pnpm test:e2e -- e2e/windows-squad-named-check-admission.spec.ts e2e/squad-source-snapshot-path.spec.ts')).toBe(true);
   expect(job.steps.some((step: any) => step.run === 'pnpm exec vitest run apps/server/src/services/execution/__tests__/named-check-runner.test.ts')).toBe(true);
   expect(workflow.jobs.verify.needs).toContain('squad-windows-admission');
   expect(workflow.jobs.verify.steps[0].env.WINDOWS_ADMISSION_RESULT).toBe('${{ needs.squad-windows-admission.result }}');
+});
+
+it('runs test-fault Squad specs in a private fault-enabled build whenever e2e is planned', () => {
+  const workflow = load(readFileSync('.github/workflows/ci.yml', 'utf8')) as any;
+  const job = workflow.jobs['squad-test-faults'];
+  expect(job.if).toBe("needs.plan.outputs.e2e == 'true'");
+  expect(job.steps.some((step: any) => step.run === 'xvfb-run -a pnpm test:e2e -- e2e/job-team-failed-slots.spec.ts e2e/job-team-launch-complete-fault.spec.ts e2e/job-team-no-turn-warning.spec.ts e2e/squad-blocker-reminder.spec.ts e2e/squad-idle-capacity-notice.spec.ts')).toBe(true);
+  // Build-gated `ZCC_TEST_*` knobs are compiled out of the production artifact the affected
+  // shards reuse, so every spec that sets one must skip there and run in this job.
+  const run = job.steps.map((step: any) => step.run ?? '').join('\n');
+  const faultSpecs = readdirSync('e2e').filter((name) => name.endsWith('.spec.ts'))
+    .filter((name) => /\bZCC_TEST_[A-Z_]+/.test(readFileSync(`e2e/${name}`, 'utf8')));
+  expect(faultSpecs.length).toBeGreaterThan(0);
+  for (const name of faultSpecs) {
+    expect(run, `${name} needs the test-fault job`).toContain(`e2e/${name}`);
+    expect(readFileSync(`e2e/${name}`, 'utf8'), `${name} must skip without a fault build`).toContain("process.env.ZCC_E2E_BUILD !== '1'");
+  }
+  expect(workflow.jobs.verify.needs).toContain('squad-test-faults');
+  expect(workflow.jobs.verify.steps[0].env.TEST_FAULTS_RESULT).toBe('${{ needs.squad-test-faults.result }}');
 });

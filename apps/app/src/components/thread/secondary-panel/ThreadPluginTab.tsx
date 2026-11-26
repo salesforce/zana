@@ -19,7 +19,10 @@ export function ThreadPluginTab({
   layout,
   surface,
   page,
-  tabId
+  tabId,
+  active,
+  tabState,
+  onTabStateChange
 }: {
   moduleId: string;
   projectId: string | null;
@@ -33,6 +36,11 @@ export function ThreadPluginTab({
   page?: PluginThreadPanelPage;
   /** The side-panel tab showing the component; forwarded to it. */
   tabId?: string;
+  /** False while the tab is mounted but hidden behind another tab. */
+  active?: boolean;
+  /** View state the plugin last saved with this tab. */
+  tabState?: JsonValue | null;
+  onTabStateChange?: (state: JsonValue | null) => void;
 }) {
   const project = useData((s) => s.projects.find((row) => row.id === projectId) ?? null);
   const threadActions = useSyncExternalStore(
@@ -57,7 +65,10 @@ export function ThreadPluginTab({
     return <p className="thread-detail-empty" data-testid="thread-plugin-tab-unavailable">{threadAction.title} is not available in this panel.</p>;
   }
 
-  if (threadAction || composeAction) {
+  // A menu launch has no document context. Use the same scoped project tab
+  // as the project sidebar, including for tabs restored from an older version.
+  const opensProjectTab = threadAction?.projectTabShortcut && params == null;
+  if (!opensProjectTab && (threadAction || composeAction)) {
     const action = threadAction ?? composeAction!;
     const ThreadPanel = threadAction?.component;
     const ComposePanel = composeAction?.component;
@@ -77,6 +88,8 @@ export function ThreadPluginTab({
               params={params ?? null}
               {...(surface ? { surface } : {})}
               {...(tabId ? { tabId } : {})}
+              {...(active !== undefined ? { active } : {})}
+              {...(onTabStateChange ? { tabState: tabState ?? null, onTabStateChange } : {})}
             />
           ) : ComposePanel ? (
             <ComposePanel
@@ -94,7 +107,7 @@ export function ThreadPluginTab({
     return <p className="thread-detail-empty">Project is unavailable for this panel.</p>;
   }
   return (
-    <div className="thread-plugin-tab" data-testid="thread-plugin-tab">
+    <div className={opensProjectTab ? 'thread-plugin-tab is-flush' : 'thread-plugin-tab'} data-testid="thread-plugin-tab">
       <ProjectExtensionTab moduleId={moduleId} project={project} />
     </div>
   );

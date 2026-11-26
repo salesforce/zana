@@ -1,4 +1,5 @@
 import type { ThreadHistoryQuery, ThreadHistoryPage, ConversationTranscript } from '@zana-ai/zcc-domain/product';
+import type { PersonaLoadWarning } from '@zana-ai/zcc-domain/persona-validation';
 import type { DesktopBrowserApi } from './browser.js';
 import type { SquadLaunchPrefill, SquadProposalErrorCode } from '@zana-ai/zcc-domain/squad-proposal';
 import type { MarketplaceCatalogRow } from '@zana-ai/zcc-domain';
@@ -168,6 +169,7 @@ import type {
   UpdateStatus,
   VoiceTranscribeResult,
   WalkedFile,
+  WalkResult,
   WhatsNewEvent,
   Worktree
 } from '@zana-ai/zcc-domain/product';
@@ -270,6 +272,8 @@ export interface CcApi {
     readArtifact(projectId: string, executionId: string, artifactId: string): Promise<Result<{ content: string }>>;
     dismiss(projectId: string, executionId: string): Promise<Result<{ dismissedSessionIds: string[] }>>;
     stop(projectId: string, executionId: string, expectedStateVersion: number): Promise<Result<ExecutionBoardProjection>>;
+    /** "Stop and fix the plan" on a step no worker can run: stops the run, keeps the work already done and opens a plan-fix card in the Inbox. Main re-validates the blocker; the renderer's hint is advisory. */
+    stopAndFixPlan(projectId: string, executionId: string, blockerId: string): Promise<Result<ExecutionBoardProjection>>;
     retry(projectId: string, executionId: string, expectedStateVersion: number): Promise<Result<ExecutionBoardProjection>>;
     retryWork(projectId: string, executionId: string, expectedStateVersion: number, workUnitId: string, assignedSlotId?: string): Promise<Result<ExecutionBoardProjection>>;
     releaseWork(projectId: string, executionId: string, expectedStateVersion: number, workUnitId: string): Promise<Result<ExecutionBoardProjection>>;
@@ -713,6 +717,8 @@ export interface CcApi {
       model?: string;
       reasoningLevel?: string;
     }): Promise<{ ok: true; operationId: string; requestSequence: number }>;
+    readMarkdown(threadId: string, path: string, projectId?: string): Promise<FsReadResult>;
+    writeMarkdown(threadId: string, body: { path: string; projectId?: string; content: string; expectedSha256: string }): Promise<FsWriteResult>;
     hostFileContent(threadId: string, path: string, projectId?: string): Promise<{
       path: string;
       relPath: string;
@@ -1107,6 +1113,16 @@ export interface CcApi {
       | { ok: false; reason: 'ineligible' | 'empty' | 'summary-failed' | 'write-failed' }
     >;
     /**
+     * Restart a Squad worker so the new process keeps its slot and run binding. The renderer sends
+     * only the session id; main resolves the slot and run from its own records and refuses sessions
+     * that are not a live Squad worker, finished runs and closing runs. `not-squad-worker` means the
+     * caller should use the ordinary restart path. Never throws.
+     */
+    restartSquadWorker(sessionId: string): Promise<
+      | { ok: true }
+      | { ok: false; reason: string; message?: string }
+    >;
+    /**
      * Read-only, display-only stats distilled from a claude session's transcript
      * (model, context tokens, rough cost, files touched, todo queue) for the
      * Agent Monitor status pane. Main authorizes from its own session record and
@@ -1134,6 +1150,8 @@ export interface CcApi {
   config: {
     get(): Promise<AppConfig>;
     set(patch: Partial<AppConfig>): Promise<AppConfig>;
+    /** Appends one exited-worker session id to `dismissedWorkerExits`. Main does the read-modify-write and applies the retention cap, so concurrent windows never overwrite each other. */
+    dismissWorkerExit(sessionId: string): Promise<AppConfig>;
     /** Opens the native folder chooser and trusts the picked folder for read-only preview. `config` is null when cancelled or refused; `error` explains a refusal (for example the 20-folder cap). */
     addTrustedPreviewFolder(): Promise<{ config: AppConfig | null; error?: string }>;
     /** Stops trusting one stored folder. Never deletes files. */
@@ -1188,6 +1206,8 @@ export interface CcApi {
     resolveDoc(root: string, reportedPath: string, originCwd?: string): Promise<FsResolveDocResult>;
     writeFile(path: string, content: string, scope?: ProjectFileScope, expectedSha256?: string): Promise<FsWriteResult>;
     walkFiles(path: string): Promise<WalkedFile[]>;
+    /** Like `walkFiles`, but also reports whether a walk cap truncated the listing. */
+    walkFilesWithStatus(path: string): Promise<WalkResult>;
     searchFiles(path: string, query: string, opts?: SearchOptions): Promise<SearchResult>;
     readDataUrl(path: string, source?: ProjectFileScope): Promise<FsReadDataUrlResult>;
     /** Create an empty file at `path`, confined to `root` (project dir). */
@@ -1451,11 +1471,17 @@ export interface CcApi {
   /** Multi-window control surface (project, plugin view and thread view windows). */
   windows: {
     /**
-     * Open (or focus) a window locked to a single project — the renderer-side
-     * half of "Open in New Window". Main validates the id and de-dupes against
+     * Open (or focus) a window scoped to a single project.
+     * Main validates the id and de-dupes against
      * an existing window for the same project. Resolves `true` once handled.
      */
     openProject(projectId: string): Promise<boolean>;
+    /** Always create an independent shell window, optionally starting in a registered project. */
+    openNew(projectId?: string): Promise<boolean>;
+    /** Return this project window to its cross-project shell. */
+    leaveProject(destination: 'projects' | 'settings'): Promise<boolean>;
+    /** Auxiliary windows leave app-wide startup work to the primary window. */
+    readonly secondary: boolean;
     /**
      * Open (or focus) a window showing one plugin project tab. Main checks the
      * project and plugin; the window's renderer checks the tab opted in with
@@ -2050,6 +2076,8 @@ export interface CcApi {
    */
   personas: {
     list(): Promise<Persona[]>;
+    /** Persona files the loader ignored (basename, source, fixed reason; no contents). Takes no arguments. */
+    loadWarnings(): Promise<PersonaLoadWarning[]>;
     onChanged(cb: (personas: Persona[]) => void): () => void;
     revealDir(): Promise<{ ok: boolean; path: string; message?: string }>;
     /**
@@ -2100,7 +2128,7 @@ export interface CcApi {
     cancel(launchRequestId: string): Promise<Result<CancelTeamLaunchResult>>;
     /** Start a durable Team job. Main re-authorizes Team/project and maps slots. */
     startJob(input: TeamJobLaunchInput & { /** Opaque main-held preview binding; never a caller fingerprint. */ previewToken?: string }): Promise<TeamJobLaunchResponse>;
-    preview(input: Pick<TeamJobLaunchInput, 'teamId' | 'projectId' | 'goal' | 'coordinationMode' | 'sourceCapabilityIds'> & import('@zana-ai/zcc-domain/launch-options').LaunchOptions): Promise<Result<import('@zana-ai/zcc-domain/squad-proposal').SquadLaunchPreview & { previewToken: string }>>;
+    preview(input: Pick<TeamJobLaunchInput, 'teamId' | 'projectId' | 'goal' | 'planText' | 'coordinationMode' | 'sourceCapabilityIds'> & import('@zana-ai/zcc-domain/launch-options').LaunchOptions): Promise<Result<import('@zana-ai/zcc-domain/squad-proposal').SquadLaunchPreview & { previewToken: string }>>;
     /** Resolve a pending Squad proposal into a composer pre-fill. Desktop window only. */
     reviewProposal(
       proposalId: string
@@ -2108,6 +2136,17 @@ export interface CcApi {
       | { ok: true; value: SquadLaunchPrefill }
       | { ok: false; code: SquadProposalErrorCode; message: string }
     >;
+    /** Re-read a pending proposal's plan files and return fresh plan findings. Desktop window only. */
+    recheckProposalPlan(
+      proposalId: string
+    ): Promise<
+      | { ok: true; value: Pick<SquadLaunchPrefill, 'planFindings' | 'planFindingsHidden' | 'planBindings' | 'planBindingsHidden' | 'planSummary' | 'planStepCount' | 'planCanonicalText' | 'planSkipImpact' | 'planSkipImpactHidden'> }
+      | { ok: false; code: SquadProposalErrorCode; message: string }
+    >;
+    /** Send the plan's current Must fix problems to the conversation that proposed the launch. Main builds the text. */
+    messageProposer(
+      proposalId: string
+    ): Promise<{ ok: true; value: { delivered: true } } | { ok: false; code: SquadProposalErrorCode; message: string }>;
     /**
      * Launch a team as an AUTONOMOUS run into a project: opens orchestrator +
      * worker tabs, the orchestrator seeded with `goal`, and a main-side
