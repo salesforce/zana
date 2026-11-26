@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { test, expect, dismissConsentOverlays, type AppHandle } from './fixtures/app.js';
 import { waitForThreadProvider } from './fixtures/thread-providers.js';
 import { openThreadToolLauncher } from './fixtures/thread-tool-panel.js';
@@ -333,7 +333,11 @@ test('Basic sidebar resizes, persists and resets with the same width as Advanced
   await projectAndThreads(app, ['A longer conversation title that benefits from a wider sidebar', 'Keep the project history together']);
   await basic(page).click();
   const handle = sidebar(page).getByRole('separator');
-  const width = async () => Math.round((await sidebar(page).boundingBox())!.width);
+  const columnWidth = (rail: Locator) => rail.evaluate(node => {
+    const { marginLeft, marginRight } = getComputedStyle(node);
+    return Math.round(node.getBoundingClientRect().width + parseFloat(marginLeft) + parseFloat(marginRight));
+  });
+  const width = () => columnWidth(sidebar(page));
   await expect(handle).toBeVisible();
   await expect.poll(width).toBe(320);
   const dragTo = async (x: number) => {
@@ -352,7 +356,7 @@ test('Basic sidebar resizes, persists and resets with the same width as Advanced
   await captureTrialScreenshot(app, testInfo.outputPath('basic-sidebar-resized-390.png'));
   await advanced(page).click();
   await expect.poll(shellWidth).toBe('390px');
-  await expect.poll(() => page.locator('aside.sidebar').evaluate(node => Math.round(node.getBoundingClientRect().width))).toBe(390);
+  await expect.poll(() => columnWidth(page.locator('aside.sidebar'))).toBe(390);
   await basic(page).click();
   await expect.poll(width).toBe(390);
   await page.reload();

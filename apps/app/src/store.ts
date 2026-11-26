@@ -930,6 +930,7 @@ function mirroredConfigFlags(config: AppConfig) {
     classicSessionViewEnabled: config.classicSessionViewEnabled ?? false,
     threadTabsEnabled: config.threadTabsEnabled ?? true,
     dockableThreadToolsEnabled: config.dockableThreadToolsEnabled ?? true,
+    glassModeEnabled: config.glassModeEnabled === true,
     catchUpSummaryDelaySeconds: config.catchUpSummaryDelaySeconds ?? 20,
     feedNoiseClassifierEnabled: config.feedNoiseClassifierEnabled ?? false,
     terminalClipboardWriteEnabled: config.terminalClipboardWriteEnabled ?? true,
@@ -1908,6 +1909,7 @@ interface DataState {
   classicSessionViewEnabled: boolean;
   threadTabsEnabled: boolean;
   dockableThreadToolsEnabled: boolean;
+  glassModeEnabled: boolean;
   /** Mirror of AppConfig.catchUpSummaryDelaySeconds — idle/blocked dwell before
    *  the add-on fires. Hydrated on init. Default 20. Used by the card to compute
    *  the shimmer threshold. */
@@ -2438,6 +2440,7 @@ export const useData = create<DataState>((set, get) => ({
   classicSessionViewEnabled: false,
   threadTabsEnabled: true,
   dockableThreadToolsEnabled: true,
+  glassModeEnabled: false,
   catchUpSummaryDelaySeconds: 20,
   feedNoiseClassifierEnabled: false,
   terminalClipboardWriteEnabled: true,

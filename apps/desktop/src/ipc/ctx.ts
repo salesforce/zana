@@ -117,6 +117,7 @@ export interface IpcCtx {
   readLiveSessionStats: any;
   /** Re-colour every window's Windows caption buttons for the current theme. */
   refreshTitleBarOverlays: () => void;
+  refreshWorkspaceVibrancy: () => void;
   registerExtensionProject: any;
   reportTeamTask: any;
   resolveTheme: any;

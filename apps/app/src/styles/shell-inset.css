@@ -37,6 +37,33 @@
   border-right-color: transparent;
 }
 
+.app-shell.shell-inset > .sidebar {
+  margin: var(--inset-gap);
+  border-right: 0;
+}
+
+.app-shell.shell-inset > .sidebar--rail {
+  /* The 52px icon rail reserves 40px for each button. */
+  margin-inline: 4px;
+  padding-inline: 1px;
+}
+
+.app-shell.shell-inset > .sidebar .sidebar-resizer {
+  /* Keep the full grab target, with its outer edge at the content column. */
+  right: calc(-1 * var(--inset-gap));
+}
+
+.app-shell.shell-inset > .sidebar .sidebar-resizer::after {
+  /* The shared hover/drag styling paints a short mark centered in the gap. */
+  top: 50%;
+  right: calc((var(--inset-gap) - 2px) / 2);
+  width: 2px;
+  height: 36px;
+  border-radius: 999px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
 /* The content sheet. Same content-track list as the collapsed-sidebar reset
  * in global.css, plus the project shell (wrapped in display:contents). */
 .app-shell.shell-inset .shell-main > .settings-panel,
@@ -62,7 +89,7 @@
   height: auto;
   width: auto;
   align-self: stretch;
-  margin: 0 var(--inset-gap) var(--inset-gap) 0;
+  margin: var(--inset-gap) var(--inset-gap) var(--inset-gap) 0;
   /* Keep the outline inside the sheet so the adjacent sidebar cannot cover it. */
   border: 1px solid var(--border);
   border-radius: var(--inset-radius);

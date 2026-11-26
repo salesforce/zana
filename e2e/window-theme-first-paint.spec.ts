@@ -5,7 +5,8 @@
  * Main sets the native `backgroundColor` to the theme's --bg-base and passes
  * `--zcc-theme=<theme>` to the preload, which seeds `<html data-theme>`. The
  * spec opens a project window under each theme (Light, Dark, and System with
- * both OS appearances) and checks both against what the renderer then paints.
+ * both OS appearances) and checks the backing before navigation against the
+ * renderer's theme token. macOS then reveals native vibrancy once loaded.
  * Electron doesn't report `additionalArguments` back, so the preload argument
  * is read from the renderer process's command line, which Linux (CI) exposes.
  * Playwright emulates `prefers-color-scheme: light` in every window by default,
@@ -16,6 +17,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Page } from '@playwright/test';
 import { isAppRendererUrl, test, expect } from './fixtures/app.js';
+
+type ThemeProbe = typeof globalThis & { zccWindowThemeInitialBackground?: string };
+
+test.use({ initialConfig: { glassModeEnabled: true } });
 
 function hex(rgb: string): string {
   const parts = rgb.match(/\d+/g)!.slice(0, 3).map(Number);
@@ -34,6 +39,16 @@ test('new windows open on the background and data-theme of the effective theme',
   const appWindows = () => electron.windows().filter((w) => isAppRendererUrl(w.url()));
   /** Open the project window and return its page plus what main gave it. */
   const openProjectWindow = async (colorScheme: 'light' | 'dark') => {
+    await electron.evaluate(({ app }) => {
+      const probe = globalThis as ThemeProbe;
+      delete probe.zccWindowThemeInitialBackground;
+      app.once('browser-window-created', (_event, win) => {
+        // Window construction applies the options after browser-window-created.
+        win.webContents.once('did-start-loading', () => {
+          probe.zccWindowThemeInitialBackground = win.getBackgroundColor().toLowerCase();
+        });
+      });
+    });
     await main.evaluate((pid) => window.cc.windows.openProject(pid), projectId);
     let page: Page | undefined;
     await expect.poll(() => {
@@ -45,7 +60,11 @@ test('new windows open on the background and data-theme of the effective theme',
     // The project window is the newest BrowserWindow.
     const created = await electron.evaluate(({ BrowserWindow }) => {
       const win = BrowserWindow.getAllWindows().reduce((newest, w) => (w.id > newest.id ? w : newest));
-      return { background: win.getBackgroundColor().toLowerCase(), pid: win.webContents.getOSProcessId() };
+      return {
+        id: win.id,
+        initialBackground: (globalThis as ThemeProbe).zccWindowThemeInitialBackground,
+        pid: win.webContents.getOSProcessId()
+      };
     });
     // Chromium rewrites its process title, so the arguments can be space- rather than NUL-separated.
     const args = process.platform === 'linux' ? readFileSync(`/proc/${created.pid}/cmdline`, 'utf8').split(/[\0 ]/) : null;
@@ -74,9 +93,22 @@ test('new windows open on the background and data-theme of the effective theme',
 
       const { page, created } = await openProjectWindow(colorScheme);
       await expect(page.locator('html')).toHaveAttribute('data-theme', expected);
-      const painted = hex(await page.locator('body').evaluate((body) => getComputedStyle(body).backgroundColor));
       const label = `theme=${theme} OS=${appearance}`;
-      expect(created.background, label).toBe(painted);
+      const colors = await page.locator('body').evaluate((body) => {
+        const style = getComputedStyle(body);
+        return { base: style.getPropertyValue('--bg-base').trim(), painted: style.backgroundColor };
+      });
+      expect(created.initialBackground, label).toBe(colors.base);
+      if (process.platform === 'darwin') {
+        // getBackgroundColor() returns RGB only. #000000 is the transparent
+        // backing set by the macOS workspace once the navigation finishes.
+        await expect.poll(() => electron.evaluate(
+          ({ BrowserWindow }, id) => BrowserWindow.fromId(id)?.getBackgroundColor().toLowerCase(),
+          created.id
+        )).toBe('#000000');
+      } else {
+        expect(hex(colors.painted), label).toBe(colors.base);
+      }
       if (created.args) expect(created.args, label).toContain(`--zcc-theme=${expected}`);
       await closeProjectWindow(page);
     }

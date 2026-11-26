@@ -641,6 +641,13 @@ describe('normalizeConfig — catch-up summary flags', () => {
     expect(normalizeConfig({}).dockableThreadToolsEnabled).toBeUndefined();
   });
 
+  it('keeps Glass Mode optional and accepts only boolean values', () => {
+    expect(normalizeConfig({}).glassModeEnabled).toBeUndefined();
+    expect(normalizeConfig({ glassModeEnabled: 'true' }).glassModeEnabled).toBeUndefined();
+    expect(normalizeConfig({ glassModeEnabled: true }).glassModeEnabled).toBe(true);
+    expect(normalizeConfig({ glassModeEnabled: false }).glassModeEnabled).toBe(false);
+  });
+
   it.each([true, false, 'true', undefined])('drops the retired inset workspace flag (%s)', value => {
     expect(normalizeConfig({ insetWorkspaceEnabled: value } as unknown as AppConfig)).not.toHaveProperty('insetWorkspaceEnabled');
   });

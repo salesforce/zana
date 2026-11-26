@@ -1,0 +1,132 @@
+/* Split views share the window backdrop between independently rounded panes. */
+.app-shell.shell-inset[data-glass-mode='true'] .split-workspace[data-split='true'] {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .split-workspace[data-split='true'] .split-pane {
+  background: var(--bg-panel);
+  border-radius: var(--inset-radius);
+}
+
+/* When a visible pane has docked tools, only its individual surfaces paint.
+   Clear the backing sheets so their gaps reveal the surrounding window. */
+.app-shell.shell-inset[data-glass-mode='true'] :is(
+  .split-workspace:has(> .split-pane-slot:not([hidden]) .thread-secondary-panel:not(.is-maximized, [hidden], [data-basic-panel-compact], [data-mobile-panel])),
+  .split-pane:has(.thread-secondary-panel:not(.is-maximized, [hidden], [data-basic-panel-compact], [data-mobile-panel])),
+  .shell-main > :is(.thread-detail-view, .module-panel-host):has(.thread-secondary-panel:not(.is-maximized, [hidden], [data-basic-panel-compact], [data-mobile-panel]))
+) {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .split-divider {
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .split-divider--row {
+  width: var(--inset-gap);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .split-divider--col {
+  height: var(--inset-gap);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .split-divider--row .split-divider-hit {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .split-divider--col .split-divider-hit {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* Dock gutters share the same window backdrop as the space between split panes. */
+.app-shell.shell-inset[data-glass-mode='true'] :is(
+  .thread-detail-split, .new-chat-panel-layout, .plugin-panel-host-layout, .split-workspace-host
+):has(> .thread-secondary-panel:not(.is-maximized, [hidden], [data-basic-panel-compact], [data-mobile-panel])),
+.app-shell.shell-inset[data-glass-mode='true'] .thread-tool-main:has(
+  > .thread-tool-bottom:not(.is-maximized, [hidden])
+) {
+  gap: var(--inset-gap);
+  background: transparent;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] :is(
+  .thread-detail-split, .new-chat-panel-layout, .plugin-panel-host-layout, .split-workspace-host
+):has(> .thread-secondary-panel:not(.is-maximized, [hidden], [data-basic-panel-compact], [data-mobile-panel]))
+  > :is(.thread-detail-main, .new-chat-panel-main, .split-plugin-main, .module-panel-host, .split-workspace-main),
+.app-shell.shell-inset[data-glass-mode='true'] .thread-detail-split:has(
+  > .thread-secondary-panel:not(.is-maximized, [hidden], [data-basic-panel-compact], [data-mobile-panel])
+) > :is(.thread-tool-main, .thread-tool-main--legacy) > .thread-detail-main,
+.app-shell.shell-inset[data-glass-mode='true'] .thread-tool-main:has(
+  > .thread-tool-bottom:not(.is-maximized, [hidden])
+) > .thread-detail-main {
+  background: var(--bg-panel);
+  border-radius: var(--inset-radius);
+}
+
+/* Keep the panel shell's overflow visible for the gutter resize targets. */
+.app-shell.shell-inset[data-glass-mode='true'] .thread-secondary-panel:not([data-basic-panel-compact], [data-mobile-panel]) {
+  border: 0;
+  border-radius: var(--inset-radius);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .thread-secondary-panel:not([data-basic-panel-compact], [data-mobile-panel])
+  > :is(.thread-secondary-chrome, .basic-secondary-chrome) {
+  border-radius: var(--inset-radius) var(--inset-radius) 0 0;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .thread-secondary-panel:not([data-basic-panel-compact], [data-mobile-panel])
+  > .thread-secondary-body {
+  border-radius: 0 0 var(--inset-radius) var(--inset-radius);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .thread-secondary-resizer {
+  left: calc(-1 * var(--inset-gap));
+  width: var(--inset-gap);
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .thread-tool-bottom-resizer {
+  top: calc(-1 * var(--inset-gap));
+  height: var(--inset-gap);
+  background: transparent;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] :is(
+  .split-divider, .thread-secondary-resizer, .thread-tool-bottom-resizer
+)::after {
+  content: '';
+  position: absolute;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 36px;
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] :is(.split-divider--col, .thread-tool-bottom-resizer)::after {
+  width: 36px;
+  height: 2px;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] :is(.split-divider, .thread-tool-bottom-resizer):hover::after {
+  background: var(--accent-blue);
+  opacity: 0.5;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] :is(
+  .split-divider:focus-visible, .split-divider[data-dragging='true'], .thread-tool-bottom-resizer:focus-visible, .thread-tool-bottom-resizer:active
+)::after {
+  background: var(--accent-blue);
+  opacity: 1;
+}
+
+.app-shell.shell-inset[data-glass-mode='true'] .split-divider[data-snapped='true']::after {
+  box-shadow: 0 0 0 1px var(--accent-blue);
+}

@@ -16,7 +16,7 @@ it('scopes every inset-workspace rule under the desktop shell class', () => {
 it('keeps the content sheet inside the grid track', () => {
   expect(css).toMatch(/\.shell-main > \.thread-detail-view/);
   expect(css).toMatch(/height: auto;/);
-  expect(css).toMatch(/margin: 0 var\(--inset-gap\) var\(--inset-gap\) 0;/);
+  expect(css).toMatch(/margin: var\(--inset-gap\) var\(--inset-gap\) var\(--inset-gap\) 0;/);
 });
 
 it('leaves overflow to each panel so scrolling surfaces keep scrolling', () => {

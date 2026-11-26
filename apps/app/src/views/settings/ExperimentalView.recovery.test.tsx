@@ -3,12 +3,42 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { AppConfig } from '@zana-ai/zcc-domain/product';
 import { ExperimentalView } from './ExperimentalView.js';
+import { getAppSurface } from '@/lib/app-surface';
+import { shellPlatform } from '@/lib/shellChrome';
 
-afterEach(cleanup);
+vi.mock('@/lib/app-surface', async (load) => ({ ...await load<typeof import('@/lib/app-surface')>(), getAppSurface: vi.fn(() => 'web') }));
+vi.mock('@/lib/shellChrome', async (load) => ({ ...await load<typeof import('@/lib/shellChrome')>(), shellPlatform: vi.fn(() => 'macos') }));
+
+afterEach(() => {
+  cleanup();
+  vi.mocked(getAppSurface).mockReset().mockReturnValue('web');
+  vi.mocked(shellPlatform).mockReset().mockReturnValue('macos');
+});
 const base = {
   version: 1, theme: 'system', shell: '/bin/zsh', claudeBinary: 'claude', fontSize: 13,
   lastProjectId: null, worktreeIsolationDefault: true
 } as AppConfig;
+
+it.each([undefined, false, true])('offers Glass Mode as a macOS opt-in: %s', enabled => {
+  vi.mocked(getAppSurface).mockReturnValueOnce('desktop');
+  const update = vi.fn();
+  render(<ExperimentalView config={{ ...base, glassModeEnabled: enabled }} onConfigDraft={vi.fn()} onUpdate={update} />);
+  const toggle = screen.getByRole('switch', { name: 'Glass Mode' });
+  expect(toggle.getAttribute('aria-checked')).toBe(String(enabled === true));
+  fireEvent.click(toggle);
+  expect(update).toHaveBeenCalledWith({ glassModeEnabled: enabled !== true });
+});
+
+it.each([['web', 'macos'], ['desktop', 'windows']] as const)('disables Glass Mode on %s/%s', (surface, platform) => {
+  vi.mocked(getAppSurface).mockReturnValueOnce(surface);
+  vi.mocked(shellPlatform).mockReturnValueOnce(platform);
+  const update = vi.fn();
+  render(<ExperimentalView config={base} onConfigDraft={vi.fn()} onUpdate={update} />);
+  const toggle = screen.getByRole<HTMLButtonElement>('switch', { name: 'Glass Mode' });
+  expect(toggle.disabled).toBe(true);
+  fireEvent.click(toggle);
+  expect(update).not.toHaveBeenCalled();
+});
 
 it('keeps development controls on the dedicated Development page', () => {
   render(<ExperimentalView config={base} onConfigDraft={vi.fn()} onUpdate={vi.fn()} />);

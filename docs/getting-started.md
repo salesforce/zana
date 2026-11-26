@@ -23,6 +23,10 @@ Open **New Chat**, choose your project and agent, and describe what you want
 done. Follow the conversation in the thread and check the **Inbox** for
 reports and questions.
 
+## Try Glass Mode on macOS
+
+Open **Settings → Experimental** and turn on **Glass Mode** to give the desktop sidebar, docks, and split panes a floating glass appearance. Glass Mode is off by default, and switching it on updates open desktop windows immediately.
+
 ## Keep exploring
 
 - [Watch the How To videos](https://zana-ide.com/docs/getting-started/#how-to-heading) — your first project, Squads, mobile access, and Agentforce.

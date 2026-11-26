@@ -333,6 +333,7 @@ import { createThreadViewHost } from './window/thread-view-host.js';
 import { findUnscopedWindow, isUnscopedRegistration, leaveProjectWindow } from './window/main-window-registry.js';
 import { createWindowsTitleBarOverlays } from './window/titlebar-overlay.js';
 import { resolveThemeSetting, windowThemeOptions } from './window/window-theme.js';
+import { bindWorkspaceVibrancy, supportsMacosWorkspaceVibrancy } from './window/macos-workspace-vibrancy.js';
 import { registerPluginViewIpc, registerThreadViewIpc } from './ipc/windows.js';
 import { showApprovalSheet } from './window/approval-sheet.js';
 import { startPeerUsePrompts } from './ipc/peer-use-prompts.js';
@@ -986,7 +987,17 @@ function setActiveProjectSkillsWatcher(
  * A thread view window (`threadView`) shows one thread and its side panel. A
  * thread may have no project, so it is never the unscoped main window either.
  */
-const windows = new Map<number, { win: BrowserWindow; projectId?: string; view?: PluginViewTarget; threadView?: ThreadViewTarget; secondary: boolean }>();
+const windows = new Map<number, {
+  win: BrowserWindow;
+  projectId?: string;
+  view?: PluginViewTarget;
+  threadView?: ThreadViewTarget;
+  secondary: boolean;
+  refreshGlass?: () => void;
+}>();
+function refreshWorkspaceVibrancy(): void {
+  for (const entry of windows.values()) entry.refreshGlass?.();
+}
 // Windows caption buttons (minimize / maximize / close) follow the effective
 // theme: new windows take `current()`, open ones are re-coloured on a Theme
 // setting change (ipc/config.ts) and on OS appearance changes (`bind()`).
@@ -8645,7 +8656,14 @@ function createWindow(projectId?: string, repairOnly = false, options: {
     }
   });
 
-  windows.set(win.id, { win, projectId, view, threadView, secondary });
+  const refreshGlass = supportsMacosWorkspaceVibrancy(process.platform, !!view || !!threadView)
+    ? bindWorkspaceVibrancy(win, {
+        repairing: () => repairOnly && startupState.mode === 'repair-required',
+        enabled: () => store.getConfig().glassModeEnabled === true,
+        opaqueBackground: () => windowThemeOptions(resolveTheme, logMainError).backgroundColor
+      })
+    : undefined;
+  windows.set(win.id, { win, projectId, view, threadView, secondary, refreshGlass });
   if (view) {
     bindPluginViewCloseLifecycle(win, pluginViewCloseGuard, () => windowShutdownStarted);
     pluginViews.broadcast();
@@ -9530,6 +9548,7 @@ function registerIpc() {
     get quickPrompts() { return quickPrompts; },
     get readLiveSessionStats() { return readLiveSessionStats; },
     get refreshTitleBarOverlays() { return titleBarOverlays.refresh; },
+    refreshWorkspaceVibrancy,
     get registerExtensionProject() { return registerExtensionProject; },
     get reportTeamTask() { return reportTeamTask; },
     get resolveTheme() { return resolveTheme; },

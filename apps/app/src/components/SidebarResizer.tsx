@@ -2,9 +2,9 @@ import { product } from '../lib/product-client.js';
 import { applySidebarWidth, SIDEBAR_MIN, SIDEBAR_MAX } from '../store.js';
 
 /**
- * Drag handle that resizes the nav sidebar (`--col-nav`). Owned by the rail
- * and kept inside its box (CSS `right: 0` in the 12px padding gutter) so
- * sibling content lists cannot intercept the hit target.
+ * Drag handle that resizes the nav sidebar (`--col-nav`). The base hit target
+ * stays inside the rail (`right: 0`). Inset shells extend it into the shared
+ * gutter up to the content column.
  *
  * Width state is global: the drag writes `--col-nav` live (clamped) and
  * persists the final value to AppConfig on mouse-up; double-click resets to
