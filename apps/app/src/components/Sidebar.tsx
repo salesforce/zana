@@ -81,20 +81,21 @@ const NON_SPLITTABLE_NAV_IDS = new Set<string>([
   'goals'
 ]);
 
-function PluginSidebarSection({ panel, active, ...sectionProps }: {
+function PluginSidebarSection({ panel, Section, active, to, id, ...sectionProps }: {
   panel: PluginNavPanelRegistration;
+  Section: NonNullable<PluginNavPanelRegistration['experimental_sidebarSection']>;
   active: boolean;
+  to: string;
+  id: string;
 } & Pick<PluginSidebarSectionProps, 'dragHandle' | 'onNavigate'>) {
   const { threadId } = useRouteState();
   const navigate = useNavigate();
-  const Section = panel.experimental_sidebarSection;
-  if (!Section) return null;
   const label = `Open ${panel.title} panel`;
   return <PluginSlotBoundary pluginId={panel.pluginId} generation={panel.generation}>
     <Section {...sectionProps} activeThreadId={threadId} openThread={(id) => navigate(getThreadRoutePath(id))}
-      panelLink={<Link to={hrefForPluginNavPanel(panel.pluginId, panel.path ?? panel.id)}
+      panelLink={<Link to={to}
         aria-current={active ? 'page' : undefined}
-        data-sidebar-nav-id={`${panel.pluginId}/${panel.path ?? panel.id}`} onClick={sectionProps.onNavigate}>
+        data-sidebar-nav-id={id} onClick={sectionProps.onNavigate}>
         {label}
       </Link>} />
   </PluginSlotBoundary>;
@@ -246,7 +247,9 @@ export function Sidebar({ railVariant = 'expanded' }: { railVariant?: 'expanded'
       const path = panel.path ?? panel.id;
       const Icon = resolveIcon(panel.icon);
       const Accessory = panel.experimental_sidebarAccessory;
+      const Section = panel.experimental_sidebarSection;
       const id = `${panel.pluginId}/${path}`;
+      const to = hrefForPluginNavPanel(panel.pluginId, path);
       const active = nav === panel.pluginId && (pluginPanelPath === path || pluginPanelPath === null);
       return {
         kind: 'row',
@@ -254,10 +257,10 @@ export function Sidebar({ railVariant = 'expanded' }: { railVariant?: 'expanded'
         label: panel.title,
         mobileGroup: 'tools',
         icon: <Icon size={16} strokeWidth={1.7} aria-hidden="true" />,
-        to: hrefForPluginNavPanel(panel.pluginId, path),
+        to,
         testId: `nav-${id}`,
         active,
-        expandedSection: panel.experimental_sidebarSection ? <PluginSidebarSection key={panel.generation} panel={panel} active={active} /> : undefined,
+        expandedSection: Section ? <PluginSidebarSection key={panel.generation} panel={panel} Section={Section} active={active} to={to} id={id} /> : undefined,
         title: collapsed || rail ? panel.title : undefined,
         badge: Accessory ? (
           <PluginSlotBoundary pluginId={panel.pluginId} generation={panel.generation}>
