@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { FileArchive, FileText, FolderOpen, Package } from 'lucide-react';
+import { Download, FileArchive, FileText, FolderOpen, Package } from 'lucide-react';
 import type { CcApi } from '@zana-ai/zcc-desktop-contract';
 import { hasDesktopBridge } from '../../../lib/app-surface.js';
 import { fileManagerName } from '../../../lib/file-manager.js';
 import { product } from '../../../lib/product-client.js';
-import { setBasicUiMode, useBasicUi } from '../../../lib/basic-ui.js';
 import { previewPathParts } from './threadSecondaryPanelLogic.js';
 
 type Request = Parameters<CcApi['openers']['fileLocation']>[0];
@@ -51,10 +50,10 @@ export function useFilePreviewReveal(input: Request, revision = 0): FilePreviewR
   };
 }
 
-export function FilePreviewRevealButton({ state, primary = false }: { state: FilePreviewRevealState; primary?: boolean }) {
+export function FilePreviewRevealButton({ state }: { state: FilePreviewRevealState }) {
   if (!state.available) return null;
   return (
-    <button type="button" className={`thread-file-preview-reveal${primary ? ' is-primary' : ''}`}
+    <button type="button" className="thread-file-preview-reveal"
       title="Open the containing folder with this file selected" disabled={state.busy}
       aria-busy={state.busy} onClick={() => { void state.reveal(); }}>
       <FolderOpen size={14} aria-hidden />
@@ -63,7 +62,7 @@ export function FilePreviewRevealButton({ state, primary = false }: { state: Fil
   );
 }
 
-export function binaryPreviewKind(path: string): { label: string; extension: string; archive: boolean; installer: boolean } | null {
+export function binaryPreviewKind(path: string): { label: string; extension: string; archive: boolean } | null {
   const extension = path.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase();
   if (!extension) return null;
   const labels: Record<string, string> = {
@@ -75,33 +74,84 @@ export function binaryPreviewKind(path: string): { label: string; extension: str
   };
   if (!Object.hasOwn(labels, extension)) return null;
   return { label: labels[extension], extension: extension.toUpperCase(),
-    archive: ['zip', 'tar', 'gz', 'tgz', 'bz2', 'xz', '7z', 'rar'].includes(extension),
-    installer: ['dmg', 'pkg', 'msi', 'deb', 'rpm', 'appimage', 'exe'].includes(extension) };
+    archive: ['zip', 'tar', 'gz', 'tgz', 'bz2', 'xz', '7z', 'rar'].includes(extension) };
 }
 
-export function FilePreviewFallback({ path, tooLarge = false, reveal }: {
-  path: string; tooLarge?: boolean; reveal?: FilePreviewRevealState;
+function downloadError(status?: number): string {
+  if (status === 403) return 'This file is outside the preview’s allowed folders.';
+  if (status === 404) return 'The file may have been moved or deleted.';
+  if (status === 503) return 'The file host is unavailable. Reconnect and try again.';
+  return 'Could not start the download. Try again.';
+}
+
+function FilePreviewDownload({ url, reveal }: { url: string; reveal?: FilePreviewRevealState }) {
+  const pending = useRef<AbortController | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => () => pending.current?.abort(), []);
+
+  async function download() {
+    if (pending.current) return;
+    const controller = new AbortController();
+    pending.current = controller;
+    setBusy(true);
+    setError(null);
+    try {
+      // Check availability without pulling the file into renderer memory.
+      // The browser handles the actual transfer, progress and save location.
+      const response = await fetch(url, { method: 'HEAD', signal: controller.signal });
+      if (controller.signal.aborted) return;
+      if (!response.ok) {
+        setError(downloadError(response.status));
+        return;
+      }
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = '';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch {
+      if (!controller.signal.aborted) setError(downloadError());
+    } finally {
+      pending.current = null;
+      if (!controller.signal.aborted) setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="thread-file-preview-file-actions">
+        <button type="button" className="thread-file-preview-reveal is-primary"
+          disabled={busy} aria-busy={busy} onClick={() => { void download(); }}>
+          <Download size={14} aria-hidden />
+          {busy ? 'Preparing download…' : 'Download file'}
+        </button>
+        {reveal ? <FilePreviewRevealButton state={reveal} /> : null}
+      </div>
+      {error ? <p className="thread-file-preview-download-error" role="alert">{error}</p> : null}
+    </>
+  );
+}
+
+export function FilePreviewFallback({ path, threadId, projectId, storage = false, tooLarge = false, reveal }: {
+  path: string; threadId?: string; projectId?: string | null; storage?: boolean;
+  tooLarge?: boolean; reveal?: FilePreviewRevealState;
 }) {
-  const basic = useBasicUi();
   const kind = binaryPreviewKind(path);
   const Icon = tooLarge ? FileText : kind?.archive ? FileArchive : Package;
-  const manager = fileManagerName();
+  const params = new URLSearchParams({ path, source: storage ? 'thread-storage' : 'workspace' });
+  if (threadId) params.set('threadId', threadId);
+  if (projectId) params.set('projectId', projectId);
+  const url = `/api/v1/file-preview/download?${params}`;
   return (
     <div className="thread-file-preview-fallback" role="status">
       <div className="thread-file-preview-file-art"><Icon size={32} strokeWidth={1.4} aria-hidden />
         {kind && !tooLarge ? <span>{kind.extension}</span> : null}</div>
       <h2>{previewPathParts(path).name}</h2>
       {kind ? <p className="thread-file-preview-file-kind">{kind.label}</p> : null}
-      <h3>{tooLarge ? 'This file is too large to preview.' : 'This file opens outside the preview.'}</h3>
-      <p>{reveal?.available
-        ? tooLarge
-          ? `Find it in ${manager} to open it in an app that can handle larger files.`
-          : `Find it in ${manager}, then open it${kind?.installer ? ' to get started' : ' in another app'}.`
-        : basic ? 'Open Advanced to access this file on the computer where it is stored.'
-          : 'Copy its path from the header to open it on the computer where it is stored.'}</p>
-      {basic && !reveal?.available ? <button type="button" className="btn btn-secondary" onClick={() => setBasicUiMode('advanced')}>Open Advanced</button> : null}
-      {reveal?.available ? <><FilePreviewRevealButton state={reveal} primary />
-        <p className="thread-file-preview-file-hint">Opens the folder with this file selected.</p></> : null}
+      {tooLarge ? <h3>This file is too large to preview.</h3> : null}
+      <FilePreviewDownload key={url} url={url} reveal={reveal} />
     </div>
   );
 }

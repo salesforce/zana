@@ -128,8 +128,16 @@
 }
 .thread-file-preview-fallback p { max-width: 38ch; margin: 0; font-size: 12px; line-height: 1.7; }
 .thread-file-preview-fallback .thread-file-preview-file-kind { font-size: 11px; }
-.thread-file-preview-fallback .thread-file-preview-reveal { margin-top: 10px; }
-.thread-file-preview-fallback .thread-file-preview-file-hint { font-size: 11px; }
+.thread-file-preview-file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.thread-file-preview-file-actions .thread-file-preview-reveal { padding: 10px 14px; }
+.thread-file-preview-fallback .thread-file-preview-download-error { color: var(--danger); }
 .thread-file-preview-reveal-error {
   margin: 0;
   padding: 9px 12px;

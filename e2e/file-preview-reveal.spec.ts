@@ -1,10 +1,10 @@
-import { mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect } from './fixtures/app.js';
 
 test.use({ launchEnv: { ZCC_FAKE_PROVIDER: '1' }, isolateBundledCatalog: true, initialConfig: { sponsorPromptDismissed: true } });
 
-test('file previews reveal confined local files through main in built Electron', async ({ app }) => {
+test('file previews reveal local files and download original bytes in built Electron', async ({ app }) => {
   const { window, electron, home } = app;
   mkdirSync(join(home, 'reveal-project', 'dist'), { recursive: true });
   const root = realpathSync(join(home, 'reveal-project'));
@@ -77,6 +77,40 @@ test('file previews reveal confined local files through main in built Electron',
   await electron.evaluate(() => { (globalThis as unknown as { failReveal: boolean }).failReveal = false; });
   await panel.getByRole('button', { name: label, exact: true }).first().click();
   await expect(panel.getByRole('alert')).toHaveCount(0);
+
+  // Linked build artifacts often reach preview as absolute workspace paths.
+  const storageRoot = await window.evaluate(async threadId => {
+    const response = await fetch(`/api/v1/threads/${threadId}/thread-storage/files`);
+    if (!response.ok) throw new Error(await response.text());
+    return (await response.json()).storageRootPath as string;
+  }, ids.threadId);
+  expect(realpathSync(storageRoot)).toBe(join(realpathSync(home), '.zcc', 'thread-storage', ids.threadId));
+  const storageDir = join(storageRoot, 'build');
+  const storedName = 'Stored installer #2.dmg';
+  const stored = join(storageDir, storedName);
+  const target = join(home, 'downloaded-installer.dmg');
+  const bytes = Buffer.alloc(2_100_000, 0xe2);
+  mkdirSync(storageDir, { recursive: true });
+  writeFileSync(stored, bytes);
+  await open(stored);
+  await expect(panel.getByRole('heading', { name: storedName })).toBeVisible();
+  const reveal = panel.getByRole('button', { name: label, exact: true }).last();
+  await reveal.click();
+  await expect.poll(async () => (await calls()).at(-1)).toBe(realpathSync(stored));
+  const nativeWindow = await electron.browserWindow(window);
+  await nativeWindow.evaluate((win, { target, storedName }) => {
+    win.webContents.session.once('will-download', (_event, item) => {
+      if (item.getFilename() === storedName) item.setSavePath(target);
+      else item.cancel();
+    });
+  }, { target, storedName });
+  const download = panel.getByRole('button', { name: 'Download file', exact: true });
+  await download.click();
+  await expect.poll(() => existsSync(target) && readFileSync(target).equals(bytes)).toBe(true);
+  rmSync(stored);
+  await download.click();
+  await expect(panel.getByRole('alert')).toContainText('The file may have been moved or deleted.');
+  await expect(download).toBeEnabled();
 
   const count = (await calls()).length;
   for (const path of [outside, '../outside.dmg', ...(process.platform === 'win32' ? [] : ['escape.dmg'])]) {
