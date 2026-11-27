@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import { dirname } from 'node:path';
 import { fsyncDirectory } from '../../fsync-directory.js';
+import { renameWithRetry } from '../../rename-retry.js';
 
 export interface DurableWriteFileSystem {
   readFile(path: string): Buffer;
@@ -61,6 +62,8 @@ export function atomicDurableWrite(
     fs?: DurableWriteFileSystem;
     uuid?: () => string;
     beforeRename?: () => void;
+    /** Test seam for the rename retry wait. */
+    sleep?: (ms: number) => void;
   } = {}
 ): void {
   const fs = options.fs ?? nodeFileSystem;
@@ -83,7 +86,9 @@ export function atomicDurableWrite(
     if (expectedHash !== undefined && currentHash(fs, target) !== expectedHash) {
       throw new MigrationCasError();
     }
-    fs.rename(temp, target);
+    // Windows: a brief lock on the target (antivirus, indexer, another
+    // process) fails the rename with EPERM/EBUSY/EACCES; retry, bounded.
+    renameWithRetry(() => fs.rename(temp, target), { sleep: options.sleep });
     fsyncDirectory(fs, dirname(target));
   } catch (error) {
     if (fd !== undefined) {
