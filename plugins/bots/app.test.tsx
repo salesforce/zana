@@ -464,7 +464,7 @@ it('picks provider, model and project from the host catalog', async () => {
   expect(screen.getByRole('button', {name: 'Project'}).textContent).toBe('Default Project');
   fireEvent.click(provider);
   fireEvent.click(screen.getByRole('option', { name: 'Claude Code' }));
-  await waitFor(() => expect(catalog).toHaveBeenCalledWith({ providerId: 'claude-code' }));
+  await waitFor(() => expect(catalog).toHaveBeenCalledWith({ providerId: 'claude-code', projectId: 'p1', hostId: '' }));
   fireEvent.click(screen.getByRole('button', {name:'Model'}));
   fireEvent.click(await screen.findByRole('option', {name:'sonnet'}));
   fireEvent.click(screen.getByRole('button', {name: 'Project'}));
@@ -490,6 +490,30 @@ it('shows model load errors from the catalog', async () => {
   await screen.findByText('Models unavailable: auth_required');
   expect(screen.getByLabelText('Model').textContent).toBe('Default');
   expect(screen.getByLabelText('Project').textContent).toContain('p1 (unavailable)');
+});
+
+it('shows the pinned machine when offline and clears the pin when changing projects', async () => {
+  const primary = { id: 'primary', name: 'This Mac', connected: true, isDefault: true };
+  const docker = { id: 'docker', name: 'Docker Linux', connected: false, isDefault: false };
+  const projects = [{ id: 'p1', name: 'Shared Project' }, { id: 'p2', name: 'Other Project' }];
+  route({
+    list: () => [{ ...scout, hostId: 'docker' }],
+    machines: ({ projectId }) => projectId === 'p1' ? [primary, docker] : [primary],
+    catalog: () => ({ projects, providers: [], models: [], modelError: null }),
+    update: () => scout
+  });
+  render(<BotsPanel />);
+  expect((await screen.findByText(/Shared Project · Docker Linux · Offline/)).textContent).toContain('Offline');
+  fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+  const machine = await screen.findByRole('button', { name: 'Machine' });
+  expect(machine.textContent).toBe('Docker Linux · Offline');
+  fireEvent.click(machine);
+  expect(screen.getByRole('option', { name: 'Project default · This Mac' })).toBeTruthy();
+  fireEvent.keyDown(machine, { key: 'Escape' });
+  fireEvent.click(screen.getByRole('button', { name: 'Project' }));
+  fireEvent.click(screen.getByRole('option', { name: 'Other Project' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
+  await waitFor(() => expect(state.rpc.call).toHaveBeenCalledWith('update', { bot: 'scout', patch: { projectId: 'p2', hostId: '' } }));
 });
 
 it('accepts a custom model ID when the catalog is unavailable', async () => {

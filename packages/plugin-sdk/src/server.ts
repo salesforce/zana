@@ -718,6 +718,15 @@ export interface PluginSdkProject {
   id: string;
   name: string;
   path?: string;
+  /** Enrolled machines with a registered checkout. The Project default is marked explicitly. */
+  executionMachines?: PluginSdkProjectMachine[];
+}
+
+export interface PluginSdkProjectMachine {
+  id: string;
+  name: string;
+  connected: boolean;
+  isDefault: boolean;
 }
 
 export interface PluginSdkProjects {

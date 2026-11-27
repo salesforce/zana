@@ -69,16 +69,19 @@ export function registerRpc(zcc: Pick<ZccPluginApi, 'rpc' | 'sdk'>, service: Bot
     return service.runRoutine(ref(args), ref(args, 'routineId'));
   });
   zcc.rpc.method('catalog', async (raw) => {
-    const providerId = typeof record(raw).providerId === 'string' ? (record(raw).providerId as string).trim() : '';
+    const args = record(raw);
+    const providerId = typeof args.providerId === 'string' ? args.providerId.trim() : '';
     const [projects, providers] = await Promise.all([
       zcc.sdk.projects.list().catch(() => []),
       zcc.sdk.providers.list().catch(() => [])
     ]);
     let models: string[] = [];
     let modelError: string | null = null;
-    if (providerId) {
+    const machines = projects.find(row => row.id === args.projectId)?.executionMachines;
+    const machine = args.hostId ? machines?.find(row => row.id === args.hostId) : machines?.find(row => row.isDefault);
+    if (providerId && (!args.hostId || machine)) {
       try {
-        const catalog = await zcc.sdk.providers.models({ providerId });
+        const catalog = await zcc.sdk.providers.models({ providerId, ...(machine ? { hostId: machine.id } : {}) });
         models = catalog.models.map((row) => row.model || row.id);
         modelError = catalog.modelLoadError?.code ?? null;
       } catch (error) {
@@ -91,6 +94,10 @@ export function registerRpc(zcc: Pick<ZccPluginApi, 'rpc' | 'sdk'>, service: Bot
       models,
       modelError
     };
+  });
+  zcc.rpc.method('machines', async (raw) => {
+    const { projectId } = record(raw);
+    return (await zcc.sdk.projects.list()).find(row => row.id === projectId)?.executionMachines ?? [];
   });
   zcc.rpc.method('nextRuns', async (raw) => {
     const bot = await service.requireBot(ref(record(raw)));

@@ -143,8 +143,15 @@ export class BotStore {
     });
   }
 
-  update(ref: string, input: BotPatch): Promise<Bot> {
-    return this.mutate(ref, (bot) => patchBot(bot, input, this.now()));
+  update(ref: string, input: BotPatch, options?: { detachMainThread?: boolean }): Promise<Bot> {
+    return this.mutate(ref, (bot) => {
+      const next = patchBot(bot, input, this.now());
+      if (options?.detachMainThread) {
+        delete next.mainThreadId;
+        delete next.roleChanged;
+      }
+      return next;
+    });
   }
 
   setMainThread(ref: string, threadId: string): Promise<Bot> {

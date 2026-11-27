@@ -29,6 +29,8 @@ Save a login, card or contact and choose the bots that may use it. Select **All 
 
 ## How it works
 
+In a bot's **Settings → Project and access**, choose **Machine** when the Project has a checkout on more than one enrolled machine. The selected machine runs its chat, background jobs, and AI routines. If it goes offline, try again when it reconnects. Changing the machine of an idle bot opens a new chat and keeps the earlier chat in history.
+
 Bots are global. The project you set only decides where the bot's threads run. If you don't set one, the Default Project is used. Each bot runs with **full** permissions, including its background jobs.
 
 Click a bot in the Basic sidebar to open its main thread. The first click creates an empty chat. Sending a message or running a routine can also create the thread. Opening or messaging a bot restores its archived thread, or creates a new one if its thread was deleted. A bot can run at most 3 background jobs at once, and keeps the last 50 job records.
