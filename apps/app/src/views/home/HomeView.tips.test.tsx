@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { HomeView } from './HomeView.js';
 import { HelpProvider } from '../../components/help/HelpProvider.js';
 import { setBasicUiMode } from '../../lib/basic-ui.js';
-import { HOME_WIDGETS_KEY, newWidget } from './widgets/model.js';
+import { HOME_WIDGETS_KEY, HOME_WIDGETS_VISIBLE_KEY, newWidget } from './widgets/model.js';
 import zanaGlyph from '../../assets/zana-glyph.svg';
 
 const mocks = vi.hoisted(() => ({ sections: [] as unknown[], composer: vi.fn() }));
@@ -20,7 +20,14 @@ vi.mock('@/plugins/plugin-slots', () => ({
   listHomepageSections: () => mocks.sections
 }));
 vi.mock('@/plugins/PluginSlotBoundary', () => ({ PluginSlotBoundary: ({ children }: { children: React.ReactNode }) => children }));
-afterEach(() => { cleanup(); localStorage.removeItem(HOME_WIDGETS_KEY); mocks.sections = []; vi.clearAllMocks(); setBasicUiMode('advanced'); });
+afterEach(() => {
+  cleanup();
+  localStorage.removeItem(HOME_WIDGETS_KEY);
+  localStorage.removeItem(HOME_WIDGETS_VISIBLE_KEY);
+  mocks.sections = [];
+  vi.clearAllMocks();
+  setBasicUiMode('advanced');
+});
 
 it('presents Basic welcome without remounting its native draft or plugin surfaces', () => {
   mocks.sections = [{ id: 'example', generation: 1, title: 'Useful links', component: () => <button>Homepage tool</button> }];
@@ -66,6 +73,11 @@ it('mounts a pinned plugin section once when switching between Basic and Advance
   ]));
   setBasicUiMode('basic');
   render(<MemoryRouter><HelpProvider><HomeView /></HelpProvider></MemoryRouter>);
+  expect(screen.queryByRole('article', { name: 'Useful links' })).toBeNull();
+  const toggle = screen.getByRole('button', { name: 'Show widgets' });
+  expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute('aria-expanded')).toBe('true');
   expect(screen.getByRole('article', { name: 'Useful links' }).querySelector('button')?.textContent).toBe('Homepage tool');
   expect(screen.getAllByText('Homepage tool')).toHaveLength(1);
   act(() => setBasicUiMode('advanced'));

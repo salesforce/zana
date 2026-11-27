@@ -21,6 +21,7 @@
 
 .home-widgets-head { justify-content: space-between; flex-wrap: wrap; }
 .home-widgets-head > div, .home-widget-dialog-actions { flex-wrap: wrap; }
+.home-widgets-head > div { margin-inline-start: auto; }
 .home-widgets-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
 
 .home-widget-btn {

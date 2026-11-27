@@ -4,8 +4,8 @@ import { useState } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import type { PluginHomepageSectionRegistration } from '@zana-ai/zcc-plugin-sdk/app';
 import { afterEach, expect, it, vi } from 'vitest';
-import { HomeWidgets, loadHomeWidgets } from './HomeWidgets.js';
-import { builtInWidgets, HOME_WIDGETS_KEY, newWidget } from './model.js';
+import { HomeWidgets, loadHomeWidgets, loadHomeWidgetsVisibility } from './HomeWidgets.js';
+import { builtInWidgets, HOME_WIDGETS_KEY, HOME_WIDGETS_VISIBLE_KEY, newWidget } from './model.js';
 
 const data = vi.hoisted(() => ({
   read: {} as Record<string, true>,
@@ -29,7 +29,9 @@ const plugin: PluginHomepageSectionRegistration = {
 };
 function Dashboard({ plugins = [] }: { plugins?: PluginHomepageSectionRegistration[] }) {
   const [widgets, setWidgets] = useState(loadHomeWidgets);
-  return <MemoryRouter><HomeWidgets plugins={plugins} widgets={widgets} onChange={setWidgets} /></MemoryRouter>;
+  const [visible, setVisible] = useState(true);
+  return <MemoryRouter><HomeWidgets plugins={plugins} widgets={widgets} onChange={setWidgets}
+    visible={visible} onVisibilityChange={setVisible} /></MemoryRouter>;
 }
 const button = (name: string) => screen.getByRole('button', { name, exact: true });
 const change = (name: string, value: string) => fireEvent.change(screen.getByLabelText(name), { target: { value } });
@@ -261,4 +263,45 @@ it('auto-scrolls while dragging near the edge and releases canceled gestures', (
   act(() => frames.shift()?.(0));
   expect(surface.scrollTop).toBe(scrollTop);
   fireEvent.pointerCancel(title, pointer);
+  fireEvent.pointerDown(title, pointer);
+  fireEvent.pointerMove(title, { ...pointer, clientY: 88 });
+  expect(screen.getByText('Drop here')).toBeTruthy();
+  act(() => window.dispatchEvent(new StorageEvent('storage', { key: HOME_WIDGETS_VISIBLE_KEY, newValue: 'false' })));
+  fireEvent.click(button('Show widgets'));
+  fireEvent.click(button('Edit layout'));
+  expect(screen.queryByText('Drop here')).toBeNull();
+  fireEvent.keyDown(button('Move Quick note on grid'), { key: 'ArrowDown' });
+  expect(screen.getByRole('article', { name: 'Quick note' }).style.gridRow).toBe('2 / span 3');
+});
+
+it('remembers the visibility toggle without deleting saved cards', () => {
+  store(builtInWidgets[2]);
+  expect(loadHomeWidgetsVisibility()).toBe(false);
+  render(<Dashboard />);
+  fireEvent.click(button('Hide widgets'));
+  expect(screen.queryByRole('article')).toBeNull();
+  expect(loadHomeWidgetsVisibility()).toBe(false);
+  fireEvent.click(button('Show widgets'));
+  expect(loadHomeWidgetsVisibility()).toBe(true);
+  expect(screen.getByRole('article', { name: 'Quick note' })).toBeTruthy();
+  fireEvent.click(button('Edit layout'));
+  act(() => window.dispatchEvent(new StorageEvent('storage', { key: HOME_WIDGETS_VISIBLE_KEY, newValue: 'false' })));
+  expect(screen.queryByRole('article')).toBeNull();
+  act(() => window.dispatchEvent(new StorageEvent('storage', { key: HOME_WIDGETS_VISIBLE_KEY, newValue: 'true' })));
+  expect(button('Edit layout')).toBeTruthy();
+  expect(screen.getByRole('article', { name: 'Quick note' })).toBeTruthy();
+});
+
+it('still hides widgets for the current window when preference storage is unavailable', () => {
+  store(builtInWidgets[2]);
+  render(<Dashboard />);
+  vi.stubGlobal('localStorage', {
+    getItem: () => { throw new Error('storage unavailable'); },
+    setItem: () => { throw new Error('storage unavailable'); }
+  });
+  expect(loadHomeWidgetsVisibility()).toBe(false);
+  fireEvent.click(button('Hide widgets'));
+  expect(button('Show widgets')).toBeTruthy();
+  expect(screen.queryByRole('article')).toBeNull();
+  expect(screen.getByRole('alert').textContent).toContain('couldn’t save whether widgets are shown');
 });

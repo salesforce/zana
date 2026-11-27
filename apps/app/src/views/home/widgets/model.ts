@@ -1,4 +1,5 @@
 export const HOME_WIDGETS_KEY = 'zcc.basicHome.widgets.v1';
+export const HOME_WIDGETS_VISIBLE_KEY = 'zcc.basicHome.widgetsVisible.v1';
 export const MAX_WIDGETS = 24;
 export const MAX_GRID_ROW = MAX_WIDGETS * 7;
 const MAX_STORAGE_LENGTH = 640_000;

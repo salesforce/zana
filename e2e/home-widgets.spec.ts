@@ -5,13 +5,17 @@ test.use({
   initialConfig: { sponsorPromptDismissed: true }
 });
 
-test('Basic Home builds a widget, lets you drop it into an empty cell, and restores the layout', async ({ app }) => {
+test('Basic Home widgets are opt-in and keep their layout when hidden', async ({ app }) => {
   const { window: page } = app;
   await dismissConsentOverlays(page);
   const basic = page.getByTestId('basic-ui-mode-basic');
   await basic.click();
   await expect(page.getByRole('heading', { name: 'What shall we work on today?' })).toBeVisible();
   const board = page.getByRole('region', { name: 'My widgets' });
+  const show = page.getByRole('button', { name: 'Show widgets' });
+  await expect(board).toBeHidden();
+  await expect(show).toHaveAttribute('aria-expanded', 'false');
+  await show.click();
   await board.getByRole('button', { name: 'Add widget' }).click();
   const dialog = page.getByRole('dialog', { name: 'Add widget' });
   await dialog.getByRole('button', { name: 'Build' }).click();
@@ -34,7 +38,17 @@ test('Basic Home builds a widget, lets you drop it into an empty cell, and resto
   await card.getByRole('button', { name: 'Resize Launch' }).press('ArrowDown');
   await expect(card.getByText(/× 4/)).toBeVisible();
   await page.reload();
-  if (await basic.getAttribute('aria-pressed') !== 'true' && !await board.isVisible()) await basic.click();
+  await expect(board).toBeVisible();
+  await expect(card).toHaveCSS('grid-row-start', '2');
+  await expect(card).toHaveCSS('grid-row-end', 'span 4');
+  await expect(card.getByRole('checkbox', { name: 'Review' })).toBeChecked();
+  await board.getByRole('button', { name: 'Hide widgets' }).click();
+  await expect(board).toBeHidden();
+  await expect(show).toBeFocused();
+  await page.reload();
+  await expect(show).toBeVisible();
+  await expect(board).toBeHidden();
+  await show.click();
   await expect(card).toHaveCSS('grid-row-start', '2');
   await expect(card).toHaveCSS('grid-row-end', 'span 4');
   await expect(card.getByRole('checkbox', { name: 'Review' })).toBeChecked();

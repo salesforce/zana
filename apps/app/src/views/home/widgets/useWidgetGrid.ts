@@ -23,7 +23,7 @@ type Gesture = {
   target: Change | null;
 };
 
-export function useGridColumns(element: React.RefObject<HTMLElement | null>): Columns {
+export function useGridColumns(element: React.RefObject<HTMLElement | null>, visible: boolean): Columns {
   const [columns, setColumns] = useState<Columns>(6);
   useEffect(() => {
     const node = element.current;
@@ -36,7 +36,7 @@ export function useGridColumns(element: React.RefObject<HTMLElement | null>): Co
     const observer = new ResizeObserver(measure);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [element]);
+  }, [element, visible]);
   return columns;
 }
 
@@ -44,6 +44,7 @@ export function useWidgetGrid(
   grid: React.RefObject<HTMLDivElement | null>,
   columns: Columns,
   layout: WidgetLayout,
+  visible: boolean,
   commit: (change: Change) => void
 ) {
   const [preview, setPreview] = useState<Change | null>(null);
@@ -52,6 +53,13 @@ export function useWidgetGrid(
   useEffect(() => () => {
     if (drag.current) cancelAnimationFrame(drag.current.frame);
   }, []);
+
+  useEffect(() => {
+    if (visible || !drag.current) return;
+    cancelAnimationFrame(drag.current.frame);
+    drag.current = null;
+    setPreview(null);
+  }, [visible]);
 
   function begin(event: PointerEvent<HTMLButtonElement>, id: string, kind: Change['kind']) {
     const card = layout.get(id);

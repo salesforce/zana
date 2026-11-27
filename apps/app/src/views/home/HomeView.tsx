@@ -9,7 +9,7 @@ import { listHomepageSections, subscribePluginSlots } from '@/plugins/plugin-slo
 import { PluginSlotBoundary } from '@/plugins/PluginSlotBoundary';
 import { composePromptSeedFrom } from '@/lib/compose-prompt-seed';
 import { useBasicUi } from '@/lib/basic-ui';
-import { HomeWidgets, loadHomeWidgets } from './widgets/HomeWidgets.js';
+import { HomeWidgets, loadHomeWidgets, loadHomeWidgetsVisibility } from './widgets/HomeWidgets.js';
 import { pluginSource } from './widgets/WidgetContent.js';
 import '../../components/basic/basic-conversation.css';
 
@@ -22,6 +22,7 @@ import '../../components/basic/basic-conversation.css';
 export function HomeView() {
   const basic = useBasicUi();
   const [widgets, setWidgets] = useState(loadHomeWidgets);
+  const [widgetsVisible, setWidgetsVisible] = useState(loadHomeWidgetsVisibility);
   const location = useLocation();
   const [search] = useSearchParams();
   const seed = composePromptSeedFrom({ searchParams: search, state: location.state });
@@ -48,11 +49,12 @@ export function HomeView() {
             <PluginNewThreadActions projectId={null} />
           </div>
         </HomeLauncherTips>
-        {basic && <HomeWidgets plugins={pluginHomepage} widgets={widgets} onChange={setWidgets} />}
+        {basic && <HomeWidgets plugins={pluginHomepage} widgets={widgets} onChange={setWidgets}
+          visible={widgetsVisible} onVisibilityChange={setWidgetsVisible} />}
         {pluginHomepage.length > 0 && (
           <div className="home-plugin-sections" hidden={basic} inert={basic || undefined}>
             {pluginHomepage.map((section) => {
-              if (basic && pinnedSources.has(pluginSource(section))) return null;
+              if (basic && widgetsVisible && pinnedSources.has(pluginSource(section))) return null;
               const Section = section.component;
               return (
                 <PluginSlotBoundary
