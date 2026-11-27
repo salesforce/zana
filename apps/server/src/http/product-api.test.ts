@@ -117,6 +117,36 @@ describe('product HTTP', () => {
     expect(noop.status).toBe(200);expect(await noop.json()).toMatchObject({ thread: { id: thread.id, projectId: 'p1' } });
   });
 
+  it('serves scoped file downloads and reports missing files through product HTTP', async () => {
+    const dataDir = realpathSync(mkdtempSync(join(tmpdir(), 'zcc-product-file-download-')));
+    writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [] }));
+    server = await startTestProductServer({ dataDir, origins: { serverPort: 0, devAppPort: 5173 } });
+    const host = upsertHost(server.ctx.db, { name: 'Download host', hostKeyHash: 'd'.repeat(64), isPrimary: true });
+    const thread = createConversationThread(server.ctx.db, { projectId: 'p1', hostId: host.id, providerId: 'test' });
+    const path = 'Build #1.dmg';
+    const url = server.url + 'api/v1/file-preview/download?' + new URLSearchParams({
+      threadId: thread.id, source: 'thread-storage', path
+    });
+
+    const missing = await fetch(url);
+    expect(missing.status).toBe(404);
+    await expect(missing.json()).resolves.toMatchObject({ code: 'path_not_found' });
+
+    const storage = join(dataDir, 'thread-storage', thread.id);
+    mkdirSync(storage, { recursive: true });
+    const bytes = Buffer.from([0, 13, 128, 255]);
+    writeFileSync(join(storage, path), bytes);
+    const head = await fetch(url, { method: 'HEAD' });
+    expect(head.status).toBe(200);
+    expect(head.headers.get('content-length')).toBe(String(bytes.length));
+    expect(await head.text()).toBe('');
+    const download = await fetch(url);
+    expect(download.status).toBe(200);
+    expect(download.headers.get('content-disposition')).toBe("attachment; filename*=UTF-8''Build%20%231.dmg");
+    expect(Buffer.from(await download.arrayBuffer())).toEqual(bytes);
+    expect((await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' } })).status).toBe(404);
+  });
+
   it('routes GET and HEAD /file-preview/html to the HTML preview sender and reports its failures', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zcc-product-html-preview-'));
     writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({ version: 1, projects: [] }));
