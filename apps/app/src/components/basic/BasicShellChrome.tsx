@@ -196,7 +196,8 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
         return <BasicConversationRowActions key={thread.id} thread={thread} title={title} onArchive={archiveConversation}>
           <Link className={`basic-ui-chat-row${activeId === thread.id ? ' is-active' : ''}${unread ? ' is-unread' : ''}`}
             to={getThreadRoutePath(thread.id, scopedProjectId)} onClick={onNavigate} aria-current={activeId === thread.id ? 'page' : undefined}
-            aria-label={label} data-testid={`basic-chat-row-${thread.id}`}>
+            aria-label={label} data-row-status={thread.archivedAt ? 'Archived' : unread ? 'Unread' : status}
+            data-testid={`basic-chat-row-${thread.id}`}>
             <span className="basic-ui-chat-title">{pinned && <Pin size={12} aria-hidden="true" />}<span className="basic-ui-chat-name" title={title}>{title}</span></span>
             {(showProject || status !== 'Idle' || thread.archivedAt || unread) && <span className="basic-ui-chat-meta">
               {showProject && <span className="basic-ui-chat-project" title={projectName}

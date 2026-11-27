@@ -57,7 +57,7 @@ test('Audit installed plugin pages on phone and tablet widths', async ({ app }, 
     await page.goto(serverUrl + '/');
     await page.getByRole('button', { name: 'Expand sidebar', exact: true }).click();
     const drawer = page.getByRole('dialog', { name: 'Navigation', exact: true });
-    await drawer.getByRole('button', { name: 'More', exact: true }).click();
+    await drawer.getByRole('button', { name: 'Tools', exact: true }).click();
     await expect(drawer.getByTestId('nav-docs')).toBeVisible();
     await drawer.getByTestId('nav-docs').click();
     await expect(page.locator('.library-panel')).toBeVisible();

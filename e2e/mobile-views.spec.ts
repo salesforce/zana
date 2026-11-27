@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
-import { chromium, type Page, type Route } from '@playwright/test';
+import { chromium, type Locator, type Page, type Route } from '@playwright/test';
 import { test, expect } from './fixtures/app.js';
 import { startMobileGateway } from '../apps/server/src/mobile/gateway.js';
 
@@ -50,6 +50,37 @@ async function capture(page: Page) {
       text: el.textContent?.slice(0, 60), width: Math.round(el.getBoundingClientRect().width),
       right: Math.round(el.getBoundingClientRect().right) }));
   });
+}
+
+async function expectQuietRowStatus(list: Locator) {
+  const dots = await Promise.all(['Idle', 'Unread', 'Working', 'Needs you', 'Error'].map(async (status) => {
+    const row = list.locator(`[data-row-status="${status}"]`).first();
+    await expect(row).toBeAttached();
+    const appearance = await row.evaluate(link => {
+      const surface = getComputedStyle(link.closest('.basic-ui-chat-item, .mobile-agent-row-surface') ?? link);
+      const status = link.querySelector('.basic-ui-chat-status, .mobile-agent-status:not(.sr-only)');
+      const dot = status ? getComputedStyle(status, '::before') : null;
+      const title = link.querySelector('.basic-ui-chat-name, .mobile-agent-row-title')!;
+      return {
+        background: surface.backgroundImage, shadow: surface.boxShadow,
+        dotSize: dot?.width, dotColor: dot?.backgroundColor,
+        titleWeight: Number(getComputedStyle(title).fontWeight)
+      };
+    });
+    expect(appearance.shadow).toBe('none');
+    if (status === 'Unread') {
+      expect(appearance.background).toContain('linear-gradient');
+      expect(appearance.titleWeight).toBeGreaterThanOrEqual(650);
+    } else {
+      expect(appearance.background).toBe('none');
+    }
+    if (status !== 'Idle') {
+      expect(appearance.dotSize).toBe('6px');
+      expect(appearance.dotColor).not.toBe('rgba(0, 0, 0, 0)');
+    }
+    return appearance.dotColor;
+  }));
+  expect(new Set(dots).size).toBe(dots.length);
 }
 
 test('Main views and populated Inbox fit phone and tablet screens', async ({ app }, testInfo) => {
@@ -120,7 +151,9 @@ test('Main views and populated Inbox fit phone and tablet screens', async ({ app
         body.threads = body.threads.map((thread: Record<string, unknown>, index: number) => ({
           ...thread,
           status: index === 0 ? 'active' : index === 2 ? 'error' : 'idle',
-          hasPendingInteraction: index === 1
+          hasPendingInteraction: index === 1,
+          lastReadSeq: 0,
+          maxSeq: index === 3 ? 2 : 0
         }));
         await route.fulfill({ response, json: body });
       };
@@ -141,9 +174,9 @@ test('Main views and populated Inbox fit phone and tablet screens', async ({ app
       await expect(drawer.getByPlaceholder('Filter projects')).toHaveCount(0);
       const newAgent = drawer.getByRole('link', { name: 'New agent', exact: true });
       const inboxShortcut = drawer.getByTestId('mobile-nav-inbox');
-      const more = drawer.getByRole('button', { name: 'More', exact: true });
+      const toolsShortcut = drawer.getByRole('button', { name: 'Tools', exact: true });
       const search = drawer.getByRole('searchbox', { name: 'Search agents' });
-      for (const control of [newAgent, inboxShortcut, more, search, history.getByRole('link').first()]) {
+      for (const control of [newAgent, inboxShortcut, toolsShortcut, search, history.getByRole('link').first()]) {
         const box = (await control.boundingBox())!;
         expect(box.height).toBeGreaterThanOrEqual(44);
         expect(box.x).toBeGreaterThanOrEqual(0);
@@ -151,33 +184,50 @@ test('Main views and populated Inbox fit phone and tablet screens', async ({ app
       }
       const createBox = (await newAgent.boundingBox())!;
       const inboxBox = (await inboxShortcut.boundingBox())!;
-      const moreBox = (await more.boundingBox())!;
+      const toolsBox = (await toolsShortcut.boundingBox())!;
       expect(inboxBox.y).toBeGreaterThanOrEqual(createBox.y + createBox.height);
-      expect(inboxBox.y).toBe(moreBox.y);
-      expect(inboxBox.x + inboxBox.width).toBeLessThan(moreBox.x);
+      expect(inboxBox.y).toBe(toolsBox.y);
+      expect(inboxBox.x + inboxBox.width).toBeLessThan(toolsBox.x);
       await expect(inboxShortcut.locator('.mobile-agent-inbox-count')).toHaveText(/^[1-9]\d*$/);
       const working = history.locator('.mobile-agent-status[data-status="Working"]');
       const attention = history.locator('.mobile-agent-status[data-status="Needs you"]');
       const failed = history.locator('.mobile-agent-status[data-status="Error"]');
-      await expect(working).toHaveCSS('animation-name', 'agent-card-pulse');
+      await expect(working).toHaveCSS('animation-name', 'none');
       await expect.poll(() => working.evaluate((el) => getComputedStyle(el, '::before').animationName)).toBe('agent-dot-pulse');
       for (const row of await history.getByRole('link').all()) {
         const project = row.locator('.mobile-agent-project');
-        const badge = row.locator('.mobile-agent-status');
+        const status = row.locator('.mobile-agent-status:not(.sr-only)');
         await expect(project).toHaveAttribute('title', 'Mobile interface verification');
         const projectBox = (await project.boundingBox())!;
-        const badgeBox = (await badge.boundingBox())!;
         expect(projectBox.width).toBeGreaterThan(60);
-        expect(projectBox.x + projectBox.width).toBeLessThanOrEqual(badgeBox.x - 7);
-        expect(badgeBox.x + badgeBox.width).toBeLessThanOrEqual(width - 16);
+        if (await status.count()) {
+          const statusBox = (await status.boundingBox())!;
+          expect(projectBox.x + projectBox.width).toBeLessThanOrEqual(statusBox.x - 7);
+          expect(statusBox.x + statusBox.width).toBeLessThanOrEqual(width - 16);
+        }
       }
       for (const theme of ['light', 'dark'] as const) {
         await page.evaluate((theme) => document.documentElement.setAttribute('data-theme', theme), theme);
-        const danger = theme === 'light' ? 'rgb(207, 34, 46)' : 'rgb(248, 81, 73)';
-        await expect(attention).toHaveCSS('color', danger);
-        await expect(failed).toHaveCSS('color', danger);
+        await expect(failed).toHaveCSS('--mobile-row-accent', theme === 'light' ? '#cf222e' : '#f85149');
         await expect(attention).toHaveCSS('animation-name', 'none');
-        await page.screenshot({ path: testInfo.outputPath(`${width}-agent-badges-${theme}.png`) });
+        await expectQuietRowStatus(history);
+        await page.screenshot({ path: testInfo.outputPath(`${width}-agent-status-${theme}.png`) });
+      }
+      if (width === 390) {
+        const basic = await context.newPage();
+        try {
+          await basic.route(rosterUrl, badgeRoster);
+          await basic.goto(serverUrl + '/?ui=basic');
+          await basic.getByRole('button', { name: 'Open conversations', exact: true }).click();
+          const chats = basic.getByRole('navigation', { name: 'Recent conversations' });
+          for (const theme of ['light', 'dark'] as const) {
+            await basic.evaluate((theme) => document.documentElement.setAttribute('data-theme', theme), theme);
+            await expectQuietRowStatus(chats);
+            await basic.screenshot({ path: testInfo.outputPath(`390-chat-status-${theme}.png`) });
+          }
+        } finally {
+          await basic.close();
+        }
       }
       await page.emulateMedia({ reducedMotion: 'reduce' });
       await expect(working).toHaveCSS('animation-name', 'none');
@@ -227,10 +277,10 @@ test('Main views and populated Inbox fit phone and tablet screens', async ({ app
       await page.getByRole('link', { name: 'Back to agents', exact: true }).click();
       await page.getByRole('button', { name: 'Expand sidebar', exact: true }).click();
       await expect(drawer.getByTestId('mobile-nav-agents')).toHaveAttribute('aria-current', 'page');
-      await drawer.getByRole('button', { name: 'More', exact: true }).click();
+      await drawer.getByRole('button', { name: 'Tools', exact: true }).click();
       await expect(drawer.getByTestId('nav-agents')).toBeVisible();
       await drawer.getByRole('button', { name: 'All agents', exact: true }).click();
-      await expect(drawer.getByRole('button', { name: 'More', exact: true })).toBeFocused();
+      await expect(drawer.getByRole('button', { name: 'Tools', exact: true })).toBeFocused();
       await inboxShortcut.click();
       await expect(page).toHaveURL(serverUrl + '/inbox');
       await expect(drawer).toBeHidden();

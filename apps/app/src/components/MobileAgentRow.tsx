@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Folder, MessageSquare, X } from 'lucide-react';
+import { MessageSquare, X } from 'lucide-react';
 import type { MobileAgentItem } from './mobile-agent-items';
 import { useSwipeToClose } from './useSwipeToClose';
 
@@ -11,6 +11,7 @@ export function MobileAgentRow({ item, active, onOpen, onClose }: {
 }) {
   const swipe = useSwipeToClose<HTMLLIElement>(onClose);
   const { distance, busy, revealed } = swipe;
+  const status = item.status === 'Idle' && item.unread && !active ? 'Unread' : item.status;
 
   return (
     <li ref={swipe.rootRef} className="mobile-agent-swipe" aria-busy={busy} data-swiping={swipe.dragging} data-revealed={revealed}
@@ -25,7 +26,7 @@ export function MobileAgentRow({ item, active, onOpen, onClose }: {
       </div>
       <div className="mobile-agent-row-surface" style={{ transform: `translateX(${-distance}px)` }}>
         <Link to={item.to} className="mobile-agent-row" draggable={false}
-          aria-current={active ? 'page' : undefined}
+          aria-current={active ? 'page' : undefined} data-row-status={status}
           {...swipe.handlers}
           onClick={(event) => {
             if (!swipe.consumeClick(event)) onOpen();
@@ -34,10 +35,8 @@ export function MobileAgentRow({ item, active, onOpen, onClose }: {
           <span className="mobile-agent-row-copy">
             <span className="mobile-agent-row-title">{item.title}</span>
             <span className="mobile-agent-row-detail">
-              <span className="mobile-agent-project" title={item.projectName}>
-                <Folder size={12} aria-hidden="true" /><span>{item.projectName}</span>
-              </span>
-              <span className="mobile-agent-status" data-status={item.status}>{item.status}</span>
+              <span className="mobile-agent-project" title={item.projectName}>{item.projectName}</span>
+              <span className={status === 'Idle' ? 'mobile-agent-status sr-only' : 'mobile-agent-status'} data-status={status}>{status}</span>
             </span>
           </span>
         </Link>

@@ -369,7 +369,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
       const overviewShortcut = drawer.getByTestId('mobile-nav-agents');
       await expect(overviewShortcut).toHaveAttribute('href', '/agents');
       const shortcutBoxes = await Promise.all([
-        overviewShortcut, drawer.getByTestId('mobile-nav-inbox'), drawer.getByRole('button', { name: 'More', exact: true })
+        overviewShortcut, drawer.getByTestId('mobile-nav-inbox'), drawer.getByRole('button', { name: 'Tools', exact: true })
       ].map((shortcut) => shortcut.boundingBox()));
       for (const box of shortcutBoxes) {
         expect(box!.y).toBe(shortcutBoxes[0]!.y);
@@ -434,7 +434,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
         await expect(phone.getByTestId('thread-detail')).toBeVisible();
         await openNavigation();
       }
-      await drawer.getByRole('button', { name: 'More', exact: true }).click();
+      await drawer.getByRole('button', { name: 'Tools', exact: true }).click();
       await expect(drawer.getByRole('button', { name: 'All agents', exact: true })).toBeFocused();
       await drawer.getByRole('button', { name: 'Close navigation', exact: true }).focus();
       await expect(drawer.getByRole('heading', { name: 'Plugins & tools' })).toBeVisible();
@@ -510,7 +510,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
       // Settings must have an exit on the page itself, including after section
       // changes and scrolling; its drawer must also dismiss on the current tab.
       await openNavigation();
-      await drawer.getByRole('button', { name: 'More', exact: true }).click();
+      await drawer.getByRole('button', { name: 'Tools', exact: true }).click();
       await drawer.getByRole('link', { name: 'Settings', exact: true }).click();
       await expect(drawer).toBeHidden();
       await expect(phone.locator('.settings-panel--preferences')).toBeVisible();
@@ -547,7 +547,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
       await expect(drawer).toBeHidden();
       await expect(phone).toHaveURL(`${serverUrl}/agents`);
       await openNavigation();
-      await drawer.getByRole('button', { name: 'More', exact: true }).click();
+      await drawer.getByRole('button', { name: 'Tools', exact: true }).click();
       await drawer.getByRole('link', { name: 'Settings', exact: true }).click();
       await openNavigation();
       await drawer.getByRole('link', { name: 'Preferences', exact: true }).click();
@@ -575,7 +575,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
     // The compact row moves New agent into its overflow menu, preserving the
     // project selection and handing focus back to the ordinary launcher.
     await openNavigation();
-    await drawer.getByRole('button', { name: 'More', exact: true }).click();
+    await drawer.getByRole('button', { name: 'Tools', exact: true }).click();
     await drawer.getByRole('button', { name: 'Projects', exact: true }).click();
     await drawer.getByRole('button', { name: 'Project actions for mobile-project', exact: true }).click();
     await drawer.getByRole('button', { name: 'New agent', exact: true }).click();
@@ -587,7 +587,7 @@ test('Mobile pairs to built Electron, uses phone navigation, reads and sends a l
     // The History action opens an overlay without changing the URL. It must
     // dismiss the drawer too, otherwise its focus trap covers the history.
     await openNavigation();
-    await drawer.getByRole('button', { name: 'More', exact: true }).click();
+    await drawer.getByRole('button', { name: 'Tools', exact: true }).click();
     await drawer.getByTestId('nav-conversation-history').click();
     await expect(drawer).toBeHidden();
     await phone.keyboard.press('Escape');
