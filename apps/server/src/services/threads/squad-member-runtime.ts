@@ -15,7 +15,7 @@ import {
   type SquadMemberRuntimeRequest, type SquadMemberStatus,
   type SquadRuntimePreflightRequest, type SquadRuntimePreflightResult
 } from '@zana-ai/zcc-contracts/runtime';
-import { ProviderStatusResultSchema } from '@zana-ai/zcc-contracts/host-rpc';
+import { ProviderStatusResultSchema, type ProviderStatusResult } from '@zana-ai/zcc-contracts/host-rpc';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { NATIVE_TOOL_POLICY_PROOF_HEADER } from '../../http/native-tool-policy-proof.js';
 import { sendJson } from '../../http/json.js';
@@ -32,6 +32,7 @@ import { bridgeLaunchForProvider, canonicalThreadProviderId, getThreadProvider, 
 import { capabilityRegistry } from '../../plugins/capability-registry.js';
 import { validateProviderModelSelection } from './provider-model-validation.js';
 import { timeSquadLaunchPhase } from './squad-launch-timing.js';
+import { createProviderStatusCache, type ProviderStatusCache } from './provider-status-cache.js';
 import type { ModernTeamMember } from '../agents/modern-team-launch-tools.js';
 import { threadAutomatedSkillIds } from './thread-automated-skill-selection.js';
 import { personaMcpAllowlistNotice } from './persona-mcp-allowlist.js';
@@ -42,6 +43,7 @@ export const MODERN_SQUAD_BINDING_ORIGIN = MODERN_SQUAD_THREAD_ORIGIN;
 const pendingCreates = new WeakMap<object, Map<string, { fingerprint: string; promise: Promise<{ threadId: string }> }>>();
 const pendingActivations = new WeakMap<object, Map<string, Promise<{ threadId: string }>>>();
 const pendingResumes = new WeakMap<object, Map<string, { fingerprint: string; promise: Promise<SquadMemberResumeResult> }>>();
+const providerStatusCaches = new WeakMap<object, ProviderStatusCache>();
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 // Public pluginIdSchema rejects '.', so renderer/plugin metadata APIs cannot
 // address this row. Same DB metadata store, independent of transcript rewind.
@@ -116,6 +118,12 @@ export async function handleMainSquadRuntimeHttp(
   return true;
 }
 
+function providerInstalled(status: ProviderStatusResult, providerId: string): boolean {
+  const installed = status.providers.find(row => canonicalThreadProviderId(row.family) === providerId);
+  const extra = status.extraInstalledAgents?.find(row => row.providerId === providerId);
+  return Boolean((installed?.installed && installed.enabled) || extra?.installed);
+}
+
 /** Availability is checked on the execution host; missing policy wiring is never an allow. */
 export async function preflightSquadRuntime(
   ctx: ProductHttpContext, input: SquadRuntimePreflightRequest
@@ -125,7 +133,7 @@ export async function preflightSquadRuntime(
   if (!project) throw new Error('squad project is not registered');
   const primary = getPrimaryHost(ctx.db);
   const hostId = ctx.hostHub.resolveHostId(request.hostId ?? project.hostId ?? primary?.id);
-  ctx.hostHub.ensureHostSessionReady(hostId);
+  const session = ctx.hostHub.ensureHostSessionReady(hostId) as { instanceId?: string; connectedAt?: unknown } | void;
   projectOnHost(project, hostId, primary?.id);
   if (project.remote) throw new Error('Modern squad runtime requires a local project');
   // The owning plugin service is the only authority: one strict registry read
@@ -144,9 +152,18 @@ export async function preflightSquadRuntime(
       .describe({ surface: 'modern', harness: providerId, headless: false, hookBase: true })
       .some(descriptor => descriptor.id === 'tool-before-native' && descriptor.available));
   const nativeToolPolicyRequired = request.nativeToolPolicyRequired === true || inventory.required.length > 0;
-  const status = ProviderStatusResultSchema.parse(await timeSquadLaunchPhase('preflight-host-provider-status', () => ctx.hostHub.callHostOnlineRpc({
-    hostId, command: { type: 'provider.status' }
-  })));
+  // One squad launch re-runs this preflight for every member create and activate,
+  // so concurrent and repeated calls share one `provider.status` RPC per host.
+  // Only a result in which every requested provider is available is kept, and only
+  // for a short time; the key changes on host reconnect and on any settings change.
+  let cache = providerStatusCaches.get(ctx.hostHub);
+  if (!cache) { cache = createProviderStatusCache(); providerStatusCaches.set(ctx.hostHub, cache); }
+  const configHash = (ctx.config as { snapshot?: () => { hash?: string } } | undefined)?.snapshot?.().hash;
+  const status = await timeSquadLaunchPhase('preflight-host-provider-status', () => cache!.get(
+    { hostId, connectionKey: `${session?.instanceId ?? ''}|${String(session?.connectedAt ?? '')}`, settingsKey: configHash ?? '' },
+    async () => ProviderStatusResultSchema.parse(await ctx.hostHub.callHostOnlineRpc({ hostId, command: { type: 'provider.status' } })),
+    result => requestedProviderIds.every(providerId => providerId === 'fake' || providerInstalled(result, providerId))
+  ));
   const providers: SquadRuntimePreflightResult['providers'] = [];
   for (const requested of [...new Set(request.providerIds)]) {
     await timeSquadLaunchPhase('preflight-provider-wait', () => waitForThreadProvider(requested));
@@ -158,9 +175,7 @@ export async function preflightSquadRuntime(
       try { bridgeLaunchForProvider(providerId, ctx.pluginHostArtifacts); }
       catch (error) { reason = error instanceof Error ? error.message : String(error); }
     }
-    const installed = status.providers.find(row => canonicalThreadProviderId(row.family) === providerId);
-    const extra = status.extraInstalledAgents?.find(row => row.providerId === providerId);
-    if (!reason && providerId !== 'fake' && !(installed?.installed && installed.enabled) && !extra?.installed) {
+    if (!reason && providerId !== 'fake' && !providerInstalled(status, providerId)) {
       reason = 'provider is unavailable on the execution host';
     }
     providers.push({ providerId, available: !reason, ...(reason ? { reason: reason.slice(0, 1024) } : {}) });
