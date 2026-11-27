@@ -166,6 +166,7 @@ import { planNormalizationNote, resolveSquadPlan } from './team-trigger-semantic
 import { renderCanonicalPlan } from '@zana-ai/zcc-server/services/execution/portable-plan-render';
 import type { PortablePlanWorkUnitInput } from '@zana-ai/zcc-server/services/execution/portable-plan';
 import { coldStartCanceled, createDeferredSeatHooks, createDeferredSeatRegistry, createSeatApprovals, createSeatRecycler, createSeatStarter, createWorkerRespawner, workerRespawnUnsupported, deferredSeatsOf, freshContextSeatsOf, lateSeatApprovalProblem, lifecycleRecycleOps, preissuedDeadlineMatches, respawnApproval, respawnLaunchShape, seatApprovalId, seatApprovalWindow, seatBindExtras, seatLaunchMode, seatLaunchProblem, seatRecovery, seatRosterEntry } from './on-demand-seat.js';
+import { timeSquadLaunchPhase } from '@zana-ai/zcc-server/services/threads/squad-launch-timing';
 import { createSquadSourceSnapshotter, launchSquad, type SquadLaunchDeps, type SquadSourceProvider } from './squad-launch-core.js';
 import { launchDigest } from '@zana-ai/zcc-server/services/launch/digest';
 import { preflightTerminalExecution } from '@zana-ai/zcc-server/services/launch/execution-routing';
@@ -8256,6 +8257,15 @@ const startTriggeredSquad = createTriggeredSquadLauncher({
 });
 
 export async function startTeamJobFromUi(
+  input: Parameters<import('@zana-ai/zcc-desktop-contract').CcApi['teams']['startJob']>[0],
+  sourceContext?: { windowId: number }
+): Promise<TeamJobLaunchResponse> {
+  // The log sink stamps each line with a clock time, so this marks when main received the launch.
+  await timeSquadLaunchPhase('launch-ipc-received', async () => undefined);
+  return timeSquadLaunchPhase('launch-total', () => startTeamJobFromUiUntimed(input, sourceContext));
+}
+
+async function startTeamJobFromUiUntimed(
   input: Parameters<import('@zana-ai/zcc-desktop-contract').CcApi['teams']['startJob']>[0],
   sourceContext?: { windowId: number }
 ): Promise<TeamJobLaunchResponse> {
