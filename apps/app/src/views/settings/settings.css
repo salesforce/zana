@@ -249,6 +249,14 @@
 
 /* Settings search results (rail) */
 .sidebar.settings-pane .settings-results {
+  /* The rail is overflow: visible, so the list must be its own scroll
+     container: otherwise scrolling a result into view scrolls .app-shell
+     (overflow: hidden still scrolls programmatically) and pulls the title bar
+     row up under the fixed sidebar controls. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 0 10px 24px;
 }
 
