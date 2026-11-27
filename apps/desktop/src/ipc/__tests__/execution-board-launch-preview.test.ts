@@ -14,7 +14,7 @@ vi.mock('../ctx.js', () => ({ ctx: {
   logMainError: h.logMainError
 } }));
 const { registerExecutionBoardIpc } = await import('../execution-board.js');
-const { SquadPreviewAdmissionError } = await import('../../squad-proposals/service.js');
+const { SquadPreviewAdmissionError, SquadPreviewFixableError } = await import('../../squad-proposals/service.js');
 const request = { teamId: 't', projectId: 'p', goal: 'ship', coordinationMode: 'structured', sourceCapabilityIds: ['cap'], push: false };
 
 describe('teams:preview', () => {
@@ -35,11 +35,13 @@ describe('teams:preview', () => {
     }
     expect(h.preview).not.toHaveBeenCalled();
   });
-  it('passes admission text through so the banner names the cause and the fix', async () => {
-    const error = new SquadPreviewAdmissionError('Worktree isolation needs a checked-out branch, but this repository is on a detached HEAD.');
+  it('passes checkout-fix text through (other admission text stays hidden) so the banner names the cause and the fix', async () => {
+    const error = new SquadPreviewFixableError('Worktree isolation needs a checked-out branch, but this repository is on a detached HEAD.');
     h.preview.mockRejectedValue(error);
     expect(await h.handlers.get('teams:preview')!({ id: 7 }, request)).toEqual({ ok: false, code: 'INVALID', message: error.message });
     expect(h.logMainError).toHaveBeenCalledWith('teams preview (teamId=t, projectId=p)', error);
+    h.preview.mockRejectedValue(new SquadPreviewAdmissionError('Named checks are unsupported on Windows.'));
+    expect(await h.handlers.get('teams:preview')!({ id: 7 }, request)).toMatchObject({ ok: false, code: 'UNAVAILABLE', message: expect.stringContaining('could not validate') });
   });
   it('logs preview failures with safe identifiers and returns a sanitized response', async () => {
     expect(h.handlers.has('teams:preview')).toBe(true);

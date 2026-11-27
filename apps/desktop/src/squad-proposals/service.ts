@@ -78,6 +78,18 @@ export class SquadPreviewAdmissionError extends Error {
   }
 }
 
+/**
+ * Admission text that is safe to show in the launch settings banner because it only names the
+ * user's own checkout setting and how to fix it. Other admission errors stay hidden from the
+ * preview IPC response.
+ */
+export class SquadPreviewFixableError extends SquadPreviewAdmissionError {
+  constructor(publicMessage: string) {
+    super(publicMessage);
+    this.name = 'SquadPreviewFixableError';
+  }
+}
+
 const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? '' : 's'}`;
 
 const MAX_SLOTS = 32;

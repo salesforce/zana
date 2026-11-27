@@ -352,7 +352,7 @@ describe('squadProposalMcpDeps', () => {
       const dir = makeCheckout(kind);
       try {
         const error = await host.resolveSquadComposerPreview({ ...input, ...options }, caller).catch(cause => cause);
-        expect(error).toMatchObject({ name: 'SquadPreviewAdmissionError', message });
+        expect(error).toMatchObject({ name: 'SquadPreviewFixableError', message });
         expect(error.message).not.toContain('TARGET_UNAVAILABLE');
       } finally { rmSync(dir, { recursive: true, force: true }); }
     });

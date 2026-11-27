@@ -374,7 +374,7 @@ import { canAuthorAndRegisterPlan, planAuthoringTransportOf, resolveLaunchApprov
 import { buildPlanFindings, hardFindingCounts, planBindings } from '@zana-ai/zcc-server/services/launch/plan-findings';
 import { createSquadProposalStore } from './squad-proposals/store.js';
 import { createStagingStore, SQUAD_STAGING_DIR_NAME, SQUAD_STAGING_PARENT_DIR_NAME } from './squad-proposals/staging.js';
-import { createSquadProposalService, SQUAD_LAUNCH_PROPOSAL_ACTION, SquadPreviewAdmissionError, type SquadProposalServiceDeps } from './squad-proposals/service.js';
+import { createSquadProposalService, SQUAD_LAUNCH_PROPOSAL_ACTION, SquadPreviewAdmissionError, SquadPreviewFixableError, type SquadProposalServiceDeps } from './squad-proposals/service.js';
 import { createSquadProposalNotifier } from './squad-proposals/notifier.js';
 import { goalMentionPaths } from './squad-proposals/sources.js';
 import { parseSshConfig } from '@zana-ai/zcc-server/services/projects/ssh-config';
@@ -3990,7 +3990,7 @@ async function resolveSquadLocationPreview(project: Project, launchOptions: Laun
         resolvedLaunch.push.value ? 'push' : '',
         resolvedLaunch.checks.value.length ? 'named checks' : ''
       ].filter(Boolean);
-      if (needs.length) throw new SquadPreviewAdmissionError(notEligibleMessage(needs.join(', '), project.quickAgent === true, status?.detached === true, await isGitRepo(root)));
+      if (needs.length) throw new SquadPreviewFixableError(notEligibleMessage(needs.join(', '), project.quickAgent === true, status?.detached === true, await isGitRepo(root)));
     }
     location = resolvedLaunch.worktree.value && eligible
       ? { kind: 'new-worktree', projectId: project.id, baseBranch: status!.branch!, isolationSource: resolvedLaunch.worktree.source }
@@ -4001,7 +4001,7 @@ async function resolveSquadLocationPreview(project: Project, launchOptions: Laun
   // A repository with no commit reports an all-zero HEAD; it is not a commit to branch from.
   const reportedHead = (await listWorktrees(checkout)).find(entry => entry.path === checkout)?.head;
   head = reportedHead && !/^0+$/.test(reportedHead) ? reportedHead : undefined;
-  if (location.kind === 'new-worktree' && !head) throw new SquadPreviewAdmissionError('Worktree isolation needs a commit to branch from, and this repository has none yet. Make an initial commit or turn worktree isolation off.');
+  if (location.kind === 'new-worktree' && !head) throw new SquadPreviewFixableError('Worktree isolation needs a commit to branch from, and this repository has none yet. Make an initial commit or turn worktree isolation off.');
   const projection = { launchOptions, resolvedLaunch, location, ...(path ? { path, ...(branch ? { branch } : {}) } : {}), ...(head ? { head } : {}) };
   return squadLaunchPreviewSchema.parse({ ...projection, fingerprint: createHash('sha256').update(JSON.stringify(projection)).digest('hex') });
 }

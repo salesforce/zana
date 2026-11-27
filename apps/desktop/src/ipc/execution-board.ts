@@ -4,7 +4,7 @@ import { launchOptionsSchema } from '@zana-ai/zcc-domain/launch-options';
 import type { CcApi } from '@zana-ai/zcc-desktop-contract';
 import { IPC } from '@zana-ai/zcc-desktop-contract';
 import { ctx } from './ctx.js';
-import { SquadPreviewAdmissionError } from '../squad-proposals/service.js';
+import { SquadPreviewFixableError } from '../squad-proposals/service.js';
 import { createSourcePickerFolders, sourcePickerDialogOptions } from './execution-source-picker.js';
 import { registerSharedProduct } from './shared-product-registry.js';
 import { store } from '@zana-ai/zcc-server/services/projects/store';
@@ -109,8 +109,8 @@ export function registerExecutionBoardIpc(): void {
         return { ok: true, value };
       } catch (error) {
         ctx.logMainError(`teams preview (teamId=${parsed.data.teamId}, projectId=${parsed.data.projectId})`, error);
-        // Trusted admission text names the cause and the fix; every other error stays sanitized.
-        if (error instanceof SquadPreviewAdmissionError) return { ok: false, code: 'INVALID', message: error.message };
+        // Checkout-setting refusals name the cause and the fix; every other error, including other admission errors, stays sanitized.
+        if (error instanceof SquadPreviewFixableError) return { ok: false, code: 'INVALID', message: error.message };
         return { ok: false, code: 'UNAVAILABLE', message: 'Launch preview could not validate the plan, sources, or target. Retry after correcting them.' };
       }
     },
