@@ -81,6 +81,14 @@ afterEach(() => { unregister(); db.close(); rmSync(dir, { recursive: true, force
 const sendAdmissions = () => vi.mocked(ctx.plugins!.admitDispatch).mock.calls.filter(([request]) => request.entry !== 'squad-member-start');
 
 describe('trusted Modern member runtime', () => {
+  // Create and activate share one cached provider.status result; tests that change what the host
+  // reports between them must let the cache expire first.
+  const expireProviderStatusCache = () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + PROVIDER_STATUS_CACHE_TTL_MS + 1);
+  };
+  afterEach(() => { vi.useRealTimers(); });
+
   it.each(['worker', 'orchestrator'] as const)('prepares idle %s using reserved UUID and attached worktree without provider start', async role => {
     mkdirSync(join(dir, 'worktree')); const worktreePath = realpathSync(join(dir, 'worktree'));
     expect(await createSquadMemberConversation(ctx, { ...member, role, worktreePath })).toEqual({ threadId: bindingId });
@@ -267,6 +275,7 @@ describe('trusted Modern member runtime', () => {
 
   it('single-flights concurrent activation before async preflight without duplicate starts', async () => {
     await createSquadMemberConversation(ctx, member);
+    expireProviderStatusCache();
     const preflight = Promise.withResolvers<void>();
     const rpc = vi.mocked(ctx.hostHub.callHostOnlineRpc).getMockImplementation()!;
     vi.mocked(ctx.hostHub.callHostOnlineRpc).mockClear().mockImplementation(async input => {
@@ -302,6 +311,7 @@ describe('trusted Modern member runtime', () => {
     ['preflight throws', 'host offline']
   ])('pre-send activation failure leaves binding retryable: %s', async (change, message) => {
     await createSquadMemberConversation(ctx, member);
+    expireProviderStatusCache();
     const plugins = ctx.plugins;
     const rpc = vi.mocked(ctx.hostHub.callHostOnlineRpc).getMockImplementation()!;
     if (change === 'provider unavailable') {
