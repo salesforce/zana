@@ -164,6 +164,27 @@
   border-left: 0;
 }
 
+/* Give the project tree more room in the expanded desktop sidebar. */
+:where(.app-shell[data-mobile='false']) .sidebar--global:not(.sidebar--rail) .sidebar-nav--sortable .nav-item {
+  min-height: 26px;
+  padding-block: 3px;
+}
+
+:where(.app-shell[data-mobile='false']) .sidebar--global:not(.sidebar--rail) .sidebar-projects .machine-project-heading {
+  min-height: 28px;
+  padding-block: 2px;
+}
+
+:where(.app-shell[data-mobile='false']) .sidebar--global:not(.sidebar--rail) .sidebar-projects .project-item {
+  min-height: 26px;
+  padding-block: 3px;
+}
+
+:where(.app-shell[data-mobile='false']) .sidebar--global:not(.sidebar--rail) .sidebar-projects .project-terminal-row {
+  min-height: 31px;
+  padding-block: 1px;
+}
+
 /* Make hover actions reachable with Tab as well. Opacity keeps their space
    reserved, so revealing them never changes the project-name width. */
 .sidebar .sidebar-projects .project-spawn {
