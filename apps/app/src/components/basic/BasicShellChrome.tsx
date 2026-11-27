@@ -1,9 +1,8 @@
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
+import { useCallback, useId, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowRight, Check, Menu, PanelLeft, PanelLeftClose, PanelsTopLeft, Pin, Plus, Search, X } from 'lucide-react';
+import { ArrowRight, Check, ChevronRight, Menu, PanelLeft, PanelLeftClose, PanelsTopLeft, Pin, Plus, Search, X } from 'lucide-react';
 import { ZanaIcon } from '../icons/ZanaIcon.js';
 import { SidebarResizer } from '../SidebarResizer.js';
-import { NewWindowButton } from '../sidebar/NewWindowButton.js';
 import { SidebarFooterSlot } from '../sidebar/SidebarFooterSlot.js';
 import { useMobileNavDismiss } from '../mobile-nav-context.js';
 import { MobileActionSheet } from '../MobilePageHeader.js';
@@ -16,7 +15,7 @@ import { getNewThreadRoutePath, getRootRoutePath, getThreadRoutePath, threadIdFr
 import { isBasicUiRouteSupported, setBasicUiMode, useBasicUi, type BasicUiMode } from '../../lib/basic-ui.js';
 import { threadRailStatus } from '../fleet-item.js';
 import { isUnreadThread } from '../../lib/unread-threads.js';
-import { basicConversationRows } from './basic-conversation-rows.js';
+import { basicConversationRows, groupBasicConversationRows, type BasicConversationRow } from './basic-conversation-rows.js';
 import { BasicConversationMenu, basicConversationViewSummary } from './BasicConversationMenu.js';
 import { BasicConversationRowActions } from './BasicConversationRowActions.js';
 import { archiveThreadWithoutConfirm } from '../threadCardActions.js';
@@ -92,6 +91,20 @@ export function BasicShellHeading({ compact, collapsed, onToggleNavigation }: { 
   </div>;
 }
 
+function BasicConversationProjectGroup({ name, expanded, searching, onToggle, children }: {
+  name: string; expanded: boolean; searching: boolean; onToggle(): void; children: ReactNode;
+}) {
+  const id = useId();
+  return <section className="basic-ui-project-group" aria-labelledby={`${id}-name`}>
+    <h3 id={`${id}-name`}>
+      <button type="button" aria-expanded={expanded} aria-controls={id} disabled={searching} onClick={onToggle}>
+        <ChevronRight size={13} aria-hidden="true" /><span title={name}>{name}</span>
+      </button>
+    </h3>
+    <div id={id} hidden={!expanded}>{children}</div>
+  </section>;
+}
+
 /** Reuses the existing live roster; no second history or execution source. */
 export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidden?: boolean; onNavigate(): void }) {
   const dismissMobileNav = useMobileNavDismiss();
@@ -127,6 +140,7 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
   };
   const searchRef = useRef<HTMLInputElement>(null);
   const [limit, setLimit] = useState(PAGE);
+  const [collapsedProjects, setCollapsedProjects] = useState<ReadonlySet<string>>(() => new Set());
   const updateQuery = (value: string) => {
     setQuery(value);
     setLimit(PAGE);
@@ -161,15 +175,53 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
   if (active && !visible.includes(active)) visible.push(active);
   // Projects only label rows; a dedicated project window already names its one project.
   const showProject = !scopedProjectId;
+  const grouped = view.layout === 'project';
+  const searching = Boolean(query.trim());
+  const toggleProject = (id: string) => setCollapsedProjects(previous => {
+    const next = new Set(previous);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
+  const renderRow = ({ thread, projectName, projectColor }: BasicConversationRow) => {
+    const status = threadRailStatus(thread);
+    const title = thread.title || 'New conversation';
+    // A live status already signals new activity. The unread dot covers finished, unseen replies.
+    const unread = status === 'Idle' && activeId !== thread.id && !thread.archivedAt && isUnreadThread(thread);
+    const pinned = !thread.archivedAt && thread.pinnedAt != null;
+    const label = [title, showProject ? projectName : null, pinned ? 'pinned' : null, unread ? 'unread' : null].filter(Boolean).join(', ');
+    const showProjectLabel = showProject && !grouped;
+    const hasStatus = status !== 'Idle' || thread.archivedAt || unread;
+    return <BasicConversationRowActions key={thread.id} thread={thread} title={title} onArchive={archiveConversation}>
+      <Link className={`basic-ui-chat-row${activeId === thread.id ? ' is-active' : ''}${unread ? ' is-unread' : ''}`}
+        to={getThreadRoutePath(thread.id, scopedProjectId)} onClick={onNavigate} aria-current={activeId === thread.id ? 'page' : undefined}
+        aria-label={label} data-row-status={thread.archivedAt ? 'Archived' : unread ? 'Unread' : status}
+        data-testid={`basic-chat-row-${thread.id}`}>
+        <span className="basic-ui-chat-title">{pinned && <Pin size={12} aria-hidden="true" />}<span className="basic-ui-chat-name" title={title}>{title}</span></span>
+        {(showProjectLabel || hasStatus) && <span className="basic-ui-chat-meta">
+          {showProjectLabel && <span className="basic-ui-chat-project" title={projectName}
+            style={{ '--basic-chat-project-color': projectColor } as CSSProperties}>{projectName}</span>}
+          {hasStatus && <span className="basic-ui-chat-statuses">
+            {thread.archivedAt ? <span className="basic-ui-chat-status">Archived</span> : null}
+            {unread && <span className="basic-ui-chat-status status-unread" data-testid={`basic-chat-unread-${thread.id}`}><span>Unread</span></span>}
+            {status !== 'Idle' && <span className={`basic-ui-chat-status status-${status === 'Working' ? 'working' : 'attention'}`}>{status === 'Needs you' ? 'Needs review' : status}</span>}
+          </span>}
+        </span>}
+      </Link>
+    </BasicConversationRowActions>;
+  };
   return <aside id="basic-conversation-sidebar" className="sidebar basic-ui-sidebar" data-testid="basic-ui-sidebar" aria-label="Conversations" hidden={hidden}>
     <Link className="basic-ui-new-chat" to={newChatPath(scopedProjectId)} onClick={onNavigate}><Plus size={17} aria-hidden="true" />New chat</Link>
-    <div className="basic-ui-chat-search list-filter">
-      <Search size={14} className="list-filter-icon" aria-hidden="true" />
-      <input ref={searchRef} type="search" aria-label="Search chats" placeholder="Search chats" value={query}
-        onChange={event => updateQuery(event.target.value)}
-        onKeyDown={event => { if (event.key === 'Escape' && query) { event.preventDefault(); event.stopPropagation(); updateQuery(''); } }} />
-      {query && <button type="button" className="list-filter-clear" aria-label="Clear chat search"
-        onClick={() => { updateQuery(''); searchRef.current?.focus(); }}><X size={12} aria-hidden="true" /></button>}
+    <div className="basic-ui-chat-controls">
+      <div className="basic-ui-chat-search list-filter">
+        <Search size={14} className="list-filter-icon" aria-hidden="true" />
+        <input ref={searchRef} type="search" aria-label="Search chats" placeholder="Search chats" value={query}
+          onChange={event => updateQuery(event.target.value)}
+          onKeyDown={event => { if (event.key === 'Escape' && query) { event.preventDefault(); event.stopPropagation(); updateQuery(''); } }} />
+        {query && <button type="button" className="list-filter-clear" aria-label="Clear chat search"
+          onClick={() => { updateQuery(''); searchRef.current?.focus(); }}><X size={12} aria-hidden="true" /></button>}
+      </div>
+      {dismissMobileNav && <BasicConversationMenu compact />}
     </div>
     <nav className="basic-ui-conversations" aria-label="Recent conversations" aria-busy={listLoading}>
       {panels.map(panel => {
@@ -183,37 +235,18 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
       <div className="basic-ui-conversations-heading">
         <h2>Conversations</h2>
         {viewSummary && <span className="basic-ui-conversations-filter" data-testid="basic-conversation-filter">{viewSummary}</span>}
-        <BasicConversationMenu />
+        {!dismissMobileNav && <BasicConversationMenu />}
       </div>
       {archived.error && <p className="basic-ui-sidebar-empty" role="alert">Archived conversations could not be loaded.</p>}
-      {visible.map(({ thread, projectName, projectColor }) => {
-        const status = threadRailStatus(thread);
-        const title = thread.title || 'New conversation';
-        // A live status already signals new activity; "Unread" covers finished, unseen replies.
-        const unread = status === 'Idle' && activeId !== thread.id && !thread.archivedAt && isUnreadThread(thread);
-        const pinned = !thread.archivedAt && thread.pinnedAt != null;
-        const label = [title, showProject ? projectName : null, pinned ? 'pinned' : null, unread ? 'unread' : null].filter(Boolean).join(', ');
-        return <BasicConversationRowActions key={thread.id} thread={thread} title={title} onArchive={archiveConversation}>
-          <Link className={`basic-ui-chat-row${activeId === thread.id ? ' is-active' : ''}${unread ? ' is-unread' : ''}`}
-            to={getThreadRoutePath(thread.id, scopedProjectId)} onClick={onNavigate} aria-current={activeId === thread.id ? 'page' : undefined}
-            aria-label={label} data-row-status={thread.archivedAt ? 'Archived' : unread ? 'Unread' : status}
-            data-testid={`basic-chat-row-${thread.id}`}>
-            <span className="basic-ui-chat-title">{pinned && <Pin size={12} aria-hidden="true" />}<span className="basic-ui-chat-name" title={title}>{title}</span></span>
-            {(showProject || status !== 'Idle' || thread.archivedAt || unread) && <span className="basic-ui-chat-meta">
-              {showProject && <span className="basic-ui-chat-project" title={projectName}
-                style={{ '--basic-chat-project-color': projectColor } as CSSProperties}>{projectName}</span>}
-              {thread.archivedAt ? <span className="basic-ui-chat-status">Archived</span> : null}
-              {unread && <span className="basic-ui-chat-status status-unread" data-testid={`basic-chat-unread-${thread.id}`}>Unread</span>}
-              {status !== 'Idle' && <span className={`basic-ui-chat-status status-${status === 'Working' ? 'working' : 'attention'}`}>{status === 'Needs you' ? 'Needs review' : status}</span>}
-            </span>}
-          </Link>
-        </BasicConversationRowActions>;
-      })}
+      {grouped ? [...groupBasicConversationRows(visible)].map(([projectId, rows]) =>
+        <BasicConversationProjectGroup key={projectId} name={rows[0].projectName} searching={searching}
+          expanded={searching || !collapsedProjects.has(projectId)} onToggle={() => toggleProject(projectId)}>
+          {rows.map(renderRow)}
+        </BasicConversationProjectGroup>) : visible.map(renderRow)}
       {!conversations.length && <p className="basic-ui-sidebar-empty" role="status">{listLoading ? 'Loading conversations…' : query.trim() || viewSummary ? 'No matching conversations.' : 'Your conversations will appear here.'}</p>}
       {conversations.length > visible.length && <button type="button" className="basic-ui-more-chats" onClick={() => setLimit(value => value + PAGE)}>Show more conversations</button>}
     </nav>
     <SidebarFooterSlot />
-    <NewWindowButton projectId={scopedProjectId ?? undefined} />
     <p className="basic-ui-sidebar-note">More tools are available in Advanced.</p>
     {!dismissMobileNav && <SidebarResizer />}
   </aside>;

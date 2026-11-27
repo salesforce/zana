@@ -1,16 +1,18 @@
 import { create } from 'zustand';
 
 /**
- * Basic sidebar view options: how conversations are sorted and which ones are
- * shown. Stored locally (shared by every window); never synced to AppConfig.
+ * Basic sidebar layout, sorting and filters. Stored locally (shared by every
+ * window); never synced to AppConfig.
  */
 export const BASIC_CONVERSATION_VIEW_KEY = 'zana.basicSidebar.conversationView';
 
 export type BasicConversationSort = 'activity' | 'created' | 'title';
 export type BasicConversationStatus = 'active' | 'archived' | 'all';
 export type BasicConversationWindow = 'all' | 'day' | 'week' | 'month';
+export type BasicConversationLayout = 'quiet' | 'project';
 
 export interface BasicConversationView {
+  layout: BasicConversationLayout;
   sort: BasicConversationSort;
   status: BasicConversationStatus;
   window: BasicConversationWindow;
@@ -19,9 +21,12 @@ export interface BasicConversationView {
 }
 
 export const DEFAULT_BASIC_CONVERSATION_VIEW: BasicConversationView = Object.freeze({
-  sort: 'activity', status: 'active', window: 'all', automations: true
+  layout: 'quiet', sort: 'activity', status: 'active', window: 'all', automations: true
 });
 
+export const BASIC_CONVERSATION_LAYOUTS: ReadonlyArray<readonly [BasicConversationLayout, string]> = [
+  ['quiet', 'Quiet list'], ['project', 'By project']
+];
 export const BASIC_CONVERSATION_SORTS: ReadonlyArray<readonly [BasicConversationSort, string]> = [
   ['activity', 'Last activity'], ['created', 'Created'], ['title', 'Title']
 ];
@@ -49,6 +54,7 @@ export function normalizeBasicConversationView(value: unknown): BasicConversatio
   const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const d = DEFAULT_BASIC_CONVERSATION_VIEW;
   return {
+    layout: pick(raw.layout, BASIC_CONVERSATION_LAYOUTS, d.layout),
     sort: pick(raw.sort, BASIC_CONVERSATION_SORTS, d.sort),
     status: pick(raw.status, BASIC_CONVERSATION_STATUSES, d.status),
     window: pick(raw.window, BASIC_CONVERSATION_WINDOWS, d.window),
@@ -58,7 +64,8 @@ export function normalizeBasicConversationView(value: unknown): BasicConversatio
 
 export function isDefaultBasicConversationView(view: BasicConversationView): boolean {
   const d = DEFAULT_BASIC_CONVERSATION_VIEW;
-  return view.sort === d.sort && view.status === d.status && view.window === d.window && view.automations === d.automations;
+  return view.layout === d.layout && view.sort === d.sort && view.status === d.status
+    && view.window === d.window && view.automations === d.automations;
 }
 
 function read(): BasicConversationView {

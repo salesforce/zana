@@ -390,11 +390,25 @@ test('Basic sidebar opens bot conversations and leaves Advanced navigation intac
   await page.getByRole('button', { name: 'Basic view', exact: true }).click();
   const sidebar = page.getByTestId('basic-ui-sidebar');
   const row = sidebar.getByRole('button', { name: 'Demo Coach', exact: true });
-  await expect(row.locator('.bt-av svg')).toBeVisible();
+  const avatar = row.locator('.bt-av svg');
+  await expect(avatar).toBeVisible();
+  await expect(row).toHaveCSS('min-height', '36px');
+  expect(Math.round((await row.boundingBox())!.height)).toBeLessThanOrEqual(37);
+  expect(Math.round((await avatar.boundingBox())!.width)).toBe(24);
   const shape = await row.locator('.bt-av').getAttribute('data-shape');
   const avatarColor = (body: Element) => getComputedStyle(body).fill;
   const color = await row.locator('.bt-body > g').first().evaluate(avatarColor);
   await expect(row).toHaveAccessibleDescription('Not started');
+  const botsToggle = sidebar.getByRole('button', { name: 'Bots', exact: true });
+  await botsToggle.click();
+  await expect(row).toBeHidden();
+  const search = sidebar.getByRole('searchbox');
+  await search.fill('coach');
+  await expect(row).toBeVisible();
+  await search.press('Escape');
+  await expect(row).toBeHidden();
+  await botsToggle.click();
+  await expect(row).toBeVisible();
   await expect(page.locator('.home-panel > .aurora-grid')).toHaveCount(0);
   await expect(sidebar.getByRole('button', { name: 'Show more', exact: true })).toHaveCount(0);
   for (const name of ['Scout', 'Guide', 'Editor', 'Planner']) {
@@ -419,6 +433,12 @@ test('Basic sidebar opens bot conversations and leaves Advanced navigation intac
   const more = sidebar.getByRole('button', { name: 'Show more', exact: true });
   await expect(more).toBeVisible();
   await expect(sidebar.locator('.bt-basic-row')).toHaveCount(5);
+  const bots = sidebar.getByRole('region', { name: 'Bots', exact: true });
+  const [botsBox, headingBox] = await Promise.all([
+    bots.boundingBox(),
+    sidebar.getByRole('heading', { name: 'Conversations' }).boundingBox()
+  ]);
+  expect(headingBox!.y - botsBox!.y).toBeLessThan(250);
   await more.click();
   const overflow = sidebar.getByRole('button', { name: 'Reviewer', exact: true });
   await overflow.hover();
@@ -429,7 +449,6 @@ test('Basic sidebar opens bot conversations and leaves Advanced navigation intac
   await expect(sidebar.locator('.bt-basic-row').first()).toHaveText(/Reviewer/);
   await sidebar.getByRole('button', { name: 'Unpin Reviewer', exact: true }).click();
   await expect(overflow).toHaveCount(0);
-  const search = sidebar.getByRole('searchbox');
   await search.fill('reviewer');
   await expect(overflow).toBeVisible();
   await search.fill('missing');

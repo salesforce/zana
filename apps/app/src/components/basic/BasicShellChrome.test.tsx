@@ -344,6 +344,40 @@ describe('Basic conversation view menu', () => {
     fireEvent.click(within(screen.getByRole('group', { name: choice })).getByRole('menuitemradio', { name: option }));
   };
 
+  it('switches layouts without leaving the current chat and reveals collapsed groups during search', () => {
+    data.threads = [thread('old', { updatedAt: 1 }), thread('web', { projectId: 'p2', updatedAt: 2 }),
+      thread('recent', { updatedAt: 3 })];
+    sidebar('/threads/web');
+    const trigger = screen.getByRole('button', { name: 'Conversation view options' });
+    const search = screen.getByRole('searchbox', { name: 'Search chats' });
+    const web = () => screen.getByRole('link', { name: 'Chat web, Website' });
+    const chatOrder = () => within(screen.getByRole('navigation')).getAllByRole('link').map(link => link.textContent);
+    expect(chatOrder()).toEqual(['Chat recentPersonal', 'Chat webWebsite', 'Chat oldPersonal']);
+
+    open();
+    pick('Layout', 'By project');
+    expect(document.activeElement).toBe(trigger);
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(trigger.className).not.toContain('is-filtered');
+    expect(chatOrder()).toEqual(['Chat recent', 'Chat old', 'Chat web']);
+    expect(web().getAttribute('aria-current')).toBe('page');
+    expect(screen.getByTestId('route').textContent).toBe('/threads/web');
+    const website = screen.getByRole('button', { name: 'Website' });
+    fireEvent.click(website);
+    expect(website.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('link', { name: 'Chat web, Website' })).toBeNull();
+    fireEvent.change(search, { target: { value: 'Website' } });
+    expect(website.getAttribute('aria-expanded')).toBe('true');
+    expect(web()).toBeTruthy();
+    fireEvent.change(search, { target: { value: '' } });
+    expect(website.getAttribute('aria-expanded')).toBe('false');
+
+    open();
+    pick('Layout', 'Quiet list');
+    expect(screen.queryByRole('button', { name: 'Website' })).toBeNull();
+    expect(web().getAttribute('aria-current')).toBe('page');
+  });
+
   it('sorts by title, hides automations and shows a filter summary', () => {
     data.threads = [thread('b', { title: 'Beta', updatedAt: 9 }), thread('a', { title: 'Alpha', updatedAt: 1 }),
       thread('bot', { title: 'Bot chat', originPluginId: 'bots', updatedAt: 5 })];

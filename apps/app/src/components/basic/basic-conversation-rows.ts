@@ -23,9 +23,8 @@ function compareThreads(sort: BasicConversationView['sort']) {
 }
 
 /**
- * Basic history is one flat list (no project grouping) that follows the
- * recorded execution host, including scratch conversations. `view` sorts and
- * filters; the status filter applies to the rows given, so archived rows must
+ * Basic history follows the recorded execution host, including scratch
+ * conversations. The status filter applies to the rows given, so archived rows must
  * come from history, not the live roster.
  */
 export function basicConversationRows(
@@ -57,4 +56,15 @@ export function basicConversationRows(
     rows.push({ thread, projectName: name, projectColor: project?.color });
   }
   return rows;
+}
+
+/** Maintain first appearance of each project and the existing order of its rows. */
+export function groupBasicConversationRows(rows: readonly BasicConversationRow[]): Map<string, BasicConversationRow[]> {
+  const groups = new Map<string, BasicConversationRow[]>();
+  for (const row of rows) {
+    const group = groups.get(row.thread.projectId);
+    if (group) group.push(row);
+    else groups.set(row.thread.projectId, [row]);
+  }
+  return groups;
 }

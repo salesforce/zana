@@ -275,7 +275,7 @@ body:has(.app-shell[data-mobile='true']) .thread-detail-overflow-menu > button {
   color: var(--accent-blue);
   font-weight: 650;
 }
-.mobile-nav-dialog :is(.mobile-agent-row-detail, .basic-ui-chat-meta) >
+.mobile-nav-dialog :is(.mobile-agent-row-detail, .basic-ui-chat-statuses) >
   :is(.mobile-agent-status:not(.sr-only), .basic-ui-chat-status:is(.status-unread, .status-working, .status-attention))::before {
   content: '';
   flex: none;

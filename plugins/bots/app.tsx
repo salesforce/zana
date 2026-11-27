@@ -272,6 +272,9 @@ const basicListCss = `
 .bt-basic { margin-bottom: 18px; font-size: 13px; line-height: 1.5; color: var(--text-primary); }
 .bt-basic .bt-list-head h2 { margin: 0; font-size: 13px; font-weight: 600; color: inherit; }
 .bt-basic .bt-list-head button { color: inherit; font-family: inherit; }
+.bt-basic-toggle { display: flex; align-items: center; gap: 5px; padding: 3px 0; border: 0; background: transparent; cursor: pointer; }
+.bt-basic-toggle:disabled { cursor: default; }
+.bt-basic-toggle[aria-expanded="false"] svg { transform: rotate(-90deg); }
 .bt-basic-list { display: grid; gap: 2px; }
 .bt-basic-item { position: relative; display: flex; align-items: center; border-radius: 8px; }
 .bt-basic-item:is(:hover, :focus-within) { background: var(--bg-hover); }
@@ -288,6 +291,22 @@ const basicListCss = `
   color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer; }
 .bt-basic-more:hover, .bt-basic-more:focus-visible { color: var(--text-primary); }
 .bt-basic .bt-basic-row { flex: 1; min-width: 0; font: inherit; color: inherit; background: transparent; }
+[data-mobile='false'] .bt-basic { margin-bottom: 5px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+[data-mobile='false'] .bt-basic .bt-list-head { min-height: 24px; padding: 0 6px; }
+[data-mobile='false'] .bt-basic .bt-list-head h2 { font-size: 11px; color: var(--text-muted); }
+[data-mobile='false'] .bt-basic .bt-list-head .bt-btn { min-height: 24px; width: 24px; padding: 0; color: var(--text-muted); }
+[data-mobile='false'] .bt-basic .bt-list-head .bt-btn span { display: none; }
+[data-mobile='false'] .bt-basic-list { gap: 0; }
+[data-mobile='false'] .bt-basic .bt-basic-row { min-height: 36px; padding: 3px 6px; gap: 6px; font-size: 12px; line-height: 15px; }
+[data-mobile='false'] .bt-basic-row .bt-av svg { width: 24px; height: 24px; }
+[data-mobile='false'] .bt-basic-row small { display: block; font-size: 10px; line-height: 14px; }
+[data-mobile='false'] .bt-basic-row small:has(.bt-dot[data-state="asleep"]) {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+[data-mobile='false'] .bt-basic-item:has([aria-current="page"]) {
+  background: color-mix(in srgb, var(--accent-blue) 13%, transparent); box-shadow: inset 2px 0 var(--accent-blue);
+}
+[data-mobile='false'] .bt-basic-more { min-height: 24px; padding: 2px 8px 2px 36px; font-size: 11px; }
 .bt-basic-dialog { box-sizing: border-box; width: min(500px, calc(100vw - 32px)); max-height: calc(100dvh - 32px);
   padding: 0; margin: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-panel); }
 .bt-basic-dialog::backdrop { background: rgb(0 0 0 / 45%); }
@@ -350,6 +369,7 @@ export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread,
   const { bots, loaded, error, refresh } = useBotList();
   const [creating, setCreating] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const listId = useId();
   const { openBot, opening, openError } = useOpenBotThread(activeThreadId, openThread);
   const eligible = useMemo(() => bots.filter(bot => projectIds.includes(bot.projectId)), [bots, projectIds]);
@@ -362,30 +382,36 @@ export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread,
     .sort((a, b) => (b.pinnedAt ?? -1) - (a.pinnedAt ?? -1));
   // Search the whole roster, including the bots behind Show more.
   const visible = showAll || query ? matches : matches.slice(0, BASIC_BOT_LIMIT);
+  const expanded = Boolean(query) || !collapsed;
   if (!matches.length && !error && (!loaded || query || !projectIds.length)) return null;
   return <section className="bt-basic" aria-label="Bots">
     <style>{CSS + basicListCss}</style>
     <div className="bt-list-head">
-      <h2>Bots</h2>
-      <button type="button" className="bt-btn is-ghost is-sm" aria-haspopup="dialog" onClick={() => setCreating(true)}>＋ New bot</button>
+      <h2><button type="button" className="bt-basic-toggle" aria-expanded={expanded} aria-controls={`${listId}-section`}
+        disabled={Boolean(query)} onClick={() => setCollapsed(value => !value)}><ChevronDown size={12} aria-hidden="true" />Bots</button></h2>
+      <button type="button" className="bt-btn is-ghost is-sm" aria-label="New bot" title="New bot" aria-haspopup="dialog"
+        onClick={() => setCreating(true)}><Plus size={14} aria-hidden="true" /><span>New bot</span></button>
     </div>
     {creating && <CreateBotDialog projectId={projectIds.length === 1 ? projectIds[0] : undefined}
       onCancel={() => setCreating(false)} onCreated={id => {
         setCreating(false);
         setShowAll(true);
+        setCollapsed(false);
         void openBot(id);
         void refresh();
       }} />}
     {error && <p role="alert">Couldn’t load bots. <button type="button" onClick={() => void refresh()}>Retry</button></p>}
     {openError && <p role="alert" className="bt-alert">{openError}</p>}
-    <div id={listId} className="bt-basic-list">
-      {visible.map(bot => <BasicBotRow key={bot.id} bot={bot} activeThreadId={activeThreadId} opening={opening === bot.id}
-        onOpen={() => void openBot(bot.id)} />)}
+    <div id={`${listId}-section`} hidden={!expanded}>
+      <div id={listId} className="bt-basic-list">
+        {visible.map(bot => <BasicBotRow key={bot.id} bot={bot} activeThreadId={activeThreadId} opening={opening === bot.id}
+          onOpen={() => void openBot(bot.id)} />)}
+      </div>
+      {!query && matches.length > BASIC_BOT_LIMIT && <button type="button" className="bt-basic-more"
+        aria-expanded={showAll} aria-controls={listId} onClick={() => setShowAll(!showAll)}>
+        {showAll ? 'Show less' : 'Show more'}
+      </button>}
     </div>
-    {!query && matches.length > BASIC_BOT_LIMIT && <button type="button" className="bt-basic-more"
-      aria-expanded={showAll} aria-controls={listId} onClick={() => setShowAll(!showAll)}>
-      {showAll ? 'Show less' : 'Show more'}
-    </button>}
   </section>;
 }
 

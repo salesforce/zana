@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ThreadListItem } from '../../thread-store.js';
-import { basicConversationRows } from './basic-conversation-rows.js';
+import { basicConversationRows, groupBasicConversationRows } from './basic-conversation-rows.js';
 import { DEFAULT_BASIC_CONVERSATION_VIEW, type BasicConversationView } from './basic-conversation-view.js';
 
 const projects = [
@@ -37,6 +37,18 @@ describe('Basic conversation rows', () => {
       thread('hidden', { visibility: 'hidden', parentThreadId: 'local' }), thread('archived', { archivedAt: 1 })];
     expect(idsOf(list(rows))).toEqual(['local', 'bound-local']);
     expect(basicConversationRows(rows, projects, undefined, '', null)).toEqual([]);
+  });
+
+  it('groups by project identity even when project labels match and keeps the input sort order', () => {
+    const rows = list([
+      thread('latest', { projectId: 'missing-b', updatedAt: 30 }),
+      thread('middle', { projectId: 'missing-a', updatedAt: 10 }),
+      thread('newest', { projectId: 'missing-b', updatedAt: 20 })
+    ]);
+    const groups = groupBasicConversationRows(rows);
+    expect([...groups].map(([id, entries]) => [id, idsOf(entries)])).toEqual([
+      ['missing-b', ['latest', 'newest']], ['missing-a', ['middle']]
+    ]);
   });
 
   it('searches project names and conversation titles, respecting dedicated project windows', () => {

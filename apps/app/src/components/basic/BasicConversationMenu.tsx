@@ -1,12 +1,13 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { AlarmClock, ArrowDownUp, Check, ChevronRight, CircleDot, Clock, Ellipsis } from 'lucide-react';
+import { AlarmClock, ArrowDownUp, Check, ChevronRight, CircleDot, Clock, Ellipsis, LayoutList, SlidersHorizontal } from 'lucide-react';
 import {
-  BASIC_CONVERSATION_SORTS, BASIC_CONVERSATION_STATUSES, BASIC_CONVERSATION_WINDOWS,
+  BASIC_CONVERSATION_LAYOUTS, BASIC_CONVERSATION_SORTS, BASIC_CONVERSATION_STATUSES, BASIC_CONVERSATION_WINDOWS,
   isDefaultBasicConversationView, useBasicConversationView, type BasicConversationView
 } from './basic-conversation-view.js';
 
-type Choice = 'sort' | 'status' | 'window';
+type Choice = 'layout' | 'sort' | 'status' | 'window';
 const CHOICES: Record<Choice, { label: string; icon: typeof Clock; options: ReadonlyArray<readonly [string, string]> }> = {
+  layout: { label: 'Layout', icon: LayoutList, options: BASIC_CONVERSATION_LAYOUTS },
   sort: { label: 'Sort by', icon: ArrowDownUp, options: BASIC_CONVERSATION_SORTS },
   status: { label: 'Status', icon: CircleDot, options: BASIC_CONVERSATION_STATUSES },
   window: { label: 'Last activity', icon: Clock, options: BASIC_CONVERSATION_WINDOWS }
@@ -23,7 +24,7 @@ export function basicConversationViewSummary(view: BasicConversationView): strin
 }
 
 /** The ••• menu beside the Basic sidebar "Conversations" heading. */
-export function BasicConversationMenu() {
+export function BasicConversationMenu({ compact = false }: { compact?: boolean }) {
   const view = useBasicConversationView(s => s.view);
   const update = useBasicConversationView(s => s.update);
   const [open, setOpen] = useState(false);
@@ -44,7 +45,7 @@ export function BasicConversationMenu() {
     document.addEventListener('keydown', onKey, true);
     return () => { document.removeEventListener('pointerdown', onPointer); document.removeEventListener('keydown', onKey, true); };
   }, [open]);
-  const filtered = !isDefaultBasicConversationView({ ...view, sort: 'activity' });
+  const filtered = !isDefaultBasicConversationView({ ...view, sort: 'activity', layout: 'quiet' });
   const choice = (key: Choice) => {
     const { label, icon: Icon, options } = CHOICES[key];
     const isOpen = expanded === key;
@@ -57,7 +58,12 @@ export function BasicConversationMenu() {
       </button>
       {isOpen && <div role="group" aria-label={label} className="basic-ui-conversation-menu-options">
         {options.map(([id, text]) => <button key={id} type="button" role="menuitemradio" aria-checked={view[key] === id}
-          onClick={() => { update({ [key]: id } as Partial<BasicConversationView>); setExpanded(null); }}>
+          onClick={(event) => {
+            update({ [key]: id } as Partial<BasicConversationView>);
+            if (key === 'layout') close(true);
+            else if (compact) event.currentTarget.focus();
+            else setExpanded(null);
+          }}>
           <span>{text}</span>{view[key] === id && <Check size={14} aria-hidden="true" />}
         </button>)}
       </div>}
@@ -65,11 +71,12 @@ export function BasicConversationMenu() {
   };
   return <div className="basic-ui-conversation-menu-wrap" ref={wrapRef}>
     <button ref={buttonRef} type="button" className={`basic-ui-conversation-menu-button${filtered ? ' is-filtered' : ''}`}
-      aria-label="Conversation view options" title="Conversation view options" aria-haspopup="menu"
+      aria-label={compact ? 'Filters' : 'Conversation view options'} title="Conversation view options" aria-haspopup="menu"
       aria-expanded={open} aria-controls={open ? menuId : undefined} onClick={() => (open ? close() : setOpen(true))}>
-      <Ellipsis size={15} aria-hidden="true" />
+      {compact ? <><SlidersHorizontal size={16} aria-hidden="true" /> Filters</> : <Ellipsis size={15} aria-hidden="true" />}
     </button>
     {open && <div id={menuId} className="basic-ui-conversation-menu" role="menu" aria-label="Conversation view options">
+      {choice('layout')}
       <span className="basic-ui-conversation-menu-label">Sort chats by</span>
       {choice('sort')}
       <span className="basic-ui-conversation-menu-label">Show</span>

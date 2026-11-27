@@ -802,3 +802,61 @@ test('Main views and populated Inbox fit phone and tablet screens', async ({ app
     await gateway.close();
   }
 });
+
+
+test('Basic mobile Filters switch between Quiet list and By project', async ({ app }) => {
+  const threadId = await app.window.evaluate(async () => {
+    const response = await fetch('/api/v1/threads', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'responsive-project', providerId: 'fake',
+        title: 'Review the responsive layout', input: 'A useful result'
+      })
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return (await response.json()).thread.id as string;
+  });
+  const reservation = createServer();
+  await new Promise<void>(resolve => reservation.listen(0, '127.0.0.1', resolve));
+  const port = (reservation.address() as { port: number }).port;
+  await new Promise<void>(resolve => reservation.close(() => resolve()));
+  const url = `http://127.0.0.1:${port}`;
+  const gateway = await startMobileGateway({ upstream: new URL(app.window.url()).origin, publicUrl: url, port });
+  try {
+    const browser = await chromium.launch();
+    try {
+      const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+      const pair = await context.request.post(`${url}/_mobile/pair`, {
+        data: { code: gateway.pair().code, label: 'Basic layout' }
+      });
+      const { credential } = await pair.json();
+      expect((await context.request.post(`${url}/_mobile/session`, {
+        headers: { authorization: `Bearer ${credential}` }
+      })).ok()).toBe(true);
+      const page = await context.newPage();
+      await page.goto(`${url}/?ui=basic`);
+      await page.getByRole('button', { name: 'Open conversations', exact: true }).click();
+      const chats = page.getByRole('navigation', { name: 'Recent conversations' });
+      const row = chats.getByTestId(`basic-chat-row-${threadId}`);
+      const filters = page.getByRole('button', { name: 'Filters', exact: true });
+      const menu = page.getByRole('menu', { name: 'Conversation view options' });
+      await expect(row.locator('.basic-ui-chat-project')).toHaveText('Mobile interface verification');
+      await filters.click();
+      await menu.getByRole('menuitem', { name: /^Layout/ }).click();
+      await menu.getByRole('menuitemradio', { name: 'By project' }).click();
+      await expect(filters).toBeFocused();
+      const project = chats.getByRole('region', { name: 'Mobile interface verification' });
+      await expect(project.getByTestId(`basic-chat-row-${threadId}`)).toBeVisible();
+      await expect(row.locator('.basic-ui-chat-project')).toHaveCount(0);
+      await filters.click();
+      await menu.getByRole('menuitem', { name: /^Layout/ }).click();
+      await menu.getByRole('menuitemradio', { name: 'Quiet list' }).click();
+      await expect(project).toHaveCount(0);
+      await expect(row.locator('.basic-ui-chat-project')).toHaveText('Mobile interface verification');
+    } finally {
+      await browser.close();
+    }
+  } finally {
+    await gateway.close();
+  }
+});

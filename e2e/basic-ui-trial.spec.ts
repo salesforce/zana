@@ -412,6 +412,8 @@ test('Basic lists conversations in one list, labelled by project, with search an
   await basic(page).click();
   const rows = sidebar(page).locator('.basic-ui-chat-row');
   const search = sidebar(page).getByRole('searchbox', { name: 'Search chats' });
+  await expect(sidebar(page).getByRole('link', { name: 'New chat', exact: true })).toHaveCSS('height', '30px');
+  await expect(sidebar(page).locator('.basic-ui-chat-search')).toHaveCSS('height', '30px');
   await expect(sidebar(page).getByRole('button', { name: 'Website', exact: true })).toHaveCount(0);
   await expect(rows).toHaveCount(30);
   const releaseRow = sidebar(page).getByTestId(`basic-chat-row-${release.ids[0]}`);
@@ -424,6 +426,15 @@ test('Basic lists conversations in one list, labelled by project, with search an
   await expect(releasePill).toHaveCSS('border-radius', '999px');
   const releaseFill = await releasePill.evaluate(el => getComputedStyle(el).backgroundColor);
   expect(releaseFill).not.toBe('rgba(0, 0, 0, 0)');
+  await expect(releaseRow).toHaveCSS('height', '36px');
+  const [rowBox, titleBox, projectBox] = await Promise.all([
+    releaseRow.boundingBox(),
+    releaseRow.locator('.basic-ui-chat-name').boundingBox(),
+    releaseRow.locator('.basic-ui-chat-project').boundingBox()
+  ]);
+  expect(titleBox!.y).toBeGreaterThanOrEqual(rowBox!.y);
+  expect(titleBox!.y + titleBox!.height).toBeLessThanOrEqual(projectBox!.y);
+  expect(projectBox!.y + projectBox!.height).toBeLessThanOrEqual(rowBox!.y + rowBox!.height);
   await search.fill('');
   const roster = sidebar(page).getByRole('navigation', { name: 'Recent conversations' });
   await resize(app, 1440, 500);
@@ -449,6 +460,8 @@ test('Basic lists conversations in one list, labelled by project, with search an
   await expect(sidebar(page).getByRole('status')).toHaveText('No matching conversations.');
   await search.fill('  WEBSITE  ');
   await expect(rows).toHaveCount(30);
+  await sidebar(page).getByRole('button', { name: 'Show more conversations' }).click();
+  await expect(rows).toHaveCount(31);
   await sidebar(page).getByTestId(`basic-chat-row-${website.ids[0]}`).click();
   await expect(page).toHaveURL(new RegExp(`/threads/${website.ids[0]}$`));
   await search.fill('');
@@ -566,6 +579,54 @@ test('Basic conversation row actions pin, rename, archive and restore a chat', a
   await expect(row).toHaveCount(0);
   await selectStatus('Active');
   await expect(row).toContainText('Release handoff');
+});
+
+test('Basic chooses a conversation layout from the three dots and remembers it after reload', async ({ app }) => {
+  const page = app.window;
+  await dismissConsentOverlays(page);
+  await resize(app, 1100, 760);
+  const desktop = await projectAndThreads(app, ['Release checklist', 'Build notes'], 'A useful result', 'Desktop');
+  const website = await projectAndThreads(app, ['Homepage draft'], 'A useful result', 'Website');
+  await basic(page).click();
+  const rail = sidebar(page);
+  const options = rail.getByRole('button', { name: 'Conversation view options' });
+  const menu = rail.getByRole('menu', { name: 'Conversation view options' });
+  const openLayout = async () => {
+    await options.click();
+    await menu.getByRole('menuitem', { name: /^Layout/ }).click();
+  };
+  const selected = rail.getByTestId(`basic-chat-row-${website.ids[0]}`);
+  await expect(selected.locator('.basic-ui-chat-project')).toHaveText('Website');
+  await selected.click();
+  await expect(page).toHaveURL(new RegExp(`/threads/${website.ids[0]}$`));
+  await openLayout();
+  await expect(menu.getByRole('menuitemradio', { name: 'Quiet list' })).toHaveAttribute('aria-checked', 'true');
+  await menu.getByRole('menuitemradio', { name: 'By project' }).click();
+  await expect(options).toBeFocused();
+  const desktopGroup = rail.getByRole('region', { name: 'Desktop' });
+  const websiteGroup = rail.getByRole('region', { name: 'Website' });
+  const toggle = desktopGroup.getByRole('button', { name: 'Desktop' });
+  const build = desktopGroup.getByTestId(`basic-chat-row-${desktop.ids[1]}`);
+  await expect(websiteGroup.locator('[aria-current="page"]')).toHaveAttribute('data-testid', `basic-chat-row-${website.ids[0]}`);
+  await expect(rail.locator('.basic-ui-chat-project')).toHaveCount(0);
+  await expect(build).toHaveCSS('height', '36px');
+  await toggle.press('Enter');
+  await expect(build).toBeHidden();
+  const search = rail.getByRole('searchbox', { name: 'Search chats' });
+  await search.fill('build');
+  await expect(build).toBeVisible();
+  await expect(websiteGroup).toHaveCount(0);
+  await search.press('Escape');
+  await expect(build).toBeHidden();
+  await page.reload();
+  await expect(selected).toHaveAttribute('aria-current', 'page');
+  await expect(build).toBeVisible();
+  await openLayout();
+  await expect(menu.getByRole('menuitemradio', { name: 'By project' })).toHaveAttribute('aria-checked', 'true');
+  await menu.getByRole('menuitemradio', { name: 'Quiet list' }).click();
+  await expect(websiteGroup).toHaveCount(0);
+  await expect(selected.locator('.basic-ui-chat-project')).toHaveText('Website');
+  await expect(page).toHaveURL(new RegExp(`/threads/${website.ids[0]}$`));
 });
 
 test('Basic is opt-in, keeps a full searchable conversation list, and restores Advanced splits', async ({ app }, testInfo) => {
@@ -1201,6 +1262,7 @@ test('Basic marks a conversation Unread when it replies while you are elsewhere,
     if (!response.ok) throw new Error(await response.text());
   }, ids[0]);
   await expect(firstUnread).toHaveText('Unread');
+  await expect.poll(() => firstUnread.evaluate(node => getComputedStyle(node, '::before').width)).toBe('6px');
   await expect(first).toHaveClass(/is-unread/);
   await expect(first).toHaveAttribute('aria-label', /, unread$/);
   await expect(first.locator('.basic-ui-chat-name')).toHaveCSS('font-weight', '650');
