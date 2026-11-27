@@ -18,15 +18,13 @@ beforeEach(() => {
 afterEach(() => { cleanup(); setBasicUiMode('advanced'); vi.restoreAllMocks(); vi.resetAllMocks(); });
 
 describe('preview reveal', () => {
-  it('offers a working Basic fallback when the file cannot be revealed locally', async () => {
+  it('offers a download in Basic when the file cannot be revealed locally', async () => {
     mocks.desktop.mockReturnValue(false);
     setBasicUiMode('basic');
     const view = render(<Preview />);
-    expect(view.queryByText(/Copy its path/)).toBeNull();
-    expect(view.getByText('Open Advanced to access this file on the computer where it is stored.')).toBeTruthy();
-    fireEvent.click(view.getByRole('button', { name: 'Open Advanced' }));
-    expect(getBasicUiMode()).toBe('advanced');
-    expect(view.getByText(/Copy its path/)).toBeTruthy();
+    expect(view.getByRole('button', { name: 'Download file' })).toBeTruthy();
+    expect(view.queryByRole('button', { name: 'Open Advanced' })).toBeNull();
+    expect(getBasicUiMode()).toBe('basic');
   });
   it('keeps the direct file action in Basic when it is available', async () => {
     setBasicUiMode('basic');
@@ -41,7 +39,7 @@ describe('preview reveal', () => {
     mocks.locate.mockResolvedValueOnce({ ok: false });
     const view = render(<Preview />);
     await act(async () => {});
-    expect(view.queryByRole('button')).toBeNull();
+    expect(view.queryByRole('button', { name: 'Show in Finder' })).toBeNull();
     view.rerender(<Preview revision={1} />);
     await view.findAllByRole('button', { name: 'Show in Finder' });
     expect(mocks.locate).toHaveBeenCalledTimes(2);
@@ -75,8 +73,8 @@ describe('preview reveal', () => {
     else mocks.locate.mockRejectedValue(new Error('offline'));
     const view = render(<Preview />);
     await act(async () => {});
-    expect(view.queryByRole('button')).toBeNull();
-    expect(view.getByText(/Copy its path/)).toBeTruthy();
+    expect(view.queryByRole('button', { name: 'Show in Finder' })).toBeNull();
+    expect(view.getByRole('button', { name: 'Download file' })).toBeTruthy();
     if (kind === 'web') expect(mocks.locate).not.toHaveBeenCalled();
   });
 
@@ -96,7 +94,7 @@ describe('preview reveal', () => {
     view.rerender(<Preview path="next.zip" />);
     await view.findAllByRole('button', { name: 'Show in Finder' });
     await act(async () => { location.resolve({ ok: false }); });
-    expect(view.getAllByRole('button')).toHaveLength(2);
+    expect(view.getAllByRole('button', { name: 'Show in Finder' })).toHaveLength(2);
     const reveal = Promise.withResolvers<{ ok: boolean; message: string }>(); mocks.reveal.mockReturnValueOnce(reveal.promise);
     fireEvent.click(view.getAllByRole('button')[0]);
     view.rerender(<Preview path="third.bin" />);
@@ -110,12 +108,66 @@ describe('preview reveal', () => {
     const state = { available: true, busy: false, error: null, label: 'Show in Finder', reveal: vi.fn() };
     const view = render(<FilePreviewFallback path="huge.log" tooLarge reveal={state} />);
     expect(view.getByText('This file is too large to preview.')).toBeTruthy();
-    expect(view.getByText(/handle larger files/)).toBeTruthy();
+    expect(view.getByRole('button', { name: 'Download file' })).toBeTruthy();
     view.rerender(<FilePreviewFallback path="archive.ZIP" reveal={state} />);
     expect(view.getByText('ZIP archive')).toBeTruthy();
-    expect(view.getByText(/in another app/)).toBeTruthy();
+    expect(view.getByRole('button', { name: 'Show in Finder' })).toBeTruthy();
     expect(binaryPreviewKind('no-extension')).toBeNull(); expect(binaryPreviewKind('notes.md')).toBeNull();
     expect(binaryPreviewKind('file.constructor')).toBeNull();
     expect(binaryPreviewKind('image.iso')?.label).toBe('Disk image');
+  });
+});
+
+describe('preview download', () => {
+  it('checks the scoped file, then delegates the original bytes to the browser', async () => {
+    const head = Promise.withResolvers<Response>();
+    const fetch = vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(head.promise);
+    const navigate = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      expect(this.getAttribute('href')).toBe(url);
+      expect(this.hasAttribute('download')).toBe(true);
+    });
+    const url = '/api/v1/file-preview/download?path=build%2Fa+%231.dmg&source=thread-storage&threadId=t1&projectId=p1';
+    const view = render(<FilePreviewFallback path="build/a #1.dmg" threadId="t1" projectId="p1" storage />);
+    const button = view.getByRole('button', { name: 'Download file' }) as HTMLButtonElement;
+    fireEvent.click(button);
+    expect(button.disabled).toBe(true);
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(url, { method: 'HEAD', signal: expect.any(AbortSignal) });
+    expect(navigate).not.toHaveBeenCalled();
+    await act(async () => { head.resolve(new Response(null, { status: 200 })); });
+    expect(navigate).toHaveBeenCalledOnce();
+    expect(button.disabled).toBe(false);
+  });
+
+  it.each([
+    [403, 'outside the preview'],
+    [404, 'moved or deleted'],
+    [503, 'Reconnect and try again'],
+    [502, 'Could not start'],
+    [0, 'Could not start']
+  ])('reports a failed download (%s) and lets the user retry', async (status, message) => {
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    if (status) fetch.mockResolvedValueOnce(new Response(null, { status }));
+    else fetch.mockRejectedValueOnce(new Error('offline'));
+    fetch.mockResolvedValueOnce(new Response(null));
+    const navigate = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const view = render(<FilePreviewFallback path="app.dmg" />);
+    fireEvent.click(view.getByRole('button', { name: 'Download file' }));
+    expect((await view.findByRole('alert')).textContent).toContain(message);
+    expect(navigate).not.toHaveBeenCalled();
+    fireEvent.click(view.getByRole('button', { name: 'Download file' }));
+    await waitFor(() => expect(navigate).toHaveBeenCalledOnce());
+    expect(view.queryByRole('alert')).toBeNull();
+  });
+
+  it('cancels an availability check when the preview changes', async () => {
+    const head = Promise.withResolvers<Response>();
+    const fetch = vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(head.promise);
+    const navigate = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const view = render(<FilePreviewFallback path="app.dmg" />);
+    fireEvent.click(view.getByRole('button', { name: 'Download file' }));
+    view.rerender(<FilePreviewFallback path="other.zip" />);
+    expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+    await act(async () => { head.resolve(new Response(null)); });
+    expect(navigate).not.toHaveBeenCalled();
   });
 });

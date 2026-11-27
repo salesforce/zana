@@ -1,4 +1,5 @@
-import { isAbsolute } from 'node:path';
+import { realpath } from 'node:fs/promises';
+import { isAbsolute, join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -34,9 +35,14 @@ export async function previewFileReader(ctx: ProductHttpContext, params: URLSear
     ctx.hostHub.callHostOnlineRpc<HostReadFileResult>({
       hostId, command: { type: 'host.read_file', root, relPath, byteRange: { offset, length } }
     });
-  const localReader = (root: string, knownRel?: string): RangeReader => {
-    const rel = knownRel ?? confined(root, candidate);
-    return (offset, length) => readConfinedFileRange(root, rel, offset, length);
+  const localReader = (root: string, rel: string, expectedRoot?: string): RangeReader => (offset, length) =>
+    readConfinedFileRange(root, rel, offset, length, { expectedRoot });
+  const storageReader = async (id: string, knownRel?: string): Promise<RangeReader> => {
+    const rel = knownRel ?? confined(threadStorageRoot(ctx.dataDir, id), candidate);
+    const storage = await realpath(threadStorageRoot(ctx.dataDir, '')).catch(() => null);
+    if (!storage) throw new ProjectFsError(404, 'path_not_found', 'thread storage not found');
+    const root = join(storage, id);
+    return localReader(root, rel, root);
   };
   // Server-owned roots plus the user's trusted folders (local targets only).
   const localMatch = async (
@@ -46,7 +52,10 @@ export async function previewFileReader(ctx: ProductHttpContext, params: URLSear
     if (!isAbsolute(candidate)) return null;
     const roots = effectivePreviewRootsFor(ctx, target, attachmentProjectId);
     const match = (await matchPreviewRootsAsync(roots, candidate))[0];
-    return match ? localReader(match.root, match.rel) : null;
+    if (match && target.thread?.id && match.root === threadStorageRoot(ctx.dataDir, target.thread.id)) {
+      return storageReader(target.thread.id, match.rel);
+    }
+    return match ? localReader(match.root, match.rel, match.trusted ? match.root : undefined) : null;
   };
   if (threadId) {
     if (!/^[A-Za-z0-9._-]+$/.test(threadId) || threadId === '.' || threadId === '..') {
@@ -64,7 +73,7 @@ export async function previewFileReader(ctx: ProductHttpContext, params: URLSear
       if (trusted) return trusted;
       return hostReader(resolveProjectHost(ctx, project.hostId), project.path, confined(project.path, candidate));
     }
-    if (source === 'thread-storage') return localReader(threadStorageRoot(ctx.dataDir, threadId));
+    if (source === 'thread-storage') return storageReader(threadId);
     const local = await localMatch({ thread, projectId: thread.projectId }, thread.projectId);
     if (local) return local;
     const env = thread.environmentId ? getEnvironment(ctx.db, thread.environmentId) : null;
@@ -72,6 +81,13 @@ export async function previewFileReader(ctx: ProductHttpContext, params: URLSear
     return hostReader(thread.hostId, env.path, confined(env.path, candidate));
   }
   if (source === 'thread-storage') throw new ProjectFsError(400, 'missing-thread', 'thread storage requires a thread');
+  const projectId = params.get('projectId');
+  if (projectId) {
+    const project = ctx.toProjects().find(row => row.id === projectId);
+    if (!project?.path || project.remote) throw new ProjectFsError(404, 'unknown-project', 'project is not registered locally');
+    const local = await localMatch({ thread: null, projectId }, projectId);
+    return local ?? hostReader(resolveProjectHost(ctx, project.hostId), project.path, confined(project.path, candidate));
+  }
   const project = authorizeProjectRelPath(ctx.toProjects(), candidate);
   if (!project || !project.relPath || !isSafeRelPath(project.relPath)) {
     throw new ProjectFsError(403, 'path-escape', 'path is not inside a known project');
@@ -117,15 +133,34 @@ export async function sendVideoPreview(
 ): Promise<void> {
   const contentType = videoContentType(params.get('path') ?? '');
   if (!contentType) throw new ProjectFsError(415, 'unsupported-video', 'unsupported video file type');
-  // Media requests can omit Origin. Never allow a foreign page to embed local files.
+  await streamPreviewFile(request, response, ctx, params, 'video', { 'content-type': contentType });
+}
+
+/** Send the original bytes as a browser-managed download. */
+export async function sendFilePreviewDownload(
+  request: IncomingMessage, response: ServerResponse, ctx: ProductHttpContext, params: URLSearchParams
+): Promise<void> {
+  const name = (params.get('path') ?? '').split(/[\\/]/).pop() || 'download';
+  const filename = encodeURIComponent(name).replace(/['()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+  await streamPreviewFile(request, response, ctx, params, 'download', {
+    'content-type': 'application/octet-stream',
+    'content-disposition': `attachment; filename*=UTF-8''${filename}`
+  });
+}
+
+async function streamPreviewFile(
+  request: IncomingMessage, response: ServerResponse, ctx: ProductHttpContext, params: URLSearchParams,
+  kind: 'video' | 'download', fileHeaders: Record<string, string>
+): Promise<void> {
+  // Media and download requests can omit Origin.
   if (request.headers['sec-fetch-site'] === 'cross-site') {
-    throw new ProjectFsError(403, 'foreign-origin', 'video must be opened from the app');
+    throw new ProjectFsError(403, 'foreign-origin', 'the file must be opened from the app');
   }
   const read = await previewFileReader(ctx, params);
-  const size = await previewFileSize(read, 'video');
+  const size = await previewFileSize(read, kind);
   const range = videoByteRange(request.headers.range, size);
   const headers = {
-    'content-type': contentType,
+    ...fileHeaders,
     'accept-ranges': 'bytes',
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
@@ -147,7 +182,7 @@ export async function sendVideoPreview(
       const result = await read(offset, length);
       const bytes = Buffer.from(result.content, 'base64');
       if (result.encoding !== 'base64' || result.totalBytes !== size || bytes.length !== length) {
-        throw new Error('video changed while reading');
+        throw new Error('file changed while reading');
       }
       offset += bytes.length;
       yield bytes;

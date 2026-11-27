@@ -70,7 +70,7 @@ export function ThreadFilePreviewView({
   const retainScroll = useRetainedFilePreviewScroll();
   if (error && content === null) {
     const tooLarge = /exceeds the read cap|too.large/i.test(error);
-    if (tooLarge && !isHtmlPreviewPath(path)) return <FilePreviewFallback path={path} tooLarge reveal={reveal} />;
+    if (tooLarge && !isHtmlPreviewPath(path)) return <FilePreviewFallback path={path} threadId={threadId} projectId={projectId} storage={storage} tooLarge reveal={reveal} />;
     return (
       <div className="thread-file-preview-error" role="status">
         <FileText size={28} strokeWidth={1.5} aria-hidden />
@@ -84,7 +84,7 @@ export function ThreadFilePreviewView({
       </div>
     );
   }
-  if (binaryPreviewKind(path)) return <FilePreviewFallback path={path} reveal={reveal} />;
+  if (binaryPreviewKind(path)) return <FilePreviewFallback path={path} threadId={threadId} projectId={projectId} storage={storage} reveal={reveal} />;
   if (content === null) {
     return (
       <StencilLines

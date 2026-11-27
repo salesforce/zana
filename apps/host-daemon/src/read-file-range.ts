@@ -1,15 +1,17 @@
-import { openContainedFile } from '@zana-ai/zcc-path-confine';
+import { openContainedFile, type OpenContainedOptions } from '@zana-ai/zcc-path-confine';
 import { FILE_RANGE_MAX_BYTES } from '@zana-ai/zcc-domain';
 import { HostCommandError } from './host-command-error.js';
 
-/** Confine every read, including subsequent seeks; never buffer a whole video. */
-export async function readConfinedFileRange(root: string, relPath: string, offset: number, length: number) {
+/** Confine each byte range and keep memory bounded for large files. */
+export async function readConfinedFileRange(
+  root: string, relPath: string, offset: number, length: number, options?: Pick<OpenContainedOptions, 'expectedRoot'>
+) {
   if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length)
     || length < 0 || length > FILE_RANGE_MAX_BYTES) {
     throw new HostCommandError('invalid-range', 'invalid file byte range');
   }
   // One validated descriptor serves every chunk of this read; the path is never reopened.
-  const contained = await openContainedFile(root, relPath);
+  const contained = await openContainedFile(root, relPath, options);
   if (!contained) throw new HostCommandError('path_not_found', 'file not found');
   const file = contained.handle;
   try {

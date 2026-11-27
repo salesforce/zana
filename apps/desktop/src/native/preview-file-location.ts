@@ -1,6 +1,6 @@
 import { realpath, stat } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
-import { resolveContainedReal } from '@zana-ai/zcc-path-confine';
+import { isAbsolute, join, relative } from 'node:path';
+import { resolveContained, resolveContainedReal } from '@zana-ai/zcc-path-confine';
 import type { CcApi } from '@zana-ai/zcc-desktop-contract';
 import type { Project } from '@zana-ai/zcc-domain/product';
 
@@ -33,16 +33,28 @@ export async function previewFileLocation(input: Request, deps: PreviewFileLocat
       || !/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,255}$/.test(input.threadId)))) return unavailable;
   try {
     const projects = deps.projects.filter(project => !project.remote && (!project.hostId || project.hostId === deps.localHostId));
+    const thread = input.threadId ? await deps.thread(input.threadId) : null;
+    if (input.source === 'thread-storage' || (thread && isAbsolute(input.path))) {
+      if (!thread || !input.threadId) return unavailable;
+      // Absolute links in messages can arrive as workspace previews even when
+      // the file belongs to this thread's server-side storage.
+      const storageRoot = join(deps.dataDir, 'thread-storage');
+      const root = join(storageRoot, input.threadId);
+      const canonicalStorage = await realpath(storageRoot).catch(() => null);
+      const safeRoot = canonicalStorage ? join(canonicalStorage, input.threadId) : null;
+      if (safeRoot && (await realpath(safeRoot).catch(() => null)) === safeRoot) {
+        const lexicalPath = resolveContained(root, input.path);
+        const candidate = lexicalPath ? relative(root, lexicalPath) : input.path;
+        const path = await containedPath(safeRoot, candidate);
+        if (path && (await stat(path)).isFile()) return { ok: true, path };
+      }
+      if (input.source === 'thread-storage') return unavailable;
+    }
     let root: string | null = null;
     // Trusted folders apply only to local desktop scopes: a local thread, a
     // local project, or no remote scope at all.
     let localScope = true;
-    if (input.source === 'thread-storage') {
-      if (!input.threadId || !await deps.thread(input.threadId)) return unavailable;
-      // Confine the thread directory too: it must not be a symlink outside storage.
-      root = await resolveContainedReal(join(deps.dataDir, 'thread-storage'), input.threadId);
-    } else if (input.threadId) {
-      const thread = await deps.thread(input.threadId);
+    if (input.threadId) {
       if (thread) {
         if (!deps.localHostId || thread.hostId !== deps.localHostId || !thread.cwd
           || (thread.projectId && !projects.some(project => project.id === thread.projectId))) return unavailable;

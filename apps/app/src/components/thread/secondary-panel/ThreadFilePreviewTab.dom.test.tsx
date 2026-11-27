@@ -328,7 +328,7 @@ describe('HTML file preview', () => {
   it('shows an installer card without reading binary contents', () => {
     const view = render(<ThreadFilePreviewTab path="dist/build.dmg" threadId="t1" />);
     expect(view.getByText('macOS disk image')).toBeTruthy();
-    expect(view.getByText('This file opens outside the preview.')).toBeTruthy();
+    expect(view.getByRole('button', { name: 'Download file' })).toBeTruthy();
     expect(mocks.readFile).not.toHaveBeenCalled();
     expect(mocks.hostFileContent).not.toHaveBeenCalled();
   });

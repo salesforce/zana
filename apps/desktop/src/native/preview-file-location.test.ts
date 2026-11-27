@@ -65,6 +65,15 @@ describe('native preview file location', () => {
     await mkdir(directory, { recursive: true }); await writeFile(join(directory, 'result.zip'), 'archive');
     await expect(previewFileLocation(request({ source: 'thread-storage', threadId: 'thread-1', path: 'result.zip' }), deps))
       .resolves.toEqual({ ok: true, path: join(directory, 'result.zip') });
+    const path = join(directory, 'result.zip');
+    await expect(previewFileLocation(request({ threadId: 'thread-1', path }), deps))
+      .resolves.toEqual({ ok: true, path });
+    vi.mocked(deps.thread).mockResolvedValueOnce({ hostId: 'remote', cwd: null });
+    await expect(previewFileLocation(request({ threadId: 'thread-1', path }), deps))
+      .resolves.toEqual({ ok: true, path });
+    expect((await previewFileLocation(request({ threadId: 'other-thread', path }), deps)).ok).toBe(false);
+    await symlink(directory, join(storage, 'alias'), 'dir');
+    expect((await previewFileLocation(request({ source: 'thread-storage', threadId: 'alias', path: 'result.zip' }), deps)).ok).toBe(false);
     await symlink(root, join(storage, 'escaped'), 'dir');
     expect((await previewFileLocation(request({ source: 'thread-storage', threadId: 'escaped' }), deps)).ok).toBe(false);
     expect((await previewFileLocation(request({ source: 'thread-storage' }), deps)).ok).toBe(false);

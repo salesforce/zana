@@ -7,7 +7,7 @@ import { FILE_RANGE_MAX_BYTES, videoContentType } from '@zana-ai/zcc-domain';
 import { readConfinedFileRange } from '@zana-ai/zcc-host-daemon/read-file-range';
 import { HostReadFileCommandSchema, HostReadFileResultSchema } from '@zana-ai/zcc-contracts/host-rpc';
 import type { ProductHttpContext } from './product-context.js';
-import { sendVideoPreview, videoByteRange } from './video-preview.js';
+import { sendFilePreviewDownload, sendVideoPreview, videoByteRange } from './video-preview.js';
 
 vi.mock('@zana-ai/zcc-db', () => ({ getConversationThread: vi.fn(), getEnvironment: vi.fn(), getPrimaryHost: () => ({ id: 'host1' }) }));
 import { getConversationThread, getEnvironment } from '@zana-ai/zcc-db';
@@ -62,7 +62,9 @@ describe('video HTTP streaming', () => {
       hostHub: { resolveHostId: () => 'host1', callHostOnlineRpc: rpc }
     } as unknown as ProductHttpContext;
     server = createServer((req, res) => {
-      void sendVideoPreview(req, res, ctx, new URL(req.url!, 'http://localhost').searchParams).catch((error) => {
+      const url = new URL(req.url!, 'http://localhost');
+      const send = url.pathname === '/download' ? sendFilePreviewDownload : sendVideoPreview;
+      void send(req, res, ctx, url.searchParams).catch((error) => {
         res.writeHead(error.status ?? 500, { 'content-type': 'application/json' }).end(JSON.stringify({ message: error.message }));
       });
     });
@@ -88,6 +90,40 @@ describe('video HTTP streaming', () => {
     expect(rpc.mock.calls.at(-1)?.[0].hostId).toBe('host1');
     const suffix = await fetch(url('large.mp4', { threadId: 't1' }), { headers: { Range: 'bytes=-5' } });
     expect(Buffer.from(await suffix.arrayBuffer())).toEqual(bytes.subarray(-5));
+  });
+  it('downloads a large binary from its recorded host with its original name and bytes', async () => {
+    const path = "Install é #1 (dev)'s.dmg";
+    await writeFile(join(root, path), bytes);
+    const url = `${base}download?${new URLSearchParams({ path, threadId: 't1' })}`;
+    const head = await fetch(url, { method: 'HEAD' });
+    expect(head.headers.get('content-length')).toBe(String(bytes.length));
+    expect(rpc).toHaveBeenCalledTimes(1);
+    const response = await fetch(url);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('application/octet-stream');
+    expect(response.headers.get('content-disposition')).toBe("attachment; filename*=UTF-8''Install%20%C3%A9%20%231%20%28dev%29%27s.dmg");
+    expect(Buffer.from(await response.arrayBuffer()).equals(bytes)).toBe(true);
+    expect(rpc.mock.calls.map(([call]) => [call.hostId, call.command.byteRange.length])).toEqual(
+      [0, 0, FILE_RANGE_MAX_BYTES, FILE_RANGE_MAX_BYTES, 17].map(length => ['host1', length])
+    );
+    expect((await fetch(url, { headers: { 'sec-fetch-site': 'cross-site' } })).status).toBe(403);
+  });
+  it('confines downloads to the selected project or thread storage', async () => {
+    const download = (path: string, extra: Record<string, string>) => fetch(
+      `${base}download?${new URLSearchParams({ path, ...extra })}`, { method: 'HEAD' }
+    );
+    expect((await download('large.mp4', { projectId: 'p1' })).status).toBe(200);
+    expect((await download('large.mp4', { projectId: 'missing' })).status).toBe(404);
+    expect((await download('../large.mp4', { projectId: 'p1' })).status).toBe(403);
+    expect((await download('missing.dmg', { threadId: 't1' })).status).toBe(404);
+    vi.mocked(getEnvironment).mockReturnValue({ path: join(root, 'checkout') } as never);
+    const storage = join(root, 'thread-storage');
+    await mkdir(join(storage, 't2'), { recursive: true });
+    await writeFile(join(storage, 't2', 'file.dmg'), 'archive');
+    await symlink(join(storage, 't2'), join(storage, 't1'), 'dir');
+    expect((await download('file.dmg', { threadId: 't1', source: 'thread-storage' })).status).toBe(404);
+    expect((await download(join(storage, 't1', 'file.dmg'), { threadId: 't1' })).status).toBe(404);
+    expect((await download(join(storage, 't2', 'file.dmg'), { threadId: 't1' })).status).toBe(403);
   });
   it('serves HEAD and rejects unsatisfiable ranges without reading content', async () => {
     const head = await fetch(url(join(root, 'large.mp4')), { method: 'HEAD' });
