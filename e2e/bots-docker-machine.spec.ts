@@ -96,9 +96,11 @@ test('a bot uses the selected Docker checkout for chat, jobs and scheduled runs'
     expect(source.status(), await source.text()).toBe(201);
     const bot = 'docker-scout';
     await value('create', { name: 'Docker Scout', projectId, providerId: 'fake' });
-    await page.locator('.nav-item').filter({ hasText: /^Bots$/ }).first().click();
-    await page.getByRole('button', { name: /Docker Scout/ }).first().click();
-    await page.getByRole('tab', { name: 'Settings' }).click();
+    await page.getByRole('button', { name: 'Organize bots', exact: true }).click();
+    await page.getByRole('link', { name: 'Open Bots panel', exact: true }).click();
+    const panel = page.locator('.bt-root');
+    await panel.getByRole('button', { name: /Docker Scout/ }).click();
+    await panel.getByRole('tab', { name: 'Settings' }).click();
     await page.getByRole('button', { name: 'Machine', exact: true }).click();
     await page.getByRole('option', { name: hostName, exact: true }).click();
     await page.getByRole('button', { name: 'Save', exact: true }).click();
