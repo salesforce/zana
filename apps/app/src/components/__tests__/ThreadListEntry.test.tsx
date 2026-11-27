@@ -52,6 +52,19 @@ describe('ThreadListEntry', () => {
     expect(plain).not.toContain('data-squad-transport');
   });
 
+  it('explains the dotted marker in the tooltip, with and without a project name', () => {
+    const render = (row: object, projectName?: string) =>
+      renderToStaticMarkup(
+        <MemoryRouter>
+          <ThreadListEntry thread={{ ...thread, status: 'idle', ...row }} projectName={projectName} />
+        </MemoryRouter>
+      );
+    const modern = { originPluginId: 'host-modern-squad' };
+    expect(render(modern)).toContain(' · idle · Modern squad member"');
+    expect(render(modern, 'Proj')).toContain('— Proj · idle · Modern squad member"');
+    expect(render({}, 'Proj')).not.toContain('Modern squad member');
+  });
+
   it('shows Needs you instead of Working when a question is pending', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
