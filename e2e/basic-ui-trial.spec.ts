@@ -92,6 +92,26 @@ async function pasteImage(page: Page) {
   await expect(page.getByLabel('Attached images')).toBeVisible();
 }
 
+test('the New Window sidebar button is available only in Advanced view', async ({ app }) => {
+  const page = app.window;
+  await dismissConsentOverlays(page);
+  const newWindow = page.getByRole('button', { name: 'New Window', exact: true });
+
+  await expect(newWindow).toBeVisible();
+  await basic(page).click();
+  await expect(basic(page)).toHaveAttribute('aria-pressed', 'true');
+  await expect(newWindow).toHaveCount(0);
+
+  await advanced(page).click();
+  await expect(advanced(page)).toHaveAttribute('aria-pressed', 'true');
+  await expect(newWindow).toBeVisible();
+  const opened = app.electron.waitForEvent('window');
+  await newWindow.click();
+  const secondWindow = await opened;
+  await expect(secondWindow.locator('.app-shell')).toBeVisible();
+  await secondWindow.close();
+});
+
 test('theme icon sits between the bell and view switch in both desktop views', async ({ app }, testInfo) => {
   const page = app.window;
   await dismissConsentOverlays(page);

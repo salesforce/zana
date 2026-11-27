@@ -90,6 +90,7 @@ function renderRail(node: ReactElement) {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('SidebarRail', () => {
@@ -103,6 +104,15 @@ describe('SidebarRail', () => {
     expect(rail('expanded')).not.toContain('data-testid="nav-sample"');
     expect(rail('rail')).toContain('data-testid="nav-sample"');
     expect(rail('rail')).not.toContain('sidebar-nav--with-collection');
+  });
+
+  it('shows New Window in the Advanced desktop sidebar', () => {
+    vi.stubGlobal('cc', {});
+    render(<MemoryRouter>
+      <SidebarRail className="sidebar" navAriaLabel="Nav" storageKey="advanced-test" pinnedIds={[]} items={items} />
+    </MemoryRouter>);
+
+    expect(screen.getByRole('button', { name: 'New Window' })).toBeTruthy();
   });
 
   it('uses touch navigation inside a mobile drawer without desktop drag or resize controls', () => {

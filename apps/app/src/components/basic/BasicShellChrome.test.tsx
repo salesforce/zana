@@ -70,6 +70,17 @@ it('shows the current interface view in mobile navigation and dismisses it after
 });
 
 describe('Basic conversation navigation', () => {
+  it('omits New Window from the Basic desktop sidebar', () => {
+    vi.stubGlobal('cc', {});
+    try {
+      setBasicUiMode('basic');
+      sidebar();
+      expect(screen.queryByRole('button', { name: 'New Window' })).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('provides the shared desktop resize handle and omits it inside the mobile drawer', () => {
     const view = render(<MemoryRouter><BasicConversationSidebar onNavigate={() => {}} /></MemoryRouter>);
     const handle = screen.getByRole('separator');

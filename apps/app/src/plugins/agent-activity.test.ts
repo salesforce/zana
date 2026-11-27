@@ -37,6 +37,17 @@ describe('generic plugin agent activity', () => {
   it.each(['scoped', 'thread', 'plugin'] as const)('does not claim a fleet from a %s window', surface => {
     h[surface] = true; const listener = vi.fn(), off = observeAgentActivity(listener); expect(listener).toHaveBeenCalledExactlyOnceWith({ ready: false, agents: [] }); off(); h.listeners.forEach(set => expect(set.size).toBe(0));
   });
+  it('keeps a secondary all-projects window from publishing duplicate activity', () => {
+    vi.stubGlobal('window', { cc: { windows: { secondary: true } } });
+    try {
+      const listener = vi.fn();
+      observeAgentActivity(listener)();
+      expect(listener).toHaveBeenCalledExactlyOnceWith({ ready: false, agents: [] });
+      h.listeners.forEach(set => expect(set.size).toBe(0));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
   it('cleans subscriptions if an initial listener throws', () => {
     expect(() => observeAgentActivity(() => { throw new Error('broken plugin'); })).toThrow('broken plugin'); h.listeners.forEach(set => expect(set.size).toBe(0));
   });
