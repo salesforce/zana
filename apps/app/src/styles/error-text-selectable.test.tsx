@@ -20,7 +20,9 @@ const ERROR_CLASSES = [
   'thread-browser-error-detail', 'session-move-error', 'project-checkout-error', 'plugin-setting-error',
   'panel-agent-tab-error', 'host-repair-agent-error', 'host-install-drawer-error', 'git-project-error',
   'ext-actions-error', 'cc-rail-error', 'agent-monitor-row-error', 'agent-modal-catchup-error',
-  'thread-queued-failure', 'toast'
+  'thread-queued-failure', 'toast',
+  // Squad launch preview and composer status text ("Launch preview could not validate ...", Location line)
+  'team-launch-settings-status', 'squad-launch-preview', 'team-composer-limit-message'
 ];
 
 const source = readFileSync(join(__dirname, 'global.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');

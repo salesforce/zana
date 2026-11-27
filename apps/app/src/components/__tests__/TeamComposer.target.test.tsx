@@ -186,6 +186,13 @@ describe('TeamComposer Squad target picker', () => {
     expect(reviewedSettings().textContent).toContain('Fail run (Default)');
   });
 
+  it('marks the effective launch settings status as selectable text (preview errors and the Location line can be copied)', async () => {
+    render(<TeamComposer />);
+    fireEvent.click(screen.getByTestId('pick-project-p1'));
+    await waitFor(() => expect(screen.getByLabelText('Effective launch settings')).toBeTruthy());
+    expect(screen.getByLabelText('Effective launch settings').classList.contains('team-launch-settings-status')).toBe(true);
+  });
+
   it('keeps Customize and Review mutually exclusive, with review below the button row', async () => {
     render(<TeamComposer />);
     fireEvent.click(screen.getByTestId('pick-project-p1'));

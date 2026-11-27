@@ -140,6 +140,9 @@ body,
 .agent-monitor-row-error,
 .agent-modal-catchup-error,
 .thread-queued-failure,
+.team-launch-settings-status,
+.squad-launch-preview,
+.team-composer-limit-message,
 .toast {
   user-select: text;
   -webkit-user-select: text;
@@ -175,6 +178,9 @@ body,
 .agent-monitor-row-error button,
 .agent-modal-catchup-error button,
 .thread-queued-failure button,
+.team-launch-settings-status button,
+.squad-launch-preview button,
+.team-composer-limit-message button,
 .toast button {
   user-select: none;
   -webkit-user-select: none;
