@@ -3,7 +3,7 @@
 .squad-launch-preview p, .squad-launch-help { margin: 5px 0 0; font-size: 12px; }
 .squad-launch-disclosure { width: fit-content; }
 .squad-launch-customize, .squad-launch-policy-fields { display: grid; gap: 8px; }
-.squad-launch-customize label, .squad-launch-policy-fields label,
+.squad-launch-customize label, .squad-launch-policy-fields label, .squad-launch-policy-choice,
 .launch-job-details .squad-launch-detail-field {
   display: grid;
   grid-template-columns: 120px minmax(0, 1fr);
@@ -13,6 +13,7 @@
 }
 .squad-launch-customize label > span,
 .squad-launch-policy-fields label > span,
+.squad-launch-policy-choice > span,
 .launch-job-details .squad-launch-detail-field > span {
   padding-top: 8px;
   color: var(--text-muted);
@@ -29,7 +30,8 @@
 
 .squad-launch-customize select,
 .squad-launch-policy-fields select,
-.squad-launch-policy-fields input {
+.squad-launch-policy-fields input,
+.squad-launch-policy-choice .launch-model-picker-trigger {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
@@ -99,10 +101,98 @@
 @media (max-width: 600px) {
   .squad-launch-customize label,
   .squad-launch-policy-fields label,
+  .squad-launch-policy-choice,
   .launch-job-details .squad-launch-detail-field {
     grid-template-columns: minmax(0, 1fr);
     gap: 4px;
   }
   .squad-launch-customize .squad-launch-help { margin-left: 0; }
   .squad-launch-resolved-details > div { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+}
+
+.squad-launch-meta {
+  flex-wrap: wrap;
+}
+
+.squad-launch-meta .thread-command-composer-meta-start {
+  flex: 1 1 300px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.squad-launch-meta .thread-command-composer-meta-end {
+  margin-inline-start: auto;
+  max-width: 100%;
+}
+
+.squad-launch-checkout,
+.squad-launch-checkout .launch-model-picker-trigger {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.squad-launch-settings-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  min-height: 30px;
+  white-space: nowrap;
+}
+
+.squad-launch-settings-toggle[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+
+.squad-launch-effective {
+  border-top: 1px solid var(--border);
+  padding-top: 9px;
+  overflow-wrap: anywhere;
+}
+
+.squad-launch-effective h4,
+.squad-launch-effective p {
+  margin: 0 0 6px;
+}
+
+.squad-launch-effective p {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.squad-launch-notice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding-inline: 14px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.squad-launch-policy-fields--composer {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+
+.squad-launch-policy-fields--composer .squad-launch-policy-choice {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+
+.squad-launch-policy-fields--composer .squad-launch-policy-choice > span {
+  padding-top: 0;
+}
+
+.squad-launch-policy-fields--composer .launch-model-picker-trigger {
+  max-width: 100%;
+}
+
+.squad-launch-policy-fields--composer > label {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 600px) {
+  .squad-launch-policy-fields--composer {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

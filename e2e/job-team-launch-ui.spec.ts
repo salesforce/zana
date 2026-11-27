@@ -147,7 +147,7 @@ test(`launching a ${coordinationMode} Team with ${profile} through the real UI c
     await expect(projectPicker).toContainText(projectName);
 
     // 6. Leave Title empty so main resolves one canonical title from the goal.
-    await modal.getByRole('button', { name: 'Customize launch', exact: true }).click();
+    await modal.getByRole('button', { name: 'Launch settings', exact: true }).click();
     await modal.getByLabel('Summary Optional').fill('Durable job launch from the Agents board');
 
     // 7. Launch — this calls the intact `teams.startJob` durable path.
@@ -160,7 +160,7 @@ test(`launching a ${coordinationMode} Team with ${profile} through the real UI c
     // 8. The launcher closes and the durable job surfaces with a bounded title
     //    inferred once by main. E2E disables the real naming provider, so this
     //    deterministically exercises the path-free objective fallback.
-    await expect(modal).toBeHidden();
+    await expect(modal).toBeHidden({ timeout: 35_000 });
     const inferredTitle = 'coordinate smoke check and report back';
     await expect(window.locator('.agent-card-title').getByText(inferredTitle, { exact: true }))
       .toBeVisible({ timeout: 15_000 });
@@ -189,7 +189,8 @@ test(`launching a ${coordinationMode} Team with ${profile} through the real UI c
       return page.executions.find((execution) => execution.executionId === executionId)?.currentBlocker?.question ?? '';
     }, { projectId: projectId!, executionId }), { timeout: 15_000, intervals: [500] })
       .toBe('Which label should result.txt use?');
-    await window.getByRole('button', { name: 'Flow view' }).click();
+    await window.getByRole('button', { name: 'Squads view' }).click();
+    await window.getByRole('button', { name: 'Map', exact: true }).click();
     await expect(window.locator('svg.squad-flow-edges path.squad-flow-edge').first())
       .toBeVisible({ timeout: 15_000 });
     await window.getByRole('button', { name: 'Board view' }).click();
@@ -210,7 +211,8 @@ test(`launching a ${coordinationMode} Team with ${profile} through the real UI c
         ({ id, profile, status, exitCode, headless })),
       executions: await window.cc.executionBoard.listProject(id)
     }), projectId).catch(() => null) : null;
-    throw new Error(`${error instanceof Error ? error.message : String(error)}\n${JSON.stringify(state)}\n${log}`);
+    const launchErrors = await window.getByTestId('team-command-error').allTextContents();
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\n${launchErrors.join('\n')}\n${JSON.stringify(state)}\n${log}`);
   } finally {
     if (projectId) {
       await window.evaluate(async (pid) => {

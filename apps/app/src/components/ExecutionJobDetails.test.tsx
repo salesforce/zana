@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  */
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExecutionBoardSnapshot } from '@zana-ai/zcc-domain/product';
 import { buildJobDetailsText, chosenRouteText, ExecutionJobDetails } from './ExecutionJobDetails.js';
@@ -33,6 +33,196 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   useUi.setState({ toasts: [] });
+});
+
+const blockerQuestion = 'Which label should we use?';
+type Blocker = NonNullable<ExecutionBoardSnapshot['execution']['currentBlocker']>;
+type Delivery = NonNullable<Blocker['delivery']>;
+const delivery = (state: Delivery['state'], retryEligible = false): Delivery => ({
+  id: 'delivery-1', state, attempt: 1, maxAttempts: 8, retryEligible
+});
+
+function questionSnapshot(over: Partial<Blocker> = {}): ExecutionBoardSnapshot {
+  const snapshot = structuredClone(baseSnapshot);
+  snapshot.execution.currentBlocker = {
+    id: 'blocker-1', workUnitId: 'unit-1', slotId: 'slot-1', question: blockerQuestion,
+    options: ['About', 'About Atlas'], notice: { status: 'ACKNOWLEDGED', attempts: 1 }, ...over
+  };
+  return snapshot;
+}
+
+function mountJob() {
+  return render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
+}
+
+describe('Squad blocker answer card', () => {
+  it('accepts free text and moves through queued to delivered with the same answer', async () => {
+    const awaiting = questionSnapshot();
+    const queued = questionSnapshot({ delivery: delivery('PENDING') });
+    queued.execution.stateVersion = 3;
+    const delivered = structuredClone(queued);
+    delivered.execution.stateVersion = 4;
+    delivered.execution.state = 'COMPLETED';
+    delete delivered.execution.currentBlocker;
+    delivered.execution.blockers = [{ id: 'blocker-1', resolved: true, deliveryState: 'DELIVERED' }];
+    delivered.execution.deliveries = [{
+      id: 'delivery-1', blockerId: 'blocker-1', workUnitId: 'unit-1', slotId: 'slot-1',
+      state: 'DELIVERED', attempt: 2, maxAttempts: 8, updatedAt: 4
+    }];
+    const read = vi.mocked(window.cc.executionBoard.snapshot);
+    const respond = vi.mocked(window.cc.executionBoard.respond);
+    const retry = vi.mocked(window.cc.executionBoard.retryDelivery);
+    read.mockResolvedValue(awaiting);
+    // The accepted response may return before the next board snapshot catches up.
+    respond.mockResolvedValue({ ok: true, value: queued.execution });
+    retry.mockImplementation(async () => {
+      read.mockResolvedValue(delivered);
+      return { ok: true, value: delivered.execution };
+    });
+    mountJob();
+
+    const card = await screen.findByRole('region', { name: blockerQuestion });
+    const input = within(card).getByRole('textbox', { name: 'Your answer' });
+    const send = within(card).getByRole('button', { name: 'Send answer' }) as HTMLButtonElement;
+    expect(within(card).getByRole('heading').textContent).toBe(blockerQuestion);
+    expect(within(card).getByText('About · About Atlas')).toBeTruthy();
+    expect(within(card).queryByRole('radio')).toBeNull();
+    expect(send.disabled).toBe(true);
+    fireEvent.change(input, { target: { value: '🧪'.repeat(4097) } });
+    expect(within(card).getByText('Your answer exceeds 16 KB.')).toBeTruthy();
+    expect(send.disabled).toBe(true);
+    fireEvent.change(input, { target: { value: '  Use the launch label.  ' } });
+    fireEvent.click(send);
+
+    const queuedBadge = await within(card).findByText('Answer queued');
+    expect(document.activeElement).toBe(queuedBadge);
+    expect(respond).toHaveBeenCalledWith('project-1', 'execution-1', 2, 'blocker-1', expect.any(String), 'Use the launch label.');
+    expect(within(card).getByText('Use the launch label.')).toBeTruthy();
+    expect(within(card).queryByRole('textbox')).toBeNull();
+    expect(within(card).queryByText('Needs your response')).toBeNull();
+
+    const failed = questionSnapshot({ delivery: delivery('FAILED', true) });
+    failed.execution.stateVersion = 4;
+    delivered.execution.stateVersion = 5;
+    read.mockResolvedValue(failed);
+    fireEvent.click(await within(card).findByRole('button', { name: 'Retry delivery' }, { timeout: 4500 }));
+    await within(card).findByText('Answer delivered');
+    expect(retry).toHaveBeenCalledWith('project-1', 'execution-1', 4, 'blocker-1', 'delivery-1');
+    expect(within(card).getByText('Use the launch label.')).toBeTruthy();
+    expect(within(screen.getByRole('complementary', { name: 'Run activity and diagnostics' })).getByText('2 of 8')).toBeTruthy();
+  });
+
+  it('does not attribute an answer delivered from another surface to this panel', async () => {
+    const open = questionSnapshot();
+    const accepted = questionSnapshot({ delivery: delivery('PENDING') });
+    accepted.execution.stateVersion = 3;
+    const resolved = structuredClone(accepted);
+    resolved.execution.stateVersion = 4;
+    delete resolved.execution.currentBlocker;
+    resolved.execution.blockers = [{ id: 'blocker-1', resolved: true, deliveryState: 'DELIVERED' }];
+    resolved.execution.deliveries = [{
+      id: 'someone-elses-delivery', blockerId: 'blocker-1', workUnitId: 'unit-1', slotId: 'slot-1',
+      state: 'DELIVERED', attempt: 1, maxAttempts: 8, updatedAt: 4
+    }];
+    const read = vi.mocked(window.cc.executionBoard.snapshot).mockResolvedValue(open);
+    vi.mocked(window.cc.executionBoard.respond).mockImplementation(async () => {
+      read.mockResolvedValue(resolved);
+      return { ok: true, value: accepted.execution };
+    });
+    mountJob();
+    const card = await screen.findByRole('region', { name: blockerQuestion });
+    fireEvent.change(within(card).getByRole('textbox'), { target: { value: 'My answer' } });
+    fireEvent.click(within(card).getByRole('button', { name: 'Send answer' }));
+    await within(card).findByText('Answer delivered');
+    expect(within(card).queryByText('My answer')).toBeNull();
+  });
+
+  it('shows delivery status alone for a queued answer from another surface', async () => {
+    vi.mocked(window.cc.executionBoard.snapshot).mockResolvedValue(questionSnapshot({ delivery: delivery('LEASED') }));
+    mountJob();
+    const card = await screen.findByRole('region', { name: blockerQuestion });
+    expect(within(card).getByText('Answer queued')).toBeTruthy();
+    expect(within(card).queryByText('Your answer')).toBeNull();
+    expect(within(card).queryByRole('textbox')).toBeNull();
+    expect(within(screen.getByRole('complementary', { name: 'Run activity and diagnostics' })).getByText('Awaiting worker acknowledgement')).toBeTruthy();
+  });
+
+  it('allows a fresh free-text answer after an exhausted retry', async () => {
+    vi.mocked(window.cc.executionBoard.snapshot).mockResolvedValue(questionSnapshot({ delivery: { ...delivery('FAILED'), error: 'Worker stopped' } }));
+    mountJob();
+    const card = await screen.findByRole('region', { name: blockerQuestion });
+    expect(within(card).getByRole('alert').textContent).toBe('Delivery failed');
+    expect(within(card).queryByRole('button', { name: 'Retry delivery' })).toBeNull();
+    expect(within(screen.getByRole('complementary', { name: 'Run activity and diagnostics' })).getByText('Worker stopped')).toBeTruthy();
+    fireEvent.click(within(card).getByRole('button', { name: 'Write a new answer' }));
+    const input = within(card).getByRole('textbox', { name: 'Your answer' });
+    expect(document.activeElement).toBe(input);
+    expect(within(card).getByRole('button', { name: 'Send answer' })).toBeTruthy();
+  });
+
+  it('retries a confirmed stale run revision once for the same blocker and request', async () => {
+    vi.mocked(window.cc.executionBoard.snapshot).mockResolvedValue(questionSnapshot());
+    const queued = questionSnapshot({ delivery: delivery('PENDING') });
+    queued.execution.stateVersion = 4;
+    const respond = vi.mocked(window.cc.executionBoard.respond)
+      .mockResolvedValueOnce({ ok: false, code: 'CONFLICT', message: 'stale execution state' })
+      .mockResolvedValueOnce({ ok: true, value: queued.execution });
+    mountJob();
+    const card = await screen.findByRole('region', { name: blockerQuestion });
+    fireEvent.change(within(card).getByRole('textbox'), { target: { value: 'About Atlas' } });
+    fireEvent.click(within(card).getByRole('button', { name: 'Send answer' }));
+    await within(card).findByText('Answer queued');
+    expect(respond).toHaveBeenCalledTimes(2);
+    const requestId = respond.mock.calls[0][4];
+    expect(respond).toHaveBeenNthCalledWith(2, 'project-1', 'execution-1', -1, 'blocker-1', requestId, 'About Atlas', true);
+  });
+
+  it('keeps the draft and request identity when delivery acceptance is uncertain', async () => {
+    vi.mocked(window.cc.executionBoard.snapshot).mockResolvedValue(questionSnapshot({ options: undefined, notice: undefined }));
+    const respond = vi.mocked(window.cc.executionBoard.respond).mockRejectedValue(new Error('connection closed'));
+    mountJob();
+    const card = await screen.findByRole('region', { name: blockerQuestion });
+    expect(within(card).queryByText('Suggested answers')).toBeNull();
+    expect(screen.queryByText('Delivery details')).toBeNull();
+    const input = within(card).getByRole('textbox', { name: 'Your answer' }) as HTMLTextAreaElement;
+    const send = within(card).getByRole('button', { name: 'Send answer' }) as HTMLButtonElement;
+    fireEvent.change(input, { target: { value: 'About Atlas' } });
+    fireEvent.click(send);
+    await waitFor(() => expect(send.disabled).toBe(false));
+    expect(input.value).toBe('About Atlas');
+    fireEvent.click(send);
+    await waitFor(() => expect(respond).toHaveBeenCalledTimes(2));
+    expect(respond.mock.calls[0][4]).toBe(respond.mock.calls[1][4]);
+  });
+
+  it('shows an answer recorded when a decision resolves without worker delivery', async () => {
+    const open = questionSnapshot();
+    const resolved = structuredClone(open);
+    delete resolved.execution.currentBlocker;
+    resolved.execution.stateVersion = 3;
+    resolved.execution.blockers = [{ id: 'blocker-1', resolved: true }];
+    const read = vi.mocked(window.cc.executionBoard.snapshot).mockResolvedValue(open);
+    vi.mocked(window.cc.executionBoard.respond).mockImplementation(async () => {
+      read.mockResolvedValue(resolved);
+      return { ok: true, value: resolved.execution };
+    });
+    mountJob();
+
+    const card = await screen.findByRole('region', { name: blockerQuestion });
+    fireEvent.change(within(card).getByRole('textbox'), { target: { value: 'Proceed' } });
+    fireEvent.click(within(card).getByRole('button', { name: 'Send answer' }));
+    await within(card).findByText('Answer recorded');
+    expect(within(card).getByText('Proceed')).toBeTruthy();
+    expect(within(card).queryByText('Answer delivered')).toBeNull();
+  });
+
+  it('keeps questions handled by the coordinator out of the human reply field', async () => {
+    vi.mocked(window.cc.executionBoard.snapshot).mockResolvedValue(questionSnapshot({ audience: 'coordinator' }));
+    mountJob();
+    const card = await screen.findByRole('region', { name: blockerQuestion });
+    expect(within(card).getByText('Coordinator deciding')).toBeTruthy();
+    expect(within(card).queryByRole('textbox')).toBeNull();
+  });
 });
 
 describe('ExecutionJobDetails phase 5 projection', () => {
@@ -67,10 +257,12 @@ describe('ExecutionJobDetails phase 5 projection', () => {
     render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
     const recover = await screen.findByRole('button', { name: 'Recover timed-out run' });
     expect(screen.getByText(/Timed out while waiting for this blocker/)).toBeTruthy();
-    expect(screen.getByText(/Inbox notice: acknowledged.*attempts 2.*item inbox-1/)).toBeTruthy();
+    expect(screen.getByText('Delivery details').closest('details')?.open).toBe(false);
+    expect(screen.getByText('Inbox notice')).toBeTruthy();
+    expect(screen.getByText('inbox-1')).toBeTruthy();
     fireEvent.click(recover);
     await waitFor(() => expect(window.cc.executionBoard.recoverTimedOut).toHaveBeenCalledWith('project-1', 'execution-1', 2, expect.any(String)));
-    expect(screen.queryByRole('button', { name: 'Respond' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send answer' })).toBeNull();
   });
 
   it('scrolls an open blocker into view once, and never for a closed run', async () => {
@@ -286,26 +478,32 @@ describe('ExecutionJobDetails phase 5 projection', () => {
     expect(screen.queryByRole('button', { name: 'Resume existing Squad' })).toBeNull();
   });
 
-  it('keeps stop available and hides generic retry for resource blocks', async () => {
+  it('places Stop Squad run beside Close details and hides generic retry for resource blocks', async () => {
     render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
-    expect(await screen.findByRole('button', { name: 'Stop Squad run' })).toBeTruthy();
+    const stop = await screen.findByRole('button', { name: 'Stop Squad run', exact: true });
+    expect(stop.closest('header')).toBe(screen.getByRole('button', { name: 'Close details' }).closest('header'));
     expect(screen.queryByRole('button', { name: 'Retry Squad run' })).toBeNull();
   });
 });
 
-describe('ExecutionJobDetails copy job details', () => {
-  it('renders a non-destructive Copy details button near the header, above Stop Squad run', async () => {
+describe('ExecutionJobDetails copy diagnostics', () => {
+  async function findCopyButton() {
+    fireEvent.click(await screen.findByText('Diagnostics', { selector: 'summary' }));
+    return screen.getByRole('button', { name: 'Copy diagnostics' });
+  }
+
+  it('places the copy action inside Diagnostics, apart from Stop Squad run', async () => {
     render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
-    const copyButton = await screen.findByRole('button', { name: 'Copy details' });
-    const stopButton = await screen.findByRole('button', { name: 'Stop Squad run' });
+    const copyButton = await findCopyButton();
+    const stopButton = await screen.findByRole('button', { name: 'Stop Squad run', exact: true });
     expect(copyButton.className).not.toContain('danger');
-    // Copy sits under Close details at the top; Stop lives in the bottom action row — Copy precedes Stop in the DOM.
-    expect(copyButton.compareDocumentPosition(stopButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(copyButton.closest('details')?.querySelector('summary')?.textContent).toBe('Diagnostics');
+    expect(copyButton.closest('details')?.contains(stopButton)).toBe(false);
   });
 
   it('copies the expected job details text and shows a transient toast (no modal)', async () => {
     render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
-    const copyButton = await screen.findByRole('button', { name: 'Copy details' });
+    const copyButton = await findCopyButton();
     fireEvent.click(copyButton);
 
     const expectedText = buildJobDetailsText('project-1', baseSnapshot);
@@ -318,9 +516,8 @@ describe('ExecutionJobDetails copy job details', () => {
     expect(expectedText).toContain('blocker-1');
 
     await waitFor(() => expect(clipboardWriteText).toHaveBeenCalledWith(expectedText));
-    await waitFor(() => expect(useUi.getState().toasts.some((toast) => toast.message === 'Job details copied')).toBe(true));
-    // The old confirmation Modal is gone.
-    expect(screen.queryByRole('dialog', { name: 'Job details copied' })).toBeNull();
+    await waitFor(() => expect(useUi.getState().toasts.some((toast) => toast.message === 'Diagnostics copied')).toBe(true));
+    expect(screen.queryByRole('dialog', { name: 'Diagnostics copied' })).toBeNull();
   });
 
   it('dumps full diagnostic parity — per-unit heartbeat and per-role usage', () => {
@@ -360,9 +557,9 @@ describe('ExecutionJobDetails copy job details', () => {
       value: { writeText: vi.fn(async () => { throw new Error('clipboard denied'); }) }
     });
     render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
-    const copyButton = await screen.findByRole('button', { name: 'Copy details' });
+    const copyButton = await findCopyButton();
     fireEvent.click(copyButton);
-    await waitFor(() => expect(useUi.getState().toasts.some((toast) => toast.message === 'Failed to copy job details')).toBe(true));
+    await waitFor(() => expect(useUi.getState().toasts.some((toast) => toast.message === 'Failed to copy diagnostics')).toBe(true));
   });
 
   it('renders the unavailable state with NO Copy button when the snapshot never loads (null guard)', async () => {
@@ -372,8 +569,7 @@ describe('ExecutionJobDetails copy job details', () => {
     }, clipboard: { writeText: clipboardWriteText } } });
     render(<ExecutionJobDetails projectId="project-1" executionId="execution-1" onClose={() => {}} />);
     expect(await screen.findByText('Squad details unavailable.')).toBeTruthy();
-    // The Copy details button (and its copyJobDetails handler) only mount once snapshot is non-null.
-    expect(screen.queryByRole('button', { name: 'Copy details' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copy diagnostics' })).toBeNull();
   });
 
   it('dumps delivery strands and coordinator wakes as metadata only — never payload text or wake message', () => {

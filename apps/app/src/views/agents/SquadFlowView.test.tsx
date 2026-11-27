@@ -3,8 +3,8 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { join } from 'node:path';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { SquadFlowGraph, SquadFlowNode } from '@zana-ai/zcc-domain/product';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import type { ExecutionBoardProjection, SquadFlowGraph, SquadFlowNode } from '@zana-ai/zcc-domain/product';
 
 // The view pulls in the live store + canvas-pan hook + router at import; stub them
 // so the pure `nodeActivity` export and the `SquadGraph` render can be tested
@@ -43,6 +43,9 @@ vi.mock('@/lib/inspect-session', () => ({
 }));
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
+  localStorage.clear();
+  stores.data.flowAllOrganization = 'merged';
   mobile.compact = false;
   mobile.inspectAgent.mockClear();
   mobile.inspectThread.mockClear();
@@ -54,7 +57,6 @@ afterEach(() => {
   stores.status.since = {};
   stores.threads = [];
 });
-vi.mock('@/components/SquadSwitcher', () => ({ SquadSwitcher: () => null }));
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }));
 
 import { nodeActivity, squadChipLabel, SquadFlowView, SquadGraph, squadHeaderLabel, STREAMING_FRESH_MS } from './SquadFlowView';
@@ -520,33 +522,43 @@ function modernThread(over: Record<string, unknown> = {}) {
 }
 
 describe('SquadFlowView modern thread integration', () => {
-  it('renders a modern-only registered project and maps pending interaction state', () => {
-    stores.data.projects = [{ id: 'p1', name: 'Modern project' }];
-    stores.threads = [modernThread({ title: 'Needs review', hasPendingInteraction: true })];
+  it('opens a Modern Squad member and hides standalone threads', async () => {
+    stores.data.projects = [{ id: 'p2', name: 'Other project' }, { id: 'p1', name: 'Modern project' }];
+    stores.threads = [
+      modernThread({ id: 'solo', projectId: 'p2', title: 'Standalone conversation' }),
+      modernThread({ title: 'Needs review', hasPendingInteraction: true })
+    ];
+    mockRuns([exampleRun({ state: 'RUNNING', modernMembers: [modernWorker('modern-1')] })]);
 
-    const { container } = render(<SquadFlowView />);
+    const { container } = render(<SquadFlowView projectId="p1" />);
 
-    expect(screen.getByText('Needs review')).toBeTruthy();
-    expect(container.querySelector('.squad-flow-node .agent-blocked')).toBeTruthy();
+    const row = await screen.findByRole('button', { name: /Needs review/ });
+    expect(container.querySelector('.squad-roster-row[data-status="blocked"]')).toBeTruthy();
+    fireEvent.click(row);
+    const details = screen.getByRole('complementary', { name: 'Agent details' });
+    expect(document.activeElement).toBe(within(details).getByRole('heading'));
+    fireEvent.click(within(details).getByRole('button', { name: 'Open thread' }));
+    expect(mobile.inspectThread).toHaveBeenCalledWith('modern-1', 'p1', expect.any(Function));
+    fireEvent.keyDown(details, { key: 'Escape' });
+    expect(document.activeElement).toBe(row);
+    expect(screen.queryByText('Standalone conversation')).toBeNull();
   });
 
-  it('renders mixed terminal and modern participants with colliding raw ids as separate nodes', () => {
+  it('renders mixed terminal and Modern Squad members with colliding raw ids as separate nodes', async () => {
     stores.data.projects = [{ id: 'p1', name: 'Mixed project' }];
-    stores.data.terminals = { p1: [{
-      id: 'same', projectId: 'p1', title: 'CLI agent', profile: 'claude', cwd: '/work/p1',
-      status: 'running', createdAt: 1
-    }] };
+    stores.data.terminals = { p1: [squadTerminal('same', 'CLI agent', 'release-notes', 'orchestrator')] };
     stores.threads = [modernThread({ id: 'same', title: 'Modern same id', activity: { activeBackgroundCommandCount: 1 } })];
+    mockRuns([exampleRun({ state: 'RUNNING', modernMembers: [modernWorker('same')] })]);
 
     const { container } = render(<SquadFlowView projectId="p1" />);
 
     expect(screen.getByText('CLI agent')).toBeTruthy();
-    expect(screen.getByText('Modern same id')).toBeTruthy();
-    expect(container.querySelectorAll('.squad-flow-node')).toHaveLength(2);
-    expect(container.querySelectorAll('.squad-flow-node--working')).toHaveLength(1);
+    expect(await screen.findByText('Modern same id')).toBeTruthy();
+    expect(container.querySelectorAll('.squad-roster-row')).toHaveLength(2);
+    expect(container.querySelectorAll('.squad-roster-row[data-status="working"]')).toHaveLength(1);
   });
 
-  it('excludes archived threads and threads belonging to unregistered projects', () => {
+  it('shows an empty state for a project with only standalone threads', () => {
     stores.data.projects = [{ id: 'p1', name: 'Visible project' }];
     stores.threads = [
       modernThread({ id: 'archived', title: 'Archived modern', archivedAt: 123 }),
@@ -556,7 +568,8 @@ describe('SquadFlowView modern thread integration', () => {
 
     render(<SquadFlowView />);
 
-    expect(screen.getByText('Visible modern')).toBeTruthy();
+    expect(screen.getByText('No Squad runs in this project')).toBeTruthy();
+    expect(screen.queryByText('Visible modern')).toBeNull();
     expect(screen.queryByText('Archived modern')).toBeNull();
     expect(screen.queryByText('Unknown project modern')).toBeNull();
   });
@@ -653,5 +666,212 @@ describe('SquadFlowView modern thread integration', () => {
     expect(mobile.inspectAgent).not.toHaveBeenCalled();
     fireEvent.doubleClick(node);
     expect(mobile.inspectAgent).toHaveBeenCalledWith('cli-1', 'p1', expect.any(Function));
+  });
+});
+
+
+function mockRuns(executions: ExecutionBoardProjection[]) {
+  vi.stubGlobal('cc', { executionBoard: { listProject: async (id: string) => ({
+    executions: executions.filter((execution) => execution.projectId === id)
+  }) } });
+}
+
+function exampleRun(over: Partial<ExecutionBoardProjection> = {}): ExecutionBoardProjection {
+  return {
+    executionId: 'release-notes',
+    projectId: 'p1',
+    teamName: 'Release Squad',
+    jobTitle: 'Prepare release notes',
+    state: 'BLOCKED',
+    attempt: 1,
+    createdAt: 10,
+    updatedAt: 20,
+    ...over
+  };
+}
+
+function exampleBlocker(over: Partial<NonNullable<ExecutionBoardProjection['currentBlocker']>> = {}) {
+  return { id: 'question', workUnitId: 'write', slotId: 'worker', question: 'Which release branch should I use?', ...over };
+}
+
+function modernWorker(threadId: string): NonNullable<ExecutionBoardProjection['modernMembers']>[number] {
+  return { threadId, slotId: 'worker', personaId: 'researcher', role: 'worker', live: true };
+}
+
+function squadTerminal(id: string, title: string, executionId: string, role: 'worker' | 'orchestrator', createdAt = 100) {
+  return {
+    id, title, createdAt, profile: 'claude', status: 'running', cwd: '/work/p1',
+    cohort: { cohortId: executionId, executionId, teamName: 'Release Squad', role }
+  };
+}
+
+describe('Squads Overview and Map', () => {
+  it('filters Squad runs by status and text and ignores standalone agents', () => {
+    stores.data.projects = [{ id: 'p1', name: 'Main project' }, { id: 'p2', name: 'Other project' }];
+    stores.data.terminals = { p1: [squadTerminal('lead', 'Release lead', 'run', 'orchestrator')] };
+    stores.status.byId = { lead: 'working' };
+    stores.threads = [
+      modernThread({ id: 'work', title: 'A long task title can be read', status: 'active' }),
+      modernThread({ id: 'idle', projectId: 'p2', title: 'Draft follow-up' })
+    ];
+    render(<SquadFlowView />);
+    expect(screen.queryByText('A long task title can be read')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '1 Working' }));
+    expect(screen.getByRole('button', { name: /Release lead/ })).toBeTruthy();
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'long task' } });
+    expect(screen.getByRole('status').textContent).toContain('No matching Squad runs');
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(screen.getByRole('button', { name: /Release lead/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Map' }));
+    expect(screen.getByRole('region', { name: 'Squad map' })).toBeTruthy();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Project' }), { target: { value: 'p2' } });
+    expect(screen.getByRole('status').textContent).toContain('No Squad runs in this project');
+    expect(screen.queryByText('Draft follow-up')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Map' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('pins human questions once, shows coordinator decisions inside details, and opens the right run', async () => {
+    stores.data.projects = [{ id: 'p1', name: 'Release project' }];
+    const coordinatorRun = exampleRun({
+      executionId: 'internal', jobTitle: 'Internal decision',
+      currentBlocker: exampleBlocker({ audience: 'coordinator', question: 'Which worker should get this?' })
+    });
+    mockRuns([
+      exampleRun({ currentBlocker: exampleBlocker() }),
+      coordinatorRun,
+      exampleRun({ executionId: 'completed', jobTitle: 'Completed job', state: 'COMPLETED', currentBlocker: exampleBlocker() })
+    ]);
+    stores.data.terminals = { p1: [
+      squadTerminal('lead', 'Release lead', 'release-notes', 'orchestrator'),
+      squadTerminal('worker', 'Release writer', 'release-notes', 'worker'),
+      squadTerminal('internal', 'Internal lead', 'internal', 'orchestrator')
+    ] };
+    const inspect = vi.fn();
+    render(<SquadFlowView projectId="p1" onInspectExecution={inspect} />);
+    const banner = await screen.findByRole('button', { name: /Needs you Which release branch/ });
+    expect(screen.getAllByText('Which release branch should I use?')).toHaveLength(1);
+    expect(await screen.findByRole('heading', { name: 'Completed job' })).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: 'Prepare release notes' })).getByText('Which release branch should I use?')).toBeTruthy();
+    expect(screen.queryByText('Which worker should get this?')).toBeNull();
+    fireEvent.click(banner);
+    expect(inspect).toHaveBeenLastCalledWith('p1', 'release-notes');
+    fireEvent.click(screen.getByRole('button', { name: /Internal lead/ }));
+    const details = screen.getByRole('complementary');
+    expect(within(details).getByText('Coordinator deciding')).toBeTruthy();
+    expect(within(details).getByText('Which worker should get this?')).toBeTruthy();
+    fireEvent.click(within(details).getByRole('button', { name: 'Open Squad details' }));
+    expect(inspect).toHaveBeenLastCalledWith('p1', 'internal');
+    fireEvent.click(within(details).getByRole('button', { name: 'Close agent details' }));
+    expect(screen.queryByRole('complementary')).toBeNull();
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'release notes' } });
+    expect(screen.getByRole('button', { name: /Release writer/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Internal lead/ })).toBeNull();
+  });
+
+  it('counts only matching runs and finds completed runs without live agents', async () => {
+    stores.data.projects = [{ id: 'p1', name: 'Release project' }];
+    stores.data.terminals = { p1: [
+      squadTerminal('lead', 'Release lead', 'release-notes', 'orchestrator'),
+      squadTerminal('writer', 'Release writer', 'release-notes', 'worker')
+    ] };
+    stores.threads = [modernThread({ id: 'solo', title: 'Draft checklist' })];
+    mockRuns([
+      exampleRun({ currentBlocker: exampleBlocker() }),
+      exampleRun({ executionId: 'atlas', jobTitle: 'Build Atlas', currentBlocker: exampleBlocker({ question: 'Which label?' }) }),
+      exampleRun({ executionId: 'docs', jobTitle: 'Audit docs', state: 'COMPLETED' })
+    ]);
+    const inspect = vi.fn();
+    render(<SquadFlowView projectId="p1" onInspectExecution={inspect} />);
+
+    expect(await screen.findByRole('button', { name: '3 All' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '0 Idle' })).toBeTruthy();
+    expect(screen.queryByText('Draft checklist')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '2 Needs you' }));
+    const runList = screen.getByRole('region', { name: 'Squad runs' });
+    expect(within(runList).getAllByRole('heading', { level: 3 })).toHaveLength(2);
+    const coordinator = within(runList).getByRole('button', { name: /Release lead/ });
+    expect(within(coordinator).getByText('Waiting', { exact: true })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Solo agents' })).toBeNull();
+    fireEvent.click(within(runList).getByRole('button', { name: /Needs you Which label/ }));
+    expect(inspect).toHaveBeenLastCalledWith('p1', 'atlas');
+
+    const search = screen.getByRole('searchbox');
+    fireEvent.change(search, { target: { value: 'Release writer' } });
+    expect(screen.getByRole('button', { name: '1 Needs you' })).toBeTruthy();
+    expect(within(runList).getAllByRole('heading', { level: 3 })).toHaveLength(1);
+    fireEvent.change(search, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Map' }));
+    fireEvent.click(screen.getByRole('button', { name: '1 Completed' }));
+    expect(screen.getByRole('button', { name: 'Overview' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.queryByText('Build Atlas')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open Squad details for Audit docs' }));
+    expect(inspect).toHaveBeenLastCalledWith('p1', 'docs');
+  });
+
+  it('dismisses a finished run and restores it immediately or after returning to its project', async () => {
+    stores.data.projects = [{ id: 'p1', name: 'Release project' }, { id: 'p2', name: 'Other project' }];
+    mockRuns([
+      exampleRun({ executionId: 'finished', jobTitle: 'Publish notes', state: 'COMPLETED' }),
+      exampleRun({ executionId: 'active', jobTitle: 'Write draft', state: 'RUNNING' })
+    ]);
+    const { unmount } = render(<SquadFlowView projectId="p1" />);
+    const completed = await screen.findByRole('button', { name: '1 Completed' });
+    expect(screen.queryByRole('button', { name: 'Dismiss Write draft' })).toBeNull();
+    fireEvent.click(completed);
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss Publish notes' }));
+    expect(screen.queryByRole('heading', { name: 'Publish notes' })).toBeNull();
+    expect(screen.getByText('No completed Squad runs')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '0 Completed' }).getAttribute('aria-pressed')).toBe('true');
+    const undo = screen.getByRole('button', { name: 'Undo' });
+    expect(document.activeElement).toBe(undo);
+    fireEvent.click(undo);
+    expect(screen.getByRole('heading', { name: 'Publish notes' })).toBeTruthy();
+    expect(document.activeElement).toBe(completed);
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss Publish notes' }));
+    unmount();
+
+    mockRuns([exampleRun({ projectId: 'p2', executionId: 'finished', jobTitle: 'Other notes', state: 'COMPLETED' })]);
+    const otherProject = render(<SquadFlowView projectId="p2" />);
+    expect(await screen.findByRole('heading', { name: 'Other notes' })).toBeTruthy();
+    otherProject.unmount();
+
+    mockRuns([exampleRun({ executionId: 'finished', jobTitle: 'Publish notes', state: 'COMPLETED' })]);
+    render(<SquadFlowView projectId="p1" />);
+    const dismissed = await screen.findByText('Dismissed runs (1)', { selector: 'summary' });
+    expect(screen.queryByRole('heading', { name: 'Publish notes' })).toBeNull();
+    fireEvent.click(dismissed);
+    fireEvent.click(screen.getByRole('button', { name: 'Restore Publish notes' }));
+    expect(screen.getByRole('heading', { name: 'Publish notes' })).toBeTruthy();
+  });
+
+  it('switches the map between runs and removes edges when filtering away an endpoint', () => {
+    stores.data.projects = [{ id: 'p1', name: 'Release project' }];
+    stores.data.flowAllOrganization = 'team-runs';
+    stores.data.terminals = { p1: [
+      squadTerminal('lead', 'Release lead', 'release-notes', 'orchestrator', 100),
+      squadTerminal('writer', 'Release writer', 'release-notes', 'worker', 110),
+      squadTerminal('review', 'Review lead', 'second-run', 'orchestrator', 50),
+      { ...squadTerminal('solo-a', 'Standalone planner', 'unused', 'worker'), cohort: undefined },
+      { ...squadTerminal('solo-b', 'Standalone reviewer', 'unused', 'worker'), cohort: undefined }
+    ] };
+    stores.mesh.messages = [
+      { projectId: 'p1', fromSessionId: 'lead', toSessionId: 'writer', ts: 10, deliveredAt: 11 },
+      { projectId: 'p1', fromSessionId: 'solo-a', toSessionId: 'solo-b', ts: 20, deliveredAt: 21 }
+    ];
+    const { container } = render(<SquadFlowView projectId="p1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Map' }));
+    expect(container.querySelectorAll('.squad-flow-canvas')).toHaveLength(2);
+    expect(container.querySelectorAll('.squad-flow-node')).toHaveLength(3);
+    expect(container.querySelectorAll('.squad-flow-edge')).toHaveLength(1);
+    expect(screen.queryByText('Standalone planner')).toBeNull();
+    expect(screen.getByText('Agent message')).toBeTruthy();
+    const picker = screen.getByRole('combobox', { name: 'Run' });
+    fireEvent.change(picker, { target: { value: 'release-notes' } });
+    expect(container.querySelectorAll('.squad-flow-canvas')).toHaveLength(1);
+    expect(container.querySelectorAll('.squad-flow-edge')).toHaveLength(1);
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'writer' } });
+    expect(container.querySelectorAll('.squad-flow-node')).toHaveLength(1);
+    expect(container.querySelectorAll('.squad-flow-edge')).toHaveLength(0);
+    expect(screen.queryByText('Agent message')).toBeNull();
   });
 });

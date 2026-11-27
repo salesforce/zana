@@ -1,5 +1,4 @@
 import { boundedText, LargeTextPreview } from './LargeTextPreview.js';
-import { formatAge } from '@/lib/squad-worker-visibility';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { ExecutionBoardSnapshot } from '@zana-ai/zcc-domain/product';
 import { useUi } from '../store';
@@ -7,6 +6,8 @@ import { usePersonas, useTeams } from '../stores/live.js';
 import { copyText } from '../lib/copy-text.js';
 import { startSerialPoll } from '../lib/serial-poll.js';
 import { mergeExecutionEvents } from './execution-event-tail.js';
+import { ExecutionBlockerCard, ExecutionDeliveryDetails, type ExecutionBlocker } from './ExecutionBlockerCard.js';
+import { ExecutionRunActivity } from './ExecutionRunActivity.js';
 
 interface Props {
   projectId: string;
@@ -28,6 +29,24 @@ function formatCost(usd?: number): string {
 const JOB_DETAILS_EVENT_TAIL = 25;
 
 type ExecutionProjection = ExecutionBoardSnapshot['execution'];
+
+const runLabels: Record<ExecutionProjection['state'], string> = {
+  READY: 'Ready', STARTING: 'Starting', RUNNING: 'Running', COMPLETED: 'Completed',
+  BLOCKED: 'Blocked', STOPPED: 'Stopped', FAILED: 'Failed'
+};
+
+type Assignment = NonNullable<ExecutionProjection['work']>['assignments'][number];
+const stepLabels: Record<Assignment['state'], string> = {
+  PENDING: 'Pending', READY: 'Ready', CLAIMED: 'Assigned', BLOCKED: 'Blocked',
+  COMPLETED: 'Complete', FAILED: 'Failed', SKIPPED: 'Skipped'
+};
+
+interface SubmittedBlockerAnswer {
+  blocker: ExecutionBlocker;
+  text: string;
+  stateVersion: number;
+  recorded: boolean;
+}
 
 function durationLabel(ms: number): string {
   return ms % 60_000 === 0 ? `${ms / 60_000} min` : `${Math.round(ms / 1_000)} s`;
@@ -266,9 +285,9 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
   const snapshotRef = useRef<ExecutionBoardSnapshot | null>(null);
   const scopeRef = useRef({ key: '', live: false, inFlight: false });
   const [busy, setBusy] = useState(false);
-  const [replyDraft, setReplyDraft] = useState('');
+  const [submittedAnswer, setSubmittedAnswer] = useState<SubmittedBlockerAnswer>();
   const requestIdentityRef = useRef<{ blockerId: string; text: string; id: string } | undefined>(undefined);
-  const blockerFormRef = useRef<HTMLFormElement>(null);
+  const blockerRef = useRef<HTMLElement>(null);
   const scrolledBlockerRef = useRef<string | undefined>(undefined);
   // An open blocker is the one thing here a person must act on, so bring it into view once per blocker
   // instead of leaving it below the run summary in a short panel.
@@ -276,7 +295,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
   useEffect(() => {
     if (!openBlockerId || scrolledBlockerRef.current === openBlockerId) return;
     scrolledBlockerRef.current = openBlockerId;
-    blockerFormRef.current?.scrollIntoView?.({ block: 'start' });
+    blockerRef.current?.scrollIntoView?.({ block: 'start' });
   }, [openBlockerId]);
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, string>>({});
   const [artifactContent, setArtifactContent] = useState<Record<string, string>>({});
@@ -287,6 +306,7 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
   const personas = usePersonas((state) => state.personas);
   const recoveryReasonId = useId();
   const timeoutRecoveryReasonId = useId();
+  const workHeadingId = useId();
   const refresh = useCallback(async (after = 0) => {
     const scope = scopeRef.current;
     if (!scope.live || scope.key !== `${projectId}:${executionId}` || scope.inFlight) return;
@@ -317,6 +337,10 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
     snapshotRef.current = null;
     setSnapshot(null); setLoaded(false); setUnavailable(false);
     setArtifactContent({});
+    setBusy(false);
+    setSubmittedAnswer(undefined);
+    requestIdentityRef.current = undefined;
+    scrolledBlockerRef.current = undefined;
     void refresh();
     return () => { scope.live = false; };
   }, [refresh, projectId, executionId]);
@@ -356,22 +380,69 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
     {execution.successorExecutionId && <p role="status">Recovered successor: {execution.successorExecutionId}</p>}
     {execution.recoveryAttention && execution.recovery?.status === 'available' && <button className="btn primary" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.relaunchMonitor(projectId, executionId))}>Recover orchestrator</button>}
   </div>;
-  const deliveryPending = snapshot.execution.currentBlocker?.delivery?.state === 'PENDING' || snapshot.execution.currentBlocker?.delivery?.state === 'LEASED';
-  const replyBytes = new TextEncoder().encode(replyDraft).byteLength;
-  const replyTooLarge = replyBytes > 16 * 1024;
-  const mutate = async (action: () => Promise<{ ok: boolean; code?: string; message?: string }>, clearReply = false) => {
+  const currentBlocker = execution.currentBlocker;
+  const localAnswer = submittedAnswer && (!currentBlocker || submittedAnswer.blocker.id === currentBlocker.id)
+    ? submittedAnswer : undefined;
+  const resolvedBlocker = !currentBlocker && localAnswer
+    ? execution.blockers?.find((blocker) => blocker.id === localAnswer.blocker.id && blocker.resolved)
+    : undefined;
+  const awaitingSnapshot = !!localAnswer && !isTerminal && (execution.stateVersion ?? 0) < localAnswer.stateVersion;
+  const blocker = awaitingSnapshot || resolvedBlocker ? localAnswer?.blocker : currentBlocker;
+  const recorded = !!resolvedBlocker || (awaitingSnapshot && !!localAnswer?.recorded);
+  const deliveryState = resolvedBlocker?.deliveryState ?? blocker?.delivery?.state;
+  const deliveryDetails = resolvedBlocker && deliveryState
+    ? execution.deliveries?.find((delivery) => delivery.blockerId === blocker?.id && delivery.state === deliveryState)
+    : undefined;
+  const deliveryId = currentBlocker?.delivery?.id ?? deliveryDetails?.id;
+  // The backend projects delivery metadata only. Echo only the reply sent in
+  // this panel, and only when it corresponds to this delivery or a recorded decision.
+  const ownAnswer = awaitingSnapshot || (deliveryId !== undefined && deliveryId === localAnswer?.blocker.delivery?.id)
+    || (recorded && localAnswer?.recorded);
+  const answer = (ownAnswer ? localAnswer?.text : undefined) ?? blocker?.response;
+  const visibleBlocker = blocker && deliveryDetails
+    ? { ...blocker, delivery: { ...deliveryDetails, retryEligible: false } }
+    : blocker;
+
+  const mutate = async (action: () => Promise<{ ok: boolean; code?: string; message?: string }>) => {
+    const scope = scopeRef.current;
     setBusy(true);
     try {
       const result = await action();
+      if (!scope.live) return;
       if (!result.ok) useUi.getState().pushToast(`Squad control failed: ${result.message ?? result.code}`, 'error');
-      else if (clearReply) {
-        setReplyDraft('');
-        requestIdentityRef.current = undefined;
-      }
       await refresh();
     } catch {
-      useUi.getState().pushToast('Squad control failed: response status unknown', 'error');
-    } finally { setBusy(false); }
+      if (scope.live) useUi.getState().pushToast('Squad control failed: response status unknown', 'error');
+    } finally {
+      if (scope.live) setBusy(false);
+    }
+  };
+  const respond = (target: ExecutionBlocker, message: string) => {
+    if (requestIdentityRef.current?.blockerId !== target.id || requestIdentityRef.current.text !== message) {
+      requestIdentityRef.current = { blockerId: target.id, text: message, id: `${target.id}:${crypto.randomUUID()}` };
+    }
+    const { id } = requestIdentityRef.current;
+    const scope = scopeRef.current;
+    void mutate(async () => {
+      let result = await window.cc.executionBoard.respond(projectId, executionId, execution.stateVersion ?? 0, target.id, id, message);
+      if (!result.ok && result.code === 'CONFLICT' && result.message === 'stale execution state' && scope.live) {
+        // Background updates can advance the run while the same blocker is open.
+        // Main revalidates the blocker ID and deduplicates using the original request ID.
+        result = await window.cc.executionBoard.respond(projectId, executionId, -1, target.id, id, message, true);
+      }
+      if (result.ok && scope.live) {
+        const updated = result.value.currentBlocker;
+        const accepted = updated?.id === target.id ? updated : target;
+        setSubmittedAnswer({
+          blocker: accepted,
+          text: message,
+          stateVersion: result.value.stateVersion ?? (execution.stateVersion ?? 0) + 1,
+          recorded: !!result.value.blockers?.some((blocker) => blocker.id === target.id && blocker.resolved)
+        });
+        requestIdentityRef.current = undefined;
+      }
+      return result;
+    });
   };
   const copyJobDetails = () => {
     // buildJobDetailsText is SYNCHRONOUS — a null snapshot would throw before the
@@ -379,12 +450,12 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
     // !snapshot above, so this is belt-and-suspenders against a future refactor that
     // hoists this handler out of the narrowed scope.
     if (!snapshot) {
-      useUi.getState().pushToast('No job details to copy', 'error');
+      useUi.getState().pushToast('No diagnostics to copy', 'error');
       return;
     }
     void copyText(buildJobDetailsText(projectId, snapshot))
-      .then(() => useUi.getState().pushToast('Job details copied', 'info'))
-      .catch(() => useUi.getState().pushToast('Failed to copy job details', 'error'));
+      .then(() => useUi.getState().pushToast('Diagnostics copied', 'info'))
+      .catch(() => useUi.getState().pushToast('Failed to copy diagnostics', 'error'));
   };
   // Offer only this Squad's own personas; the renderer list is advisory, main enforces the roster.
   const followUpTeam = teams.find((team) => team.id === execution.teamId);
@@ -408,168 +479,207 @@ export function ExecutionJobDetails({ projectId, executionId, onClose }: Props) 
     if (action === 'instruct') setFollowUpInstruction('');
   };
 
+  const work = execution.work;
+  const assignmentOwners = new Map(execution.modernMembers?.map(({ slotId, personaId }) => [slotId, personaId]));
+  const personaNames = new Map(personas.map(({ id, name }) => [id, name]));
+  const ownerLabel = (slotId: string | undefined) => {
+    if (!slotId) return 'Unassigned';
+    // Classic seats carry the configured persona between their row and seat index.
+    const personaId = assignmentOwners.get(slotId) ?? /^\d+:(.+):\d+$/.exec(slotId)?.[1];
+    return (personaId && personaNames.get(personaId)) || slotId;
+  };
+
   return (
     <section className="execution-details" aria-label="Squad details">
-       <header><strong>Squad · {execution.jobTitle}</strong><button className="btn execution-details-close" type="button" onClick={onClose}>Close details</button></header>
-       <div className="execution-details-copy"><button className="btn" type="button" onClick={copyJobDetails}>Copy details</button></div>
-       {recoveryActions}
-      <dl className="execution-details-meta">
-        <dt>Run ID</dt><dd><code>{execution.executionId}</code></dd>
-        <dt>Kind</dt><dd>{execution.launchDisplay?.label ?? 'Squad execution'}</dd>
-        <dt>Status</dt><dd>{execution.state} · attempt {execution.attempt}</dd>
-        <dt>Goal</dt><dd>{execution.objective ?? execution.jobTitle}</dd>
-        <dt>Summary</dt><dd>{execution.summary ?? '—'}</dd>
-        <dt>Squad</dt><dd>{execution.teamName ?? execution.teamId ?? '—'}</dd>
-        {execution.startedFrom ? (
-          <><dt>Started from</dt><dd>{execution.startedFrom.title
-            ?? (execution.startedFrom.kind === 'thread' ? 'A Modern conversation' : 'A CLI Agent session')}</dd></>
-        ) : null}
-        <dt>Orchestrator</dt><dd>{execution.coordinator?.status ?? 'unknown'}{execution.coordinator?.sessionId ? ` · ${execution.coordinator.sessionId}` : ''}</dd>
-      </dl>
-       {execution.recoveryAttention && <p role="alert">Orchestrator lost. {execution.recovery?.status === 'available'
-        ? 'Recovery available. Rotation creates a replacement credential; no cached token is required.'
-         : 'Recovery deadline expired.'}</p>}
-       {execution.retainedWorktree && <section className="execution-worktree" aria-label="Retained Squad worktree">
-         <h4>Retained worktree</h4>
-         <p><code>{execution.retainedWorktree.path}</code> · {execution.retainedWorktree.branch}</p>
-         {execution.retainedWorktree.disposition === 'left' ? <p role="status">Worktree left by user. No further lifecycle action is pending.</p> : <>
-           <p>Leave preserves this checkout. Delete requires confirmation and refuses a worktree with uncommitted changes or unmerged commits. Force delete removes it anyway and permanently discards that work.</p>
-           {followUpRoster.length > 0 && <label className="execution-follow-up-persona">Follow-up persona{' '}
-             <select aria-label="Follow-up persona" value={followUpPersonaId} onChange={(event) => setFollowUpPersonaId(event.target.value)}>
-               <option value="">Squad coordinator (default)</option>
-               {followUpRoster.map((persona) => <option key={persona.id} value={persona.id}>{persona.name ?? persona.id}</option>)}
-             </select>
-           </label>}
-           <textarea aria-label="Follow-up agent instruction" value={followUpInstruction} onChange={(event) => setFollowUpInstruction(event.target.value)} placeholder="Describe the follow-up work…" rows={3} />
-           <div className="execution-details-actions">
-             <button className="btn" type="button" disabled={busy || !followUpInstruction.trim()} onClick={() => void worktreeAction('instruct')}>Instruct an agent</button>
-             <button className="btn" type="button" disabled={busy} onClick={() => void worktreeAction('leave')}>Leave worktree</button>
-             <button className="btn danger" type="button" disabled={busy} onClick={() => void worktreeAction('delete')}>Delete worktree</button>
-             <button className="btn danger" type="button" disabled={busy} onClick={() => void worktreeAction('force-delete')}>Force delete unmerged work</button>
-           </div>
-         </>}
-       </section>}
-      <h4>Sources</h4>
-      {execution.sources?.length ? execution.sources.map((source) => (
-        <div key={source.id}>{source.name} · {source.contentDigest}{source.extractionWarnings.map((warning) => <p key={warning}>{warning}</p>)}</div>
-      )) : <p>No execution sources.</p>}
-      <h4>Work units</h4>
-      <p>{execution.work?.completed ?? 0}/{execution.work?.total ?? 0} complete · Progress {execution.work?.total ? Math.round(execution.work.completed / execution.work.total * 100) : 0}%</p>
-      <p>{Object.entries(execution.work?.counts ?? {}).map(([state, count]) => `${state}: ${count}`).join(' · ')}</p>
-      <h4>Assignments</h4>
-      {execution.work?.assignments.map((assignment) => {
-        const assignedSlotId = assignmentDrafts[assignment.workUnitId] ?? assignment.slotId ?? execution.work?.rosterSlotIds[0] ?? '';
-        return <div key={assignment.workUnitId}>
-          {assignment.title} → {assignment.slotId ?? 'unassigned'} · {assignment.state}
-          {chosenRouteText(assignment as AssignmentRoute) && <p role="status" className="execution-details-route">{chosenRouteText(assignment as AssignmentRoute)}</p>}
-          {assignment.slotId !== undefined && freshSlots.has(assignment.slotId) && <span className="scheduler-pill">Fresh session per unit</span>}
-          {assignment.loopRound !== undefined && assignment.loopMax !== undefined && <p role="status" className="execution-details-recovery-reason">{reviewRoundText(assignment.loopRound, assignment.loopMax)}</p>}
-          {assignment.recovery && <p role="status" className="execution-details-recovery-reason">Recovering engineer after API error: {RECOVERY_TEXT[assignment.recovery.step] ?? assignment.recovery.step}</p>}
-          {!isTerminal && (assignment.state === 'FAILED' || assignment.state === 'BLOCKED') && <>
-            <select aria-label={`Assignment for ${assignment.title}`} value={assignedSlotId} onChange={(event) => setAssignmentDrafts((current) => ({ ...current, [assignment.workUnitId]: event.target.value }))}>
-              <option value="">Unassigned</option>{execution.work?.rosterSlotIds.map((slotId) => <option key={slotId} value={slotId}>{slotId}</option>)}
-            </select>
-            <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.retryWork(projectId, executionId, execution.stateVersion ?? 0, assignment.workUnitId, assignedSlotId || undefined))}>Retry work</button>
-          </>}
-          {assignment.state === 'CLAIMED' && <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.releaseWork(projectId, executionId, execution.stateVersion ?? 0, assignment.workUnitId))}>Release work</button>}
-          {assignment.state === 'READY' && <>
-            <select aria-label={`Assignment for ${assignment.title}`} value={assignedSlotId} onChange={(event) => setAssignmentDrafts((current) => ({ ...current, [assignment.workUnitId]: event.target.value }))}>
-              {execution.work?.rosterSlotIds.map((slotId) => <option key={slotId} value={slotId}>{slotId}</option>)}
-            </select>
-            <button className="btn" type="button" disabled={busy || !assignedSlotId} onClick={() => void mutate(() => window.cc.executionBoard.reassignWork(projectId, executionId, execution.stateVersion ?? 0, assignment.workUnitId, assignedSlotId))}>Reassign work</button>
-          </>}
-        </div>;
-      })}
-      {snapshot.execution.currentBlocker && (
-        <form ref={blockerFormRef} className="execution-blocker" onSubmit={(event) => {
-          event.preventDefault();
-          if (isTerminal) return;
-          const blocker = snapshot.execution.currentBlocker!;
-          const message = replyDraft.trim();
-          if (!message) return;
-          if (requestIdentityRef.current?.blockerId !== blocker.id || requestIdentityRef.current.text !== message) {
-            requestIdentityRef.current = { blockerId: blocker.id, text: message, id: `${blocker.id}:${crypto.randomUUID()}` };
-          }
-          void mutate(() => window.cc.executionBoard.respond(projectId, executionId, execution.stateVersion ?? 0, blocker.id, requestIdentityRef.current!.id, message), true);
-        }}>
-          <div className="execution-blocker-heading"><h4>Current blocker</h4><span>{isTerminal ? 'Squad run closed' : 'Needs your response'}</span>{!isTerminal && snapshot.execution.currentBlocker.waitingSince !== undefined && <span className="execution-blocker-wait" data-testid="execution-blocker-wait">Waiting {formatAge(Date.now() - snapshot.execution.currentBlocker.waitingSince)}</span>}</div>
-          <p className="execution-blocker-question">{snapshot.execution.currentBlocker.question}</p>
-          {snapshot.execution.currentBlocker.options?.length ? <p className="execution-blocker-options">{snapshot.execution.currentBlocker.options.join(' · ')}</p> : null}
-          {isTerminal && <p className="execution-blocker-terminal" role="status">Squad run {execution.state.toLowerCase()}. This blocker is retained as history and can no longer receive a response.</p>}
-          {isTerminal && execution.timeoutReason === 'unresolved-blocker' && <p role="status" aria-live="polite">Timed out while waiting for this blocker. Recovery starts a fresh run; retained read-only work is not repeated.</p>}
-          {snapshot.execution.currentBlocker.notice && <p role="status" aria-live="polite">Inbox notice: {snapshot.execution.currentBlocker.notice.status.toLowerCase()} · attempts {snapshot.execution.currentBlocker.notice.attempts}{snapshot.execution.currentBlocker.notice.inboxItemId ? ` · item ${snapshot.execution.currentBlocker.notice.inboxItemId}` : ''}</p>}
-          {snapshot.execution.currentBlocker.delivery && <p className="execution-delivery-status"
-            role={snapshot.execution.currentBlocker.delivery.state === 'FAILED' ? 'alert' : 'status'}
-            aria-live="polite"
-            aria-atomic="true"
-          >
-            {snapshot.execution.currentBlocker.delivery.state === 'PENDING' && 'Pending delivery'}
-            {snapshot.execution.currentBlocker.delivery.state === 'LEASED' && 'Awaiting worker acknowledgement'}
-            {snapshot.execution.currentBlocker.delivery.state === 'FAILED' && 'Delivery failed'}
-            {snapshot.execution.currentBlocker.delivery.state === 'DELIVERED' && 'Delivered'}
-            {' · Attempt '}{snapshot.execution.currentBlocker.delivery.attempt}/{snapshot.execution.currentBlocker.delivery.maxAttempts}
-            {snapshot.execution.currentBlocker.delivery.error ? ` · ${snapshot.execution.currentBlocker.delivery.error}` : ''}
-            {!isTerminal && snapshot.execution.currentBlocker.delivery.retryEligible && <button className="btn" type="button" disabled={busy} onClick={() => {
-              const blocker = snapshot.execution.currentBlocker!;
-              void mutate(() => window.cc.executionBoard.retryDelivery(projectId, executionId, execution.stateVersion ?? 0, blocker.id, blocker.delivery!.id));
-            }}>Retry</button>}
-          </p>}
-          {!isTerminal && <><label className="execution-blocker-label" htmlFor="execution-blocker-response">Response</label>
-          <textarea id="execution-blocker-response" aria-label="Blocker response" aria-invalid={replyTooLarge || undefined} value={replyDraft} onChange={(event) => setReplyDraft(event.target.value)} placeholder="Give worker decision, missing detail, or approval…" rows={3} />
-          <div className="execution-blocker-actions"><span role="status" aria-live="polite" aria-atomic="true">{replyBytes}/16384 UTF-8 bytes{replyTooLarge ? ' · Response is too large' : deliveryPending ? ' · Answer queued; waiting for worker acknowledgement' : ''}</span>
-          <button className="btn primary" type="submit" disabled={busy || replyTooLarge || deliveryPending} title={deliveryPending ? 'Answer is already queued for this worker. Wait for acknowledgement or retry after delivery fails.' : undefined}>Respond</button></div></>}
-        </form>
-      )}
-      <h4>Progress</h4>
-      {snapshot.events.map((event) => (
-        <details key={event.id}><summary>{event.severity}: {event.summary}</summary>
-          <p>{[event.producerRole, event.slotId, event.eventType].filter(Boolean).join(' · ')}</p>
-          {event.detail && <p>{event.detail}</p>}{event.progress && <p>{event.progress.completed}/{event.progress.total}</p>}
-          {event.references?.map((reference) => <p key={reference.uri}>{reference.label}: {reference.uri}</p>)}
-        </details>
-      ))}
-      <h4>Artifacts</h4>
-      {snapshot.artifacts.map((artifact) => <details key={artifact.id} onToggle={(event) => {
-        if (!event.currentTarget.open || artifactContent[artifact.id] !== undefined) return;
-        const scope = scopeRef.current;
-        void window.cc.executionBoard.readArtifact(projectId, executionId, artifact.id).then((result) => {
-          if (!scope.live) return;
-          if (result.ok) setArtifactContent((current) => ({ ...current, [artifact.id]: result.value.content }));
-          else {
-            console.error(`[ExecutionJobDetails] artifact read failed (execution ${executionId}, artifact ${artifact.id}): ${result.message}`);
-            useUi.getState().pushToast(`Artifact read failed: ${result.message}`, 'error');
-            // Mirror the failure into the same state the successful path uses, so the
-            // <pre> below shows the error instead of "Loading…" forever.
-            setArtifactContent((current) => ({ ...current, [artifact.id]: `Error: ${result.message ?? 'read failed'}` }));
-          }
-        }).catch((err) => {
-          if (!scope.live) return;
-          const message = err instanceof Error ? err.message : String(err);
-          console.error(`[ExecutionJobDetails] artifact read rejected (execution ${executionId}, artifact ${artifact.id})`, err);
-          useUi.getState().pushToast(`Artifact read failed: ${message}`, 'error');
-          setArtifactContent((current) => ({ ...current, [artifact.id]: `Error: ${message}` }));
-        });
-      }}><summary>{artifact.name} · {artifact.mediaType} · {artifact.contentDigest}</summary>{artifactContent[artifact.id] && boundedText(artifactContent[artifact.id]).length < artifactContent[artifact.id].length ? <LargeTextPreview text={artifactContent[artifact.id]} /> : <pre>{artifactContent[artifact.id] ?? 'Loading…'}</pre>}</details>)}
-      <h4>Usage</h4>
-      <p>Attribution: {execution.usage?.completeness ?? 'unavailable'} · Observations {execution.usage?.observationCount ?? 0} · Gaps {execution.usage?.gapCount ?? 0}</p>
-       {execution.usage?.byRole.map((usage) => <p key={usage.role}>{usage.role}: input {usage.inputTokens ?? 'unknown'} · output {usage.outputTokens ?? 'unknown'} · cache read {usage.cacheReadTokens ?? 'unknown'} · cache write {usage.cacheWriteTokens ?? 'unknown'} · provider-reported cost {usage.providerCostUsd === undefined ? 'unknown' : `$${usage.providerCostUsd.toFixed(4)}`}</p>)}
-      <h4>Assembled result</h4>
-      {execution.assembledResult ? <div>
-        <p>{execution.assembledResult.outcome} · <code>{execution.assembledResult.digest}</code></p>
-        <p>{execution.assembledResult.summary}</p>
-        {execution.assembledResult.units.map((unit) => <details key={unit.id}><summary>{unit.title} · {unit.state}</summary>
-          {unit.result && <p>{unit.result}</p>}
-        </details>)}
-      </div> : <p>Not assembled.</p>}
-      <h4>Route fit</h4>
-      {execution.routeFitProposal ? <p>{execution.routeFitProposal.fit} · {execution.routeFitProposal.reason} · inactive proposal ({execution.routeFitProposal.evaluatorVersion})</p> : <p>Not evaluated.</p>}
-      {execution.limits && <p data-testid="execution-limits">Run limits: {limitsSummary(execution.limits)}</p>}
-      {execution.failureReason && <><h4>Failure reason</h4><p>{execution.failureReason}</p></>}
-      <h4>Final summary</h4><p>{execution.finalSummary ?? 'Not completed.'}</p>
-       <div className="execution-details-actions">
-         {!terminal.has(execution.state) && <button className="btn danger" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.stop(projectId, executionId, execution.stateVersion ?? 0))}>Stop Squad run</button>}
-         {execution.state === 'BLOCKED' && !execution.currentBlocker && !execution.resourceBlock && <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.retry(projectId, executionId, execution.stateVersion ?? 0))}>Retry Squad run</button>}
-       </div>
+      <header className="execution-run-header">
+        <div className="execution-run-title"><h3>{execution.jobTitle}</h3>{execution.teamName && <p>{execution.teamName}</p>}</div>
+        <div className="execution-run-header-actions">
+          <span className="execution-run-badge" data-state={execution.state} data-testid="execution-run-state">{runLabels[execution.state]}</span>
+          {!isTerminal && (
+            <button className="btn danger" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.stop(projectId, executionId, execution.stateVersion ?? 0))}>Stop Squad run</button>
+          )}
+          <button className="btn execution-details-close" type="button" onClick={onClose}>Close details</button>
+        </div>
+      </header>
+      <div className="execution-run-layout">
+        <div className="execution-run-main">
+          {visibleBlocker && (
+            <ExecutionBlockerCard
+              key={visibleBlocker.id}
+              blocker={visibleBlocker}
+              deliveryState={deliveryState}
+              recorded={recorded}
+              closed={isTerminal}
+              timedOut={execution.timeoutReason === 'unresolved-blocker'}
+              answer={answer}
+              workTitle={execution.work?.assignments.find((assignment) => assignment.workUnitId === visibleBlocker.workUnitId)?.title}
+              busy={busy}
+              sectionRef={blockerRef}
+              onRespond={(message) => respond(visibleBlocker, message)}
+              onRetry={(deliveryId) => void mutate(() => window.cc.executionBoard.retryDelivery(
+                projectId, executionId, execution.stateVersion ?? 0, visibleBlocker.id, deliveryId
+              ))}
+            />
+          )}
+          {recoveryActions}
+          {execution.recoveryAttention && <p role="alert">Orchestrator lost. {execution.recovery?.status === 'available'
+           ? 'Recovery available. Rotation creates a replacement credential; no cached token is required.'
+            : 'Recovery deadline expired.'}</p>}
+          {execution.retainedWorktree && <section className="execution-worktree" aria-label="Retained Squad worktree">
+            <h4>Retained worktree</h4>
+            <p><code>{execution.retainedWorktree.path}</code> · {execution.retainedWorktree.branch}</p>
+            {execution.retainedWorktree.disposition === 'left' ? <p role="status">Worktree left by user. No further lifecycle action is pending.</p> : <>
+              <p>Leave preserves this checkout. Delete requires confirmation and refuses a worktree with uncommitted changes or unmerged commits. Force delete removes it anyway and permanently discards that work.</p>
+              {followUpRoster.length > 0 && <label className="execution-follow-up-persona">Follow-up persona{' '}
+                <select aria-label="Follow-up persona" value={followUpPersonaId} onChange={(event) => setFollowUpPersonaId(event.target.value)}>
+                  <option value="">Squad coordinator (default)</option>
+                  {followUpRoster.map((persona) => <option key={persona.id} value={persona.id}>{persona.name ?? persona.id}</option>)}
+                </select>
+              </label>}
+              <textarea aria-label="Follow-up agent instruction" value={followUpInstruction} onChange={(event) => setFollowUpInstruction(event.target.value)} placeholder="Describe the follow-up work…" rows={3} />
+              <div className="execution-details-actions">
+                <button className="btn" type="button" disabled={busy || !followUpInstruction.trim()} onClick={() => void worktreeAction('instruct')}>Instruct an agent</button>
+                <button className="btn" type="button" disabled={busy} onClick={() => void worktreeAction('leave')}>Leave worktree</button>
+                <button className="btn danger" type="button" disabled={busy} onClick={() => void worktreeAction('delete')}>Delete worktree</button>
+                <button className="btn danger" type="button" disabled={busy} onClick={() => void worktreeAction('force-delete')}>Force delete unmerged work</button>
+              </div>
+            </>}
+          </section>}
+          <section className="execution-run-card" aria-labelledby={workHeadingId}>
+            <div className="execution-run-card-heading">
+              <h4 id={workHeadingId}>Work steps</h4>
+              {!!work?.total && (
+                <div className="execution-run-progress">
+                  <span>{work.completed}/{work.total} complete</span>
+                  <progress aria-label="Work steps complete" max={work.total} value={work.completed} />
+                </div>
+              )}
+            </div>
+            {work?.assignments.length ? (
+              <ul className="execution-run-steps">{work.assignments.map((assignment) => {
+                const assignedSlotId = assignmentDrafts[assignment.workUnitId] ?? assignment.slotId ?? work.rosterSlotIds[0] ?? '';
+                const asking = currentBlocker?.workUnitId === assignment.workUnitId && currentBlocker.audience !== 'coordinator';
+                const needsReply = asking && assignment.state === 'BLOCKED' && !deliveryState;
+                const route = chosenRouteText(assignment);
+                const canManage = !isTerminal && assignment.state !== 'PENDING' && assignment.state !== 'COMPLETED' && assignment.state !== 'SKIPPED';
+                return (
+                  <li key={assignment.workUnitId} data-needs-reply={needsReply || undefined}>
+                    <div className="execution-run-step-line">
+                      <div><strong>{assignment.title}</strong><small>{ownerLabel(assignment.slotId)}</small></div>
+                      <span className="execution-run-badge" data-state={assignment.state}>{needsReply ? 'Needs you' : stepLabels[assignment.state]}</span>
+                    </div>
+                    {route && <p className="execution-details-route" role="status">{route}</p>}
+                    {assignment.slotId && freshSlots.has(assignment.slotId) && <span className="scheduler-pill">Fresh session per unit</span>}
+                    {assignment.loopRound !== undefined && assignment.loopMax !== undefined && <p className="execution-details-recovery-reason" role="status">{reviewRoundText(assignment.loopRound, assignment.loopMax)}</p>}
+                    {assignment.recovery && <p className="execution-details-recovery-reason" role="status">Recovering engineer after API error: {RECOVERY_TEXT[assignment.recovery.step] ?? assignment.recovery.step}</p>}
+                    {canManage && (
+                      <details className="execution-run-step-actions">
+                        <summary>Assignment actions</summary>
+                        <div className="execution-details-actions">
+                          {(assignment.state === 'FAILED' || assignment.state === 'BLOCKED') && <>
+                            <select aria-label={`Assignment for ${assignment.title}`} value={assignedSlotId} onChange={(event) => setAssignmentDrafts((current) => ({ ...current, [assignment.workUnitId]: event.target.value }))}>
+                              <option value="">Unassigned</option>{work.rosterSlotIds.map((slotId) => <option key={slotId} value={slotId}>{slotId}</option>)}
+                            </select>
+                            <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.retryWork(projectId, executionId, execution.stateVersion ?? 0, assignment.workUnitId, assignedSlotId || undefined))}>Retry work</button>
+                          </>}
+                          {assignment.state === 'CLAIMED' && <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.releaseWork(projectId, executionId, execution.stateVersion ?? 0, assignment.workUnitId))}>Release work</button>}
+                          {assignment.state === 'READY' && <>
+                            <select aria-label={`Assignment for ${assignment.title}`} value={assignedSlotId} onChange={(event) => setAssignmentDrafts((current) => ({ ...current, [assignment.workUnitId]: event.target.value }))}>
+                              {work.rosterSlotIds.map((slotId) => <option key={slotId} value={slotId}>{slotId}</option>)}
+                            </select>
+                            <button className="btn" type="button" disabled={busy || !assignedSlotId} onClick={() => void mutate(() => window.cc.executionBoard.reassignWork(projectId, executionId, execution.stateVersion ?? 0, assignment.workUnitId, assignedSlotId))}>Reassign work</button>
+                          </>}
+                        </div>
+                      </details>
+                    )}
+                  </li>
+                );
+              })}</ul>
+            ) : <p className="execution-run-empty">No work steps yet.</p>}
+          </section>
+          {snapshot.artifacts.length > 0 && (
+            <section className="execution-run-card" aria-label="Artifacts">
+              <div className="execution-run-card-heading"><h4>Artifacts</h4></div>
+              <div className="execution-run-card-body">
+                {snapshot.artifacts.map((artifact) => <details key={artifact.id} onToggle={(event) => {
+                  if (!event.currentTarget.open || artifactContent[artifact.id] !== undefined) return;
+                  const scope = scopeRef.current;
+                  void window.cc.executionBoard.readArtifact(projectId, executionId, artifact.id).then((result) => {
+                    if (!scope.live) return;
+                    if (result.ok) setArtifactContent((current) => ({ ...current, [artifact.id]: result.value.content }));
+                    else {
+                      console.error(`[ExecutionJobDetails] artifact read failed (execution ${executionId}, artifact ${artifact.id}): ${result.message}`);
+                      useUi.getState().pushToast(`Artifact read failed: ${result.message}`, 'error');
+                      // Mirror the failure into the same state the successful path uses, so the
+                      // <pre> below shows the error instead of "Loading…" forever.
+                      setArtifactContent((current) => ({ ...current, [artifact.id]: `Error: ${result.message ?? 'read failed'}` }));
+                    }
+                  }).catch((err) => {
+                    if (!scope.live) return;
+                    const message = err instanceof Error ? err.message : String(err);
+                    console.error(`[ExecutionJobDetails] artifact read rejected (execution ${executionId}, artifact ${artifact.id})`, err);
+                    useUi.getState().pushToast(`Artifact read failed: ${message}`, 'error');
+                    setArtifactContent((current) => ({ ...current, [artifact.id]: `Error: ${message}` }));
+                  });
+                }}><summary>{artifact.name} · {artifact.mediaType} · {artifact.contentDigest}</summary>{artifactContent[artifact.id] && boundedText(artifactContent[artifact.id]).length < artifactContent[artifact.id].length ? <LargeTextPreview text={artifactContent[artifact.id]} /> : <pre>{artifactContent[artifact.id] ?? 'Loading…'}</pre>}</details>)}
+              </div>
+            </section>
+          )}
+          {(execution.assembledResult || execution.finalSummary || execution.failureReason) && (
+            <section className="execution-run-card" aria-label="Run outcome">
+              <div className="execution-run-card-heading"><h4>Run outcome</h4></div>
+              <div className="execution-run-card-body">
+                {execution.assembledResult && <div>
+                  <h4>Assembled result</h4>
+                  <p>{execution.assembledResult.outcome} · <code>{execution.assembledResult.digest}</code></p>
+                  <p>{execution.assembledResult.summary}</p>
+                  {execution.assembledResult.units.map((unit) => <details key={unit.id}><summary>{unit.title} · {unit.state}</summary>
+                    {unit.result && <p>{unit.result}</p>}
+                  </details>)}
+                </div>}
+                {execution.failureReason && <><h4>Failure reason</h4><p>{execution.failureReason}</p></>}
+                {execution.finalSummary && <><h4>Final summary</h4><p>{execution.finalSummary}</p></>}
+              </div>
+            </section>
+          )}
+          {execution.state === 'BLOCKED' && !currentBlocker && !execution.resourceBlock && (
+            <div className="execution-details-actions">
+              <button className="btn" type="button" disabled={busy} onClick={() => void mutate(() => window.cc.executionBoard.retry(projectId, executionId, execution.stateVersion ?? 0))}>Retry Squad run</button>
+            </div>
+          )}
+        </div>
+        <aside className="execution-run-rail" aria-label="Run activity and diagnostics">
+          {visibleBlocker && <ExecutionDeliveryDetails key={visibleBlocker.id} blocker={visibleBlocker} />}
+          <ExecutionRunActivity key={execution.executionId} events={snapshot.events} work={work} truncated={snapshot.truncated} />
+          <details className="execution-run-card execution-run-disclosure execution-run-diagnostics">
+            <summary>Diagnostics</summary>
+            <button className="btn execution-run-copy" type="button" onClick={copyJobDetails}>Copy diagnostics</button>
+            <dl className="execution-details-meta">
+              <dt>Run ID</dt><dd><code>{execution.executionId}</code></dd>
+              <dt>Kind</dt><dd>{execution.launchDisplay?.label ?? 'Squad execution'}</dd>
+              <dt>Status</dt><dd>{execution.state} · attempt {execution.attempt}</dd>
+              {execution.objective && execution.objective !== execution.jobTitle && <><dt>Goal</dt><dd>{execution.objective}</dd></>}
+              <dt>Summary</dt><dd>{execution.summary ?? '—'}</dd>
+              <dt>Squad</dt><dd>{execution.teamName ?? execution.teamId ?? '—'}</dd>
+              {execution.startedFrom ? (
+                <><dt>Started from</dt><dd>{execution.startedFrom.title
+                  ?? (execution.startedFrom.kind === 'thread' ? 'A Modern conversation' : 'A CLI Agent session')}</dd></>
+              ) : null}
+              <dt>Orchestrator</dt><dd>{execution.coordinator?.status ?? 'unknown'}{execution.coordinator?.sessionId ? ` · ${execution.coordinator.sessionId}` : ''}</dd>
+            </dl>
+            <h4>Sources</h4>
+            {execution.sources?.length ? execution.sources.map((source) => (
+              <div key={source.id}>{source.name} · {source.contentDigest}{source.extractionWarnings.map((warning) => <p key={warning}>{warning}</p>)}</div>
+            )) : <p>No execution sources.</p>}
+            <h4>Usage</h4>
+            <p>Attribution: {execution.usage?.completeness ?? 'unavailable'} · Observations {execution.usage?.observationCount ?? 0} · Gaps {execution.usage?.gapCount ?? 0}</p>
+             {execution.usage?.byRole.map((usage) => <p key={usage.role}>{usage.role}: input {usage.inputTokens ?? 'unknown'} · output {usage.outputTokens ?? 'unknown'} · cache read {usage.cacheReadTokens ?? 'unknown'} · cache write {usage.cacheWriteTokens ?? 'unknown'} · provider-reported cost {usage.providerCostUsd === undefined ? 'unknown' : `$${usage.providerCostUsd.toFixed(4)}`}</p>)}
+            <h4>Route fit</h4>
+            {execution.routeFitProposal ? <p>{execution.routeFitProposal.fit} · {execution.routeFitProposal.reason} · inactive proposal ({execution.routeFitProposal.evaluatorVersion})</p> : <p>Not evaluated.</p>}
+            {execution.limits && <p data-testid="execution-limits">Run limits: {limitsSummary(execution.limits)}</p>}
+          </details>
+        </aside>
+      </div>
     </section>
   );
 }

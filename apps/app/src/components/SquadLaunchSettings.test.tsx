@@ -69,14 +69,13 @@ describe('SquadLaunchSettings', () => {
     expect(onChange).toHaveBeenLastCalledWith({});
   });
 
-  it('uses policy field isolation only when checkout is excluded', () => {
-    const { rerender } = render(<SquadLaunchPolicyFields value={{}} onChange={vi.fn()} disabled={false} />);
-    expect(screen.getByLabelText('Worktree isolation')).toBeTruthy();
-    expect(screen.getAllByRole('option', { name: 'Use default' })).toHaveLength(4);
-    expect(screen.getByTestId('precedence-launch.options').textContent).toMatch(/This launch.*Plan.*Squad.*Built-in default/);
-    expect(screen.queryByText(/Inherit resolved/)).toBeNull();
-    rerender(<SquadLaunchPolicyFields value={{}} onChange={vi.fn()} disabled={false} includeCheckout />);
+  it('uses shared picklists for composer policies and keeps checkout separate', () => {
+    const { rerender } = render(<SquadLaunchPolicyFields value={{}} onChange={vi.fn()} disabled={false} composer checkoutOwned />);
     expect(screen.queryByLabelText('Worktree isolation')).toBeNull();
+    expect(screen.getByRole('button', { name: 'On complete' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'On complete' }).textContent).toContain('Keep checkout and branch');
+    expect(screen.getByRole('button', { name: 'Push' })).toHaveProperty('disabled', false);
+    rerender(<SquadLaunchPolicyFields value={{}} onChange={vi.fn()} disabled={false} />);
     expect(screen.getAllByRole('option', { name: 'Use default' })).toHaveLength(3);
   });
 
@@ -96,10 +95,7 @@ describe('SquadLaunchSettings', () => {
 
   it('updates every policy selector and supports no checks', () => {
     const onChange = vi.fn();
-    const { rerender } = render(<SquadLaunchPolicyFields value={{}} onChange={onChange} disabled={false} />);
-    fireEvent.change(screen.getByLabelText('Worktree isolation'), { target: { value: 'true' } });
-    expect(onChange).toHaveBeenLastCalledWith({ worktree: true });
-    rerender(<SquadLaunchPolicyFields value={{ worktree: true }} onChange={onChange} disabled={false} />);
+    const { rerender } = render(<SquadLaunchPolicyFields value={{ worktree: true }} onChange={onChange} disabled={false} />);
     fireEvent.change(screen.getByLabelText('On complete'), { target: { value: 'delete' } });
     expect(onChange).toHaveBeenLastCalledWith({ worktree: true, onComplete: 'delete' });
     rerender(<SquadLaunchPolicyFields value={{ worktree: true, onComplete: 'delete' }} onChange={onChange} disabled={false} />);

@@ -400,7 +400,8 @@ test('demo: a tour of Zana', async ({ app }) => {
     await say('flow');
     await go(page.getByTestId('nav-agents'));
     await expect(page.locator('.agent-card').filter({ hasText: /Atlas/ }).first()).toBeVisible({ timeout: 30_000 });
-    await go(page.getByRole('button', { name: 'Flow view' }));
+    await go(page.getByRole('button', { name: 'Squads view' }));
+    await go(page.getByRole('button', { name: 'Map', exact: true }));
     const edges = page.locator('svg.squad-flow-edges');
     await expect(edges.locator('path.squad-flow-edge').first()).toBeVisible({ timeout: 30_000 });
     await focus(edges, 3600);

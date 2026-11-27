@@ -1,0 +1,562 @@
+.squad-flow.squad-overview {
+  --squad-action: var(--danger);
+  --squad-working: var(--settings-link, var(--accent-blue));
+  container: squad-overview / inline-size;
+  min-width: 0;
+  padding: 12px clamp(12px, 2.7vw, 40px) 24px;
+  gap: 14px;
+}
+
+.squad-overview > * {
+  flex-shrink: 0;
+}
+
+.squad-overview-header,
+.squad-overview-tools,
+.squad-map-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 8px 16px;
+}
+
+.squad-overview h1 {
+  margin: 0;
+  color: var(--text-bright);
+  font-size: 25px;
+  line-height: 1.2;
+  letter-spacing: -.025em;
+}
+
+.squad-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.squad-select select,
+.squad-search {
+  min-width: 0;
+  min-height: 34px;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.squad-select select {
+  max-width: min(320px, 100%);
+  padding: 4px 8px;
+  font: inherit;
+}
+
+.squad-search {
+  display: flex;
+  flex: 0 1 270px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  color: var(--text-muted);
+}
+
+.squad-search input {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  font: inherit;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.squad-search input::placeholder {
+  color: var(--text-muted);
+}
+
+.squad-search:focus-within,
+.squad-overview button:focus-visible,
+.squad-select select:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--accent-blue));
+  outline-offset: 2px;
+}
+
+.squad-search input:focus {
+  outline: none;
+}
+
+.squad-view-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+
+.squad-view-switch button {
+  min-height: 29px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.squad-view-switch button:hover,
+.squad-view-switch button[aria-pressed='true'] {
+  background: var(--bg-panel);
+  color: var(--text-bright);
+}
+
+.squad-view-switch button[aria-pressed='true'] {
+  border-color: var(--border);
+  font-weight: 600;
+}
+
+.squad-status-filters {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.squad-filter-tile {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  min-height: 46px;
+  gap: 5px 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  text-align: start;
+  font: inherit;
+  cursor: pointer;
+}
+
+.squad-filter-tile strong {
+  font-size: 18px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.squad-filter-tile span,
+.squad-status {
+  font-size: 12px;
+}
+
+.squad-filter-tile:hover,
+.squad-roster-row:hover {
+  background: var(--bg-hover);
+}
+
+.squad-filter-tile[aria-pressed='true'],
+.squad-roster-row[aria-pressed='true'] {
+  color: var(--text-bright);
+  background: color-mix(in srgb, var(--accent-blue) 12%, var(--bg-panel));
+}
+
+.squad-filter-tile[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--accent-blue) 55%, var(--border));
+}
+
+.squad-filter-tile[data-status='working'] strong,
+.squad-status[data-status='working'] {
+  color: var(--squad-working);
+}
+
+.squad-filter-tile[data-status='blocked'] strong,
+.squad-status[data-status='blocked'] {
+  color: var(--squad-action);
+}
+
+.squad-other-statuses {
+  grid-column: 1 / -1;
+  justify-self: end;
+}
+
+.squad-content,
+.squad-content-main {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.squad-content--inspecting {
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 26%);
+  align-items: start;
+}
+
+.squad-section-title {
+  margin: 0 0 7px;
+  color: var(--text-bright);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.squad-section-title small {
+  margin-inline-start: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.squad-section-title small,
+.squad-roster-body small,
+.squad-detail-title small,
+.squad-detail-state small,
+.squad-attention small {
+  color: var(--text-muted);
+}
+
+.squad-surface {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-panel);
+}
+
+.squad-run + .squad-run {
+  margin-top: 9px;
+}
+
+.squad-run-header,
+.squad-roster-row {
+  display: grid;
+  grid-template-columns: 29px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 8px 12px;
+}
+
+.squad-roster-row {
+  width: 100%;
+  min-height: 47px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.squad-roster-row:first-child {
+  border-radius: 8px 8px 0 0;
+}
+
+.squad-roster-row:last-child {
+  border-radius: 0 0 8px 8px;
+}
+
+.squad-roster-row:first-child:last-child {
+  border-radius: 8px;
+}
+
+.squad-run-header + .squad-roster-row,
+.squad-roster-row + .squad-roster-row {
+  border-top: 1px solid var(--border);
+}
+
+.squad-roster-row:focus-visible {
+  outline-offset: -2px;
+}
+
+.squad-roster-row[data-status='working']:not([aria-pressed='true']):not(:hover) {
+  background: color-mix(in srgb, var(--accent-blue) 5%, var(--bg-panel));
+}
+
+.squad-roster-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.squad-roster-body strong,
+.squad-run-header h3 {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.35;
+  font-weight: 650;
+}
+
+.squad-roster-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+}
+
+.squad-roster-chevron {
+  color: var(--text-muted);
+}
+
+.squad-run-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.squad-run-actions,
+.squad-dismissal {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.squad-dismissed-runs > summary {
+  padding: 8px 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.squad-dismissed-runs ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.squad-dismissed-runs .squad-dismissal { border-top: 1px solid var(--border); }
+.squad-dismissed-runs small { color: var(--text-muted); }
+
+.squad-run-actions:empty { display: none; }
+
+.squad-dismissal {
+  justify-content: space-between;
+  padding: 7px 12px;
+  overflow-wrap: anywhere;
+}
+
+.squad-status {
+  justify-self: start;
+  padding: 3px 7px;
+  border-radius: 5px;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.squad-status[data-status='working'],
+.squad-status[data-status='blocked'],
+.squad-status[data-status='done'] {
+  background: color-mix(in srgb, currentColor 11%, var(--bg-panel));
+}
+
+.squad-filter-tile[data-status='done'] strong,
+.squad-status[data-status='done'] {
+  color: var(--success);
+}
+
+.squad-attention {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  min-height: 42px;
+  gap: 9px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--squad-action) 32%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--squad-action) 8%, var(--bg-panel));
+  color: var(--text-primary);
+  font: inherit;
+  text-align: start;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.squad-attention + .squad-attention {
+  margin-top: -6px;
+}
+
+.squad-attention:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--squad-action) 14%, var(--bg-panel));
+}
+
+.squad-attention strong {
+  color: var(--squad-action);
+}
+
+.squad-attention small {
+  display: block;
+  margin-top: 3px;
+}
+
+.squad-run > .squad-attention {
+  width: calc(100% - 24px);
+  margin: 0 12px 8px;
+}
+
+.squad-empty {
+  margin: 0;
+  padding: 12px;
+  color: var(--text-muted);
+}
+
+.squad-empty .btn {
+  margin-inline-start: 8px;
+}
+
+.squad-member-details {
+  position: sticky;
+  top: 0;
+  padding: 12px;
+}
+
+.squad-detail-title,
+.squad-detail-state,
+.squad-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.squad-detail-title {
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 9px;
+}
+
+.squad-detail-title h2 {
+  margin: 2px 0 0;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+
+.squad-detail-title h2:focus {
+  outline: none;
+}
+
+.squad-detail-question {
+  overflow-wrap: anywhere;
+  padding: 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--squad-action) 8%, var(--bg-panel));
+}
+
+.squad-detail-question strong {
+  display: block;
+  margin-bottom: 3px;
+}
+
+.squad-detail-actions {
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.squad-map-heading {
+  margin-bottom: 2px;
+}
+
+.squad-map-legend,
+.squad-map-legend span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.squad-dependency-dash {
+  display: inline-block;
+  width: 16px;
+  border-top: 2px dashed currentColor;
+}
+
+.squad-flow-edge--dependency {
+  stroke-dasharray: 5 4;
+}
+
+.squad-overview .squad-flow-head {
+  padding-inline: 0;
+}
+
+.squad-overview .squad-flow-canvas {
+  margin-inline: 0;
+  max-height: 480px;
+}
+
+.squad-overview .squad-flow-node {
+  box-shadow: 0 2px 5px color-mix(in srgb, #000 13%, transparent);
+  background: var(--bg-panel);
+}
+
+.squad-overview .squad-flow-node:hover {
+  background: var(--bg-hover);
+}
+
+.squad-overview .squad-flow-node--orch {
+  border-color: var(--border-strong);
+}
+
+.squad-overview .squad-flow-stat.agent-idle,
+.squad-overview .squad-flow-state-text.agent-idle {
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+
+.squad-overview .squad-flow-run-groups {
+  max-height: 560px;
+}
+
+.squad-overview .squad-flow-run-groups .squad-flow-canvas {
+  max-height: none;
+}
+
+.app-shell[data-mobile='true'] .squad-flow.squad-overview {
+  padding-inline: 12px;
+}
+
+.app-shell[data-mobile='true'] .squad-view-switch button,
+.app-shell[data-mobile='true'] .squad-search input,
+.app-shell[data-mobile='true'] .squad-select select,
+@container squad-overview (max-width: 620px) {
+  .squad-content--inspecting {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .squad-member-details {
+    grid-row: 1;
+    position: static;
+  }
+
+  .squad-status-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .squad-roster-row,
+  .squad-run-header {
+    gap: 6px;
+    padding-inline: 8px;
+  }
+
+  .squad-run-header {
+    grid-template-columns: 29px minmax(0, 1fr) auto;
+  }
+
+  .squad-run-header h3 {
+    hyphens: auto;
+  }
+
+  .squad-run-actions {
+    grid-column: 2 / -1;
+    justify-self: start;
+  }
+}

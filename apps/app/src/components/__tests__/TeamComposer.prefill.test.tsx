@@ -170,7 +170,7 @@ describe('TeamComposer prefill', () => {
     expect(fieldOpts).toHaveBeenCalledWith(expect.objectContaining({ initialText: 'Build the thing', projectId: 'p2' }));
     expect(screen.getByTestId('team-picker').getAttribute('data-value')).toBe('t2');
     expect(screen.getByTestId('team-coordination-mode').getAttribute('data-value')).toBe('structured');
-    fireEvent.click(screen.getByRole('button', { name: /^Customize launch/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Launch settings/ }));
     expect((screen.getByLabelText(/Title/) as HTMLInputElement).value).toBe('Big job');
     expect((screen.getByLabelText(/Summary/) as HTMLTextAreaElement).value).toBe('Why it matters');
     expect(screen.getByText('design.md')).toBeTruthy();

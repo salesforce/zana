@@ -558,46 +558,25 @@ test('Main views and populated Inbox fit phone and tablet screens', async ({ app
         }
         if (name === 'agents') {
           await page.getByRole('button', { name: 'Agents actions', exact: true }).click();
-          await expect(page.getByRole('button', { name: 'Canvas view', exact: true })).toBeVisible();
+          await expect(page.getByRole('button', { name: 'Squads view', exact: true })).toBeVisible();
           if (width === 320) {
             await expect(page.getByRole('button', { name: 'Board view', exact: true })).toHaveAttribute('aria-pressed', 'true');
           }
-          await page.getByRole('button', { name: 'Canvas view', exact: true }).click();
-          const canvas = page.locator('.squad-flow-canvas').first();
-          await expect(canvas).toBeVisible();
-          const canvasBox = await canvas.boundingBox();
-          expect(canvasBox!.width).toBeGreaterThanOrEqual(width - 48);
-          expect(canvasBox!.x + canvasBox!.width).toBeLessThanOrEqual(width);
-          const canvasAgent = canvas.locator('.squad-flow-node').first();
-          await expect(canvasAgent).toBeVisible();
-          expect(await canvasAgent.evaluate(el => getComputedStyle(el).touchAction)).toBe('pan-x pan-y');
-          await page.screenshot({ path: testInfo.outputPath(`${width}-agents-canvas.png`) });
-          const nodeBox = await canvasAgent.boundingBox();
-          expect(nodeBox!.x).toBeGreaterThanOrEqual(canvasBox!.x);
-          expect(nodeBox!.x + nodeBox!.width).toBeLessThanOrEqual(canvasBox!.x + canvasBox!.width);
-          if (width === 320) {
-            const beforePan = await canvas.evaluate(el => el.scrollLeft);
-            const position = await canvasAgent.getAttribute('style');
-            const touch = await context.newCDPSession(page);
-            const x = nodeBox!.x + nodeBox!.width / 2;
-            const y = nodeBox!.y + nodeBox!.height / 2;
-            await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
-            for (const offset of [20, 40, 60, 80]) {
-              await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x - offset, y }] });
-            }
-            await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-            await expect.poll(() => canvas.evaluate(el => el.scrollLeft)).toBeGreaterThan(beforePan + 15);
-            await expect(canvasAgent).toHaveAttribute('style', position!);
-            await expect(page).not.toHaveURL(/\/sessions\//);
-            await touch.detach();
-            await canvas.evaluate((el, left) => { el.scrollLeft = left; }, beforePan);
-          }
-          await canvasAgent.tap();
-          await expect(page).toHaveURL(/\/sessions\//);
-          await expect(page.locator('.agent-terminal-modal')).toHaveCount(0);
-          await page.goBack();
+          await page.getByRole('button', { name: 'Squads view', exact: true }).click();
+          const overview = page.getByRole('region', { name: 'Squads', exact: true });
+          await expect(overview).toBeVisible();
+          const overviewBox = await overview.boundingBox();
+          expect(overviewBox!.width).toBeGreaterThanOrEqual(width - 48);
+          expect(overviewBox!.x + overviewBox!.width).toBeLessThanOrEqual(width);
+          const emptySquads = overview.getByText('No Squad runs in this project', { exact: true });
+          await expect(emptySquads).toBeVisible();
+          await overview.getByRole('button', { name: 'Map', exact: true }).tap();
+          await expect(emptySquads).toBeVisible();
+          await overview.getByRole('button', { name: 'Overview', exact: true }).tap();
+          await expect(overview.locator('.squad-roster-row')).toHaveCount(0);
+          await page.screenshot({ path: testInfo.outputPath(`${width}-agents-squads.png`) });
           await page.getByRole('button', { name: 'Agents actions', exact: true }).click();
-          await expect(page.getByRole('button', { name: 'Canvas view', exact: true })).toHaveAttribute('aria-pressed', 'true');
+          await expect(page.getByRole('button', { name: 'Squads view', exact: true })).toHaveAttribute('aria-pressed', 'true');
           await page.getByRole('button', { name: 'List view', exact: true }).click();
           await expect(page.locator('.agent-monitor-row').first()).toBeVisible();
           await page.screenshot({ path: testInfo.outputPath(`${width}-agents-list.png`) });
@@ -737,14 +716,14 @@ test('Main views and populated Inbox fit phone and tablet screens', async ({ app
     const desktopDetail = await page.locator('.agent-monitor-main').boundingBox();
     expect(desktopDetail!.x).toBeGreaterThanOrEqual(desktopList!.x + desktopList!.width - 1);
     await expect(page.getByRole('button', { name: 'Back to agents', exact: true })).toHaveCount(0);
-    await page.getByRole('button', { name: 'Flow view', exact: true }).click();
+    await page.getByRole('button', { name: 'Squads view', exact: true }).click();
     await page.setViewportSize({ width: 390, height: 900 });
     await page.getByRole('button', { name: 'Agents actions', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Canvas view', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Squads view', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Close actions', exact: true }).click();
     await expect(page.getByTestId('mobile-agent-board')).toBeVisible();
     await page.setViewportSize({ width: 1280, height: 900 });
-    await expect(page.getByRole('button', { name: 'Flow view', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('button', { name: 'Squads view', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await expect(page.locator('.squad-flow, .squad-flow-empty').first()).toBeVisible();
     writeFileSync(testInfo.outputPath('responsive-audit.json'), JSON.stringify(audit, null, 2));
   } finally {

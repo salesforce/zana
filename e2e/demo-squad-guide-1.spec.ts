@@ -116,7 +116,8 @@ test('demo: what is a Squad', async ({ app }) => {
     };
     // Warm Flow view and the Inbox question once (first paint is slow), then rest on Settings -> Squads.
     await tap(page, page.getByTestId('nav-agents'));
-    await tap(page, page.getByRole('button', { name: 'Flow view' }));
+    await tap(page, page.getByRole('button', { name: 'Squads view' }));
+    await tap(page, page.getByRole('button', { name: 'Map', exact: true }));
     await expect(page.locator('svg.squad-flow-edges path.squad-flow-edge').first()).toBeVisible({ timeout: 30_000 });
     await page.getByRole('link', { name: 'Settings', exact: true }).click();
     await page.getByTestId('settings-nav-squads').click();
@@ -148,7 +149,8 @@ test('demo: what is a Squad', async ({ app }) => {
     await demo.section({ number: 2, title: 'A Squad at work', subtitle: 'Agents → Flow view', hint: 'Who works, how work hands off' });
     await tap(page, page.getByRole('link', { name: 'Back to app' }));
     await tap(page, page.getByTestId('nav-agents'));
-    await tap(page, page.getByRole('button', { name: 'Flow view' }));
+    await tap(page, page.getByRole('button', { name: 'Squads view' }));
+    await tap(page, page.getByRole('button', { name: 'Map', exact: true }));
     await expect(page.locator('svg.squad-flow-edges path.squad-flow-edge').first()).toBeVisible({ timeout: 30_000 });
     await demo.say('flow');
     await demo.settle();

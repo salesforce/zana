@@ -382,6 +382,7 @@ const IS_WORKER = /worker standby/.test(PROMPT);
 // [Squad report] names with execution.respond, then rests idle for the completion report.
 const ANSWERS_REPORTS = /E2E own Squad reports/.test(PROMPT);
 const IS_OWNER = ANSWERS_REPORTS || /E2E start Job Team/.test(PROMPT);
+const OVERVIEW_DEMO = /E2E start Job Team for Squad overview/.test(PROMPT);
 // Design-session role: proposes a Squad launch from files the spec wrote, then rests idle.
 // 'E2E launch Squad' is the same role for specs whose entries use squad_launch (see proposer()).
 const IS_PROPOSER = /E2E (propose|launch) Squad/.test(PROMPT);
@@ -558,11 +559,11 @@ const PLAN = NO_ROUTE ? NO_ROUTE_PLAN : APIERR ? API_ERROR_PLAN : FAILED_DAG ? F
 
 async function owner() {
   log('owner start');
-  const started = await mcp('execution.start', {
+  const request = {
     version: 1,
     teamId: 'e2e-job-team',
     launchRequestId: 'e2e-cli-agent-job-' + process.pid,
-    jobTitle: ANSWERS_REPORTS ? 'CLI Agent reporting job' : APIERR ? 'CLI Agent API error job' : CHURN ? 'CLI Agent kickoff churn job' : NO_ROUTE ? 'CLI Agent no-route job' : STALLED ? 'CLI Agent stalled job' : STREAMING ? 'CLI Agent streaming job' : HANDOFF ? 'CLI Agent handoff job' : 'CLI Agent durable job',
+    jobTitle: OVERVIEW_DEMO ? 'Atlas website navigation' : ANSWERS_REPORTS ? 'CLI Agent reporting job' : APIERR ? 'CLI Agent API error job' : CHURN ? 'CLI Agent kickoff churn job' : NO_ROUTE ? 'CLI Agent no-route job' : STALLED ? 'CLI Agent stalled job' : STREAMING ? 'CLI Agent streaming job' : HANDOFF ? 'CLI Agent handoff job' : 'CLI Agent durable job',
     summary: 'Full Job Team route started by a CLI Agent owner.',
     workUnits: PLAN,
     ...(ANSWERS_REPORTS ? { notify: true } : {}),
@@ -590,8 +591,18 @@ async function owner() {
           { initialTask: 'Run assigned work from the durable execution.' },
           { initialTask: 'Run assigned work from the durable execution.' }
         ]
-  });
+  };
+  const started = await mcp('execution.start', request);
   log('owner execution started', started && started.id);
+  if (OVERVIEW_DEMO) {
+    const review = await mcp('execution.start', {
+      ...request,
+      launchRequestId: request.launchRequestId + '-release-notes',
+      jobTitle: 'Review release notes',
+      workUnits: [{ id: 'release-label', title: 'Choose release notes heading', task: 'Ask which heading to use', dependencies: [], readOnly: true, verification: ['heading chosen'] }]
+    });
+    log('owner release notes review started', review && review.id);
+  }
   if (ANSWERS_REPORTS) await answerReports();
   await hold();
 }
@@ -815,9 +826,11 @@ async function planCorrectionOrchestrator() {
 
 async function handleNavigationLabel(outcomeFence, blockedUnitId, blockedBlockerId) {
   const blockerId = blockedBlockerId || 'blk-navigation-label';
+  const releaseNotes = blockedUnitId === 'release-label';
   const r = await tryMcp('execution.work.block', {
     executionId: EXECUTION_ID, workUnitId: blockedUnitId || 'navigation-label', blockerId: blockerId,
-    question: 'Which label should result.txt use?', options: ['About', 'About Atlas'], ...outcomeFence
+    question: releaseNotes ? 'Which heading should the release notes use?' : 'Which label should result.txt use?',
+    options: releaseNotes ? ['Highlights', 'What is new'] : ['About', 'About Atlas'], ...outcomeFence
   });
   log('block', r.ok ? 'ok' : r.error);
   // Blocking ends this turn: go idle so the host's delivery drain sees a RESTFUL
@@ -934,6 +947,9 @@ async function doUnit(unitId) {
       // Complete with the chosen label as the unit result. The engine inherits
       // this into the 'assemble' worker's assignment text — NO side file.
       await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: 'navigation-label', result: chosenLabel, ...outcomeFence });
+    } else if (unitId === 'release-label') {
+      const heading = await handleNavigationLabel(outcomeFence, unitId, 'blk-release-label');
+      await mcp('execution.work.complete', { executionId: EXECUTION_ID, workUnitId: unitId, result: heading, ...outcomeFence });
     } else if (unitId === 'assemble') {
       // Inherit the chosen label from the engine-injected 'Upstream results'
       // section of THIS unit's assignment push (dependencyResultsSection). If the

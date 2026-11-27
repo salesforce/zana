@@ -36,7 +36,8 @@ describe('ExecutionJobDetails run limits', () => {
     await screen.findByTestId('execution-limits');
     expect(screen.getByText('Failure reason')).toBeTruthy();
     expect(screen.getByText('claim wall-clock exceeded')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Copy details' }));
+    fireEvent.click(screen.getByText('Diagnostics', { selector: 'summary' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy diagnostics' }));
     await vi.waitFor(() => expect(copy.copyText).toHaveBeenCalled());
     const dump = copy.copyText.mock.calls[0][0] as string;
     expect(dump).toContain('Failure reason: claim wall-clock exceeded');
@@ -48,7 +49,7 @@ describe('ExecutionJobDetails run limits', () => {
     expect((await screen.findByTestId('execution-limits')).textContent).toBe('Run limits: up to 32 sessions');
     view.unmount();
     mount();
-    await screen.findByText('Stop Squad run');
+    await screen.findByRole('button', { name: 'Stop Squad run', exact: true });
     expect(screen.queryByTestId('execution-limits')).toBeNull();
   });
 });

@@ -71,6 +71,8 @@ describe('AgentLauncher launch mode and draft session', () => {
     fireEvent.click(screen.getByRole('button', { name: /Squad/ }));
     expect(screen.getByTestId('team')).toBeTruthy();
     expect(screen.getByRole('dialog').getAttribute('aria-label')).toBe('New squad');
+    expect(screen.getByRole('heading', { name: 'Project a' })).toBeTruthy();
+    expect(screen.queryByText(/A scratch Claude session/)).toBeNull();
     expect(readLaunchModePreference()).toBe('team');
   });
 

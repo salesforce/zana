@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { hasDesktopBridge } from '@/lib/app-surface';
-import { ChevronRight, GitPullRequest, Hash, Workflow } from 'lucide-react';
+import { ArrowRight, ChevronRight, GitPullRequest, Hash, LayoutList, Search, Workflow } from 'lucide-react';
 import type { ExecutionBoardProjection, SquadFlowNode } from '@zana-ai/zcc-domain/product';
 import {
   useData,
@@ -17,17 +17,25 @@ import { useThreads } from '@/thread-store';
 import { useCanvasPan } from '@/hooks/useCanvasPan';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import './mobile-canvas.css';
+import './squad-overview.css';
 import { buildSquadFlow, isQuiescentSquad, SOLO_GROUP_ICON, SOLO_GROUP_LABEL, type FlowGraph } from '@/lib/squadFlow';
 import { modernFlowParticipants } from '@/lib/modern-squad-members';
 import { squadFlowBounds, type FlowPoint } from '@/lib/squadFlowBounds';
 import {
   ALL_SQUADS,
-  reconcileSquadLaunchSelection,
   squadLaunchGroups
 } from '@/lib/squadLaunchGroups';
-import { SquadSwitcher, type SquadSwitcherItem } from '@/components/SquadSwitcher';
-import { teamRunLabel } from '@/lib/executionIdentity';
+import { shortRunId, teamRunLabel } from '@/lib/executionIdentity';
 import { childRowCounts, edgeRoute, layout, NODE_W, nodeNotice, simplify } from './squadFlowLayout';
+import { SquadMemberDetails, SquadRoster } from './SquadRoster';
+import {
+  isClosedSquadRun, mainSquadFilters, matchesSquadMemberSearch, matchesSquadSearch,
+  nodeActivity, runStates, sliceSquadGraph, squadMemberStatus, squadQuestion, squadRunStatus, squadStatusCounts,
+  squadStatuses, type SquadStatusFilter
+} from './squadFlowPresentation';
+import { readDismissedSquadRuns, saveSquadRunDismissal, subscribeToSquadRunDismissals } from './squadRunDismissals';
+
+export { nodeActivity, STREAMING_FRESH_MS } from './squadFlowPresentation';
 
 /**
  * Sticky squad-selection reducer for the Flow view's switcher. Given the
@@ -121,45 +129,6 @@ const STATE_VERB: Record<SquadFlowNode['state'], string> = {
 };
 
 /**
- * Activity treatment for one node, split into tiers so the graph shows motion for
- * ANY genuinely-working node even when it draws no edges (a single-worker linear DAG
- * has zero handoffs — the "no arrows, looks dead" gap) WITHOUT ever fabricating motion
- * for a node that is not actually working.
- *
- *  - `working` (→ static border accent + self-arc): the node is ACTUALLY doing work.
- *    "Actually" means real liveness evidence — it is `streaming` (fresh output, below),
- *    OR its live agent-mesh dot reads 'working'. A bare durable CLAIM is deliberately
- *    NOT working: a claim is only an assignment, so a just-claimed / stranded slot whose
- *    worker sits idle must not render a phantom self-arc (that is the exact wedge the
- *    self-heal path — redispatchStalled / flushStale — exists to recover). Such a claim
- *    surfaces as `claimed`.
- *  - `streaming` (→ bright self-arc + live badge): the stronger, backend-grounded tier.
- *    The node's CLAIMED unit produced real worker OUTPUT within {@link STREAMING_FRESH_MS}
- *    (`progressAt`), advanced by the host ONLY from PTY output — never by the agent-state
- *    lease renewal that keeps a stuck worker's `leaseExpiresAt` future, so a live lease
- *    alone must NOT read as streaming. `streaming ⊆ working`.
- *  - `claimed` (→ static neutral chip, NO arc): holds a durable claim but shows no
- *    liveness (stale/absent `progressAt`, mesh dot not 'working'). Surfaced honestly as
- *    "assigned, not confirmed emitting" — never as motion.
- *
- * A quiescent (all-exited) squad and any exited node get no treatment.
- */
-export const STREAMING_FRESH_MS = 15_000;
-export function nodeActivity(node: SquadFlowNode, now: number): { working: boolean; streaming: boolean; claimed: boolean } {
-  if (node.exited) return { working: false, streaming: false, claimed: false };
-  // STREAMING requires FRESH output progress — not a bare live lease. `progressAt`
-  // advances only on real worker OUTPUT (byte-output renewal + worker turn), never on
-  // the agent-state lease renewal that keeps a stuck worker's `leaseExpiresAt` future.
-  const streaming = node.claim?.progressAt !== undefined && now - node.claim.progressAt < STREAMING_FRESH_MS;
-  // WORKING = real liveness ONLY: fresh output, OR a live agent dot reading 'working'.
-  // A bare claim (incl. a detached board-synth node with no fresh output) is NOT working
-  // — it reads as `claimed` so a stranded assignment can never render phantom motion.
-  const working = streaming || node.state === 'working';
-  const claimed = !working && node.claim !== undefined;
-  return { working, streaming, claimed };
-}
-
-/**
  * Named sub-agent child rows nested inside a parent node card. Renders nothing
  * when no identity was captured — the parent's count badge is the fallback.
  * A "+N more" chip reconciles the visible rows (and any children whose hook
@@ -246,12 +215,16 @@ function FlowEdge({
   path,
   hot,
   pending,
+  dependency,
+  markerId,
   strokeWidth,
   animate
 }: {
   path: string;
   hot: boolean;
   pending: boolean;
+  dependency: boolean;
+  markerId: string;
   strokeWidth: number;
   animate: boolean;
 }) {
@@ -261,8 +234,8 @@ function FlowEdge({
     <g>
       <path
         d={path}
-        className={`squad-flow-edge ${hot ? 'squad-flow-edge--hot' : ''} ${pending ? 'squad-flow-edge--pending' : ''}`}
-        markerEnd={hot ? 'url(#sf-arrow-hot)' : 'url(#sf-arrow)'}
+        className={`squad-flow-edge ${hot ? 'squad-flow-edge--hot' : ''} ${pending ? 'squad-flow-edge--pending' : ''} ${dependency ? 'squad-flow-edge--dependency' : ''}`}
+        markerEnd={`url(#${markerId})`}
         strokeWidth={strokeWidth}
       />
       {animate &&
@@ -293,12 +266,12 @@ function FlowEdge({
  * direction. `variant` mirrors the node tier: `streaming` (fresh output) is the bright,
  * faster arc; `working` (live agent dot, no fresh output yet) is dimmer and slower —
  * both convey motion, so a working lone worker is never invisible. */
-function SelfLoopArc({ cx, topY, animate, variant = 'streaming' }: { cx: number; topY: number; animate: boolean; variant?: 'streaming' | 'working' }) {
+function SelfLoopArc({ cx, topY, animate, markerId, variant = 'streaming' }: { cx: number; topY: number; animate: boolean; markerId: string; variant?: 'streaming' | 'working' }) {
   // Small arc bowing up out of the node's top edge, entering back down into it.
   const path = `M${cx - 16},${topY} C${cx - 34},${topY - 46} ${cx + 34},${topY - 46} ${cx + 16},${topY}`;
   return (
     <g>
-      <path d={path} className={`squad-flow-self-loop ${variant === 'working' ? 'squad-flow-self-loop--working' : ''}`} markerEnd="url(#sf-arrow-self)" fill="none" />
+      <path d={path} className={`squad-flow-self-loop ${variant === 'working' ? 'squad-flow-self-loop--working' : ''}`} markerEnd={`url(#${markerId})`} fill="none" />
       {animate && (
         <polygon points="0,-3.5 6.5,0 0,3.5" className={`squad-flow-chevron--self ${variant === 'working' ? 'squad-flow-chevron--self-working' : ''}`}>
           <animateMotion dur={variant === 'working' ? '2.8s' : '1.8s'} repeatCount="indefinite" path={path} rotate="auto" />
@@ -323,12 +296,14 @@ function flowNodeTitle(node: SquadFlowNode, compact: boolean): string {
   return `${label} (${action})`;
 }
 
-export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
+export function SquadGraph({ graph, onInspectExecution, pannable = true, questionsPinned = false }: {
   graph: FlowGraph;
   onInspectExecution?: (projectId: string, executionId: string) => void;
   pannable?: boolean;
+  questionsPinned?: boolean;
 }) {
   const navigate = useNavigate();
+  const arrowId = useId();
   const inspectFlowNode = useCallback((node: SquadFlowNode) => {
     if (node.inspectionTarget.type === 'thread') {
       inspectThread(node.inspectionTarget.id, graph.projectId, navigate);
@@ -338,7 +313,14 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
   }, [graph.projectId, navigate]);
   const width = 1100;
   const now = graph.builtAt;
-  const { placed, height: layoutHeight } = useMemo(() => layout(graph, width), [graph, width]);
+  const { placed, height: layoutHeight } = useMemo(() => {
+    if (!questionsPinned) return layout(graph, width);
+    // The map shares the full-width question banner with Overview.
+    const nodes = graph.nodes.map((node) => nodeNotice(node) === 'blocker' && node.job
+      ? { ...node, job: { ...node.job, blockerQuestion: undefined } }
+      : node);
+    return layout({ ...graph, nodes }, width);
+  }, [graph, questionsPinned, width]);
 
   // Skip the flowing chevrons for reduced-motion users (arrowheads still show
   // direction). Read once — the preference doesn't change mid-session in practice.
@@ -394,7 +376,7 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
   const contentWidth = bounds.width;
   const contentHeight = bounds.height;
 
-  const newestTs = graph.edges.reduce((mx, e) => Math.max(mx, e.lastTs), 0);
+  const newestTs = graph.edges.reduce((mx, edge) => edge.kind === 'work-dependency' ? mx : Math.max(mx, edge.lastTs), 0);
   const rollup = graph.summary;
   // A done (all-exited) squad must render as a static, muted graph — no gold
   // hot edge, no flowing chevrons — so it doesn't keep looking like live work.
@@ -504,18 +486,19 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
             aria-hidden="true"
           >
             <defs>
-              <marker id="sf-arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+              <marker id={arrowId} markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
                 <path d="M0,0 L9,4.5 L0,9 z" className="squad-flow-arrowhead" />
               </marker>
-              <marker id="sf-arrow-hot" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto">
+              <marker id={`${arrowId}-hot`} markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto">
                 <path d="M0,0 L10,5 L0,10 z" className="squad-flow-arrowhead-hot" />
               </marker>
-              <marker id="sf-arrow-self" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+              <marker id={`${arrowId}-self`} markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
                 <path d="M0,0 L9,4.5 L0,9 z" className="squad-flow-arrowhead-self" />
               </marker>
             </defs>
             {routedEdges.map(({ edge: e, points }) => {
-              const hot = !quiescent && e.lastTs === newestTs && newestTs > 0;
+              const dependency = e.kind === 'work-dependency';
+              const hot = !dependency && !quiescent && e.lastTs === newestTs && newestTs > 0;
               return (
                 <FlowEdge
                   key={`${e.fromSessionId}->${e.toSessionId}`}
@@ -525,12 +508,14 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
                   })), EDGE_RADIUS)}
                   hot={hot}
                   pending={e.pending}
+                  dependency={dependency}
+                  markerId={hot ? `${arrowId}-hot` : arrowId}
                   strokeWidth={Math.min(4, 1.5 + (e.count - 1) * 0.6)}
-                  animate={animateFlow && !quiescent}
+                  animate={animateFlow && !quiescent && !dependency}
                 />
               );
             })}
-            {!quiescent &&
+            {!quiescent && !graph.isSolo &&
               resolvedPlaced.map(({ node, x, y }) => {
                 const { working, streaming } = nodeActivity(node, now);
                 // Self-arc renders for ANY genuinely-working node (Plan 1), so a lone
@@ -542,6 +527,7 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
                     cx={x + bounds.offsetX + NODE_W / 2}
                     topY={y + bounds.offsetY}
                     animate={animateFlow}
+                    markerId={`${arrowId}-self`}
                     variant={streaming ? 'streaming' : 'working'}
                   />
                 ) : null;
@@ -573,7 +559,16 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
                 onPointerDown={compact ? undefined : (e) => handlePointerDown(e, node, x, y)}
                 onPointerMove={compact ? undefined : handlePointerMove}
                 onPointerUp={compact ? undefined : handlePointerUp}
-                onClick={compact ? () => inspectFlowNode(node) : undefined}
+                onClick={(event) => {
+                  if (compact) inspectFlowNode(node);
+                  else if (event.detail === 0) {
+                    if (node.job?.executionId && onInspectExecution && (node.inspectionTarget.type !== 'thread' || node.isOrchestrator)) {
+                      onInspectExecution(graph.projectId, node.job.executionId);
+                    } else {
+                      inspectFlowNode(node);
+                    }
+                  }
+                }}
                 onDoubleClick={compact || node.inspectionTarget.type === 'thread' ? undefined : () => inspectFlowNode(node)}
                 title={flowNodeTitle(node, compact)}
               >
@@ -587,8 +582,8 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
                   </span>
                   <span className="squad-flow-node-body">
                     <span className="squad-flow-node-top">
-                      <span className="squad-flow-node-label">{prettyLabel(node.label)}</span>
-                      {node.isOrchestrator && (
+                      <span className="squad-flow-node-label">{questionsPinned ? node.label : prettyLabel(node.label)}</span>
+                      {node.isOrchestrator && !questionsPinned && (
                         <span className="squad-flow-orch-tag" title="Orchestrator — close it to end the whole squad">
                           orchestrator
                         </span>
@@ -614,9 +609,9 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
                           no output
                         </span>
                       )}
-                      {node.role && (
+                      {(node.role || (questionsPinned && node.isOrchestrator)) && (
                         <span className="squad-flow-node-role" title={node.role}>
-                          {node.role}
+                          {questionsPinned && node.isOrchestrator ? 'Coordinator' : node.role}
                         </span>
                       )}
                       {node.liveSubagents > 0 && !node.subagentChildren?.length && (
@@ -652,14 +647,14 @@ export function SquadGraph({ graph, onInspectExecution, pannable = true }: {
 }
 
 interface SquadFlowViewProps {
-  /** Scope to one project (the project-scoped AgentsBoard passes this). Omitted
-   *  on the global board → one graph per project that has live agents. */
+  /** Scope to one project. The global board offers a project picker. */
   projectId?: string;
   onInspectExecution?: (projectId: string, executionId: string) => void;
 }
 
 export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewProps = {}) {
   const compact = useCompactLayout();
+  const navigate = useNavigate();
   const terminals = useData((s) => s.terminals);
   const projects = useData((s) => s.projects);
   const threads = useThreads((s) => s.threads);
@@ -672,8 +667,8 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
   const subagentChildrenById = useSubagentChildren((s) => s.byId);
   const includeScheduled = useData((s) => s.includeScheduledAgentsInAgentView);
   const flowAllOrganization = useData((s) => s.flowAllOrganization);
-  const { isPanning: isStackPanning, canvasPanProps: stackPanProps } = useCanvasPan();
   const [executions, setExecutions] = useState<ExecutionBoardProjection[]>([]);
+  const [view, setView] = useState<'overview' | 'map'>('overview');
 
   const threadParticipantsByProject = useMemo(
     () => modernFlowParticipants(threads, executions, personas),
@@ -712,7 +707,7 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [projectId, projects]);
 
-  // One graph per project that has live agents (or just the scoped project). Raw
+  // One graph per project that has Squad members (or just the scoped project). Raw
   // slices only; derive behind a memo so a status tick doesn't rebuild the world
   // (render-storm guard).
   const graphs = useMemo<FlowGraph[]>(() => {
@@ -723,12 +718,15 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
     for (const pid of projectIds) {
       if (projectId && pid !== projectId) continue;
       if (!byProjectId.has(pid)) continue;
-      const list = terminals[pid];
+      const sessions = agentViewTerminals(terminals[pid], includeScheduled);
+      const projectAgents = agents.filter((agent) => agent.projectId === pid);
+      const participants = threadParticipantsByProject.get(pid);
+      if (!squadLaunchGroups(projectAgents, sessions, participants).some((group) => !group.isSolo)) continue;
       const graph = buildSquadFlow({
         projectId: pid,
-        sessions: agentViewTerminals(list, includeScheduled),
-        agents: agents.filter((a) => a.projectId === pid),
-        threadParticipants: threadParticipantsByProject.get(pid),
+        sessions,
+        agents: projectAgents,
+        threadParticipants: participants,
         messages: messages.filter((m) => m.projectId === pid),
         statusById,
         sinceById,
@@ -755,30 +753,13 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
     threadParticipantsByProject
   ]);
 
-  const byProjectId = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects]);
-
-  // In-memory sticky selection: keep the chosen squad while it exists; new
-  // squads don't steal focus; fall back to the first when the selection exits.
-  const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
-  const selected = reconcileSquadSelection(selectedId, graphs);
-  // Commit the reconciled id back to state ONLY when it differs, or we'd loop.
+  const [selectedId, setSelectedId] = useState<string>();
+  const selected = projectId ?? (projects.some((project) => project.id === selectedId)
+    ? selectedId
+    : reconcileSquadSelection(undefined, graphs) ?? projects[0]?.id);
   if (selected !== selectedId) setSelectedId(selected);
 
-  // "New" cue: projectIds present when the first selection was committed. Any
-  // squad not in this set is "new" until selected. Ref so it survives renders
-  // but resets on reload (consistent with in-memory selection).
-  const seenRef = useRef<Set<string> | null>(null);
-  if (seenRef.current === null && graphs.length > 0) {
-    seenRef.current = new Set(graphs.map((g) => g.projectId));
-  }
-  const seen = seenRef.current ?? new Set<string>();
-
-  // ---- second picker: split the ACTIVE project's mesh into its squads -------
-  // A squad = one team launch (shared teamLaunchId); solo/unregistered agents
-  // form one "Solo agents" bucket. For each squad we build a launch-FILTERED
-  // graph so its orchestrator/edges/rollup are computed within the squad (not
-  // inherited from the merged graph). Same raw slices as `graphs`, re-derived
-  // behind a memo (render-storm guard). `selected` is the active project id.
+  // Build a graph per launch so each Squad has its own coordinator and edges.
   const squadDerived = useMemo(() => {
     const builtAt = Date.now();
     const pid = selected;
@@ -788,7 +769,7 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
     const projAgents = agents.filter((a) => a.projectId === pid);
     const threadParticipants = threadParticipantsByProject.get(pid) ?? [];
     const projMessages = messages.filter((m) => m.projectId === pid);
-    const groups = squadLaunchGroups(projAgents, sessions, threadParticipants);
+    const groups = squadLaunchGroups(projAgents, sessions, threadParticipants).filter((group) => !group.isSolo);
     const byLaunch = new Map<string, FlowGraph>();
     for (const grp of groups) {
       const g = buildSquadFlow({
@@ -810,119 +791,347 @@ export function SquadFlowView({ projectId, onInspectExecution }: SquadFlowViewPr
     return { groups, byLaunch };
   }, [selected, terminals, agents, messages, statusById, sinceById, subagentsById, subagentChildrenById, executions, includeScheduled, threadParticipantsByProject]);
 
-  const groupIds = squadDerived.groups.map((g) => g.launchId);
-
-  // Sticky squad selection — defaults to the most-recent squad (not "All").
-  const [selectedLaunch, setSelectedLaunch] = useState<string | undefined>(undefined);
-  const selectedSquad = reconcileSquadLaunchSelection(selectedLaunch, groupIds);
-  if (selectedSquad !== selectedLaunch) setSelectedLaunch(selectedSquad);
-
-  // Per-project "new squad" cue: snapshot the launch ids present when a project
-  // is first viewed; any launch id appearing later is "new" until selected.
-  const seenLaunchRef = useRef<Map<string, Set<string>>>(new Map());
-  let seenLaunch = selected ? seenLaunchRef.current.get(selected) : undefined;
-  if (selected && !seenLaunch && groupIds.length > 0) {
-    seenLaunch = new Set(groupIds);
-    seenLaunchRef.current.set(selected, seenLaunch);
+  const mergedGraph = graphs.find((graph) => graph.projectId === selected);
+  const selectedProject = projects.find((project) => project.id === selected);
+  const projectExecutions = executions.filter((execution) => execution.projectId === selected);
+  const executionsById = new Map(projectExecutions.map((execution) => [execution.executionId, execution]));
+  const runs: SquadRun[] = [];
+  for (const group of squadDerived.groups) {
+    const graph = squadDerived.byLaunch.get(group.launchId);
+    if (!graph) continue;
+    const execution = executionsById.get(graph.executionId ?? group.launchId);
+    runs.push({
+      id: group.launchId,
+      graph,
+      execution,
+      title: execution?.jobTitle || graph.executionJobTitle || squadChipLabel(graph, runs.length + 1),
+      teamName: execution?.teamName ?? graph.teamName,
+      startedAt: execution?.createdAt ?? group.launchedAt
+    });
+    if (execution) executionsById.delete(execution.executionId);
   }
-
-  if (graphs.length === 0) {
-    return (
-      <div className="squad-flow-empty">
-        <Workflow size={28} aria-hidden="true" />
-        <h4>No squads running</h4>
-        <p>
-          When you launch a squad, its members appear here as a live flow — who&rsquo;s working,
-          who&rsquo;s blocked, and how work hands off between them.
-        </p>
-      </div>
-    );
+  for (const execution of executionsById.values()) {
+    runs.push({ id: execution.executionId, execution, title: execution.jobTitle, teamName: execution.teamName, startedAt: execution.createdAt });
   }
-
-  const items: SquadSwitcherItem[] = graphs.map((g) => {
-    const project = byProjectId.get(g.projectId);
-    return {
-      id: g.projectId,
-      label: g.squad?.name ?? project?.name ?? g.projectId,
-      icon: g.squad?.icon ?? '🤖',
-      color: project?.color,
-      working: g.summary.working,
-      isNew: !seen.has(g.projectId) && g.projectId !== selected
-    };
-  });
-
-  const mergedGraph = graphs.find((g) => g.projectId === selected) ?? graphs[0];
-
-  // Squad-row chips: "All squads" (the merged graph) + one per launch group.
-  const { groups, byLaunch } = squadDerived;
-  const seenLaunchSet = seenLaunch ?? new Set<string>();
-  let realOrdinal = 0;
-  const squadItems: SquadSwitcherItem[] = [
-    {
-      id: ALL_SQUADS,
-      label: 'All squads',
-      icon: '🗂️',
-      working: mergedGraph.summary.working,
-      isNew: false
-    },
-    ...groups.map((grp): SquadSwitcherItem => {
-      const g = byLaunch.get(grp.launchId);
-      if (!grp.isSolo) realOrdinal += 1;
-      return {
-        id: grp.launchId,
-        label: g?.executionId && g.teamName
-          ? teamRunLabel({ cohortId: grp.launchId, executionId: g.executionId, executionJobTitle: g.executionJobTitle, teamName: g.teamName })
-          : g ? squadChipLabel(g, realOrdinal) : grp.launchId,
-        icon: grp.isSolo ? SOLO_GROUP_ICON : '🤖',
-        working: g?.summary.working ?? 0,
-        isNew: !seenLaunchSet.has(grp.launchId) && grp.launchId !== selectedSquad
-      };
-    })
-  ];
-
-  // The graph to render: the merged view for "All", else the selected squad's
-  // filtered graph (falling back to merged if that squad just vanished).
-  const activeGraph =
-    selectedSquad === ALL_SQUADS ? mergedGraph : byLaunch.get(selectedSquad) ?? mergedGraph;
-  const separateGraphs = selectedSquad === ALL_SQUADS && flowAllOrganization === 'team-runs'
-    ? groups.flatMap((group) => {
-        const graph = byLaunch.get(group.launchId);
-        return graph ? [graph] : [];
-      })
-    : [];
+  runs.sort((a, b) => b.startedAt - a.startedAt);
 
   return (
-    <div className="squad-flow">
-      {compact && <p className="mobile-canvas-hint">Swipe to explore · Tap an agent to open</p>}
-      {graphs.length > 1 && (
-        <SquadSwitcher items={items} selected={selected} onSelect={setSelectedId} ariaLabel="Projects" />
+    <SquadSurface
+      key={selected}
+      compact={compact}
+      view={view}
+      setView={setView}
+      projectId={selected}
+      projectName={selectedProject?.name}
+      projectPicker={projectId ? undefined : { selected, projects, onSelect: setSelectedId }}
+      mergedGraph={mergedGraph}
+      runs={runs}
+      splitMap={flowAllOrganization === 'team-runs'}
+      onInspectExecution={selected && onInspectExecution ? (executionId) => onInspectExecution(selected, executionId) : undefined}
+      onOpenMember={(node) => {
+        if (!selected) return;
+        if (node.inspectionTarget.type === 'thread') inspectThread(node.inspectionTarget.id, selected, navigate);
+        else inspectAgentSession(node.inspectionTarget.id, selected, navigate);
+      }}
+    />
+  );
+}
+
+interface SquadRun {
+  id: string;
+  title: string;
+  teamName?: string;
+  startedAt: number;
+  graph?: FlowGraph;
+  execution?: ExecutionBoardProjection;
+}
+
+interface SquadSurfaceProps {
+  compact: boolean;
+  view: 'overview' | 'map';
+  setView: (view: 'overview' | 'map') => void;
+  projectId?: string;
+  projectName?: string;
+  projectPicker?: {
+    selected?: string;
+    projects: readonly { id: string; name: string }[];
+    onSelect: (id: string) => void;
+  };
+  mergedGraph?: FlowGraph;
+  runs: SquadRun[];
+  splitMap: boolean;
+  onInspectExecution?: (executionId: string) => void;
+  onOpenMember: (node: SquadFlowNode) => void;
+}
+
+function SquadSurface({ compact, view, setView, projectId, projectName, projectPicker, mergedGraph, runs, splitMap, onInspectExecution, onOpenMember }: SquadSurfaceProps) {
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<SquadStatusFilter>('all');
+  const [selectedRun, setSelectedRun] = useState(ALL_SQUADS);
+  const [selectedMember, setSelectedMember] = useState<string>();
+  const [dismissedRuns, setDismissedRuns] = useState(() => readDismissedSquadRuns(projectId));
+  const [lastDismissed, setLastDismissed] = useState<{ executionId: string; title: string }>();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const undoButton = useRef<HTMLButtonElement>(null);
+  const activeFilter = useRef<HTMLButtonElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
+  useEffect(() => subscribeToSquadRunDismissals(() => setDismissedRuns(readDismissedSquadRuns(projectId))), [projectId]);
+  useLayoutEffect(() => {
+    if (lastDismissed) undoButton.current?.focus();
+  }, [lastDismissed]);
+  const now = mergedGraph?.builtAt ?? Date.now();
+  const query = search.trim().toLowerCase();
+  const memberQuery = matchesSquadSearch(query, projectName) ? '' : query;
+  const mapOnly = view === 'map';
+  const isDismissed = ({ execution }: SquadRun) => execution && isClosedSquadRun(execution) && dismissedRuns.has(execution.executionId);
+  const hiddenRuns = runs.filter(isDismissed);
+  const matchingRuns = runs.filter((run) => !isDismissed(run)).flatMap((run) => {
+    const question = squadQuestion(run.execution);
+    const state = run.execution?.state;
+    const runMatches = matchesSquadSearch(memberQuery, run.title, run.teamName, question, run.execution?.executionId, state && runStates[state]);
+    const nodes = (run.graph?.nodes ?? []).filter((node) => runMatches || matchesSquadMemberSearch(node, now, memberQuery));
+    if (!runMatches && nodes.length === 0) return [];
+    const status = squadRunStatus(run.execution, question, nodes, now);
+    return [{ ...run, nodes, question, status }];
+  });
+  const counts = squadStatusCounts(matchingRuns.map((run) => run.status));
+  // Overview filters top-level rows. Keep a matching run's roster together.
+  const visibleRuns = matchingRuns.filter((run) => filter === 'all' || run.status === filter);
+  visibleRuns.sort((a, b) => Number(!!b.question) - Number(!!a.question));
+  const detail = visibleRuns.flatMap((run) => run.nodes).find((node) => node.sessionId === selectedMember);
+  const statusOptions = Object.keys(squadStatuses) as SquadStatusFilter[];
+  const mapRuns = mapOnly ? visibleRuns
+    .map((run) => ({ ...run, nodes: run.nodes.filter((node) => filter === 'all' || squadMemberStatus(node, now) === filter) }))
+    .filter((run) => run.graph && run.nodes.length > 0) : [];
+  const chosenRun = mapRuns.find((run) => run.id === selectedRun);
+  const graphs = (chosenRun ? [chosenRun] : mapRuns).flatMap((run) => run.graph ? [sliceSquadGraph(run.graph, run.nodes)] : []);
+
+  let mapGraphs = graphs;
+  if (mergedGraph && !chosenRun && !splitMap && graphs.length > 1) {
+    const mapIds = new Set(graphs.flatMap((graph) => graph.nodes.map((node) => node.sessionId)));
+    mapGraphs = [sliceSquadGraph(mergedGraph, mergedGraph.nodes.filter((node) => mapIds.has(node.sessionId)))];
+  }
+
+  const clearMember = () => setSelectedMember(undefined);
+  const updateDismissal = (executionId: string, dismissed: boolean) => {
+    if (!projectId) return;
+    saveSquadRunDismissal(projectId, executionId, dismissed);
+    setDismissedRuns((current) => {
+      const next = new Set(current);
+      if (dismissed) next.add(executionId);
+      else next.delete(executionId);
+      return next;
+    });
+  };
+  const dismissRun = (run: SquadRun) => {
+    if (!run.execution || !isClosedSquadRun(run.execution)) return;
+    updateDismissal(run.execution.executionId, true);
+    setLastDismissed({ executionId: run.execution.executionId, title: run.title });
+    clearMember();
+  };
+  const restoreRun = (executionId: string) => {
+    updateDismissal(executionId, false);
+    setLastDismissed((current) => current?.executionId === executionId ? undefined : current);
+    (activeFilter.current ?? searchInput.current)?.focus();
+  };
+  const closeMember = () => {
+    clearMember();
+    trigger.current?.focus();
+  };
+  const chooseMember = (node: SquadFlowNode, button: HTMLButtonElement) => {
+    trigger.current = button;
+    setSelectedMember(node.sessionId);
+  };
+  const changeFilter = (next: SquadStatusFilter) => {
+    setFilter(next);
+    if (next === 'done') setView('overview');
+    clearMember();
+  };
+  const questionButton = (run: SquadRun & { question?: string }, includeRunTitle: boolean) => run.question && (
+    <button type="button" className="squad-attention" key={run.id} disabled={!onInspectExecution || !run.execution} onClick={() => {
+      if (run.execution) onInspectExecution?.(run.execution.executionId);
+    }}>
+      <strong>Needs you</strong><span>{run.question}{includeRunTitle && <small>{run.title}</small>}</span>
+      <ChevronRight size={16} aria-hidden="true" />
+    </button>
+  );
+  const hasContent = runs.length > 0;
+  const hasMatches = visibleRuns.length > 0;
+
+  return (
+    <section className="squad-flow squad-overview" aria-label="Squads" onKeyDown={(event) => {
+      if (event.key === 'Escape' && detail) {
+        event.stopPropagation();
+        closeMember();
+      }
+    }}>
+      <header className="squad-overview-header">
+        <h1>Squads</h1>
+        {projectPicker && projectPicker.projects.length > 0 && (
+          <label className="squad-select">Project
+            <select value={projectPicker.selected ?? ''} onChange={(event) => projectPicker.onSelect(event.target.value)}>
+              {projectPicker.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+            </select>
+          </label>
+        )}
+      </header>
+      <div className="squad-overview-tools">
+        <div className="squad-view-switch" role="group" aria-label="Squad display">
+          <button type="button" aria-pressed={!mapOnly} onClick={() => setView('overview')}><LayoutList size={15} aria-hidden="true" />Overview</button>
+          <button type="button" aria-pressed={mapOnly} onClick={() => {
+            if (filter === 'done') changeFilter('all');
+            clearMember();
+            setView('map');
+          }}><Workflow size={15} aria-hidden="true" />Map</button>
+        </div>
+        <label className="squad-search">
+          <Search size={15} aria-hidden="true" />
+          <input type="search" ref={searchInput} aria-label="Search Squad runs and members" placeholder="Search Squad runs and members…" value={search} onChange={(event) => {
+            setSearch(event.target.value);
+            clearMember();
+          }} />
+        </label>
+      </div>
+      {hasContent && (
+        <div className="squad-status-filters" role="group" aria-label="Filter Squad runs">
+          {mainSquadFilters.map((status) => (
+            <button type="button" key={status} ref={filter === status ? activeFilter : undefined} className="squad-filter-tile" aria-pressed={filter === status} data-status={status} onClick={() => changeFilter(status)}>
+              <strong>{counts[status]}</strong><span>{squadStatuses[status]}</span>
+            </button>
+          ))}
+          {statusOptions.some((status) => !mainSquadFilters.some((primary) => status === primary) && counts[status] > 0) && (
+            <label className="squad-select squad-other-statuses">Status
+              <select value={filter} onChange={(event) => changeFilter(event.target.value as SquadStatusFilter)}>
+                {statusOptions.filter((status) => status === 'all' || counts[status] > 0 || status === filter)
+                  .map((status) => <option key={status} value={status}>{squadStatuses[status]} ({counts[status]})</option>)}
+              </select>
+            </label>
+          )}
+        </div>
       )}
-      {groups.length > 1 && (
-        <SquadSwitcher
-          items={squadItems}
-          selected={selectedSquad}
-          onSelect={setSelectedLaunch}
-          ariaLabel="Squads in project"
-        />
+      {lastDismissed && (
+        <div className="squad-surface squad-dismissal">
+          <span role="status">{lastDismissed.title} dismissed</span>
+          <button type="button" className="btn" ref={undoButton} onClick={() => restoreRun(lastDismissed.executionId)}>Undo</button>
+        </div>
       )}
-      {separateGraphs.length > 0 ? (
+      <div className={detail ? 'squad-content squad-content--inspecting' : 'squad-content'}>
+        <div className="squad-content-main">
+          {mapOnly && visibleRuns.map((run) => questionButton(run, true))}
+          {!mapOnly && visibleRuns.length > 0 && (
+            <section aria-label="Squad runs">
+              <h2 className="squad-section-title">Squad runs <small>{visibleRuns.length}</small></h2>
+              {visibleRuns.map((run) => (
+                <section className="squad-surface squad-run" aria-label={run.title} key={run.id}>
+                  <div className="squad-run-header">
+                    <span className="squad-roster-icon"><Workflow size={15} aria-hidden="true" /></span>
+                    <div className="squad-roster-body">
+                      <h3>{run.title}</h3>
+                      <small>{[run.teamName && run.teamName !== run.title ? run.teamName : undefined,
+                        run.execution && `Run ${shortRunId(run.execution.executionId)}`,
+                        run.graph && `${run.graph.nodes.length} ${run.graph.nodes.length === 1 ? 'agent' : 'agents'}`].filter(Boolean).join(' · ')}</small>
+                    </div>
+                    {run.execution && !run.question && (
+                      <span className="squad-status" data-status={run.execution.state === 'COMPLETED' ? 'done' : undefined}>{runStates[run.execution.state]}</span>
+                    )}
+                    {run.execution && (
+                      <div className="squad-run-actions">
+                        {onInspectExecution && (
+                          <button className="btn squad-run-open" type="button" aria-label={`Open Squad details for ${run.title}`} onClick={() => onInspectExecution(run.execution!.executionId)}>
+                            Details <ChevronRight size={14} aria-hidden="true" />
+                          </button>
+                        )}
+                        {projectId && isClosedSquadRun(run.execution) && (
+                          <button className="btn" type="button" aria-label={`Dismiss ${run.title}`} title="Dismiss from Squads on this device" onClick={() => dismissRun(run)}>Dismiss</button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {questionButton(run, false)}
+                  <SquadRoster nodes={run.nodes} now={now} selectedId={selectedMember} onSelect={chooseMember} questionPinned={!!run.question} />
+                </section>
+              ))}
+            </section>
+          )}
+          {mapOnly && hasMatches && (
+            <SquadMap compact={compact} graphs={mapGraphs} runs={mapRuns} selectedRun={chosenRun?.id ?? ALL_SQUADS}
+              onSelect={setSelectedRun} onInspectExecution={onInspectExecution} />
+          )}
+          {!hasMatches && (
+            <div className="squad-surface squad-empty" role="status">
+              <strong>{hasContent
+                ? filter === 'done' && !query ? 'No completed Squad runs' : 'No matching Squad runs'
+                : 'No Squad runs in this project'}</strong>
+              {hasContent && <button type="button" className="btn" onClick={() => { setSearch(''); changeFilter('all'); }}>Clear filters</button>}
+            </div>
+          )}
+          {!mapOnly && hiddenRuns.length > 0 && (
+            <details className="squad-surface squad-dismissed-runs">
+              <summary>Dismissed runs ({hiddenRuns.length})</summary>
+              <ul>
+                {hiddenRuns.map((run) => (
+                  <li key={run.id} className="squad-dismissal">
+                    <span>{run.title} <small>· {shortRunId(run.execution!.executionId)}</small></span>
+                    <button type="button" className="btn" aria-label={`Restore ${run.title}`} onClick={() => restoreRun(run.execution!.executionId)}>Restore</button>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+        {detail && (
+          <SquadMemberDetails node={detail} now={now} onClose={closeMember} onOpen={onOpenMember} onInspectExecution={onInspectExecution} />
+        )}
+      </div>
+    </section>
+  );
+}
+
+function SquadMap({ compact, graphs, runs, selectedRun, onSelect, onInspectExecution }: {
+  compact: boolean;
+  graphs: FlowGraph[];
+  runs: SquadRun[];
+  selectedRun: string;
+  onSelect: (id: string) => void;
+  onInspectExecution?: (executionId: string) => void;
+}) {
+  const { isPanning, canvasPanProps } = useCanvasPan();
+  if (!graphs.length) return <p className="squad-surface squad-empty">No Squad members to map in this selection.</p>;
+  const edges = graphs.flatMap((graph) => graph.edges);
+  const hasMessages = edges.some((edge) => edge.kind !== 'work-dependency');
+  const hasDependencies = edges.some((edge) => edge.kind === 'work-dependency');
+  const stacked = graphs.length > 1;
+  return (
+    <section aria-label="Squad map">
+      <div className="squad-map-heading">
+        <div className="squad-map-legend">
+          {hasMessages && <span><ArrowRight size={15} aria-hidden="true" /> Agent message</span>}
+          {hasDependencies && <span><span className="squad-dependency-dash" aria-hidden="true" /> Work dependency</span>}
+          {!edges.length && <span>No handoffs in this selection yet</span>}
+          {compact && <span>Swipe to explore</span>}
+        </div>
+        {runs.length > 1 && <label className="squad-select">Run
+          <select value={selectedRun} onChange={(event) => onSelect(event.target.value)}>
+            <option value={ALL_SQUADS}>All Squad runs</option>
+            {runs.map((run) => <option key={run.id} value={run.id}>{run.title}{run.execution ? ` · ${shortRunId(run.execution.executionId)}` : ''}</option>)}
+          </select>
+        </label>}
+      </div>
+      {stacked ? (
         <div
-          className={`squad-flow-run-groups${isStackPanning ? ' is-panning' : ''}`}
+          className={`squad-flow-run-groups${isPanning ? ' is-panning' : ''}`}
           aria-label={compact ? 'Agent canvases. Swipe to explore.' : 'Squad run canvases. Drag empty space to pan.'}
-          {...(!compact ? stackPanProps : {})}
+          {...(!compact ? canvasPanProps : {})}
         >
-          {separateGraphs.map((graph) => (
-            <SquadGraph
-              key={`${graph.projectId}:${graph.executionId ?? graph.nodes[0]?.sessionId}`}
-              graph={graph}
-              onInspectExecution={onInspectExecution}
-              pannable={false}
-            />
+          {graphs.map((graph) => (
+            <SquadGraph key={graph.executionId ?? graph.nodes[0]?.sessionId} graph={graph} pannable={false} questionsPinned
+              onInspectExecution={onInspectExecution ? (_, executionId) => onInspectExecution(executionId) : undefined} />
           ))}
         </div>
       ) : (
-        <SquadGraph key={`${activeGraph.projectId}:${selectedSquad}`} graph={activeGraph} onInspectExecution={onInspectExecution} />
+        <SquadGraph key={selectedRun} graph={graphs[0]} questionsPinned
+          onInspectExecution={onInspectExecution ? (_, executionId) => onInspectExecution(executionId) : undefined} />
       )}
-    </div>
+    </section>
   );
 }

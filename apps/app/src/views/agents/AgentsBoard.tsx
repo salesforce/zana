@@ -1,6 +1,6 @@
 import { PluginAgentsView } from '@/plugins/PluginAgentsView';
 import { agentsViewKey, projectAgentsView, fleetKey, executionKey } from '@/plugins/agents-view-model';
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Bot, Moon, Plus, Puzzle, Search, X } from 'lucide-react';
 import type { ExecutionBoardProjection, Project, TerminalSession } from '@zana-ai/zcc-domain/product';
@@ -149,16 +149,35 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [selectedExecution, setSelectedExecution] = useState<{ projectId: string; executionId: string } | null>(null);
 
+  const boardContentRef = useRef<HTMLDivElement>(null);
+  const detailsTriggerRef = useRef<HTMLElement | null>(null);
+  const openExecution = useCallback((projectId: string, executionId: string) => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && !active.closest('.execution-details, .agents-board-content[data-execution-open]')) {
+      detailsTriggerRef.current = active;
+    }
+    setSelectedExecution({ projectId, executionId });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (selectedExecution) {
+      boardContentRef.current?.focus({ preventScroll: true });
+    } else {
+      detailsTriggerRef.current?.focus({ preventScroll: true });
+      detailsTriggerRef.current = null;
+    }
+  }, [selectedExecution]);
+
   useEffect(() => {
     const pending = takePendingSquadDetailsTarget();
-    if (pending) setSelectedExecution(pending);
-    const openExecution = (event: Event) => {
+    if (pending) openExecution(pending.projectId, pending.executionId);
+    const onOpenExecution = (event: Event) => {
       const detail = (event as CustomEvent<{ projectId?: string; executionId?: string }>).detail;
-      if (detail?.projectId && detail.executionId) setSelectedExecution({ projectId: detail.projectId, executionId: detail.executionId });
+      if (detail?.projectId && detail.executionId) openExecution(detail.projectId, detail.executionId);
     };
-    window.addEventListener('zana:open-squad-details', openExecution);
-    return () => window.removeEventListener('zana:open-squad-details', openExecution);
-  }, []);
+    window.addEventListener('zana:open-squad-details', onOpenExecution);
+    return () => window.removeEventListener('zana:open-squad-details', onOpenExecution);
+  }, [openExecution]);
 
   const loadMoreExecutions = async () => {
     // Can be invoked while the board is in GLOBAL scope (no scoped project) —
@@ -287,7 +306,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
     return withModernSquadMembers(items, memberExecutions, personas);
   }, [cards, threads, projects, scopedProject, scheduledTasks, includeScheduled, executions, personas, threadToggles, shownPluginThreads]);
 
-  const showSearch = isGlobal || (compact && boardView === 'board');
+  const showSearch = (isGlobal && (boardView !== 'flow' || !!pluginView)) || (compact && boardView === 'board');
   const q = showSearch ? filter.trim().toLowerCase() : '';
   const visibleFleet = q
     ? fleet.filter(
@@ -330,7 +349,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
     }
     const executionId = item.card.session.cohort?.executionId;
     if (executionId) {
-      setSelectedExecution({ projectId: item.projectId, executionId });
+      openExecution(item.projectId, executionId);
       return;
     }
     inspectAgentSession(item.card.session.id, item.projectId, navigate);
@@ -434,7 +453,7 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
   return (
     <div className={isGlobal ? 'agents-board agents-board--global panel-body--full' : 'agents-board'}>
       <MobilePageHeader title="Agents" primary={<button type="button" className="icon-btn" aria-label="New agent" data-testid="agents-board-new-thread" onClick={() => useUi.getState().setLauncherOpen(true)}><Plus size={20} /></button>}>{secondaryActions}</MobilePageHeader>
-      {showToolbar && !showMobileBoard && (
+      {showToolbar && !showMobileBoard && !selectedExecution && (
         <div className="agents-board-toolbar">
           {!compact && secondaryActions}
           {searchAgents}
@@ -442,7 +461,15 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
         </div>
       )}
 
-      <div className="agents-board-content">
+      <div
+        ref={boardContentRef}
+        className="agents-board-content"
+        data-execution-open={selectedExecution ? '' : undefined}
+        tabIndex={selectedExecution ? -1 : undefined}
+        onKeyDown={selectedExecution ? (event) => {
+          if (event.key === 'Escape' && !event.defaultPrevented) setSelectedExecution(null);
+        } : undefined}
+      >
       {selectedExecution && (
         <ExecutionJobDetails
           projectId={selectedExecution.projectId}
@@ -477,20 +504,20 @@ export function AgentsBoard({ scope }: { scope: AgentsBoardScope }) {
             const item = fleet.find((item) => fleetKey(item) === key);
             if (item) { inspect(item); return; }
             const execution = scopedExecutions.find((e) => executionKey(e) === key);
-            if (execution) setSelectedExecution({ projectId: execution.projectId, executionId: execution.executionId });
+            if (execution) openExecution(execution.projectId, execution.executionId);
           }}
         />
       ) : boardView === 'flow' ? (
         <SquadFlowView
           projectId={scopedProject?.id}
-          onInspectExecution={(projectId, executionId) => setSelectedExecution({ projectId, executionId })}
+          onInspectExecution={openExecution}
         />
       ) : boardView === 'list' ? (
         <AgentMonitor
           cards={visibleFleet}
           executions={executions}
           showProject={isGlobal}
-          onInspectExecution={(projectId, executionId) => setSelectedExecution({ projectId, executionId })}
+          onInspectExecution={openExecution}
         />
       ) : fleet.length === 0 && executions.length === 0 ? (
         <PaneEmptyState

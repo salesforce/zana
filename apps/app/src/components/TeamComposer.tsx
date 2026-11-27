@@ -1,9 +1,10 @@
 import { PlanReviewDisclosure, planHasMustFix, type PlanRecheck } from './PlanReviewDisclosure.js';
+import { PrecedenceStrip } from './PrecedenceStrip.js';
 import { product } from '../lib/product-client.js';
 import { SquadLaunchPolicyFields, SquadResolvedLaunchDetails } from './SquadLaunchSettings.js';
 import { launchOptionsSchema, type LaunchOptions, type ExecutionResolvedLaunchV1 } from '@zana-ai/zcc-domain/launch-options';
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, FileText, Folder, Paperclip, Users, X } from 'lucide-react';
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { ArrowUp, ChevronDown, FileText, Paperclip, Users, X } from 'lucide-react';
 import type { ExecutionSourceCapabilityView, Project, TeamAvailabilityUnknown, TeamCoordinationMode, TeamRequirementFailure } from '@zana-ai/zcc-domain/product';
 import {
   CommandComposer,
@@ -45,9 +46,8 @@ import {
   composerDropProjectRoot,
   stageRemoteComposerAttachments
 } from './legacy-agent-home.js';
-import { NO_TARGET, squadTargetOptions, squadTargetSelector } from './team-composer-target.js';
+import { NEW_WORKTREE, NO_TARGET, squadTargetOptions, squadTargetSelector } from './team-composer-target.js';
 import type { Worktree } from '@zana-ai/zcc-domain/product';
-import { platformShortcut } from '../lib/platformShortcut.js';
 import { sortCatalogueByName } from '../lib/catalogue-sort.js';
 import { ZanaSpinner } from './fairy/ZanaSpinner.js';
 
@@ -115,8 +115,8 @@ export function TeamComposer({
   const [launching, setLaunching] = useState(false);
   const [targetValue, setTargetValue] = useState(NO_TARGET);
   const [launchOptions, setLaunchOptions] = useState<LaunchOptions>(() => prefill?.launchOptions ?? {});
-  const [customizeOpen, setCustomizeOpen] = useState(false);
-  const [reviewOpen, setReviewOpen] = useState(false);
+  const [launchSettingsOpen, setLaunchSettingsOpen] = useState(false);
+  const launchSettingsId = useId();
   const [previewGeneration, setPreviewGeneration] = useState(0);
   const [previewState, setPreviewState] = useState<{ key: string; generation: number; resolved?: ExecutionResolvedLaunchV1; preview?: SquadLaunchPrefill['launchPreview']; error?: string }>();
   const launchBusyRef = useRef(false);
@@ -148,17 +148,23 @@ export function TeamComposer({
     try { window.localStorage.setItem(LAUNCH_PICK_KEY, value); } catch { /* storage unavailable */ }
   };
   const target = squadTargetSelector(targetValue);
-  const { target: _storedTarget, ...policyOptions } = launchOptions;
-  const effectiveOptions = reviewedBound ? prefill?.launchOptions ?? prefill?.launchPreview?.launchOptions ?? {} : { ...policyOptions, ...(target ? { target } : {}) };
-  const overrideCount = Object.keys(effectiveOptions).filter((key) => key !== 'target' && effectiveOptions[key as keyof LaunchOptions] !== undefined).length;
+  const { target: _storedTarget, worktree: _storedWorktree, ...policyOptions } = launchOptions;
+  const effectiveOptions: LaunchOptions = reviewedBound ? prefill?.launchOptions ?? prefill?.launchPreview?.launchOptions ?? {} : {
+    ...policyOptions,
+    ...(target ? { target, onComplete: 'leave' } : targetValue === NEW_WORKTREE ? { worktree: true } : {})
+  };
+  const overrideCount = Object.entries(policyOptions).filter(([key, value]) => value !== undefined && (key !== 'onComplete' || !target)).length;
   const optionsValid = launchOptionsSchema.safeParse(effectiveOptions);
 
-  // The picker needs at least one linked worktree beyond Default + Project root. Existing worktrees are offered by branch only for local Projects; main re-resolves the selector at launch.
+  // Existing worktrees are offered by branch only for local Projects. Main resolves the selector.
   const projectPath = project?.path;
   const projectIsRemote = Boolean(project?.remote);
   useEffect(() => {
-    const reviewedTarget = projectId === prefill?.projectId ? (prefill.launchOptions ?? prefill.launchPreview?.launchOptions)?.target : undefined;
-    setTargetValue(reviewedTarget?.kind === 'worktree' ? `worktree:${reviewedTarget.branch}` : reviewedTarget?.kind === 'project-root' ? 'project-root' : NO_TARGET);
+    const reviewedOptions = projectId === prefill?.projectId ? prefill.launchOptions ?? prefill.launchPreview?.launchOptions : undefined;
+    const reviewedTarget = reviewedOptions?.target;
+    setTargetValue(reviewedTarget?.kind === 'worktree' ? `worktree:${reviewedTarget.branch}`
+      : reviewedTarget?.kind === 'project-root' ? 'project-root'
+        : reviewedOptions?.worktree === true ? NEW_WORKTREE : NO_TARGET);
     setWorktrees([]);
     if (!projectPath || projectIsRemote) return;
     let cancelled = false;
@@ -167,11 +173,10 @@ export function TeamComposer({
       () => undefined
     );
     return () => { cancelled = true; };
-  }, [projectPath, projectIsRemote]);
-  const targetOptions = useMemo(() => squadTargetOptions(worktrees), [worktrees]);
+  }, [projectId, projectPath, projectIsRemote, prefill]);
 
   const field = useComposerPromptField({
-    placeholder: platformShortcut('Describe the GOAL for the squad to reach (⌘↵ to launch). Attach or drop supporting files.'),
+    placeholder: 'What should this Squad accomplish?',
     testId: 'team-command-input',
     ariaLabel: 'Goal for the squad',
     projectId,
@@ -198,6 +203,19 @@ export function TeamComposer({
   activeInputRef.current = { stagingKey, previewKey };
   const currentPreview = previewState?.key === previewKey ? previewState : undefined;
   const resolved = currentPreview?.resolved;
+  const launchPreview = currentPreview?.preview ?? (reviewedBound ? prefill?.launchPreview : undefined);
+  const previewLocation = launchPreview?.location;
+  const launchPreviewError = optionsValid.success ? currentPreview?.error : 'Invalid launch options or incompatible target.';
+  const projectBranch = worktrees.find((tree) => tree.path === projectPath)?.branch
+    ?? (previewLocation?.kind === 'new-worktree' ? previewLocation.baseBranch : previewLocation?.kind === 'project-root' ? launchPreview?.branch : undefined);
+  const inheritedLocation = targetValue === NO_TARGET && previewLocation
+    ? previewLocation.kind === 'new-worktree' ? `New worktree from ${previewLocation.baseBranch}`
+      : launchPreview?.branch ? `Project · ${launchPreview.branch}` : 'Project checkout'
+    : undefined;
+  const targetOptions = squadTargetOptions(worktrees, projectBranch, inheritedLocation);
+  if (reviewedBound && target?.kind === 'worktree' && !targetOptions.some((option) => option.value === targetValue)) {
+    targetOptions.push({ value: targetValue, label: `Worktree · ${target.branch}` });
+  }
   const previewReady = currentPreview?.generation === previewGeneration && Boolean(resolved) && !currentPreview?.error;
   useEffect(() => {
     if (previewState?.key === previewKey && previewState.generation === previewGeneration) return;
@@ -643,19 +661,6 @@ export function TeamComposer({
                     onChange={(value) => { if (!reviewedBound && !squadPinned) setLaunchPick(value); }}
                   />
                 </div>
-                {!projectIsRemote && targetOptions.length > 2 ? (
-                  <div className="thread-command-chip">
-                    <PopoverPicklist
-                      id="team-target"
-                      value={targetValue}
-                      ariaLabel="Squad target"
-                      searchable={targetOptions.length > 6}
-                      options={targetOptions}
-                      disabled={reviewedBound}
-                      onChange={(value) => { if (!reviewedBound) setTargetValue(value); }}
-                    />
-                  </div>
-                ) : null}
               </div>
               <div className="thread-command-footer-end">
                 <span className="composer-control-tooltip" data-tooltip={field.canAttach ? 'Attach files' : 'Attachments are unavailable while sending'}>
@@ -720,74 +725,76 @@ export function TeamComposer({
           ))}
         </ul>
       ) : null}
-      <div className="launch-job-details" role="group" aria-label="Squad details">
-        {reviewedBound ? <p role="note">Reviewed launch policies and target are fixed. Prepare a new proposal to change them.</p> : null}
-        <div aria-label="Effective launch settings" role="status">
-          {selectedTeam && (launchPick === 'MODERN' && projectIsRemote ? <p className="team-launch-mode-note" role="alert" data-testid="team-launch-mode-note">Modern Squads need a local Project</p> : transportView.fallbackReason ? <p className="team-launch-mode-note" data-testid="team-launch-mode-note">{transportView.fallbackReason}</p> : null)}
-          {currentPreview?.preview ? <p>Location: {currentPreview.preview.location.kind === 'new-worktree'
-            ? `New worktree from ${currentPreview.preview.location.baseBranch} — isolation: ${currentPreview.preview.location.isolationSource}; path assigned at launch`
-            : `${currentPreview.preview.branch} — ${currentPreview.preview.path}${currentPreview.preview.location.kind === 'worktree' ? ' (user-owned)' : ' (Project)'}`}</p> : null}
-          {resolved?.push.value ? <p>Push allowed ({resolved.push.source})</p> : null}
-          {resolved && resolved.onComplete.value !== 'leave' ? <p>{resolved.onComplete.value === 'merge' ? 'Merge' : 'Delete'} on completion ({resolved.onComplete.source})</p> : null}
-          {!resolved ? <p>{!optionsValid.success ? 'Invalid launch options or incompatible target.' : currentPreview?.error ?? 'Validating launch plan, sources, and target…'}</p> : null}
-        </div>
-        <div className="squad-launch-actions">
-          <button type="button" className="launch-advanced-toggle launch-disclosure-button" aria-expanded={customizeOpen} aria-controls="squad-customize-launch" onClick={() => { setCustomizeOpen((open) => !open); setReviewOpen(false); }}>
-            Customize launch
-            {!reviewedBound && overrideCount > 0 ? <span className="launch-advanced-badge">{overrideCount}</span> : null}
-          </button>
-          <button type="button" className="launch-advanced-toggle launch-disclosure-button" aria-expanded={reviewOpen} onClick={() => { setReviewOpen((open) => !open); setCustomizeOpen(false); }}>Review settings</button>
-        </div>
-        {reviewOpen ? <div className="launch-advanced launch-advanced-card squad-launch-review" aria-label="Reviewed launch settings">
-          {resolved ? <SquadResolvedLaunchDetails resolved={resolved} projectId={projectId || undefined} /> : <p>Launch settings are not available yet.</p>}
-        </div> : null}
-        {customizeOpen ? <div id="squad-customize-launch" className="launch-advanced launch-advanced-card">
-        {!reviewedBound ? <SquadLaunchPolicyFields value={effectiveOptions} onChange={setLaunchOptions} disabled={launching} includeCheckout={false} /> : null}
-        <label className="workflow-arg-field squad-launch-detail-field" htmlFor="team-title">
-          <span>Title <span className="launch-optional">Optional</span></span>
-          <input
-            id="team-title"
-            type="text"
-            maxLength={256}
-            value={title}
-            placeholder="Defaults from goal"
-            onChange={(event) => setTitle(event.target.value)}
-          />
-        </label>
-        <label className="workflow-arg-field squad-launch-detail-field" htmlFor="team-summary">
-          <span>
-            Summary <span className="launch-optional">Optional</span>
-            {summaryView.show ? (
-              <span className={`team-composer-limit${summaryView.over ? ' is-over' : ''}`} data-testid="team-summary-count">{summaryView.label}</span>
-            ) : null}
-          </span>
-          <textarea
-            id="team-summary"
-            rows={3}
-            maxLength={SQUAD_SUMMARY_MAX_CHARS}
-            value={summary}
-            placeholder="Add context for this squad"
-            onChange={(event) => setSummary(event.target.value)}
-          />
-        </label>
-        </div> : null}
-      </div>
-      <div className="thread-command-composer-meta">
+      <div className="thread-command-composer-meta squad-launch-meta">
         <div className="thread-command-composer-meta-start">
-          <div className="thread-command-chip">
-            <Folder size={14} aria-hidden="true" />
-            <ComposerProjectPicker
-              projects={projects}
-              value={projectId}
-              onChange={setProjectId}
-              disabled={Boolean(pinnedProject) || reviewedBound}
-              title={pinnedProject ? 'Workspace is locked to this project' : undefined}
-            />
-          </div>
+          <ComposerProjectPicker
+            projects={projects}
+            value={projectId}
+            onChange={setProjectId}
+            disabled={Boolean(pinnedProject) || reviewedBound}
+            title={pinnedProject ? 'Project locked to this launcher' : undefined}
+          />
+          {project && !projectIsRemote && (
+            <div className="thread-command-chip squad-launch-checkout">
+              <PopoverPicklist
+                id="team-target"
+                value={targetValue}
+                ariaLabel="Squad target"
+                searchable={targetOptions.length > 6}
+                searchPlaceholder="Search checkouts…"
+                options={targetOptions}
+                disabled={reviewedBound || launching}
+                onChange={setTargetValue}
+              />
+            </div>
+          )}
         </div>
-        {goalView.show ? (
-          <span className={`team-composer-limit${goalView.over ? ' is-over' : ''}`} data-testid="team-goal-count">{goalView.label}</span>
-        ) : null}
+        <div className="thread-command-composer-meta-end">
+          {goalView.show && <span className={`team-composer-limit${goalView.over ? ' is-over' : ''}`} data-testid="team-goal-count">{goalView.label}</span>}
+          <button type="button" className="launch-advanced-toggle squad-launch-settings-toggle" aria-expanded={launchSettingsOpen} aria-controls={launchSettingsId} onClick={() => setLaunchSettingsOpen((open) => !open)}>
+            Launch settings
+            {!reviewedBound && overrideCount > 0 && <span className="launch-advanced-badge">{overrideCount}</span>}
+            <ChevronDown size={12} aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+      {selectedTeam && (launchPick === 'MODERN' && projectIsRemote ? <p className="team-launch-mode-note" role="alert" data-testid="team-launch-mode-note">Modern Squads need a local Project</p> : transportView.fallbackReason ? <p className="team-launch-mode-note" data-testid="team-launch-mode-note">{transportView.fallbackReason}</p> : null)}
+      {resolved && (resolved.push.value || resolved.onComplete.value !== 'leave') && (
+        <div className="squad-launch-notice" aria-label="Launch policy notices" role="status">
+          {resolved.push.value && <span>Push allowed ({resolved.push.source})</span>}
+          {resolved.onComplete.value !== 'leave' && <span>{resolved.onComplete.value === 'merge' ? 'Merge' : 'Delete'} on completion ({resolved.onComplete.source})</span>}
+        </div>
+      )}
+      {launchPreviewError && <p className="team-composer-limit-message" role="alert">{launchPreviewError}</p>}
+      <div id={launchSettingsId} hidden={!launchSettingsOpen}>
+        {launchSettingsOpen && (
+          <section className="launch-job-details launch-advanced launch-advanced-card" aria-label="Squad launch settings">
+            {reviewedBound && <p role="note">Reviewed launch policies and target are fixed. Prepare a new proposal to change them.</p>}
+            {!reviewedBound && <SquadLaunchPolicyFields value={launchOptions} onChange={setLaunchOptions} disabled={launching} composer checkoutOwned={Boolean(target)} />}
+            <label className="workflow-arg-field squad-launch-detail-field" htmlFor="team-title">
+              <span>Title <span className="launch-optional">Optional</span></span>
+              <input id="team-title" type="text" maxLength={256} value={title} placeholder="Defaults from goal" onChange={(event) => setTitle(event.target.value)} />
+            </label>
+            <label className="workflow-arg-field squad-launch-detail-field" htmlFor="team-summary">
+              <span>
+                Summary <span className="launch-optional">Optional</span>
+                {summaryView.show && <span className={`team-composer-limit${summaryView.over ? ' is-over' : ''}`} data-testid="team-summary-count">{summaryView.label}</span>}
+              </span>
+              <textarea id="team-summary" rows={3} maxLength={SQUAD_SUMMARY_MAX_CHARS} value={summary} placeholder="Add context for this squad" onChange={(event) => setSummary(event.target.value)} />
+            </label>
+            <div className="squad-launch-effective" aria-label="Effective launch settings">
+              <h4>Effective settings</h4>
+              {previewLocation && <p>Location: {previewLocation.kind === 'new-worktree'
+                ? `New worktree from ${previewLocation.baseBranch} · Path assigned at launch`
+                : `${launchPreview?.branch ?? 'HEAD'} · ${launchPreview?.path ?? projectPath}`}</p>}
+              <div aria-label="Reviewed launch settings">
+                {resolved ? <SquadResolvedLaunchDetails resolved={resolved} projectId={projectId || undefined} />
+                  : <p>{launchPreviewError ?? 'Resolving launch location and settings…'}</p>}
+              </div>
+              {!reviewedBound && <PrecedenceStrip settingKey="launch.options" />}
+            </div>
+          </section>
+        )}
       </div>
     </div>
     </PluginComposerChrome>

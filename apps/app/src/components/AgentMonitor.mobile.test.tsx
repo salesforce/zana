@@ -38,14 +38,14 @@ afterEach(cleanup);
 it('offers Canvas without inheriting desktop Flow and preserves each screen choice', () => {
   const { unmount } = render(<AgentViewToggle />);
   expect(screen.getAllByRole('button')).toHaveLength(3);
-  expect(screen.getByRole('button', { name: 'Canvas view' }).getAttribute('aria-pressed')).toBe('false');
+  expect(screen.getByRole('button', { name: 'Squads view' }).getAttribute('aria-pressed')).toBe('false');
   expect(screen.getByRole('button', { name: 'Board view' }).getAttribute('aria-pressed')).toBe('true');
-  fireEvent.click(screen.getByRole('button', { name: 'Canvas view' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Squads view' }));
   expect(useUi.getState().mobileAgentsBoardView).toBe('flow');
-  expect(screen.getByRole('button', { name: 'Canvas view' }).getAttribute('aria-pressed')).toBe('true');
+  expect(screen.getByRole('button', { name: 'Squads view' }).getAttribute('aria-pressed')).toBe('true');
   unmount();
   render(<AgentViewToggle />);
-  expect(screen.getByRole('button', { name: 'Canvas view' }).getAttribute('aria-pressed')).toBe('true');
+  expect(screen.getByRole('button', { name: 'Squads view' }).getAttribute('aria-pressed')).toBe('true');
   cleanup();
   const next = render(<AgentViewToggle />);
   layout.compact = false;
@@ -54,7 +54,7 @@ it('offers Canvas without inheriting desktop Flow and preserves each screen choi
   expect(useUi.getState().agentsBoardView).toBe('list');
   layout.compact = true;
   next.rerender(<AgentViewToggle />);
-  expect(screen.getByRole('button', { name: 'Canvas view' }).getAttribute('aria-pressed')).toBe('true');
+  expect(screen.getByRole('button', { name: 'Squads view' }).getAttribute('aria-pressed')).toBe('true');
   fireEvent.click(screen.getByRole('button', { name: 'Board view' }));
   expect(useUi.getState().agentsBoardView).toBe('list');
   expect(useUi.getState().mobileAgentsBoardView).toBe('board');
