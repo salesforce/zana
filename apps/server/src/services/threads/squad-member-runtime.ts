@@ -31,6 +31,7 @@ import { resumeConversationStrict, StrictResumeError } from './conversation-host
 import { bridgeLaunchForProvider, canonicalThreadProviderId, getThreadProvider, waitForThreadProvider } from './thread-provider-catalog.js';
 import { capabilityRegistry } from '../../plugins/capability-registry.js';
 import { validateProviderModelSelection } from './provider-model-validation.js';
+import { timeSquadLaunchPhase } from './squad-launch-timing.js';
 import type { ModernTeamMember } from '../agents/modern-team-launch-tools.js';
 import { threadAutomatedSkillIds } from './thread-automated-skill-selection.js';
 import { personaMcpAllowlistNotice } from './persona-mcp-allowlist.js';
@@ -131,7 +132,7 @@ export async function preflightSquadRuntime(
   // joined with its sealed generations, after startup settles. A second store
   // handle plus per-row re-reads would see a torn mid-activation inventory.
   const inventory = ctx.plugins
-    ? await ctx.plugins.toolPolicyReadiness()
+    ? await timeSquadLaunchPhase('preflight-plugin-readiness', () => ctx.plugins!.toolPolicyReadiness())
     : { ready: false, required: [], reason: 'plugin service is unavailable' };
   const policyInventoryReady = inventory.ready;
   // Veto state comes from the host-owned capability registry, never a constant:
@@ -143,12 +144,12 @@ export async function preflightSquadRuntime(
       .describe({ surface: 'modern', harness: providerId, headless: false, hookBase: true })
       .some(descriptor => descriptor.id === 'tool-before-native' && descriptor.available));
   const nativeToolPolicyRequired = request.nativeToolPolicyRequired === true || inventory.required.length > 0;
-  const status = ProviderStatusResultSchema.parse(await ctx.hostHub.callHostOnlineRpc({
+  const status = ProviderStatusResultSchema.parse(await timeSquadLaunchPhase('preflight-host-provider-status', () => ctx.hostHub.callHostOnlineRpc({
     hostId, command: { type: 'provider.status' }
-  }));
+  })));
   const providers: SquadRuntimePreflightResult['providers'] = [];
   for (const requested of [...new Set(request.providerIds)]) {
-    await waitForThreadProvider(requested);
+    await timeSquadLaunchPhase('preflight-provider-wait', () => waitForThreadProvider(requested));
     const providerId = canonicalThreadProviderId(requested);
     const provider = getThreadProvider(providerId);
     let reason = provider?.unavailableReason;
@@ -174,7 +175,7 @@ export async function preflightSquadRuntime(
     if (selection.permissionMode && !getThreadProvider(providerId)?.capabilities.permissionModes.includes(selection.permissionMode)) {
       throw new Error('Modern provider permission mode is unsupported');
     }
-    await validateProviderModelSelection(ctx, { hostId, providerId, cwd: project.path, model: selection.model });
+    await timeSquadLaunchPhase('preflight-model-validation', () => validateProviderModelSelection(ctx, { hostId, providerId, cwd: project.path, model: selection.model }));
   }
   return { ready: !reason, hostId, policyInventoryReady, nativeToolPolicyRequired, nativeToolPolicyWired,
     providers, ...(reason ? { reason } : {}) };
@@ -228,19 +229,19 @@ export async function createSquadMemberConversation(
   // Reserve before the first await so concurrent retries cannot issue two starts.
   const promise = (async () => {
     const automatedSkillIds = request.automatedSkillIds ?? [];
-    const preflight = await preflightSquadRuntime(ctx, { projectId: request.projectId,
+    const preflight = await timeSquadLaunchPhase('member-create-preflight', () => preflightSquadRuntime(ctx, { projectId: request.projectId,
       hostId: request.hostId, providerIds: [request.providerId], nativeToolPolicyRequired: request.nativeToolPolicyRequired,
-      selections: [{ providerId: request.providerId, model: request.model, permissionMode: request.permissionMode }] });
+      selections: [{ providerId: request.providerId, model: request.model, permissionMode: request.permissionMode }] }));
     if (!preflight.ready) throw new Error(preflight.reason);
     // The member's first turn is dispatched by activation, which does not admit. Admit the
     // start here, once, before any thread or environment exists. A prepared member cannot
     // be held for later, so a wait is a refusal; an admission failure also refuses.
-    const refusal = admissionRefusal(await admitDispatch(ctx, {
+    const refusal = admissionRefusal(await timeSquadLaunchPhase('member-create-admit', () => admitDispatch(ctx, {
       projectId: request.projectId, surface: 'modern', entry: 'squad-member-start', origin: 'system',
       prompt: { text: request.prompt }
-    }));
+    })));
     if (refusal) throw new Error(`${SQUAD_START_REFUSED_PREFIX} (${refusal.code}): ${refusal.message}`.slice(0, 1024));
-    const thread = await createConversationFromRequest(ctx, {
+    const thread = await timeSquadLaunchPhase('member-create-conversation', () => createConversationFromRequest(ctx, {
       id: request.bindingId, projectId: request.projectId, hostId: preflight.hostId, providerId: request.providerId,
       input: [request.prompt], promptInput: [{ type: 'text', text: request.prompt, mentions: [] }], title: request.title,
       visibility: request.role === 'worker' ? 'hidden' : 'visible', originPluginId: MODERN_SQUAD_BINDING_ORIGIN,
@@ -259,7 +260,7 @@ export async function createSquadMemberConversation(
           ...(request.allowedSkillNames !== undefined ? { allowedSkillNames: request.allowedSkillNames } : {}),
           ...(request.mcpAllowlist !== undefined ? { mcpAllowlist: request.mcpAllowlist } : {}) });
       }
-    });
+    }));
     if (thread.id !== request.bindingId) throw new Error('squad runtime did not preserve reserved binding UUID');
     const environment = thread.environmentId ? getEnvironment(ctx.db, thread.environmentId) : null;
     if (!environment?.path) throw new Error('squad member environment is unavailable');
@@ -298,19 +299,19 @@ export async function activateSquadMemberConversation(ctx: ProductHttpContext, i
   }
   // Reserve before the first await so concurrent retries cannot issue two starts.
   const promise = (async () => {
-    const preflight = await preflightSquadRuntime(ctx, { projectId: request.projectId, hostId: request.hostId,
+    const preflight = await timeSquadLaunchPhase('member-activate-preflight', () => preflightSquadRuntime(ctx, { projectId: request.projectId, hostId: request.hostId,
       providerIds: [request.providerId], nativeToolPolicyRequired: request.nativeToolPolicyRequired,
-      selections: [{ providerId: request.providerId, model: request.model, permissionMode: request.permissionMode }] });
+      selections: [{ providerId: request.providerId, model: request.model, permissionMode: request.permissionMode }] }));
     if (!preflight.ready) throw new Error(preflight.reason);
     assertBinding();
-    await activatePreparedConversation(ctx, { id: request.bindingId, projectId: request.projectId, providerId: request.providerId,
+    await timeSquadLaunchPhase('member-activate-start', () => activatePreparedConversation(ctx, { id: request.bindingId, projectId: request.projectId, providerId: request.providerId,
       input: [request.prompt], promptInput: [{ type: 'text', text: request.prompt, mentions: [] }], title: request.title,
       model: request.model, reasoningLevel: request.reasoningLevel, permissionMode: request.permissionMode,
       automatedSkillIds: threadAutomatedSkillIds(ctx.db, request.bindingId) }, () => {
       // Runs synchronously after every pre-send await; failures before here never reached the provider.
       assertBinding();
       persistBindingMetadata(ctx, request.bindingId, { squadActivationStarted: true });
-    });
+    }));
     persistBindingMetadata(ctx, request.bindingId, { squadActivationAccepted: true });
     return { threadId: request.bindingId };
   })();
@@ -367,7 +368,7 @@ export async function deliverSquadMemberConversation(
   };
   persist('uncertain');
   try {
-    await sendConversationTurn(ctx, request.bindingId, [{ type: 'text', text: request.message, mentions: [] }], 'queue-if-active');
+    await timeSquadLaunchPhase('member-deliver-send', () => sendConversationTurn(ctx, request.bindingId, [{ type: 'text', text: request.message, mentions: [] }], 'queue-if-active'));
     return result(persist('accepted'));
   } catch (error) {
     // Admission rejection proves no send; other failures may follow queue/host side effects.
