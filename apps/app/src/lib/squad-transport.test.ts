@@ -3,10 +3,12 @@ import { describe, expect, it } from 'vitest';
 import {
   MODERN_SQUAD_THREAD_ORIGIN,
   agentSessionTransport,
+  MODERN_SQUAD_MEMBER_LABEL,
   isModernSquadThread,
   squadTransport,
   squadTransportClass,
-  squadTransportKind
+  squadTransportKind,
+  withModernSquadLabel
 } from './squad-transport.js';
 
 describe('squad transport helpers', () => {
@@ -66,5 +68,13 @@ describe('squad transport helpers', () => {
     // The run's pinned transport wins over the Squad's current setting, but never over a live PTY.
     expect(agentSessionTransport({ id: 'execution:e1', cohort: cohort('cli') }, teams, true, false, 'MODERN')).toBe('MODERN');
     expect(agentSessionTransport({ id: 'pty-1', cohort: cohort('cli') }, teams, false, false, 'MODERN')).toBe('CLI');
+  });
+});
+
+describe('withModernSquadLabel', () => {
+  it('appends the Modern label only for Modern squad members', () => {
+    expect(withModernSquadLabel('Row', true)).toBe(`Row · ${MODERN_SQUAD_MEMBER_LABEL}`);
+    expect(withModernSquadLabel('Row', true, ', ')).toBe(`Row, ${MODERN_SQUAD_MEMBER_LABEL}`);
+    expect(withModernSquadLabel('Row', false)).toBe('Row');
   });
 });

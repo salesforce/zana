@@ -13,7 +13,7 @@ import { useThreadCardActions, ThreadCardMenu, openThreadMenu } from './threadCa
 import { PromptModal } from './PromptModal.js';
 import type { AgentCard } from './AgentBoard.js';
 import { FleetKindChip } from './FleetKindChip.js';
-import { isModernSquadThread } from '../lib/squad-transport.js';
+import { isModernSquadThread, withModernSquadLabel } from '../lib/squad-transport.js';
 import { isVisibleThread, threadTitle } from './fleet-item.js';
 import { threadStatusToAgentState } from './thread/thread-timeline-model.js';
 
@@ -239,7 +239,7 @@ export function AgentTray({
                   setMenu(null);
                   openThreadMenu(e, thread, setThreadMenu);
                 }}
-                title={`${item.title} — ${item.projectName} · ${STATE_LABEL[item.state]}`}
+                title={withModernSquadLabel(`${item.title} — ${item.projectName} · ${STATE_LABEL[item.state]}`, Boolean(item.modernSquad))}
                 style={item.projectColor ? ({ '--project-color': item.projectColor } as CSSProperties) : undefined}
               >
                 <span className={`tab-agent-dot agent-${item.state}`} aria-hidden="true" />

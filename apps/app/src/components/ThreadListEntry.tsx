@@ -6,7 +6,7 @@ import { showOngoingThreadWork, threadStatusLabel, threadStatusTone } from './th
 import { useThreadWorkingPhrase } from './thread/useThreadWorkingPhrase.js';
 import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
 import { FleetKindChip } from './FleetKindChip.js';
-import { isModernSquadThread } from '../lib/squad-transport.js';
+import { isModernSquadThread, withModernSquadLabel } from '../lib/squad-transport.js';
 import {
   getThreadListIndicatorLabel,
   resolveThreadListIndicator,
@@ -71,7 +71,7 @@ export function ThreadListEntry({
       }}
       onContextMenu={onContextMenu}
       aria-current={active ? 'true' : undefined}
-      title={`${thread.title ?? 'Untitled agent'}${projectName ? ` — ${projectName}` : ''} · ${thread.status}`}
+      title={withModernSquadLabel(`${thread.title ?? 'Untitled agent'}${projectName ? ` — ${projectName}` : ''} · ${thread.status}`, modernSquad)}
     >
       <span className="agents-row-icon">
         <ProviderIcon providerId={thread.providerId} size={13} />

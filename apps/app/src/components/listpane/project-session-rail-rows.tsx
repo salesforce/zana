@@ -17,7 +17,7 @@ import {
 } from '../fleet-item.js';
 import type { ThreadListItem } from '../../thread-store.js';
 import { AgentRowDetail } from './AgentRowDetail.js';
-import { isModernSquadThread } from '../../lib/squad-transport.js';
+import { isModernSquadThread, withModernSquadLabel } from '../../lib/squad-transport.js';
 import { sessionRailTitle } from '../../lib/sessionRailTitle.js';
 
 export function ProjectAgentRailRow({
@@ -144,9 +144,9 @@ export function ProjectThreadRailRow({
           onOpen();
         }}
         onContextMenu={onContextMenu}
-        aria-label={title}
+        aria-label={withModernSquadLabel(title, modernSquad, ', ')}
         aria-current={active ? 'true' : undefined}
-        title={`${title} · ${thread.status}`}
+        title={withModernSquadLabel(`${title} · ${thread.status}`, modernSquad)}
       >
         <ThreadIdentityIcon thread={thread} className="tab-profile-icon" />
         <span className="project-terminal-text">
