@@ -13,6 +13,7 @@ import type { LaunchItemMapping } from './squad-proposals/sources.js';
 import { PlanCorrectionService } from './plan-correction/service.js';
 import { gateInvalidProvidedPlan, splitProposedGoalSources, teamJobFailureResponse, type ProvidedPlanGateDeps } from './team-launch-support.js';
 import { planNormalizationNote, resolveSquadPlan } from './team-trigger-semantics.js';
+import { timeSquadLaunchPhase } from '@zana-ai/zcc-server/services/threads/squad-launch-timing';
 import { hasPortablePlanStep } from '@zana-ai/zcc-server/services/execution/portable-plan';
 import { formatSquadPlanFinding, type SquadPlanFinding } from '@zana-ai/zcc-domain/squad-proposal';
 import { planCorrectionReason, planIntakeDisposition } from './plan-correction/findings.js';
@@ -238,37 +239,38 @@ export async function launchSquad(
   // immutable content store and execution ledger carries only bounded metadata.
   const launchRequestId = deps.newLaunchRequestId();
   if (input.transportPin) deps.pinLaunchTransport?.(launchRequestId, input.transportPin);
-  const snapshot = await deps.snapshotSources(ctx.sources, {
+  const sourcePolicy = await resolveSourcePolicy(deps.realpath, { ...(project.remote ? {} : { projectRoot: project.path }), ...deps.sourceBases() });
+  const snapshot = await timeSquadLaunchPhase('launch-snapshot-sources', () => deps.snapshotSources(ctx.sources, {
     projectId: project.id, launchRequestId, sourceCapabilityIds: input.sourceCapabilityIds, sourcePaths, goalSourceDescriptors,
     // Re-checked against the realpath issue() takes, so a symlink swapped in after discovery can't escape.
-    policy: await resolveSourcePolicy(deps.realpath, { ...(project.remote ? {} : { projectRoot: project.path }), ...deps.sourceBases() }),
+    policy: sourcePolicy,
     ...(input.attachments?.length ? { attachments: input.attachments } : {})
-  });
+  }));
   if (!snapshot.ok) return snapshot;
   const { sourceBundle } = snapshot;
   if (snapshot.attachmentMapping) ctx.onAttachmentMapping?.(snapshot.attachmentMapping);
   let started = false;
   try {
-    const built = await buildSquadStartRequest(deps, {
+    const built = await timeSquadLaunchPhase('launch-build-request', () => buildSquadStartRequest(deps, {
       teamId: input.teamId, projectId: project.id, projectName: project.name, launchRequestId,
       coordinationMode: input.coordinationMode, slots: input.slots, attended: ctx.sources?.kind === 'window',
       goal: input.goal, ...(input.planText ? { planText: input.planText } : {}), title: input.title, summary: input.summary, completionInboxNotice: input.completionInboxNotice,
       sourceBundle, goalSourceDescriptors: redactedGoalSources,
       launchOptions: options.data,
       ...(targetCheck.target ? { target: targetCheck.target } : {})
-    });
+    }));
     if (!built.ok) return built.response;
     if (input.launchPreview) {
       if (!deps.validateLaunchPreview) return { ok: false, code: 'UNAVAILABLE', message: 'Trusted launch preview validation unavailable' };
-      try { await deps.validateLaunchPreview(project.id, built.request, input.launchPreview); }
+      try { await timeSquadLaunchPhase('launch-validate-preview', () => deps.validateLaunchPreview!(project.id, built.request, input.launchPreview!)); }
       catch (error) { return { ok: false, code: 'LAUNCH_CHANGED', message: error instanceof Error ? error.message : 'Launch changed' }; }
     }
-    const result = owner.proposal || owner.reportTo
+    const result = await timeSquadLaunchPhase('launch-execution-start', async () => owner.proposal || owner.reportTo
       ? await deps.squadExecutionService.start(owner.principalId, project.id, built.request, {
         ...(owner.proposal ? { proposal: owner.proposal } : {}),
         ...(owner.reportTo ? { reportTo: owner.reportTo } : {})
       })
-      : await deps.squadExecutionService.start(owner.principalId, project.id, built.request);
+      : await deps.squadExecutionService.start(owner.principalId, project.id, built.request));
     if (!result.ok) return teamJobFailureResponse(result);
     started = true;
     return { ok: true, value: { executionId: result.value.id, state: result.value.state } };
@@ -385,10 +387,10 @@ async function buildSquadStartRequest(deps: SquadLaunchDeps, args: {
     { planError: providedPlanError, unattended: !args.attended, projectId: args.projectId, projectName: args.projectName, launchRequestId }
   );
   if (planRefusal) return { ok: false, response: planRefusal };
-  const sanitizedJobTitle = await deps.nameTeamExecution(
+  const sanitizedJobTitle = await timeSquadLaunchPhase('launch-name-execution', () => deps.nameTeamExecution(
     launchRequestId, sanitizedGoal, sanitizedExplicitTitle,
     sourceBundle?.sources.map((source) => redactCapturedExecutionSourcePaths(source.extractedText, capturedPathDescriptors))
-  );
+  ));
   const sharedTask = [
     `Shared job goal: ${sanitizedGoal}`,
     sanitizedSummary ? `Context: ${sanitizedSummary}` : '',
