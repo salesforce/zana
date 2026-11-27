@@ -76,6 +76,19 @@ it('requires confirmation to uninstall, reports failures, and lets Escape dismis
   await screen.findByText('Remove denied'); expect(api.remove).toHaveBeenCalledWith('example');
 });
 
+it('keeps an always-enabled plugin accessible without disable or uninstall actions', async () => {
+  api.apps = [plugin({ alwaysEnabled: true, provenance: 'builtin', sourceKind: 'builtin' })];
+  setup();
+  const installedRow = await screen.findByTestId('plugin-row-example');
+  expect(within(installedRow).queryByRole('switch')).toBeNull();
+  expect(inspector().getByRole('link', { name: 'Settings →' })).toBeTruthy();
+  expect(inspector().queryByRole('switch')).toBeNull();
+  expect(inspector().queryByRole('button', { name: 'More plugin actions' })).toBeNull();
+  fireEvent.click(inspector().getByRole('tab', { name: 'Installation' }));
+  expect(inspector().queryByRole('button', { name: /^(Disable|Uninstall)$/ })).toBeNull();
+  expect(inspector().getByRole('button', { name: 'Reload', exact: true })).toBeTruthy();
+});
+
 it('offers renderer recovery before selecting any detail section', async () => {
   api.modules = [{ id: 'example', title: 'Example', icon: 'Box', loadError: 'Renderer could not load' }];
   setup();

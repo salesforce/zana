@@ -6483,6 +6483,8 @@ export interface PluginAppEntry {
   collection?: 'coding-agents';
   /** Offer this plugin’s enable switch in Experimental settings. */
   experimental?: true;
+  /** The host requires this plugin to stay installed and enabled. */
+  alwaysEnabled?: true;
   status: 'running' | 'disabled' | 'degraded' | 'needs-configuration';
   statusDetail?: string | null;
   /** Host-derived recovery choices; local paths and replacement sources remain private. */

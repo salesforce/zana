@@ -53,6 +53,7 @@ import { soundProviderSettingsHref } from '../../plugins/notification-sounds.js'
 import { listSettingsSections, subscribePluginSlots } from '@/plugins/plugin-slots';
 import { PluginHubIncludes } from './PluginHubIncludes.js';
 import { PluginSubmissionAction } from './PluginSubmissionAction.js';
+import { canSubmitPlugin } from './plugin-submission.js';
 import { PluginBrowseSplit } from './PluginBrowseSplit.js';
 import { PluginUpdateDetails, pluginUpdateDelivery } from './PluginUpdateDetails.js';
 import { PluginMoreFromAuthor, PluginOverviewLead, PluginReleaseSection, PluginDetailsSection } from './CatalogPluginDetail.js';
@@ -64,6 +65,7 @@ import { PluginLoadFailure } from '../../plugins/PluginLoadFailure.js';
 import { useUi } from '@/store';
 import {
   buildHubRows,
+  canChangeInstallation,
   moduleHostCallReady,
   type HubRow
 } from './installed-plugins.js';
@@ -773,8 +775,7 @@ function AboutCard({ row, installation, onConfigure, onManage }: { row: HubRow; 
     (moduleHostCallReady(row) || module.settingsPanel !== module.panel);
   const openPanel = () => useUi.getState().setNav(module.id);
 
-  const canToggle = plugin != null || entry != null;
-  const canUninstall = plugin != null || entry != null;
+  const canDisableOrRemove = canChangeInstallation(row);
   const enabled = plugin ? plugin.enabled : (entry?.enabled ?? true);
   const toggleEnabled = () => {
     void setHubRowEnabled({ module, entry: entry ?? null, plugin: plugin ?? null }, !enabled, product)
@@ -875,7 +876,7 @@ function AboutCard({ row, installation, onConfigure, onManage }: { row: HubRow; 
     }
   };
   const uninstall = async () => {
-    if (!canUninstall) return;
+    if (!canDisableOrRemove) return;
     setRemoving(true);
     setRemoveError(null);
     try {
@@ -926,7 +927,7 @@ function AboutCard({ row, installation, onConfigure, onManage }: { row: HubRow; 
                       : 'Built-in module'}
           </p>
         </div>
-        {canToggle && (
+        {canDisableOrRemove && (
           <label className="ext-installed-switch ext-hub-about-switch" title={enabled ? 'Disable' : 'Enable'}>
             <input
               type="checkbox"
@@ -944,7 +945,7 @@ function AboutCard({ row, installation, onConfigure, onManage }: { row: HubRow; 
             Open
           </button>
         )}
-        {/* buildHubRows only supplies installed records to this detail card. */}
+        {(canDisableOrRemove || canSubmitPlugin(row)) && (
           <div className="ext-hub-more-wrap">
             <button
               type="button"
@@ -959,21 +960,24 @@ function AboutCard({ row, installation, onConfigure, onManage }: { row: HubRow; 
             {aboutMenuOpen ? (
               <div className="ext-hub-more-menu" role="menu" aria-label="Plugin actions">
                 <PluginSubmissionAction row={row} onChoose={() => setAboutMenuOpen(false)} />
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setAboutMenuOpen(false);
-                    onManage();
-                    setConfirmRemove(true);
-                  }}
-                >
-                  <Trash2 size={14} />
-                  Uninstall
-                </button>
+                {canDisableOrRemove && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setAboutMenuOpen(false);
+                      onManage();
+                      setConfirmRemove(true);
+                    }}
+                  >
+                    <Trash2 size={14} />
+                    Uninstall
+                  </button>
+                )}
               </div>
             ) : null}
           </div>
+        )}
       </div>
       <div hidden={!installation}>
       <div className="ext-hub-about-grid">
@@ -1143,13 +1147,15 @@ function AboutCard({ row, installation, onConfigure, onManage }: { row: HubRow; 
           {pluginReloadError ? <p className="modal-error">{pluginReloadError}</p> : null}
         </div>
       ) : null}
-      {canToggle && (
+      {(canDisableOrRemove || entry) && (
         <div className="ext-actions-footer" hidden={!installation}>
           <div className="ext-actions ext-actions--start">
-            <button type="button" className="settings-btn" onClick={toggleEnabled}>
-              <Power size={14} />
-              {enabled ? 'Disable' : 'Enable'}
-            </button>
+            {canDisableOrRemove && (
+              <button type="button" className="settings-btn" onClick={toggleEnabled}>
+                <Power size={14} />
+                {enabled ? 'Disable' : 'Enable'}
+              </button>
+            )}
             {entry && (
               <button type="button" className="settings-btn" onClick={reveal}>
                 <FolderOpen size={14} />
@@ -1157,7 +1163,7 @@ function AboutCard({ row, installation, onConfigure, onManage }: { row: HubRow; 
               </button>
             )}
           </div>
-          {canUninstall && (
+          {canDisableOrRemove && (
             <div className="ext-actions ext-actions--end">
               {confirmRemove ? (
                 <>

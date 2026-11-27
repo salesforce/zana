@@ -364,6 +364,9 @@ it('keeps optional settings discovery metadata across the strict runtime boundar
   const row = { id: 'sample', name: 'Sample', description: '', icon: 'Puzzle', enabled: true, provenance: 'direct', status: 'running', appUrl: null };
   expect(PluginAppSnapshotSchema.parse({ ...row, experimental: true })).toHaveProperty('experimental', true);
   expect(PluginAppSnapshotSchema.safeParse({ ...row, experimental: 'yes' }).success).toBe(false);
+  expect(PluginAppSnapshotSchema.parse(row)).not.toHaveProperty('alwaysEnabled');
+  expect(PluginAppSnapshotSchema.parse({ ...row, alwaysEnabled: true })).toHaveProperty('alwaysEnabled', true);
+  expect(PluginAppSnapshotSchema.safeParse({ ...row, alwaysEnabled: 'yes' }).success).toBe(false);
   expect(PluginAppSnapshotSchema.parse(row)).not.toHaveProperty('hasSettings');
   for (const hasSettings of [true, false]) expect(PluginAppSnapshotSchema.parse({ ...row, hasSettings })).toHaveProperty('hasSettings', hasSettings);
   expect(PluginAppSnapshotSchema.safeParse({ ...row, hasSettings: 'yes' }).success).toBe(false);

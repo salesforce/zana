@@ -1,9 +1,11 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createPluginService, loadManifestFromDir } from './plugin-service.js';
+import { createPluginService, loadManifestFromDir, toPluginAppSnapshot } from './plugin-service.js';
 import { createPluginStore, pluginStorePath, type InstalledPluginRow, type PluginSourceKind } from './plugin-store.js';
+import { createPluginUninstalledStore, pluginUninstalledPath } from './plugin-uninstalled.js';
 
 const roots: string[] = [];
 const services: ReturnType<typeof createPluginService>[] = [];
@@ -42,6 +44,69 @@ beforeEach(() => { vi.stubEnv('ZCC_OFFICIAL_MARKETPLACE_URL', 'off'); vi.stubEnv
 afterEach(() => { services.splice(0).forEach(s => s.stop()); roots.splice(0).forEach(dir => rmSync(dir, { recursive: true, force: true })); vi.unstubAllEnvs(); });
 
 describe('bundled plugin policy through PluginService', () => {
+  it.each(['new', 'previously uninstalled'])('starts Bots automatically for a %s installation', async profile => {
+    const dataDir = root(), bundled = root();
+    plugin(join(bundled, 'bots'), 'bots');
+    const uninstalled = createPluginUninstalledStore({ file: pluginUninstalledPath(dataDir) });
+    if (profile === 'previously uninstalled') await uninstalled.add('bots');
+    const subject = service(dataDir, bundled);
+    await subject.start();
+    expect(subject.get('bots')).toMatchObject({ enabled: true, status: 'running' });
+    const entry = toPluginAppSnapshot(subject.snapshot()[0]!);
+    expect(entry).toMatchObject({ id: 'bots', alwaysEnabled: true });
+    expect(entry).not.toHaveProperty('experimental');
+    expect(uninstalled.has('bots')).toBe(false);
+    await expect(subject.disable('bots')).rejects.toThrow(/always on/);
+    await expect(subject.remove('bots')).rejects.toThrow(/always on/);
+    await expect(subject.callRpc('bots', 'read', {})).resolves.toMatchObject({ version: '1.0.0' });
+  });
+
+  it('starts a previously disabled Bots registration with its existing data', async () => {
+    const dataDir = root(), bundled = root();
+    plugin(join(bundled, 'bots'), 'bots');
+    const previous = service(dataDir, bundled);
+    const row = await previous.install('builtin:bots', { enable: false });
+    expect(row).toMatchObject({ enabled: true, status: 'running' });
+    await previous.callRpc('bots', 'save', {});
+    previous.stop();
+    const store = createPluginStore({ file: pluginStorePath(dataDir) });
+    await store.upsert({ ...row, enabled: false, status: 'disabled' });
+    const subject = service(dataDir, bundled);
+    await subject.start();
+    expect(store.get('bots')).toMatchObject({ enabled: true, status: 'running', installedAt: row.installedAt });
+    expect(await subject.reconcileBuiltins()).toEqual([]);
+    await expect(subject.callRpc('bots', 'read', {})).resolves.toMatchObject({ saved: 'keep me' });
+  });
+
+  it('preserves an independent installation with a reserved id until its owner removes it', async () => {
+    const dataDir = root(), bundled = root();
+    plugin(join(bundled, 'bots'), 'bots');
+    const independent = await seed(dataDir, plugin(root(), 'bots'), 'git');
+    await createPluginStore({ file: pluginStorePath(dataDir) }).upsert({ ...independent, enabled: false, status: 'disabled' });
+    const subject = service(dataDir, bundled);
+    await subject.start();
+    const entry = toPluginAppSnapshot(subject.snapshot()[0]!);
+    expect(entry).toMatchObject({ enabled: false, status: 'disabled', updatePolicy: 'migration-required' });
+    expect(entry).not.toHaveProperty('alwaysEnabled');
+    await subject.remove('bots');
+    expect(subject.get('bots')).toMatchObject({ sourceKind: 'builtin', enabled: true, status: 'running' });
+    await expect(subject.callRpc('bots', 'read', {})).resolves.toMatchObject({ version: '1.0.0' });
+  });
+
+  it('restores the Bots enablement flag while recovery keeps a damaged runtime offline', async () => {
+    const dataDir = root(), bundled = root();
+    const runtime = plugin(join(dataDir, 'plugins', 'generations', randomUUID(), 'builtin'), 'bots');
+    const row = await seed(dataDir, runtime, 'builtin');
+    await createPluginStore({ file: pluginStorePath(dataDir) }).upsert({ ...row, enabled: false, status: 'disabled' });
+    const damaged = join(dataDir, 'plugin-activations', randomUUID());
+    mkdirSync(damaged, { recursive: true });
+    writeFileSync(join(damaged, 'journal.json'), 'broken');
+    const subject = service(dataDir, bundled);
+    await subject.start();
+    expect(subject.get('bots')).toMatchObject({ enabled: true, status: 'degraded', statusDetail: expect.stringContaining('Repair the journal directory') });
+    await expect(subject.callRpc('bots', 'read', {})).rejects.toThrow();
+  });
+
   it.each(['git', 'npm', 'catalog'] as const)('rejects an actual bundled identity delivered by %s and cleans staging', async kind => {
     const dataDir = root(), bundled = root(); plugin(join(bundled, 'tasks'));
     const cloneGit = vi.fn(async (_url: string, dest: string) => { plugin(dest); return { commit: 'new-commit' }; });

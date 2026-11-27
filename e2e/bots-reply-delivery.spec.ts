@@ -36,15 +36,7 @@ function toolCaller(page: Page, home: string) {
 test('first bot contact sends without approval and replies reach running and idle threads with attribution', async ({ app, home }, testInfo) => {
   test.setTimeout(240_000);
   const page = app.window;
-  const toggle = page.getByRole('switch', { name: 'Bots', exact: true });
-  await route(page, '/settings/experimental');
-  await expect(toggle).toHaveAttribute('aria-checked', 'false', { timeout: 30_000 });
-  await page.getByRole('link', { name: 'Back to app' }).click();
-  await route(page, '/settings/experimental');
-  await toggle.click();
-  await expect(toggle).toBeEnabled();
-  await expect(toggle).toHaveAttribute('aria-checked', 'true');
-  await page.getByRole('link', { name: 'Back to app' }).click();
+  await expect(page.getByRole('button', { name: 'Organize bots' })).toBeVisible({ timeout: 45_000 });
 
   const rpc = async (method: string, args: Record<string, unknown>) => {
     const res = await page.request.post(new URL('/api/v1/plugin-apps/bots/rpc', page.url()).href, { data: { method, args } });

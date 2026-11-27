@@ -116,6 +116,11 @@ export function rowEnabled(row: HubRow): boolean {
   return true;
 }
 
+/** The server owns the enable and uninstall policy for installed plugins. */
+export function canChangeInstallation(row: HubRow): boolean {
+  return row.plugin ? !row.plugin.alwaysEnabled : row.entry != null;
+}
+
 /**
  * True when `ModuleHost.call` can reach a live main module.
  *
