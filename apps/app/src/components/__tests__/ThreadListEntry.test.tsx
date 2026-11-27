@@ -63,6 +63,7 @@ describe('ThreadListEntry', () => {
     expect(render(modern)).toContain(' · idle · Modern squad member"');
     expect(render(modern, 'Proj')).toContain('— Proj · idle · Modern squad member"');
     expect(render({}, 'Proj')).not.toContain('Modern squad member');
+    expect(render({ title: undefined })).toContain('title="Untitled agent · idle"');
   });
 
   it('shows Needs you instead of Working when a question is pending', () => {
