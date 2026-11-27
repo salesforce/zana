@@ -5,7 +5,7 @@ import { hasDesktopBridge } from '@/lib/app-surface';
 import { PluginBrandIcon } from './PluginBrandIcon.js';
 import { useUi } from '@/store';
 import { reconcilePluginApps } from '@/plugins/plugin-app-loader';
-import { rowDescription, rowEnabled, type HubRow } from './installed-plugins.js';
+import { canChangeInstallation, rowDescription, rowEnabled, type HubRow } from './installed-plugins.js';
 import { installedIconTone, installedIconUrl } from './installed-collection.js';
 import { installedNotRunning, installedRuntimeStatus } from './installed-row-status.js';
 import { installedCapabilities, installedSource } from './plugin-presentation.js';
@@ -17,7 +17,7 @@ export function InstalledPluginCard({ row, onOpen, selected = false }: { row: Hu
   const [updating, setUpdating] = useState(false);
   const enabled = pending ?? rowEnabled(row);
   const desktopOnly = !hasDesktopBridge() && !!row.entry && !row.plugin;
-  const canToggle = !desktopOnly && (row.plugin != null || row.entry != null);
+  const canToggle = !desktopOnly && canChangeInstallation(row);
   const availableVersion = desktopOnly ? null : pluginAvailableVersion(row);
   const runtime = installedRuntimeStatus(row);
   const notRunning =

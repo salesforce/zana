@@ -167,11 +167,13 @@ describe('bundled plugin registry invariants', () => {
     }
   });
 
-  it('offers Bots as an opt-in experiment and keeps Design Docs enabled', () => {
+  it('always enables Bots and keeps Design Docs enabled by default', () => {
     expect(BUILTIN_PLUGINS.some(plugin => plugin.pluginId === 'salesforce')).toBe(false);
-    expect(BUILTIN_PLUGINS.find(plugin => plugin.pluginId === 'bots')).toMatchObject({
-      autoInstall: true, defaultEnabled: false, experimental: true
+    const bots = BUILTIN_PLUGINS.find(plugin => plugin.pluginId === 'bots');
+    expect(bots).toMatchObject({
+      autoInstall: true, defaultEnabled: true, alwaysEnabled: true
     });
+    expect(bots).not.toHaveProperty('experimental');
     expect(BUILTIN_PLUGINS.find(plugin => plugin.pluginId === 'design-docs')).toMatchObject({
       autoInstall: true, defaultEnabled: true
     });

@@ -6,6 +6,10 @@ export function bundledPluginById(id: string) {
   return BUNDLED_PLUGINS.find(plugin => plugin.pluginId === id);
 }
 
+export function isAlwaysEnabledBuiltin(id: string, sourceKind: PluginSourceKind): boolean {
+  return sourceKind === 'builtin' && bundledPluginById(id)?.alwaysEnabled === true;
+}
+
 export function assertBundledPluginInstall(args: {
   id: string;
   sourceKind: PluginSourceKind;

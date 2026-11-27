@@ -154,7 +154,7 @@ import { pluginGitFailure, runPluginGitCommand } from './plugin-git-command.js';
 import { createPluginUpdateStore } from './plugin-update-store.js';
 import { installedSourceIntent, pluginUpdateFingerprint, pluginEngineProblems, resolvePluginUpdate, type PluginSourceIntent, type PluginUpdateCheck, type PluginUpdateResolver, type PluginUpdateCandidate } from './plugin-update-resolver.js';
 import { PLUGIN_UPDATE_CHECK_INTERVAL_MS, startPluginUpdateSweep } from './plugin-updates.js';
-import { assertBundledPluginInstall, bundledPluginById, bundledPluginSourceNotice, reconcileBundledPluginMetadata } from './bundled-plugin-policy.js';
+import { assertBundledPluginInstall, bundledPluginById, bundledPluginSourceNotice, isAlwaysEnabledBuiltin, reconcileBundledPluginMetadata } from './bundled-plugin-policy.js';
 import { buildPluginApp, buildPluginServer, buildPluginHost, getPluginBuildToolchain, createPluginDevLoop } from '@zana-ai/zcc-plugin-build';
 import { createPluginServicesRegistry } from '@zana-ai/zcc-plugin-sdk/server';
 import { createSerializedTransactionQueue } from '../durable-store.js';
@@ -363,6 +363,7 @@ export function toPluginAppSnapshot(row: PluginUiSnapshot) {
     description: row.description,
     icon: row.icon,
     enabled: row.enabled,
+    ...(isAlwaysEnabledBuiltin(row.id, row.sourceKind) ? { alwaysEnabled: true as const } : {}),
     ...(bundledPluginById(row.id)?.experimental ? { experimental: true as const } : {}),
     provenance: row.provenance,
     sourceKind: row.sourceKind,
@@ -1003,6 +1004,20 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     if (stopped) throw new Error('plugin service is stopped');
   }
 
+  async function withDeactivation<T>(id: string, action: (row: InstalledPluginRow | undefined) => Promise<T>): Promise<T> {
+    const getOptionalPlugin = () => {
+      const row = store.get(id);
+      if (isAlwaysEnabledBuiltin(id, row?.sourceKind ?? 'builtin')) throw new Error(`Plugin "${id}" is always on.`);
+      return row;
+    };
+    // Refuse before interrupting activation, and recheck the source once queued installs finish.
+    getOptionalPlugin();
+    bumpLifecycleEpoch(id);
+    cancelRecovery(id);
+    await ensureActivationRecovery();
+    return withLifecycle(id, () => action(getOptionalPlugin()));
+  }
+
   async function reloadPlugin(id: string, resetRecovery = true): Promise<InstalledPluginRow> {
     await waitForStartup();
     // Automatic recovery keeps its attempt budget; an explicit reload starts a fresh one.
@@ -1628,6 +1643,8 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
 
   async function loadOne(row: InstalledPluginRow, isActive: () => boolean = () => !stopped): Promise<void> {
     if (!isActive()) return;
+    // Upgrades and recovered registrations can still carry the former opt-out.
+    if (!row.enabled && isAlwaysEnabledBuiltin(row.id, row.sourceKind)) row = { ...row, enabled: true };
     const recoveryDetail = activationRecoveryDetail(row);
     if (recoveryDetail) {
       await disposeOne(row.id);
@@ -2348,7 +2365,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       name: manifest.name,
       description: manifest.description,
       icon: manifest.branding.icon ?? 'Puzzle',
-      enabled: enable,
+      enabled: enable || isAlwaysEnabledBuiltin(manifest.id, materialized.sourceKind),
       status: 'disabled',
       statusDetail: null,
       provenance: materialized.provenance,
@@ -2716,7 +2733,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
     for (const def of [...BUILTIN_PLUGINS, ...OFFICIAL_PLUGINS]) {
       const row = store.get(def.pluginId);
       if (!row) continue;
-      if (uninstalled.has(def.pluginId)) continue;
+      if (!def.alwaysEnabled && uninstalled.has(def.pluginId)) continue;
       if (isLocalSidecar(opts.dataDir, def.pluginId)) continue;
       let bundledDir: string | null = null;
       try {
@@ -2999,48 +3016,43 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       });
     },
     async disable(id) {
-      bumpLifecycleEpoch(id);
-      cancelRecovery(id);
-      await ensureActivationRecovery();
-      return withLifecycle(id, async () => {
-      const row = store.get(id);
-      if (!row) throw new Error(`plugin not installed: ${id}`);
-      await disposeOne(id);
-      const next = withToolPolicy({ ...row, enabled: false, status: 'disabled' as const, updatedAt: now() });
-      await store.upsert(next);
-      live.delete(id);
-      refreshToolPolicyInventory();
-      await applyMissingRequiredPluginStatus();
-      await emitCapabilities();
-      await emitAppsChanged();
-      await syncCliSkill();
-      return next;
+      return withDeactivation(id, async row => {
+        if (!row) throw new Error(`plugin not installed: ${id}`);
+        await disposeOne(id);
+        const next = withToolPolicy({ ...row, enabled: false, status: 'disabled' as const, updatedAt: now() });
+        await store.upsert(next);
+        live.delete(id);
+        refreshToolPolicyInventory();
+        await applyMissingRequiredPluginStatus();
+        await emitCapabilities();
+        await emitAppsChanged();
+        await syncCliSkill();
+        return next;
       });
     },
     async remove(id) {
-      bumpLifecycleEpoch(id);
-      cancelRecovery(id);
-      await ensureActivationRecovery();
-      return withLifecycle(id, async () => {
-      await disposeOne(id);
-      const row = await store.remove(id);
-      if (started) startBuiltinSourceWatchers();
-      live.delete(id);
-      refreshToolPolicyInventory();
-      await uninstalled.add(id);
-      if (row) {
-        if (isManagedGeneration(opts.dataDir, row.rootDir)) {
-          await removeUnreferencedGeneration(row.rootDir);
-        } else if (row.rootDir.startsWith(join(opts.dataDir, 'plugins') + sep)) {
-          rmSync(row.rootDir, { recursive: true, force: true });
+      await withDeactivation(id, async () => {
+        await disposeOne(id);
+        const row = await store.remove(id);
+        if (started) startBuiltinSourceWatchers();
+        live.delete(id);
+        refreshToolPolicyInventory();
+        await uninstalled.add(id);
+        if (row) {
+          if (isManagedGeneration(opts.dataDir, row.rootDir)) {
+            await removeUnreferencedGeneration(row.rootDir);
+          } else if (row.rootDir.startsWith(join(opts.dataDir, 'plugins') + sep)) {
+            rmSync(row.rootDir, { recursive: true, force: true });
+          }
         }
-      }
-      removeLeftoverSidecar(opts.dataDir, id);
-      await applyMissingRequiredPluginStatus();
-      await emitCapabilities();
-      await emitAppsChanged();
-      await syncCliSkill();
+        removeLeftoverSidecar(opts.dataDir, id);
+        await applyMissingRequiredPluginStatus();
+        await emitCapabilities();
+        await emitAppsChanged();
+        await syncCliSkill();
       });
+      const definition = bundledPluginById(id);
+      if (definition?.alwaysEnabled && !store.get(id)) await service.install(`builtin:${definition.name}`);
     },
     reload: id => reloadPlugin(id),
     async repair(id, path) {
@@ -3134,7 +3146,7 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       const installed: InstalledPluginRow[] = [];
       for (const def of BUILTIN_PLUGINS) {
         if (!def.autoInstall) continue;
-        if (uninstalled.has(def.pluginId)) continue;
+        if (!def.alwaysEnabled && uninstalled.has(def.pluginId)) continue;
         if (store.get(def.pluginId)) continue;
         try {
           installed.push(await installParsed({ kind: 'builtin', name: def.name }, def.defaultEnabled));

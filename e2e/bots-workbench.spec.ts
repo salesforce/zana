@@ -29,24 +29,35 @@ async function openBotsPanel(page: Page) {
   await page.getByRole('link', { name: 'Open Bots panel' }).click();
 }
 
-async function openBotsSwitch(page: Page) {
-  await route(page, '/settings/experimental');
-  return page.getByRole('switch', { name: 'Bots', exact: true });
-}
-
 test.beforeEach(async ({ app }) => {
+  await expect(organizeBots(app.window)).toBeVisible({ timeout: 45_000 });
+});
+
+test('Bots is available on a fresh install and cannot be disabled or uninstalled', async ({ app }) => {
   const page = app.window;
-  const nav = organizeBots(page);
-  const toggle = await openBotsSwitch(page);
-  await expect(toggle).toHaveAttribute('aria-checked', 'false', { timeout: 45_000 });
-  await page.getByRole('link', { name: 'Back to app' }).click();
-  await expect(nav).toHaveCount(0);
-  await openBotsSwitch(page);
-  await toggle.click();
-  await expect(toggle).toBeEnabled();
-  await expect(toggle).toHaveAttribute('aria-checked', 'true');
-  await page.getByRole('link', { name: 'Back to app' }).click();
-  await expect(nav).toBeVisible();
+  await route(page, '/settings/experimental');
+  await expect(page.getByRole('heading', { name: 'Experimental features' })).toBeVisible();
+  await expect(page.getByRole('switch', { name: 'Bots', exact: true })).toHaveCount(0);
+
+  await route(page, '/extensions/plugins');
+  const row = page.getByTestId('plugin-row-bots');
+  await expect(row).toBeVisible();
+  await expect(row.getByRole('switch')).toHaveCount(0);
+  await row.getByRole('button', { name: 'Bots plugin details' }).click();
+  const details = page.getByRole('region', { name: 'Installed plugin' });
+  await expect(details).toBeVisible();
+  await expect(details.getByRole('switch', { name: 'Disable Bots' })).toHaveCount(0);
+  await expect(details.getByRole('button', { name: 'More plugin actions' })).toHaveCount(0);
+  await details.getByRole('tab', { name: 'Installation' }).click();
+  await expect(details.getByRole('button', { name: /^(Disable|Uninstall)$/ })).toHaveCount(0);
+
+  const disabled = await page.evaluate(() => window.cc.pluginApps.setEnabled('bots', false));
+  expect(disabled).toMatchObject({ ok: false, message: expect.stringMatching(/bots.*always on/i) });
+  const removed = await page.evaluate(() => window.cc.pluginApps.remove('bots'));
+  expect(removed).toMatchObject({ ok: false, message: expect.stringMatching(/bots.*always on/i) });
+  await route(page, '/');
+  await openBotsPanel(page);
+  await expect(page.getByRole('form', { name: 'Create a bot' })).toBeVisible();
 });
 
 test('Advanced sidebar discloses five bots at a time alongside Machines', async ({ app }) => {
@@ -351,20 +362,8 @@ test('Bots shows routines, tagged memory, and host settings controls in the inst
   await panel.getByRole('button', {name:'Save',exact:true}).click();
   await expect(panel.getByRole('heading',{name:'Scout II'})).toBeVisible();
 
-  const toggle = await openBotsSwitch(app.window);
-  await expect(toggle).toHaveAttribute('aria-checked', 'true');
-  await toggle.click();
-  const nav = organizeBots(app.window);
-  await expect(toggle).toBeEnabled();
+  await route(app.window, '/');
   await app.window.reload();
-  await expect(toggle).toHaveAttribute('aria-checked', 'false');
-  await app.window.getByRole('link', { name: 'Back to app' }).click();
-  await expect(nav).toHaveCount(0);
-  await openBotsSwitch(app.window);
-  await toggle.click();
-  await expect(toggle).toBeEnabled();
-  await app.window.getByRole('link', { name: 'Back to app' }).click();
-  await expect(nav).toBeVisible();
   await openBotsPanel(app.window);
   await expect(panel.getByRole('heading', { name: 'Scout II' })).toBeVisible();
   await expect.poll(readPersonality).toBe('**Triage releases**');
