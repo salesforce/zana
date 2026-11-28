@@ -131,6 +131,16 @@ export function droppedPathsFromAbsolutePaths(
   }));
 }
 
+export function droppedPathsFromEntries(
+  entries: ReadonlyArray<{ path: string; kind: PathEntryKind }>,
+  projectRoot?: string | null
+): DroppedPath[] {
+  return uniqueDroppedPaths(entries.flatMap((entry) => {
+    const dropped = toDroppedPath(entry.path.trim(), entry.kind, projectRoot);
+    return dropped ? [dropped] : [];
+  }));
+}
+
 export function mentionContentForDroppedPaths(paths: DroppedPath[]) {
   return paths.flatMap((row) => [
     {
