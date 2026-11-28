@@ -21,6 +21,7 @@ import {
   preflightSquadRuntime, retainSquadMemberConversation, squadMemberStatus, stopSquadMemberConversation, handleMainSquadRuntimeHttp,
   isSquadMemberThread, resolveSquadMember
 } from './squad-member-runtime.js';
+import { PROVIDER_STATUS_CACHE_TTL_MS } from './provider-status-cache.js';
 import { createNativeToolPolicyVerifier, signNativeToolPolicyRequest } from '../../http/native-tool-policy-proof.js';
 import { SQUAD_RUNTIME_OPERATION_PATH, SQUAD_START_REFUSED_PREFIX } from '@zana-ai/zcc-contracts/runtime';
 import { startProductServer } from '../../http/product-server.js';
@@ -80,6 +81,14 @@ afterEach(() => { unregister(); db.close(); rmSync(dir, { recursive: true, force
 const sendAdmissions = () => vi.mocked(ctx.plugins!.admitDispatch).mock.calls.filter(([request]) => request.entry !== 'squad-member-start');
 
 describe('trusted Modern member runtime', () => {
+  // Create and activate share one cached provider.status result; tests that change what the host
+  // reports between them must let the cache expire first.
+  const expireProviderStatusCache = () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + PROVIDER_STATUS_CACHE_TTL_MS + 1);
+  };
+  afterEach(() => { vi.useRealTimers(); });
+
   it.each(['worker', 'orchestrator'] as const)('prepares idle %s using reserved UUID and attached worktree without provider start', async role => {
     mkdirSync(join(dir, 'worktree')); const worktreePath = realpathSync(join(dir, 'worktree'));
     expect(await createSquadMemberConversation(ctx, { ...member, role, worktreePath })).toEqual({ threadId: bindingId });
@@ -266,6 +275,7 @@ describe('trusted Modern member runtime', () => {
 
   it('single-flights concurrent activation before async preflight without duplicate starts', async () => {
     await createSquadMemberConversation(ctx, member);
+    expireProviderStatusCache();
     const preflight = Promise.withResolvers<void>();
     const rpc = vi.mocked(ctx.hostHub.callHostOnlineRpc).getMockImplementation()!;
     vi.mocked(ctx.hostHub.callHostOnlineRpc).mockClear().mockImplementation(async input => {
@@ -301,6 +311,7 @@ describe('trusted Modern member runtime', () => {
     ['preflight throws', 'host offline']
   ])('pre-send activation failure leaves binding retryable: %s', async (change, message) => {
     await createSquadMemberConversation(ctx, member);
+    expireProviderStatusCache();
     const plugins = ctx.plugins;
     const rpc = vi.mocked(ctx.hostHub.callHostOnlineRpc).getMockImplementation()!;
     if (change === 'provider unavailable') {
@@ -887,7 +898,54 @@ describe('Modern runtime preflight', () => {
       ready: false, required: [], reason: 'plugin tool policy inventory unavailable: plugin registry missing after it existed' });
     expect(await preflightSquadRuntime(ctx, { projectId: 'p', providerIds: ['test-provider'] })).toMatchObject({ ready: false, policyInventoryReady: false });
     vi.mocked(ctx.hostHub.callHostOnlineRpc).mockResolvedValue({ providers: [] });
-    expect(await preflightSquadRuntime(ctx, { projectId: 'p', providerIds: ['test-provider'] })).toMatchObject({ ready: false, providers: [{ available: false }] });
+    // A usable result is reused for up to the cache TTL, so let it expire first.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(Date.now() + PROVIDER_STATUS_CACHE_TTL_MS + 1);
+      expect(await preflightSquadRuntime(ctx, { projectId: 'p', providerIds: ['test-provider'] })).toMatchObject({ ready: false, providers: [{ available: false }] });
+    } finally { vi.useRealTimers(); }
+  });
+
+  const statusCalls = () => vi.mocked(ctx.hostHub.callHostOnlineRpc).mock.calls.filter(([input]) => input.command.type === 'provider.status').length;
+
+  it('asks the host for provider status once for the preflights of one launch', async () => {
+    for (let i = 0; i < 7; i++) {
+      expect(await preflightSquadRuntime(ctx, { projectId: 'p', providerIds: ['test-provider'] })).toMatchObject({ ready: true });
+    }
+    expect(statusCalls()).toBe(1);
+  });
+
+  it('shares one request between concurrent preflights', async () => {
+    await Promise.all([1, 2, 3].map(() => preflightSquadRuntime(ctx, { projectId: 'p', providerIds: ['test-provider'] })));
+    expect(statusCalls()).toBe(1);
+  });
+
+  it('does not keep an unavailable result or a failure', async () => {
+    const rpc = vi.mocked(ctx.hostHub.callHostOnlineRpc);
+    const original = rpc.getMockImplementation()!;
+    rpc.mockImplementation(async (input) => input.command.type === 'provider.status' ? { providers: [] } : original(input));
+    expect(await preflightSquadRuntime(ctx, { projectId: 'p', providerIds: ['test-provider'] })).toMatchObject({ ready: false });
+    rpc.mockImplementation(async (input) => { if (input.command.type === 'provider.status') throw new Error('host offline'); return original(input); });
+    await expect(preflightSquadRuntime(ctx, { projectId: 'p', providerIds: ['test-provider'] })).rejects.toThrow('host offline');
+    rpc.mockImplementation(original);
+    expect(await preflightSquadRuntime(ctx, { projectId: 'p', providerIds: ['test-provider'] })).toMatchObject({ ready: true });
+    expect(statusCalls()).toBe(3);
+  });
+
+  it('asks again after a host reconnect or a settings change', async () => {
+    let instanceId = 'a';
+    let configHash = 'one';
+    ctx.hostHub.ensureHostSessionReady = (() => ({ instanceId, connectedAt: 1 })) as never;
+    (ctx.config as unknown as { snapshot: () => { hash: string } }).snapshot = () => ({ hash: configHash });
+    await preflightSquadRuntime(ctx, { projectId: 'p', providerIds: ['test-provider'] });
+    await preflightSquadRuntime(ctx, { projectId: 'p', providerIds: ['test-provider'] });
+    expect(statusCalls()).toBe(1);
+    instanceId = 'b';
+    await preflightSquadRuntime(ctx, { projectId: 'p', providerIds: ['test-provider'] });
+    expect(statusCalls()).toBe(2);
+    configHash = 'two';
+    await preflightSquadRuntime(ctx, { projectId: 'p', providerIds: ['test-provider'] });
+    expect(statusCalls()).toBe(3);
   });
 });
 
