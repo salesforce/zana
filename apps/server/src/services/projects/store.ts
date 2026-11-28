@@ -1697,7 +1697,12 @@ export const store = {
     trustDirInClaudeConfig(placeholder);
     return project;
   },
-  addProject(path: string): Project {
+  /**
+   * `touch: false` leaves an existing row's `lastActiveAt` alone, so a call
+   * that changes nothing else does not rewrite projects.json (every rewrite is
+   * a chance for a Windows rename lock; see ensureQuickAgentProject).
+   */
+  addProject(path: string, { touch = true }: { touch?: boolean } = {}): Project {
     const stat = statSync(path);
     if (!stat.isDirectory()) throw new Error('not a directory');
     const projects = this.listProjects();
@@ -1714,12 +1719,14 @@ export const store = {
       !ext && isGeneratedScratchFolder(path) ? deriveNameFromGitOrigin(path) : null;
     const existing = projects.find((p) => p.path === path);
     if (existing) {
-      existing.lastActiveAt = Date.now();
+      let changed = touch;
+      if (touch) existing.lastActiveAt = Date.now();
       // Heal a plain row that turns out to be an extension source (e.g. added
       // as a plain project before its manifest existed, or added by hand).
       if (ext && existing.category !== EXTENSION_PROJECT_CATEGORY) {
         existing.category = EXTENSION_PROJECT_CATEGORY;
         existing.name = `Ext: ${ext.title}`.slice(0, 256);
+        changed = true;
       } else if (
         scratchDerivedName &&
         !existing.category &&
@@ -1729,8 +1736,9 @@ export const store = {
         // (i.e. nobody has renamed it since) — a first addProject call can run
         // before the clone lands, then register_project fires again after.
         existing.name = scratchDerivedName;
+        changed = true;
       }
-      writeProjects(projects);
+      if (changed) writeProjects(projects);
       return existing;
     }
     const displayName = ext
@@ -1822,7 +1830,8 @@ export const store = {
    */
   ensureQuickAgentProject(): Project {
     const anchor = this.ensureScratchRoot();
-    const project = this.addProject(anchor);
+    // No touch: opening a dialog must not rewrite projects.json for a bare timestamp.
+    const project = this.addProject(anchor, { touch: false });
     const needsQuickAgent = !project.quickAgent;
     const needsDisplayName =
       project.name === SCRATCH_DIR_NAME

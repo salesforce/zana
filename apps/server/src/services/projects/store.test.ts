@@ -1009,6 +1009,35 @@ describe('ensureQuickAgentProject — legacy migration', () => {
     expect(store.ensureQuickAgentProject().name).toBe('My Scratch');
   });
 
+  it('does not rewrite projects.json when nothing but lastActiveAt would change', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      store.ensureQuickAgentProject();
+      const before = readFileSync(projectsFile, 'utf8');
+      vi.setSystemTime(Date.now() + 60_000);
+
+      store.ensureQuickAgentProject();
+      store.ensureQuickAgentProject();
+
+      expect(readFileSync(projectsFile, 'utf8')).toBe(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('still bumps lastActiveAt when a project is added by path again', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const first = store.ensureQuickAgentProject();
+      vi.setSystemTime(Date.now() + 60_000);
+      const again = store.addProject(first.path);
+      expect(again.lastActiveAt).toBeGreaterThan(first.lastActiveAt);
+      expect(readJson(projectsFile).projects[0].lastActiveAt).toBe(again.lastActiveAt);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('rewrites a stored Default Workspace label to Default Project', () => {
     const first = store.ensureQuickAgentProject();
     store.updateProject(first.id, { name: 'Default Workspace' });
