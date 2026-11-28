@@ -4,7 +4,7 @@ import {
   statSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { join, posix, resolve, win32 } from 'node:path';
 import {
   experimental_createConfinedConfigLeaf as createConfinedConfigLeaf,
   experimental_linkProjects as linkProjects,
@@ -285,15 +285,45 @@ function readJsonObject(file: string, maxBytes?: number): Record<string, unknown
  * decision the user already made (the cwd or an ancestor accepted in their real
  * `.claude.json`); never grant trust that was not there.
  */
-function trustedProjects(globalConfig: Record<string, unknown> | null, cwd: string | undefined): Record<string, unknown> | null {
+export function trustedProjects(
+  globalConfig: Record<string, unknown> | null,
+  cwd: string | undefined,
+  pathApi: typeof posix = process.platform === 'win32' ? win32 : posix
+): Record<string, unknown> | null {
   if (!cwd) return null;
   const projects = globalConfig?.projects;
   if (typeof projects !== 'object' || projects === null) return null;
-  const record = projects as Record<string, { hasTrustDialogAccepted?: unknown } | undefined>;
-  for (let dir = resolve(cwd); ; dir = dirname(dir)) {
-    if (record[dir]?.hasTrustDialogAccepted === true) return { [resolve(cwd)]: { hasTrustDialogAccepted: true } };
-    if (dirname(dir) === dir) return null;
+  const windows = pathApi === win32;
+  // Windows paths are case-insensitive and Claude has written project keys with
+  // either slash, so look up on one folded spelling. POSIX keys stay exact.
+  const keyOf = windows ? windowsLookupKey : (p: string) => p;
+  const trusted = new Set<string>();
+  for (const [key, entry] of Object.entries(projects as Record<string, { hasTrustDialogAccepted?: unknown } | null>)) {
+    if (entry?.hasTrustDialogAccepted === true) trusted.add(keyOf(key));
   }
+  const start = pathApi.resolve(cwd);
+  for (let dir = start; ; dir = pathApi.dirname(dir)) {
+    if (trusted.has(keyOf(dir))) {
+      // Claude matches the key to its cwd by exact case (either slash works), so
+      // write the cwd's own spelling, not the real file's.
+      return { [windows ? windowsSlashForm(start) : start]: { hasTrustDialogAccepted: true } };
+    }
+    if (pathApi.dirname(dir) === dir) return null;
+  }
+}
+
+const WINDOWS_UNC_DEVICE_PREFIX = /^\\\\[?.]\\UNC\\/i;
+const WINDOWS_DEVICE_PREFIX = /^\\\\[?.]\\/;
+
+/** Forward slashes, without a `\\?\` or `\\.\` device prefix (`\\?\UNC\a\b` becomes `//a/b`). */
+function windowsSlashForm(path: string): string {
+  return path.replace(WINDOWS_UNC_DEVICE_PREFIX, '\\\\').replace(WINDOWS_DEVICE_PREFIX, '').replace(/\\/g, '/');
+}
+
+/** Case-folded slash form with no trailing separator (a drive root keeps its own). */
+function windowsLookupKey(path: string): string {
+  const slashed = windowsSlashForm(path).toLowerCase();
+  return /^[a-z]:\/$/.test(slashed) ? slashed : slashed.replace(/(?<=.)\/+$/, '');
 }
 
 /**
