@@ -15,7 +15,9 @@ const native = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/native-capabilities.js', () => ({ nativeCapabilities: native }));
 
 const attachments = vi.hoisted(() => ({ desktop: false, pickFiles: vi.fn(async (): Promise<string[]> => []) }));
-const suggestionState = vi.hoisted(() => ({ commands: [] as Array<{ name: string; description: string }> }));
+const suggestionState = vi.hoisted(() => ({ commands: [] as Array<{ name: string; description: string }>, menuOpen: false }));
+const claim = vi.hoisted(() => ({ claimEscape: vi.fn() }));
+vi.mock('../../hooks/useDialogFocusTrap.js', () => ({ claimEscape: claim.claimEscape, ESC_CLOSES_DIALOG_ATTR: 'data-esc-closes-dialog' }));
 const editorState = vi.hoisted(() => ({
   json: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'before' }] }] } as unknown,
   options: undefined as undefined | {
@@ -75,7 +77,7 @@ vi.mock('./use-composer-suggestions.js', () => ({
   useMentionProviderRows: () => [],
   useComposerSuggestions: (args: { commands: Array<{ name: string; description: string }> }) => {
     suggestionState.commands = args.commands;
-    return { suggestions: [], menuOpen: false };
+    return { suggestions: [], menuOpen: suggestionState.menuOpen };
   }
 }));
 
@@ -96,6 +98,7 @@ describe('useComposerPromptField', () => {
     vi.clearAllMocks();
     native.mockReset().mockResolvedValue({ commands: [], skills: [], diagnostics: [] });
     attachments.desktop = false;
+    suggestionState.menuOpen = false;
   });
   afterEach(() => {
     cleanup();
@@ -208,6 +211,39 @@ describe('useComposerPromptField', () => {
     expect(handleKeyDown({}, new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, cancelable: true }))).toBe(false);
     act(() => result.current.handleChromeKeyDown(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, cancelable: true }) as never));
     expect(onSubmit).toHaveBeenCalledWith({ modifierEnter: true });
+  });
+
+  it('claims Escape only when it closes the typeahead menu, so a plain Escape can close the dialog', () => {
+    const keyDown = () => (editorState.options!.editorProps as unknown as { handleKeyDown: (view: unknown, event: KeyboardEvent) => boolean }).handleKeyDown;
+    const field = () => renderHook(() => useComposerPromptField({
+      placeholder: 'Prompt', testId: 'prompt', projectId: 'p1', projects: [], slashCatalog: { kind: 'cli' }, onSubmit: () => {}
+    }));
+    field();
+    const plain = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+    expect(keyDown()({}, plain)).toBe(false);
+    expect(claim.claimEscape).not.toHaveBeenCalled();
+    cleanup();
+    suggestionState.menuOpen = true;
+    field();
+    const open = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+    expect(keyDown()({}, open)).toBe(true);
+    expect(open.defaultPrevented).toBe(true);
+    expect(claim.claimEscape).toHaveBeenCalledWith(open);
+  });
+
+  it('drives the open typeahead menu from the keyboard and leaves other keys to the editor', () => {
+    suggestionState.menuOpen = true;
+    renderHook(() => useComposerPromptField({
+      placeholder: 'Prompt', testId: 'prompt', projectId: 'p1', projects: [], slashCatalog: { kind: 'cli' }, onSubmit: () => {}
+    }));
+    const { handleKeyDown } = editorState.options!.editorProps as unknown as { handleKeyDown: (view: unknown, event: KeyboardEvent) => boolean };
+    const press = (init: KeyboardEventInit) => { const e = new KeyboardEvent('keydown', { cancelable: true, ...init }); return [handleKeyDown({}, e), e.defaultPrevented] as const; };
+    expect(press({ key: 'ArrowDown' })).toEqual([true, true]);
+    expect(press({ key: 'ArrowUp' })).toEqual([true, true]);
+    expect(press({ key: 'x' })).toEqual([false, false]);
+    expect(press({ key: 'Enter', ctrlKey: true })).toEqual([true, true]);
+    // Nothing to apply: Enter falls through to the normal submit.
+    expect(press({ key: 'Enter' })).toEqual([true, true]);
   });
 
   it('rerenders consumers with updated serialized editor text', () => {

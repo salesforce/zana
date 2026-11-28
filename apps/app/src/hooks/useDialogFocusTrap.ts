@@ -1,5 +1,29 @@
 import { useEffect, useRef, type RefObject } from 'react';
 
+const claimedEscapes = new WeakSet<Event>();
+
+/** Attribute the composer editor carries to opt in to the Escape rule below. */
+export const ESC_CLOSES_DIALOG_ATTR = 'data-esc-closes-dialog';
+
+/** An editor feature (e.g. closing its typeahead menu) consumed this Escape; the dialog must stay open. */
+export function claimEscape(event: Event): void {
+  claimedEscapes.add(event);
+}
+
+/**
+ * ProseMirror calls preventDefault on every Escape keydown it receives, so a focused
+ * composer editor always arrives defaultPrevented. For editors that opt in with
+ * {@link ESC_CLOSES_DIALOG_ATTR} that alone must not block the dialog; only an
+ * explicit claim (`claimEscape`) does. Every other default-prevented Escape
+ * (nested pickers, plugin editors) still wins over the dialog.
+ */
+function escapeHandledElsewhere(e: KeyboardEvent): boolean {
+  if (!e.defaultPrevented) return false;
+  if (claimedEscapes.has(e)) return true;
+  const target = e.target;
+  return !(target instanceof Element && target.closest(`[${ESC_CLOSES_DIALOG_ATTR}]`));
+}
+
 /**
  * Modal-dialog focus affordances shared by the agent launchers:
  *   - Escape calls `onClose`,
@@ -36,7 +60,7 @@ export function useDialogFocusTrap(
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         // A nested portalled dialog or picker handles its own Escape.
-        if (e.defaultPrevented || !dialogRef.current?.contains(e.target as Node)) return;
+        if (escapeHandledElsewhere(e) || !dialogRef.current?.contains(e.target as Node)) return;
         onCloseRef.current?.();
         return;
       }
