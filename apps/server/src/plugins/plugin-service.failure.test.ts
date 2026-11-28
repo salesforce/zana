@@ -6,15 +6,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   scanError: undefined as unknown,
   scanGate: null as null | Promise<void>,
+  scanDelays: new Map<string, Promise<void>>(),
   scanStarted: vi.fn(),
   runtimes: [] as Array<{ options: Parameters<typeof import('./isolated-plugin-runtime.js').createIsolatedPluginRuntime>[0]; dispose: ReturnType<typeof vi.fn> }>
 }));
 vi.mock('./plugin-file-scan.js', async importOriginal => {
   const actual = await importOriginal<typeof import('./plugin-file-scan.js')>();
-  return { ...actual, scanPluginFiles: async (dir: string) => { state.scanStarted(); await state.scanGate; if (state.scanError !== undefined) throw state.scanError; return actual.scanPluginFiles(dir); } };
+  return { ...actual, scanPluginFiles: async (dir: string) => { state.scanStarted(); await state.scanGate; await state.scanDelays.get(/queued-(\d)/.exec(dir)?.[1] ?? ''); if (state.scanError !== undefined) throw state.scanError; return actual.scanPluginFiles(dir); } };
 });
 vi.mock('./isolated-plugin-runtime.js', () => ({ createIsolatedPluginRuntime: (options: Parameters<typeof import('./isolated-plugin-runtime.js').createIsolatedPluginRuntime>[0]) => {
   options.api.rpc.method('ping', () => 'alive');
+  const mentionId = /queued-(\d)/.exec(options.entry)?.[1];
+  if (mentionId) options.api.ui.registerMentionProvider({ id: `m${mentionId}`, label: mentionId, search: () => [], resolve: () => ({ context: '' }) });
   const dispose = vi.fn(); state.runtimes.push({ options, dispose });
   return { started: Promise.resolve(), dispose };
 } }));
@@ -31,7 +34,7 @@ function fixture(onAppsChanged?: () => void) {
   const service = createPluginService({ dataDir, bundledRoot: root(), onAppsChanged }); services.push(service);
   return { service, plugin, dataDir };
 }
-afterEach(() => { for (const service of services.splice(0)) service.stop(); state.scanError = undefined; state.scanGate = null; state.scanStarted.mockReset(); state.runtimes.length = 0; for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); vi.useRealTimers(); });
+afterEach(() => { for (const service of services.splice(0)) service.stop(); state.scanError = undefined; state.scanGate = null; state.scanDelays.clear(); state.scanStarted.mockReset(); state.runtimes.length = 0; for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('plugin service responsiveness failures', () => {
   it.each([Error('scan failed'), 'scan failed'])('degrades an initial installation when its bounded scan fails: %s', async error => {
@@ -177,6 +180,65 @@ describe('plugin service responsiveness failures', () => {
     await starting;
     expect(service.snapshot()).toMatchObject([{ id: row.id, status: 'degraded', appUrl: null }]);
     expect(changed).not.toHaveBeenCalled();
+  });
+
+  it('skips a queued plugin that became live while earlier plugins were still loading', async () => {
+    const { service: setup, dataDir } = fixture();
+    const dirs: string[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      const dir = join(root(), `queued-${index}`); mkdirSync(dir); dirs.push(dir);
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: `zcc-plugin-queued-${index}`, version: '0.1.0', engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' }, zcc: { name: `Queued ${index}`, description: 'Queued fixture', branding: { icon: 'Puzzle' }, server: './server.mjs' } }));
+      writeFileSync(join(dir, 'server.mjs'), 'export default function () {}');
+      await setup.install(dir);
+    }
+    setup.stop();
+    state.scanStarted.mockReset(); state.runtimes.length = 0;
+    const deferred = Promise.withResolvers<void>();
+    state.scanGate = deferred.promise;
+    const service = createPluginService({ dataDir, bundledRoot: root() }); services.push(service);
+    const starting = service.start();
+    await vi.waitFor(() => expect(state.scanStarted).toHaveBeenCalledTimes(4));
+    state.scanGate = null;
+    await service.install(dirs[4]);
+    deferred.resolve();
+    await starting;
+    expect(service.snapshot().filter(row => row.status === 'running')).toHaveLength(5);
+  });
+
+  it('keeps contribution order stable when concurrently loading plugins finish in reverse order', async () => {
+    const { service: setup, dataDir } = fixture();
+    const dirs: string[] = [];
+    for (let index = 0; index < 4; index += 1) {
+      const dir = join(root(), `queued-${index}`); mkdirSync(dir); dirs.push(dir);
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: `zcc-plugin-queued-${index}`, version: '0.1.0', engines: { zcc: '>=1.0.0', zccPluginSdk: '>=0.1.0' }, zcc: { name: `Queued ${index}`, description: 'Order fixture', branding: { icon: 'Puzzle' }, server: './server.mjs' } }));
+      writeFileSync(join(dir, 'server.mjs'), 'export default function () {}');
+      await setup.install(dir);
+    }
+    setup.stop();
+    const gates = [0, 1, 2, 3].map(() => Promise.withResolvers<void>());
+    gates.forEach((entry, index) => state.scanDelays.set(String(index), entry.promise));
+    const service = createPluginService({ dataDir, bundledRoot: root() }); services.push(service);
+    const starting = service.start();
+    await vi.waitFor(() => expect(state.scanStarted).toHaveBeenCalledTimes(8));
+    for (const entry of [...gates].reverse()) { entry.resolve(); await new Promise(resolve => setTimeout(resolve, 20)); }
+    await starting;
+    expect(service.mentionProviders().map(provider => provider.pluginId)).toEqual(['queued-0', 'queued-1', 'queued-2', 'queued-3']);
+  });
+
+  it('logs the startup total when startup is cancelled', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { service: setup, plugin, dataDir } = fixture();
+    await setup.install(plugin);
+    setup.stop();
+    const deferred = Promise.withResolvers<void>();
+    state.scanGate = deferred.promise;
+    const service = createPluginService({ dataDir, bundledRoot: root() }); services.push(service);
+    const starting = service.start();
+    await vi.waitFor(() => expect(state.scanStarted).toHaveBeenCalled());
+    service.stop();
+    deferred.resolve();
+    await starting.catch(() => undefined);
+    expect(info.mock.calls.map(call => String(call[0])).some(line => line.startsWith(`[plugins] startup cancelled in `))).toBe(true);
   });
 
   it.each(['disable', 'remove'] as const)('does not undo a plugin %s while startup waits on a scan', async (operation) => {

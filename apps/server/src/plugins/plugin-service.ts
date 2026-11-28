@@ -162,6 +162,8 @@ import { createPluginPackService, type PluginPackService } from './plugin-packs.
 import type { PluginRecoveryState } from '@zana-ai/zcc-domain/product';
 import { copyRecoveryRollbackRuntime, copyBundledPluginRuntime } from './plugin-recovery-runtime.js';
 import { finalizeToolSettled } from './tool-settled.js';
+import { createPluginStartupTimer } from './plugin-startup-timing.js';
+import { loadPluginsConcurrently } from './plugin-load-scheduler.js';
 
 export interface CatalogSearchHit {
   marketplace: string;
@@ -3165,13 +3167,16 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       const generation = ++lifecycleGeneration;
       const isActive = () => !stopped && lifecycleGeneration === generation;
       starting = (async () => {
-      await ensureActivationRecovery();
+      const timer = createPluginStartupTimer();
+      let outcome: 'finished' | 'failed' | 'cancelled' = 'cancelled';
+      try {
+      await timer.step('ensureActivationRecovery', () => ensureActivationRecovery());
       if (!isActive()) return;
-      await retireRetiredFirstPartyPlugins();
+      await timer.step('retireRetiredFirstPartyPlugins', () => retireRetiredFirstPartyPlugins());
       if (!isActive()) return;
-      await this.reconcileBuiltins();
+      await timer.step('reconcileBuiltins', () => this.reconcileBuiltins());
       if (!isActive()) return;
-      await seedDefaultMarketplaces();
+      await timer.step('seedDefaultMarketplaces', () => seedDefaultMarketplaces());
       if (!isActive()) return;
       const pending = store.list().filter((row) => !live.has(row.id));
       const { ordered, cycles } = sortPluginsByRequires(
@@ -3184,21 +3189,34 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
         live.set(cycle.plugin.id, { row: degraded, handle: null, rpc: new Map() });
         await store.upsert(degraded);
       }
-      for (const node of ordered) {
-        if (!isActive()) return;
-        if (!live.has(node.id)) {
+      // Plugins load concurrently (capped), each after the plugins it requires.
+      await loadPluginsConcurrently(ordered, {
+        shouldContinue: isActive,
+        onError: (error, node) => logPluginFailure(node.id, 'startup load failed after an earlier startup failure', error),
+        load: async (node) => {
+          if (live.has(node.id)) return;
           const epoch = lifecycleEpoch(node.id);
-          await loadOne(node.row, () => isActive() && lifecycleEpoch(node.id) === epoch);
+          await timer.step(`load ${node.id}`, () => loadOne(node.row, () => isActive() && lifecycleEpoch(node.id) === epoch));
         }
+      });
+      if (!isActive()) return;
+      // Plugins finish loading in a varying order; keep the registry order the
+      // dependency-ordered start used so contributions stay deterministic.
+      const startupIds = new Set(ordered.map((node) => node.id));
+      const arranged = [...live].filter(([id]) => !startupIds.has(id));
+      for (const node of ordered) {
+        const entry = live.get(node.id);
+        if (entry) arranged.push([node.id, entry]);
       }
+      live.clear();
+      for (const [id, entry] of arranged) live.set(id, entry);
+      await timer.step('applyMissingRequiredPluginStatus', () => applyMissingRequiredPluginStatus());
       if (!isActive()) return;
-      await applyMissingRequiredPluginStatus();
+      await timer.step('emitCapabilities', () => emitCapabilities());
       if (!isActive()) return;
-      await emitCapabilities();
+      await timer.step('emitAppsChanged', () => emitAppsChanged());
       if (!isActive()) return;
-      await emitAppsChanged();
-      if (!isActive()) return;
-      await syncCliSkill();
+      await timer.step('syncCliSkill', () => syncCliSkill());
       if (!isActive()) return;
       updateSweep?.stop();
       updateSweep = startPluginUpdateSweep({
@@ -3208,7 +3226,14 @@ export function createPluginService(opts: PluginServiceOptions): PluginService {
       appliedDevelopmentMode = developmentEnabled();
       started = true;
       startupFailed = false;
+      outcome = 'finished';
       void checkInstalledUpdates(true).catch(() => undefined);
+      } catch (error) {
+        outcome = 'failed';
+        throw error;
+      } finally {
+        timer.finish(outcome);
+      }
       })();
       const attempt = starting;
       void attempt.catch(() => { if (starting === attempt) { starting = null; startupFailed = true; } });
