@@ -82,11 +82,15 @@ test('Windows caption buttons follow the Theme setting and the OS appearance in 
     }
 
     // Theme System: the overlay follows a real appearance change. Forcing
-    // `themeSource` flips `shouldUseDarkColors` and the renderer's
-    // prefers-color-scheme, and Electron emits `updated` itself, as on an OS switch.
+    // `themeSource` flips `shouldUseDarkColors` and Electron emits `updated`
+    // itself, as on an OS switch. Under Playwright each page's
+    // prefers-color-scheme is pinned (light), so `themeSource` alone never
+    // reaches the renderer: emulate the same appearance on every window, as
+    // window-theme-first-paint.spec.ts does.
     await main.evaluate(() => window.cc.config.set({ theme: 'system' }));
     for (const appearance of ['light', 'dark'] as const) {
       await electron.evaluate(({ nativeTheme }, value) => { nativeTheme.themeSource = value; }, appearance);
+      await Promise.all([main, projectWindow!].map((page) => page.emulateMedia({ colorScheme: appearance })));
       await expect(main.locator('html')).toHaveAttribute('data-theme', appearance);
       await expect(projectWindow!.locator('html')).toHaveAttribute('data-theme', appearance);
       const painted = await paintedTitleBar(main, '.titlebar');
