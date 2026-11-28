@@ -278,3 +278,46 @@ export function assertWindowsCommandLineFits(
     `Cannot start ${command}: its command line is ${length} characters, over the Windows limit of ${limit}.${hint}`
   );
 }
+
+/** Claude's flag for one additive system-prompt layer, and its file twin (Claude Code 2.1.x). */
+const APPEND_SYSTEM_PROMPT_FLAG = '--append-system-prompt';
+const APPEND_SYSTEM_PROMPT_FILE_FLAG = '--append-system-prompt-file';
+
+export interface SystemPromptSpill {
+  /** Every layer's text in argv order, joined with a blank line (Claude concatenates the layers the same way). */
+  text: string;
+  /** `args` with all layers replaced by one file flag, placed where the first layer was. */
+  args: string[];
+}
+
+/**
+ * Split every `--append-system-prompt <text>` layer out of `args`, for a launch
+ * whose command line would pass the Windows limit. The caller writes `text` to a
+ * file and passes its path through {@link SystemPromptSpill.args} via `fileFor`,
+ * so a long set of layers (inbox guidance, persona, plugin instructions, RULES)
+ * stops counting against the 32766-character limit. Returns null when the argv
+ * carries no layer.
+ */
+export function spillSystemPromptLayers(
+  args: readonly string[],
+  fileFor: (text: string) => string | null
+): SystemPromptSpill | null {
+  const layers: string[] = [];
+  const kept: string[] = [];
+  let at = -1;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === APPEND_SYSTEM_PROMPT_FLAG && i + 1 < args.length) {
+      if (at < 0) at = kept.length;
+      layers.push(args[i + 1]!);
+      i++;
+    } else {
+      kept.push(args[i]!);
+    }
+  }
+  if (layers.length === 0) return null;
+  const text = layers.join('\n\n');
+  const path = fileFor(text);
+  if (!path) return null;
+  kept.splice(at, 0, APPEND_SYSTEM_PROMPT_FILE_FLAG, path);
+  return { text, args: kept };
+}

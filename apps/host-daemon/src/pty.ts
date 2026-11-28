@@ -26,7 +26,14 @@ import {
 import { allowlistIgnoredWarning, planUserMcpDisable } from './mcp-allowlist-disable.js';
 import { stripInheritedClaudeSession, ensureInteractiveTerminalEnv, augmentPath } from './env.js';
 import { resolveHarnessCommand } from './harness/harness-verify.js';
-import { assertWindowsCommandLineFits, windowsDirectLaunch } from './harness/windows-command.js';
+import { claudeSupportsAppendSystemPromptFile } from './harness/claude/system-prompt-file-support.js';
+import {
+  assertWindowsCommandLineFits,
+  CREATE_PROCESS_COMMAND_LINE_LIMIT,
+  spillSystemPromptLayers,
+  windowsCommandLineLength,
+  windowsDirectLaunch
+} from './harness/windows-command.js';
 import { isTmuxAvailable, buildLocalTmuxCommand, wrapRemoteTmux, tmuxSessionName, killLocalTmuxSession } from './tmux.js';
 import {
   SESSION_CALLBACK_ENV_KEYS,
@@ -588,6 +595,8 @@ export class PtyManager extends EventEmitter {
   private seatSpawns = new Map<string, SeatSpawnPlan>();
   /** Per-session plugin instruction files (OpenCode); unlinked in {@link finalizeExit}. */
   private sessionInstructionFiles = new Map<string, string>();
+  /** Spilled `--append-system-prompt` layers (Windows over-limit launches); own slot so it never collides with plugin instructions. */
+  private sessionSystemPromptFiles = new Map<string, string>();
   /** Per-session native tool gate modules (OpenCode); unlinked in {@link finalizeExit}. */
   private sessionNativeToolGateFiles = new Map<string, string>();
   /** Per-session native tool gate directories (named on argv); removed in {@link finalizeExit}. */
@@ -936,6 +945,7 @@ export class PtyManager extends EventEmitter {
     return this.live.has(sessionId)
       || this.sessionMcpConfigFiles.has(sessionId)
       || this.sessionInstructionFiles.has(sessionId)
+      || this.sessionSystemPromptFiles.has(sessionId)
       || this.sessionNativeToolGateFiles.has(sessionId)
       || this.sessionNativeToolGateDirs.has(sessionId);
   }
@@ -1030,6 +1040,7 @@ export class PtyManager extends EventEmitter {
     return [...new Set([
       ...this.sessionMcpConfigFiles.keys(),
       ...this.sessionInstructionFiles.keys(),
+      ...this.sessionSystemPromptFiles.keys(),
       ...this.sessionNativeToolGateFiles.keys(),
       ...this.sessionNativeToolGateDirs.keys()
     ])];
@@ -1037,7 +1048,7 @@ export class PtyManager extends EventEmitter {
 
   /** Unlink every per-session launch file written so far for a spawn that is being refused. */
   private releaseSessionLaunchFiles(sessionId: string): void {
-    for (const files of [this.sessionNativeToolGateFiles, this.sessionInstructionFiles, this.sessionMcpConfigFiles]) {
+    for (const files of [this.sessionNativeToolGateFiles, this.sessionInstructionFiles, this.sessionSystemPromptFiles, this.sessionMcpConfigFiles]) {
       const path = files.get(sessionId);
       if (!path) continue;
       files.delete(sessionId);
@@ -1096,6 +1107,21 @@ export class PtyManager extends EventEmitter {
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(`[pty] writeSessionNativeToolGateFile(${sessionId}) failed:`, err);
+      return null;
+    }
+  }
+
+  /** Write spilled `--append-system-prompt` layers to a host-owned `0600` file (own slot; unlinked on exit). */
+  private writeSessionSystemPromptFile(sessionId: string, text: string): string | null {
+    try {
+      mkdirSync(SESSION_MCP_CONFIG_DIR, { recursive: true });
+      const path = join(SESSION_MCP_CONFIG_DIR, `${sessionId}.system-prompt.md`);
+      writeFileSync(path, text, { mode: 0o600 });
+      this.sessionSystemPromptFiles.set(sessionId, path);
+      return path;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[pty] writeSessionSystemPromptFile(${sessionId}) failed:`, err);
       return null;
     }
   }
@@ -2379,7 +2405,22 @@ export class PtyManager extends EventEmitter {
       microVmCpus: opts.microVmCpus,
       microVmMemoryMib: opts.microVmMemoryMib
     };
-    const wrapped = execEnv.wrap({ command, args: fullArgs }, envCtx);
+    // Windows: when the Claude command line would pass CreateProcess's limit (a
+    // durable Squad orchestrator carries about 25 K before plugin instructions or
+    // RULES), the system-prompt layers go to one 0600 file read through
+    // `--append-system-prompt-file`. Other platforms and short launches keep argv as is.
+    let launchArgs = fullArgs;
+    if (process.platform === 'win32' && caps.injectsClaudeMcpConfig
+      && windowsCommandLineLength(command, fullArgs) > CREATE_PROCESS_COMMAND_LINE_LIMIT
+      && claudeSupportsAppendSystemPromptFile(command)) {
+      const spill = spillSystemPromptLayers(fullArgs, (text) => this.writeSessionSystemPromptFile(sessionId, text));
+      if (spill) {
+        launchArgs = spill.args;
+        // eslint-disable-next-line no-console
+        console.info(`[pty] ${sessionId}: command line over the Windows limit; moved ${(fullArgs.length - spill.args.length) / 2 + 1} system-prompt layer(s), ${spill.text.length} chars, to a file`);
+      }
+    }
+    const wrapped = execEnv.wrap({ command, args: launchArgs }, envCtx);
     // On Windows a `.cmd` shim would route the launch through cmd.exe and its
     // 8191-character cap: a trivial forwarder (`@"…\claude.exe" %*`) earlier
     // on PATH than the exe, or an npm/pnpm/yarn shim (`codex.cmd`, which runs
@@ -2829,6 +2870,15 @@ export class PtyManager extends EventEmitter {
       this.sessionMcpConfigFiles.delete(sessionId);
       try {
         unlinkSync(mcpConfigFile);
+      } catch {
+        /* best-effort — already gone or swept */
+      }
+    }
+    const systemPromptFile = this.sessionSystemPromptFiles.get(sessionId);
+    if (systemPromptFile) {
+      this.sessionSystemPromptFiles.delete(sessionId);
+      try {
+        unlinkSync(systemPromptFile);
       } catch {
         /* best-effort — already gone or swept */
       }

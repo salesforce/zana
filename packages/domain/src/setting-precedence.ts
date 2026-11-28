@@ -123,7 +123,7 @@ export const SETTING_PRECEDENCE = [
     mergeRule: 'last',
     note: 'The last permission-mode argument on the command line wins. Autonomous launches add acceptEdits near the end, and yolo profiles ignore the mode.',
     evidence: [
-      { file: 'apps/host-daemon/src/pty.ts', line: 2098, contains: "['--permission-mode', 'acceptEdits']" }
+      { file: 'apps/host-daemon/src/pty.ts', line: 2124, contains: "['--permission-mode', 'acceptEdits']" }
     ]
   },
   {

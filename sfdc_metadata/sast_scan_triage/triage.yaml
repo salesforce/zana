@@ -52,4 +52,11 @@ false_positive:
       identity and parsing model ids containing slashes. The example is not a
       configured model, selection, default, or network request. Runtime routing
       honors the user-selected provider and never chooses the comment example.
+  - id: apps/host-daemon/src/harness/claude/system-prompt-file-support.ts:51a1f05af85e342e3c849b47d387086476282d5f50dc240c19216d6edfb1eb5a
+    justification: >
+      execFileSync is called without a shell (no shell option, so no metacharacter
+      interpretation) and with the constant argument vector ['--help']. The command is
+      the claude binary the host already resolved for this launch (checked by the
+      existing identity probe), not request, plugin or renderer input. The probe only
+      reads help text to decide whether to use --append-system-prompt-file.
 not_exploitable: []
