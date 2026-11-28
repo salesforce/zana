@@ -238,6 +238,121 @@ test('bot tabs share a centered content column at wide and narrow pane sizes', a
   }
 });
 
+test('Advanced sidebar discloses five bots at a time alongside Machines', async ({ app }) => {
+  const page = app.window;
+  const section = page.locator('.sidebar--global').getByRole('region', { name: 'Bots', exact: true });
+  const create = (name: string) => page.request.post(new URL('/api/v1/plugin-apps/bots/rpc', page.url()).href, {
+    data: { method: 'create', args: { name, personality: 'A local preview bot.' } }
+  });
+  for (let index = 1; index <= 12; index++) expect((await create(`Sidebar Bot ${index}`)).ok()).toBe(true);
+  const rows = section.locator('.project-terminal-row');
+  const machines = page.getByTestId('sidebar-projects-heading');
+  await expect(machines).toBeVisible();
+  await expect(rows).toHaveCount(5);
+  const botsHeading = section.getByRole('button', { name: 'Bots', exact: true });
+  const botsActions = section.locator('header .list-header-actions');
+  const machineActions = machines.locator('xpath=..').locator('.list-header-actions');
+  const away = page.getByRole('link', { name: 'New Chat', exact: true });
+  await away.focus();
+  await away.hover();
+  await expect(botsActions).toHaveCSS('opacity', '0');
+  await expect(machineActions).toHaveCSS('opacity', '0');
+  await botsHeading.hover();
+  await expect(botsActions).toHaveCSS('opacity', '1');
+  await machines.hover();
+  await expect(machineActions).toHaveCSS('opacity', '1');
+  await expect(botsActions).toHaveCSS('opacity', '0');
+  await away.hover();
+  await botsHeading.focus();
+  await page.keyboard.press('Tab');
+  await expect(organizeBots(page)).toBeFocused();
+  await expect(botsActions).toHaveCSS('opacity', '1');
+  await machines.focus();
+  await page.keyboard.press('Tab');
+  const organizeProjects = page.getByRole('button', { name: 'Organize projects' });
+  await expect(organizeProjects).toBeFocused();
+  await expect(machineActions).toHaveCSS('opacity', '1');
+  await organizeProjects.click();
+  await away.hover();
+  await expect(machineActions).toHaveCSS('opacity', '1');
+  await organizeProjects.click();
+  await away.focus();
+  await away.hover();
+  await expect(machineActions).toHaveCSS('opacity', '0');
+  await section.getByRole('button', { name: 'Show more 7 left' }).click();
+  await expect(rows).toHaveCount(10);
+  await expect(rows.nth(5)).toBeFocused();
+  await section.getByRole('button', { name: 'Show more 2 left' }).click();
+  await expect(rows).toHaveCount(12);
+  await section.getByRole('button', { name: 'Show fewer' }).click();
+  await expect(rows).toHaveCount(5);
+  await section.getByRole('button', { name: 'Bots', exact: true }).click();
+  await expect(rows.first()).toBeHidden();
+  await expect(machines).toBeVisible();
+  await section.getByRole('button', { name: 'Bots', exact: true }).click();
+  await rows.first().click();
+  await expect(page).toHaveURL(/\/threads\//);
+  await expect(rows.first()).toHaveAttribute('aria-current', 'true');
+
+  const menu = page.getByRole('dialog', { name: 'Organize bots' });
+  await organizeBots(page).click();
+  await menu.getByRole('button', { name: 'Pinned only' }).click();
+  await expect(section.getByText('No pinned bots.')).toBeVisible();
+  await organizeBots(page).click();
+  await menu.getByRole('button', { name: 'All bots' }).click();
+  await organizeBots(page).click();
+  await menu.getByRole('button', { name: 'Alphabetical' }).click();
+  await expect(rows.nth(1)).toContainText('Sidebar Bot 10');
+  const refresh = section.getByRole('button', { name: 'Reload bot list' });
+  await refresh.click();
+  await expect(refresh).toBeEnabled();
+  await expect(rows).toHaveCount(5);
+  await section.getByRole('button', { name: 'New bot' }).click();
+  const createDialog = page.getByRole('dialog', { name: 'New bot' });
+  await createDialog.getByRole('textbox', { name: 'Name', exact: true }).fill('Fresh bot');
+  await createDialog.getByRole('button', { name: 'Create bot', exact: true }).click();
+  await expect(createDialog).toBeHidden();
+  await expect(rows.first()).toContainText('Fresh bot');
+  await expect(rows.first()).toContainText('Not started');
+  await openBotsPanel(page);
+  await expect(page.locator('.bt-root')).toBeVisible();
+});
+
+test('Advanced bot row actions appear on hover and keyboard focus', async ({ app }) => {
+  const page = app.window;
+  const rpc = new URL('/api/v1/plugin-apps/bots/rpc', page.url()).href;
+  for (const name of ['First Bot', 'Menu Bot']) {
+    const response = await page.request.post(rpc, { data: { method: 'create', args: { name } } });
+    expect(response.ok()).toBe(true);
+  }
+  const section = page.locator('.sidebar--global').getByRole('region', { name: 'Bots', exact: true });
+  const row = section.locator('.project-terminal-row').filter({ hasText: 'Menu Bot' });
+  const actions = section.getByRole('button', { name: 'Actions for Menu Bot' });
+  const away = page.getByRole('link', { name: 'New Chat', exact: true });
+  await away.hover();
+  await expect(actions).toHaveCSS('opacity', '0');
+  await row.hover();
+  await expect(actions).toHaveCSS('opacity', '1');
+  await away.hover();
+  await row.focus();
+  await page.keyboard.press('Tab');
+  await expect(actions).toBeFocused();
+  await expect(actions).toHaveCSS('opacity', '1');
+  await page.keyboard.press('Enter');
+  const menu = section.getByRole('dialog', { name: 'Actions for Menu Bot' });
+  await expect(menu.getByRole('button', { name: 'Open chat' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+  await expect(actions).toBeFocused();
+  await row.click({ button: 'right' });
+  await menu.getByRole('button', { name: 'Pin bot' }).click();
+  await expect(section.locator('.project-terminal-row').first()).toContainText('Menu Bot');
+  await actions.click();
+  await expect(menu.getByRole('button', { name: 'Unpin bot' })).toBeVisible();
+  await menu.getByRole('button', { name: 'Open bot profile' }).click();
+  await expect(page.locator('.bt-root').getByRole('heading', { name: 'Menu Bot' })).toBeVisible();
+});
+
 test('Bots shows routines, tagged memory, and host settings controls in the installed panel', async ({ app, home }, testInfo) => {
   test.setTimeout(180_000);
   const cli = resolve(process.env.ZCC_E2E_APP_ROOT ?? '.', 'packages/cli/dist/bin/zcc');

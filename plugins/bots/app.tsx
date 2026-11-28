@@ -444,6 +444,7 @@ const railListCss = `
 .bt-rail .list-header-actions .icon-btn { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 7px; }
 .bt-rail .list-header-actions .icon-btn:is(:hover, .on) { background: var(--sidebar-hover); color: var(--text-primary); }
 .bt-rail .bt-rail-organize { inset: auto; overflow-y: auto; overscroll-behavior: contain; }
+.bt-rail .project-terminal-more[aria-expanded='true'] { opacity: 1; }
 .bt-rail-organize-link a { display: flex; align-items: center; min-height: 29px; padding: 5px 7px;
   border-radius: 6px; color: var(--text-muted); font-size: 12px; text-decoration: none; }
 .bt-rail-organize-link a:hover { background: var(--sidebar-hover); color: var(--text-primary); }
@@ -462,10 +463,8 @@ const botSorts = [
 ] as const;
 type BotRailSort = typeof botSorts[number][0];
 
-function BotRailOrganize({ pinnedOnly, sort, onShow, onSort, panelLink }: {
-  pinnedOnly: boolean; sort: BotRailSort;
-  onShow(value: boolean): void; onSort(value: BotRailSort): void; panelLink: ReactNode;
-}) {
+
+function useBotSidebarMenu() {
   const [open, setOpen] = useExclusivePopover();
   const menuId = useId();
   const trigger = useRef<HTMLButtonElement>(null);
@@ -482,7 +481,8 @@ function BotRailOrganize({ pinnedOnly, sort, onShow, onSort, panelLink }: {
         top: top === undefined ? 'auto' : top + 'px', bottom: bottom === undefined ? 'auto' : bottom + 'px' });
     };
     position();
-    element.querySelector<HTMLElement>('button[aria-pressed="true"]')?.focus();
+    (element.querySelector<HTMLButtonElement>('button[aria-pressed="true"]') ??
+      element.querySelector<HTMLButtonElement>('button:not(:disabled)'))?.focus();
     const outside = (event: PointerEvent) => {
       if (event.target instanceof Node && !element.contains(event.target) && !button.contains(event.target)) setOpen(false);
     };
@@ -495,6 +495,15 @@ function BotRailOrganize({ pinnedOnly, sort, onShow, onSort, panelLink }: {
       document.removeEventListener('pointerdown', outside);
     };
   }, [open, setOpen]);
+
+  return { open, setOpen, close, menuId, trigger, menu };
+}
+
+function BotRailOrganize({ pinnedOnly, sort, onShow, onSort, panelLink }: {
+  pinnedOnly: boolean; sort: BotRailSort;
+  onShow(value: boolean): void; onSort(value: BotRailSort): void; panelLink: ReactNode;
+}) {
+  const { open, setOpen, close, menuId, trigger, menu } = useBotSidebarMenu();
 
   return <>
     <button ref={trigger} type="button" className={`icon-btn${pinnedOnly || sort !== 'pinned' ? ' on' : ''}`}
@@ -519,6 +528,53 @@ function BotRailOrganize({ pinnedOnly, sort, onShow, onSort, panelLink }: {
       {panelLink && <div className="bt-rail-organize-link" onClick={() => setOpen(false)}>{panelLink}</div>}
     </div>}
   </>;
+}
+
+function AdvancedBotRow({ bot, current, opening, onOpen, onUpdate }: {
+  bot: BotView; current: boolean; opening: boolean; onOpen(): void; onUpdate(): Promise<void>;
+}) {
+  const navigate = useZccNavigate();
+  const { open, setOpen, close, menuId, trigger, menu } = useBotSidebarMenu();
+  const { busy, feedback, run } = useAction(bot.id);
+  const state = botState(bot);
+  const pinned = bot.pinnedAt != null;
+  const label = `Actions for ${bot.name}`;
+
+  async function togglePinned() {
+    close();
+    if (await run('update', { patch: { pinned: !pinned } })) await onUpdate();
+  }
+
+  return <div>
+    <div className="project-thread-row-wrap" onContextMenu={event => {
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(true);
+    }}>
+      <button type="button" className={`project-terminal-row is-thread${current ? ' active' : ''}`}
+        aria-current={current ? 'true' : undefined} title={bot.name} disabled={opening} onClick={onOpen}>
+        <span className="tab-profile-icon" aria-hidden="true"><BotAvatar bot={bot} size={14} live={current} /></span>
+        <span className="project-terminal-text">
+          <span className="project-terminal-name">{bot.name}</span>
+          <span className="project-terminal-detail">{state === 'asleep' ? 'Idle' : STATE_LABEL[state]} · Thread</span>
+        </span>
+      </button>
+      <button ref={trigger} type="button" className="project-terminal-more" aria-label={label} title={label}
+        aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? menuId : undefined}
+        onClick={() => setOpen(value => !value)}>
+        <MoreHorizontal size={13} aria-hidden="true" />
+      </button>
+      {open && <div id={menuId} ref={menu} className="sidebar-projects-organize-menu bt-rail-organize"
+        role="dialog" aria-label={label} onKeyDown={event => {
+          if (event.key === 'Escape') { event.stopPropagation(); close(); }
+        }}>
+        <button type="button" disabled={opening} onClick={() => { close(); onOpen(); }}>Open chat</button>
+        <button type="button" onClick={() => { close(); navigate.toPluginPanel('bots', { subPath: bot.id }); }}>Open bot profile</button>
+        <button type="button" disabled={busy} onClick={() => void togglePinned()}>{pinned ? 'Unpin bot' : 'Pin bot'}</button>
+      </div>}
+    </div>
+    {feedback}
+  </div>;
 }
 
 export function AdvancedBots({ activeThreadId, openThread, panelLink, dragHandle, onNavigate }: PluginSidebarSectionProps) {
@@ -553,7 +609,7 @@ export function AdvancedBots({ activeThreadId, openThread, panelLink, dragHandle
     const target = pendingFocus.current;
     pendingFocus.current = null;
     if (target === 'more') moreRef.current?.focus();
-    else if (target !== null) listRef.current?.querySelectorAll('button')[target]?.focus();
+    else if (target !== null) listRef.current?.querySelectorAll<HTMLButtonElement>('.project-terminal-row')[target]?.focus();
   }, [limit]);
 
   return <section className="bt-rail" aria-label="Bots">
@@ -591,19 +647,9 @@ export function AdvancedBots({ activeThreadId, openThread, panelLink, dragHandle
       {openError && <p className="bt-rail-note" role="alert">{openError}</p>}
       {!error && !matches.length && <p className="bt-rail-note">{!loaded ? 'Loading bots…' : pinnedOnly ? 'No pinned bots.' : 'No bots yet.'}</p>}
       <div id={listId} className="bt-rail-list" ref={listRef}>
-        {visible.map(bot => {
-          const state = botState(bot);
-          const current = !!activeThreadId && activeThreadId === bot.mainThreadId;
-          return <button key={bot.id} type="button" className={`project-terminal-row is-thread${current ? ' active' : ''}`}
-            aria-current={current ? 'true' : undefined} title={bot.name} disabled={opening === bot.id}
-            onClick={() => void openBot(bot.id)}>
-            <span className="tab-profile-icon" aria-hidden="true"><BotAvatar bot={bot} size={14} live={current} /></span>
-            <span className="project-terminal-text">
-              <span className="project-terminal-name">{bot.name}</span>
-              <span className="project-terminal-detail">{state === 'asleep' ? 'Idle' : STATE_LABEL[state]} · Thread</span>
-            </span>
-          </button>;
-        })}
+        {expanded && visible.map(bot => <AdvancedBotRow key={bot.id} bot={bot}
+          current={!!activeThreadId && activeThreadId === bot.mainThreadId} opening={opening === bot.id}
+          onOpen={() => void openBot(bot.id)} onUpdate={refresh} />)}
       </div>
       {remaining > 0 && <button ref={moreRef} type="button" className="sidebar-projects-heading bt-rail-more"
         aria-controls={listId} onClick={() => {
@@ -623,44 +669,13 @@ export function AdvancedBots({ activeThreadId, openThread, panelLink, dragHandle
   </section>;
 }
 
-function useBotSidebarMenu() {
-  const [open, setOpen] = useExclusivePopover();
-  const menuId = useId();
-  const trigger = useRef<HTMLButtonElement>(null);
-  const menu = useRef<HTMLDivElement>(null);
-  const close = useCallback(() => { setOpen(false); trigger.current?.focus(); }, [setOpen]);
-  useLayoutEffect(() => {
-    const element = menu.current;
-    const button = trigger.current;
-    if (!open || !element || !button) return;
-    const position = () => {
-      const { left, width, maxHeight, top, bottom } = placePopoverMenu(button.getBoundingClientRect(),
-        { width: window.innerWidth, height: window.innerHeight }, 180);
-      Object.assign(element.style, { left: left + 'px', width: width + 'px', maxHeight: maxHeight + 'px',
-        top: top === undefined ? 'auto' : top + 'px', bottom: bottom === undefined ? 'auto' : bottom + 'px' });
-    };
-    position();
-    (element.querySelector<HTMLButtonElement>('button[aria-pressed="true"]') ??
-      element.querySelector<HTMLButtonElement>('button:not(:disabled)'))?.focus();
-    const outside = (event: PointerEvent) => {
-      if (event.target instanceof Node && !element.contains(event.target) && !button.contains(event.target)) setOpen(false);
-    };
-    window.addEventListener('resize', position);
-    window.addEventListener('scroll', position, true);
-    document.addEventListener('pointerdown', outside);
-    return () => {
-      window.removeEventListener('resize', position);
-      window.removeEventListener('scroll', position, true);
-      document.removeEventListener('pointerdown', outside);
-    };
-  }, [open, setOpen]);
-
-  return { open, setOpen, close, menuId, trigger, menu };
+export function BotsPanel({ subPath = '' }: { subPath?: string } = {}) {
+  return <BotsPanelView key={subPath} initialBotId={subPath || null} />;
 }
 
-export function BotsPanel() {
+function BotsPanelView({ initialBotId }: { initialBotId: string | null }) {
   const { bots, loaded, error, refresh } = useBotList();
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState(initialBotId);
   const [creating, setCreating] = useState(false);
   const bot = bots.find((row) => row.id === selected) ?? bots[0] ?? null;
   const showCreate = creating || (loaded && bots.length === 0);
