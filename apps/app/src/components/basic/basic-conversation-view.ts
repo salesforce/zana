@@ -79,11 +79,15 @@ function read(): BasicConversationView {
 
 interface BasicConversationViewState {
   view: BasicConversationView;
+  conversationsCollapsed: boolean;
+  toggleConversations(): void;
   update(patch: Partial<BasicConversationView>): void;
 }
 
 export const useBasicConversationView = create<BasicConversationViewState>((set, get) => ({
   view: read(),
+  conversationsCollapsed: false,
+  toggleConversations: () => set(state => ({ conversationsCollapsed: !state.conversationsCollapsed })),
   update(patch) {
     const view = normalizeBasicConversationView({ ...get().view, ...patch });
     set({ view });

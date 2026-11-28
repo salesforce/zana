@@ -32,6 +32,8 @@ export function navPanelListsInExtensionsHub(placement?: PluginNavPanelPlacement
 
 export interface BasicSidebarSectionProps {
   searchQuery: string;
+  /** The section is displayed in the compact navigation drawer. */
+  compact?: boolean;
   activeThreadId: string | null;
   projectIds: readonly string[];
   openThread(threadId: string): void;

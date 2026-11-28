@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 
 const state = vi.hoisted(() => ({
   rpc: { call: vi.fn() },
-  navigate: { toThread: vi.fn(), openPanelAgent: vi.fn((_options: unknown) => true) as ReturnType<typeof vi.fn> | undefined },
+  navigate: { toThread: vi.fn(), toPluginPanel: vi.fn(), openPanelAgent: vi.fn((_options: unknown) => true) as ReturnType<typeof vi.fn> | undefined },
   realtime: [] as Array<(payload?: unknown) => void>,
   registered: [] as unknown[]
 }));
@@ -42,7 +42,7 @@ function route(handlers: Record<string, (args: any) => unknown>) {
 }
 
 beforeEach(() => { memoryRpc.mockReset().mockResolvedValue({ memories: [], hasMore: false }); state.realtime.length = 0; state.navigate.openPanelAgent = vi.fn(() => true); });
-afterEach(() => { cleanup(); state.rpc.call.mockReset(); state.navigate.toThread.mockReset(); });
+afterEach(() => { cleanup(); state.rpc.call.mockReset(); state.navigate.toThread.mockReset(); state.navigate.toPluginPanel.mockReset(); });
 
 it('registers the Bots nav panel', () => {
   expect(state.registered).toEqual(expect.arrayContaining([
@@ -124,6 +124,57 @@ it('organizes the bot roster, reloads it and creates a bot from the sidebar', as
   fireEvent.click(form.getByRole('button', { name: 'Create bot' }));
   await section.findByRole('button', { name: 'New analyst Not started · Thread' });
   expect(openThread).not.toHaveBeenCalled();
+});
+
+it('opens the bot row menu, pins the bot and opens its chat or profile', async () => {
+  let pinnedAt: number | undefined;
+  const openThread = vi.fn();
+  route({ list: () => [scout, { ...fresh, pinnedAt }], openThread: () => ({ threadId: 'fresh-thread' }), update: ({ patch }) => {
+    pinnedAt = patch.pinned ? 10 : undefined;
+  } });
+  render(<AdvancedBots activeThreadId={null} openThread={openThread} panelLink={null} />);
+  const row = await screen.findByRole('button', { name: 'Fresh Not started · Thread' });
+  const actions = screen.getByRole('button', { name: 'Actions for Fresh' });
+  const menu = () => screen.getByRole('dialog', { name: 'Actions for Fresh' });
+  const choose = (name: string) => fireEvent.click(within(menu()).getByRole('button', { name }));
+
+  fireEvent.contextMenu(row);
+  expect(document.activeElement).toBe(within(menu()).getByRole('button', { name: 'Open chat' }));
+  fireEvent.keyDown(menu(), { key: 'Escape' });
+  expect(document.activeElement).toBe(actions);
+  fireEvent.click(actions);
+  fireEvent.pointerDown(screen.getByRole('button', { name: 'Bots', exact: true }));
+  expect(screen.queryByRole('dialog', { name: 'Actions for Fresh' })).toBeNull();
+
+  fireEvent.click(actions);
+  choose('Pin bot');
+  await waitFor(() => expect(screen.getAllByRole('button', { name: /· Thread$/ })[0]).toBe(row));
+  expect(state.rpc.call).toHaveBeenCalledWith('update', { bot: 'fresh', patch: { pinned: true } });
+  fireEvent.click(actions);
+  choose('Unpin bot');
+  await waitFor(() => expect(screen.getAllByRole('button', { name: /· Thread$/ })[1]).toBe(row));
+
+  fireEvent.click(actions);
+  choose('Open bot profile');
+  expect(state.navigate.toPluginPanel).toHaveBeenCalledWith('bots', { subPath: 'fresh' });
+  expect(openThread).not.toHaveBeenCalled();
+  fireEvent.click(actions);
+  choose('Open chat');
+  await waitFor(() => expect(openThread).toHaveBeenCalledWith('fresh-thread'));
+});
+
+it('shows a pin failure by the bot row and selects the profile named by the panel route', async () => {
+  route({ list: () => [scout, fresh], update: () => { throw new Error('Could not pin bot'); } });
+  const rail = render(<AdvancedBots activeThreadId={null} openThread={vi.fn()} panelLink={null} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Actions for Fresh' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Pin bot' }));
+  expect((await screen.findByRole('alert')).textContent).toBe('Could not pin bot');
+  rail.unmount();
+
+  const panel = render(<BotsPanel subPath="fresh" />);
+  expect(await screen.findByRole('heading', { name: 'Fresh' })).toBeTruthy();
+  panel.rerender(<BotsPanel subPath="scout" />);
+  expect(await screen.findByRole('heading', { name: 'Scout' })).toBeTruthy();
 });
 
 it('recovers from a sidebar list failure and reports a failed open', async () => {
@@ -705,7 +756,12 @@ it('shows five bots, puts the newest pins first, and searches beyond the collaps
   const names = () => Array.from(view.container.querySelectorAll('.bt-basic-row .bt-name'), node => node.textContent);
   const more = await screen.findByRole('button', { name: 'Show more' });
   expect(names()).toEqual(['Bot 6', 'Bot 5', 'Bot 0', 'Bot 1', 'Bot 2']);
-  expect(screen.getByRole('button', { name: 'Unpin Bot 6' }).getAttribute('aria-pressed')).toBe('true');
+  expect(screen.getByRole('button', { name: 'Bot 6', exact: true }).querySelector('.bt-basic-pinned')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Actions for Bot 6' }));
+  expect(within(screen.getByRole('dialog', { name: 'Actions for Bot 6' })).getByRole('button', { name: 'Unpin bot' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Bots', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Bots', exact: true }));
+  expect(screen.queryByRole('dialog')).toBeNull();
   fireEvent.click(more);
   expect(names()).toHaveLength(7);
   fireEvent.click(screen.getByRole('button', { name: 'Show less' }));
@@ -720,16 +776,73 @@ it('shows five bots, puts the newest pins first, and searches beyond the collaps
   expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull();
 });
 
+it('starts compact Bots collapsed, keeps New bot accessible, and reveals search matches', async () => {
+  route({ list: () => [scout] });
+  const props = { compact: true, searchQuery: '', activeThreadId: null, projectIds: ['p1'], openThread: vi.fn(), registerThreads: vi.fn() };
+  const view = render(<BasicBots {...props} />);
+  const toggle = await screen.findByRole('button', { name: 'Bots', exact: true });
+  const bot = () => screen.queryByRole('button', { name: 'Scout', exact: true });
+  expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  expect(screen.getByRole('button', { name: 'New bot' })).toBeTruthy();
+  expect(bot()).toBeNull();
+  view.rerender(<BasicBots {...props} searchQuery="scout" />);
+  expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  expect(bot()).toBeTruthy();
+  view.rerender(<BasicBots {...props} />);
+  expect(bot()).toBeNull();
+  fireEvent.click(toggle);
+  expect(bot()).toBeTruthy();
+  fireEvent.click(toggle);
+  expect(bot()).toBeNull();
+});
+
 it('reports failed pin updates without opening a chat or changing the pin', async () => {
-  route({ list: () => [scout], update: () => { throw Error('Cannot save pin'); } });
+  route({ list: () => [scout], update: () => { throw Error('Cannot save pin'); }, openThread: () => ({ threadId: 't1' }) });
   const props = { searchQuery: '', activeThreadId: null, projectIds: ['p1'], openThread: vi.fn(), registerThreads: vi.fn() };
   render(<BasicBots {...props} />);
-  const pin = await screen.findByRole('button', { name: 'Pin Scout' });
-  fireEvent.click(pin);
+  const actions = await screen.findByRole('button', { name: 'Actions for Scout' });
+  const menu = () => screen.getByRole('dialog', { name: 'Actions for Scout' });
+  fireEvent.contextMenu(screen.getByRole('button', { name: 'Scout', exact: true }));
+  expect(document.activeElement).toBe(within(menu()).getByRole('button', { name: 'Open chat' }));
+  fireEvent.keyDown(menu(), { key: 'Escape' });
+  expect(document.activeElement).toBe(actions);
+  expect(actions.getAttribute('aria-expanded')).toBe('false');
+
+  fireEvent.click(actions);
+  fireEvent.click(within(menu()).getByRole('button', { name: 'Pin bot' }));
   expect((await screen.findByRole('alert')).textContent).toBe('Cannot save pin');
   expect(state.rpc.call).toHaveBeenCalledWith('update', { bot: 'scout', patch: { pinned: true } });
-  expect(pin.getAttribute('aria-pressed')).toBe('false');
+  expect(actions.getAttribute('aria-expanded')).toBe('false');
   expect(props.openThread).not.toHaveBeenCalled();
+  fireEvent.click(actions);
+  expect(within(menu()).getByRole('button', { name: 'Pin bot' })).toBeTruthy();
+  fireEvent.click(within(menu()).getByRole('button', { name: 'Open chat' }));
+  await waitFor(() => expect(props.openThread).toHaveBeenCalledWith('t1'));
+});
+
+it('pins and unpins a bot from its Basic row menu', async () => {
+  let pinnedAt: number | undefined;
+  route({ list: () => [fresh, { ...scout, pinnedAt }], update: ({ patch }) => {
+    pinnedAt = patch.pinned ? 10 : undefined;
+  } });
+  const openThread = vi.fn();
+  render(<BasicBots searchQuery="" activeThreadId="t1" projectIds={['p1']} openThread={openThread} registerThreads={vi.fn()} />);
+  const actions = await screen.findByRole('button', { name: 'Actions for Scout' });
+  const row = screen.getByRole('button', { name: 'Scout', exact: true });
+  const rows = () => screen.getByRole('region', { name: 'Bots' }).querySelectorAll('.bt-basic-row');
+  const choose = (name: string) => {
+    fireEvent.click(actions);
+    const menu = screen.getByRole('dialog', { name: 'Actions for Scout' });
+    fireEvent.click(within(menu).getByRole('button', { name }));
+  };
+  choose('Pin bot');
+  await waitFor(() => expect(rows()[0]).toBe(row));
+  expect(row.querySelector('.bt-basic-pinned')).toBeTruthy();
+  choose('Unpin bot');
+  await waitFor(() => expect(rows()[1]).toBe(row));
+  expect(row.querySelector('.bt-basic-pinned')).toBeNull();
+  expect(row.getAttribute('aria-current')).toBe('page');
+  expect(openThread).not.toHaveBeenCalled();
 });
 
 

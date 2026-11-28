@@ -238,6 +238,41 @@ test('bot tabs share a centered content column at wide and narrow pane sizes', a
   }
 });
 
+test('Advanced bot row actions appear on hover and keyboard focus', async ({ app }) => {
+  const page = app.window;
+  const rpc = new URL('/api/v1/plugin-apps/bots/rpc', page.url()).href;
+  for (const name of ['First Bot', 'Menu Bot']) {
+    const response = await page.request.post(rpc, { data: { method: 'create', args: { name } } });
+    expect(response.ok()).toBe(true);
+  }
+  const section = page.locator('.sidebar--global').getByRole('region', { name: 'Bots', exact: true });
+  const row = section.locator('.project-terminal-row').filter({ hasText: 'Menu Bot' });
+  const actions = section.getByRole('button', { name: 'Actions for Menu Bot' });
+  const away = page.getByRole('link', { name: 'New Chat', exact: true });
+  await away.hover();
+  await expect(actions).toHaveCSS('opacity', '0');
+  await row.hover();
+  await expect(actions).toHaveCSS('opacity', '1');
+  await away.hover();
+  await row.focus();
+  await page.keyboard.press('Tab');
+  await expect(actions).toBeFocused();
+  await expect(actions).toHaveCSS('opacity', '1');
+  await page.keyboard.press('Enter');
+  const menu = section.getByRole('dialog', { name: 'Actions for Menu Bot' });
+  await expect(menu.getByRole('button', { name: 'Open chat' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+  await expect(actions).toBeFocused();
+  await row.click({ button: 'right' });
+  await menu.getByRole('button', { name: 'Pin bot' }).click();
+  await expect(section.locator('.project-terminal-row').first()).toContainText('Menu Bot');
+  await actions.click();
+  await expect(menu.getByRole('button', { name: 'Unpin bot' })).toBeVisible();
+  await menu.getByRole('button', { name: 'Open bot profile' }).click();
+  await expect(page.locator('.bt-root').getByRole('heading', { name: 'Menu Bot' })).toBeVisible();
+});
+
 test('Bots shows routines, tagged memory, and host settings controls in the installed panel', async ({ app, home }, testInfo) => {
   test.setTimeout(180_000);
   const cli = resolve(process.env.ZCC_E2E_APP_ROOT ?? '.', 'packages/cli/dist/bin/zcc');
@@ -441,13 +476,26 @@ test('Basic sidebar opens bot conversations and leaves Advanced navigation intac
   expect(headingBox!.y - botsBox!.y).toBeLessThan(250);
   await more.click();
   const overflow = sidebar.getByRole('button', { name: 'Reviewer', exact: true });
+  const actions = sidebar.getByRole('button', { name: 'Actions for Reviewer', exact: true });
+  const botMenu = sidebar.getByRole('dialog', { name: 'Actions for Reviewer', exact: true });
+  await search.hover();
+  await expect(actions).toHaveCSS('opacity', '0');
   await overflow.hover();
-  await sidebar.getByRole('button', { name: 'Pin Reviewer', exact: true }).click();
+  await expect(actions).toHaveCSS('opacity', '1');
+  await actions.click();
+  await expect(botMenu.getByRole('button', { name: 'Open chat' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(botMenu).toHaveCount(0);
+  await expect(actions).toBeFocused();
+  await page.keyboard.press('Enter');
+  await botMenu.getByRole('button', { name: 'Pin bot', exact: true }).click();
   await expect(sidebar.locator('.bt-basic-row').first()).toHaveText(/Reviewer/);
   await page.reload();
   await expect(more).toBeVisible();
   await expect(sidebar.locator('.bt-basic-row').first()).toHaveText(/Reviewer/);
-  await sidebar.getByRole('button', { name: 'Unpin Reviewer', exact: true }).click();
+  await expect(overflow.locator('.bt-basic-pinned')).toBeVisible();
+  await overflow.click({ button: 'right' });
+  await botMenu.getByRole('button', { name: 'Unpin bot', exact: true }).click();
   await expect(overflow).toHaveCount(0);
   await search.fill('reviewer');
   await expect(overflow).toBeVisible();
@@ -457,6 +505,11 @@ test('Basic sidebar opens bot conversations and leaves Advanced navigation intac
   await row.click();
   await expect(page).toHaveURL(/\/threads\/[^/?#]+/);
   await expect(row).toHaveAttribute('aria-current', 'page');
+  await expect(row.locator('.bt-name')).toHaveCSS('font-weight', '650');
+  await search.hover();
+  const selectedRow = row.locator('xpath=..');
+  await expect(selectedRow).toHaveCSS('box-shadow', 'none');
+  await expect(selectedRow).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   await expect(page.locator('.thread-detail-main > .aurora-grid')).toHaveCount(0);
   const chat = page.url();
   const api = new URL('/api/v1' + new URL(chat).pathname, chat).href;

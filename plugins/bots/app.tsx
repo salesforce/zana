@@ -1,5 +1,5 @@
 import { placePopoverMenu, PopoverPicklist, useExclusivePopover } from '@zana-ai/zcc-ui/popover-picklist';
-import { Check, ChevronDown, ChevronRight, ListFilter, Pin, Plus, RefreshCw } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, ListFilter, MoreHorizontal, Pin, Plus, RefreshCw } from 'lucide-react';
 import { VaultPanel } from './src/vault/VaultPanel.js';
 import { Section, botSectionCss } from './src/BotSection.js';
 import { BotMemory } from './src/BotMemory.js';
@@ -276,17 +276,24 @@ const basicListCss = `
 .bt-basic-toggle:disabled { cursor: default; }
 .bt-basic-toggle[aria-expanded="false"] svg { transform: rotate(-90deg); }
 .bt-basic-list { display: grid; gap: 2px; }
-.bt-basic-item { position: relative; display: flex; align-items: center; border-radius: 8px; }
-.bt-basic-item:is(:hover, :focus-within) { background: var(--bg-hover); }
-.bt-basic-item:has([aria-current="page"]) { background: var(--bg-elevated); }
-.bt-basic-pin { display: grid; place-items: center; flex: 0 0 30px; height: 30px; border-radius: 6px;
+.bt-basic-item { display: flex; align-items: center; border-radius: 8px; }
+.bt-basic-item:is(:hover, :has(:focus-visible, [aria-expanded="true"])) { background: var(--sidebar-hover); }
+.bt-basic-item:has([aria-current="page"]) { background: var(--sidebar-active); }
+.bt-basic-row[aria-current="page"] .bt-name { font-weight: 650; }
+.bt-basic-pinned { flex: none; color: var(--text-muted); transform: rotate(35deg); }
+.bt-basic-actions { display: grid; place-items: center; flex: none; width: 28px; height: 28px; border-radius: 5px;
   padding: 0; margin-right: 4px; background: transparent; border: 0; color: var(--text-muted); cursor: pointer; }
-.bt-basic-pin:hover, .bt-basic-pin:focus-visible { color: var(--text-primary); background: var(--bg-hover); }
-.bt-basic-pin svg { transform: rotate(35deg); }
-.bt-basic-pin[aria-pressed="true"] svg { fill: currentColor; }
+.bt-basic-actions:is(:hover, [aria-expanded="true"]) { color: var(--text-primary); background: var(--sidebar-hover); }
+.bt-basic .bt-basic-actions:focus-visible, .bt-basic .bt-basic-row:focus-visible { outline-offset: -2px; }
 @media (hover: hover) and (pointer: fine) {
-  .bt-basic-item:not(:hover):not(:focus-within) .bt-basic-pin[aria-pressed="false"] { position: absolute; right: 0; opacity: 0; }
+  .bt-basic-actions { opacity: 0; pointer-events: none; }
+  .bt-basic-item:is(:hover, :has(:focus-visible)) .bt-basic-actions,
+  .bt-basic-actions[aria-expanded="true"] { opacity: 1; pointer-events: auto; }
 }
+@media (pointer: coarse) { .bt-basic-actions { width: 44px; height: 44px; } }
+.bt-basic .bt-basic-menu { inset: auto; min-width: 0; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; }
+.bt-basic-menu button { border: 0; background: transparent; cursor: pointer; }
+.bt-basic-menu button:disabled { opacity: .5; cursor: default; }
 .bt-basic-more { display: block; padding: 8px 10px 8px 48px; border: 0; background: transparent;
   color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer; }
 .bt-basic-more:hover, .bt-basic-more:focus-visible { color: var(--text-primary); }
@@ -303,10 +310,19 @@ const basicListCss = `
 [data-mobile='false'] .bt-basic-row small:has(.bt-dot[data-state="asleep"]) {
   position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
 }
-[data-mobile='false'] .bt-basic-item:has([aria-current="page"]) {
-  background: color-mix(in srgb, var(--accent-blue) 13%, transparent); box-shadow: inset 2px 0 var(--accent-blue);
-}
 [data-mobile='false'] .bt-basic-more { min-height: 24px; padding: 2px 8px 2px 36px; font-size: 11px; }
+[data-mobile='true'] .bt-basic { margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+[data-mobile='true'] .bt-basic .bt-list-head { padding: 0 0 0 6px; }
+[data-mobile='true'] .bt-basic .bt-list-head h2 { flex: 1; font-size: 14px; }
+[data-mobile='true'] .bt-basic-toggle { width: 100%; }
+[data-mobile='true'] .bt-basic-toggle svg { width: 14px; height: 14px; }
+[data-mobile='true'] .bt-basic :is(.bt-basic-toggle, .bt-basic-row, .bt-list-head .bt-btn, .bt-basic-more) { min-height: 44px; }
+[data-mobile='true'] .bt-basic .bt-basic-row { padding: 4px 8px; gap: 8px; }
+[data-mobile='true'] .bt-basic-row .bt-av svg { width: 24px; height: 24px; }
+[data-mobile='true'] .bt-basic-row .bt-av + span { display: flex; align-items: baseline; gap: 8px; }
+[data-mobile='true'] .bt-basic-row small { flex: none; }
+[data-mobile='true'] .bt-basic-actions { width: 44px; height: 44px; opacity: 1; pointer-events: auto; }
+[data-mobile='true'] .bt-basic-more { padding: 0 8px; color: var(--accent-blue); }
 .bt-basic-dialog { box-sizing: border-box; width: min(500px, calc(100vw - 32px)); max-height: calc(100dvh - 32px);
   padding: 0; margin: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-panel); }
 .bt-basic-dialog::backdrop { background: rgb(0 0 0 / 45%); }
@@ -315,25 +331,45 @@ const basicListCss = `
 .bt-basic .bt-note, .bt-basic [role="alert"] { color: var(--text-muted); font-size: 11px; }
 `;
 
-function BasicBotRow({ bot, activeThreadId, opening, onOpen }: {
-  bot: BotView; activeThreadId: string | null; opening: boolean; onOpen(): void;
+function BasicBotRow({ bot, activeThreadId, opening, onOpen, onUpdate }: {
+  bot: BotView; activeThreadId: string | null; opening: boolean; onOpen(): void; onUpdate(): Promise<void>;
 }) {
   const current = Boolean(activeThreadId && bot.mainThreadId === activeThreadId);
   const statusId = useId();
   const pinned = bot.pinnedAt != null;
   const { busy, feedback, run } = useAction(bot.id);
+  const { open, setOpen, close, menuId, trigger, menu } = useBotSidebarMenu();
+  const label = `Actions for ${bot.name}`;
+
+  async function togglePinned() {
+    close();
+    if (await run('update', { patch: { pinned: !pinned } })) await onUpdate();
+  }
+
   return <>
-    <div className="bt-basic-item">
+    <div className="bt-basic-item" onContextMenu={event => {
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(true);
+    }}>
       <button type="button" className="bt-item bt-basic-row" title={bot.name} aria-label={bot.name} aria-describedby={statusId}
         aria-current={current ? 'page' : undefined}
         aria-busy={opening} disabled={opening} onClick={onOpen}>
         <BotListIdentity bot={bot} live={current} statusId={statusId} />
+        {pinned && <Pin className="bt-basic-pinned" size={12} aria-hidden="true" />}
       </button>
-      <button type="button" className="bt-basic-pin" aria-label={`${pinned ? 'Unpin' : 'Pin'} ${bot.name}`}
-        title={pinned ? 'Unpin bot' : 'Pin bot'} aria-pressed={pinned} disabled={busy}
-        onClick={() => void run('update', { patch: { pinned: !pinned } })}>
-        <Pin size={15} aria-hidden="true" />
+      <button ref={trigger} type="button" className="bt-basic-actions" aria-label={label} title={label}
+        aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? menuId : undefined}
+        onClick={() => setOpen(value => !value)}>
+        <MoreHorizontal size={16} aria-hidden="true" />
       </button>
+      {open && <div id={menuId} ref={menu} className="sidebar-projects-organize-menu bt-basic-menu"
+        role="dialog" aria-label={label} onKeyDown={event => {
+          if (event.key === 'Escape') { event.stopPropagation(); close(); }
+        }}>
+        <button type="button" disabled={opening} onClick={() => { close(); onOpen(); }}>Open chat</button>
+        <button type="button" disabled={busy} onClick={() => void togglePinned()}>{pinned ? 'Unpin bot' : 'Pin bot'}</button>
+      </div>}
     </div>
     {feedback}
   </>;
@@ -365,11 +401,12 @@ function useOpenBotThread(activeThreadId: string | null, openThread: (threadId: 
   return { openBot, opening, openError };
 }
 
-export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread, registerThreads }: BasicSidebarSectionProps) {
+export function BasicBots({ searchQuery, compact = false, activeThreadId, projectIds, openThread, registerThreads }: BasicSidebarSectionProps) {
   const { bots, loaded, error, refresh } = useBotList();
   const [creating, setCreating] = useState(false);
   const [showAll, setShowAll] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapseOverride, setCollapsed] = useState<boolean>();
+  const collapsed = collapseOverride ?? compact;
   const listId = useId();
   const { openBot, opening, openError } = useOpenBotThread(activeThreadId, openThread);
   const eligible = useMemo(() => bots.filter(bot => projectIds.includes(bot.projectId)), [bots, projectIds]);
@@ -388,7 +425,7 @@ export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread,
     <style>{CSS + basicListCss}</style>
     <div className="bt-list-head">
       <h2><button type="button" className="bt-basic-toggle" aria-expanded={expanded} aria-controls={`${listId}-section`}
-        disabled={Boolean(query)} onClick={() => setCollapsed(value => !value)}><ChevronDown size={12} aria-hidden="true" />Bots</button></h2>
+        disabled={Boolean(query)} onClick={() => setCollapsed(!collapsed)}><ChevronDown size={12} aria-hidden="true" />Bots</button></h2>
       <button type="button" className="bt-btn is-ghost is-sm" aria-label="New bot" title="New bot" aria-haspopup="dialog"
         onClick={() => setCreating(true)}><Plus size={14} aria-hidden="true" /><span>New bot</span></button>
     </div>
@@ -404,12 +441,12 @@ export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread,
     {openError && <p role="alert" className="bt-alert">{openError}</p>}
     <div id={`${listId}-section`} hidden={!expanded}>
       <div id={listId} className="bt-basic-list">
-        {visible.map(bot => <BasicBotRow key={bot.id} bot={bot} activeThreadId={activeThreadId} opening={opening === bot.id}
-          onOpen={() => void openBot(bot.id)} />)}
+        {expanded && visible.map(bot => <BasicBotRow key={bot.id} bot={bot} activeThreadId={activeThreadId} opening={opening === bot.id}
+          onOpen={() => void openBot(bot.id)} onUpdate={refresh} />)}
       </div>
       {!query && matches.length > BASIC_BOT_LIMIT && <button type="button" className="bt-basic-more"
         aria-expanded={showAll} aria-controls={listId} onClick={() => setShowAll(!showAll)}>
-        {showAll ? 'Show less' : 'Show more'}
+        {showAll ? (compact ? 'Show fewer bots' : 'Show less') : (compact ? 'Show more bots' : 'Show more')}
       </button>}
     </div>
   </section>;
@@ -420,6 +457,7 @@ const railListCss = `
 .bt-rail .list-header-actions .icon-btn { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 7px; }
 .bt-rail .list-header-actions .icon-btn:is(:hover, .on) { background: var(--sidebar-hover); color: var(--text-primary); }
 .bt-rail .bt-rail-organize { inset: auto; overflow-y: auto; overscroll-behavior: contain; }
+.bt-rail .project-terminal-more[aria-expanded='true'] { opacity: 1; }
 .bt-rail-organize-link a { display: flex; align-items: center; min-height: 29px; padding: 5px 7px;
   border-radius: 6px; color: var(--text-muted); font-size: 12px; text-decoration: none; }
 .bt-rail-organize-link a:hover { background: var(--sidebar-hover); color: var(--text-primary); }
@@ -438,10 +476,8 @@ const botSorts = [
 ] as const;
 type BotRailSort = typeof botSorts[number][0];
 
-function BotRailOrganize({ pinnedOnly, sort, onShow, onSort, panelLink }: {
-  pinnedOnly: boolean; sort: BotRailSort;
-  onShow(value: boolean): void; onSort(value: BotRailSort): void; panelLink: ReactNode;
-}) {
+
+function useBotSidebarMenu() {
   const [open, setOpen] = useExclusivePopover();
   const menuId = useId();
   const trigger = useRef<HTMLButtonElement>(null);
@@ -458,7 +494,8 @@ function BotRailOrganize({ pinnedOnly, sort, onShow, onSort, panelLink }: {
         top: top === undefined ? 'auto' : top + 'px', bottom: bottom === undefined ? 'auto' : bottom + 'px' });
     };
     position();
-    element.querySelector<HTMLElement>('button[aria-pressed="true"]')?.focus();
+    (element.querySelector<HTMLButtonElement>('button[aria-pressed="true"]') ??
+      element.querySelector<HTMLButtonElement>('button:not(:disabled)'))?.focus();
     const outside = (event: PointerEvent) => {
       if (event.target instanceof Node && !element.contains(event.target) && !button.contains(event.target)) setOpen(false);
     };
@@ -471,6 +508,15 @@ function BotRailOrganize({ pinnedOnly, sort, onShow, onSort, panelLink }: {
       document.removeEventListener('pointerdown', outside);
     };
   }, [open, setOpen]);
+
+  return { open, setOpen, close, menuId, trigger, menu };
+}
+
+function BotRailOrganize({ pinnedOnly, sort, onShow, onSort, panelLink }: {
+  pinnedOnly: boolean; sort: BotRailSort;
+  onShow(value: boolean): void; onSort(value: BotRailSort): void; panelLink: ReactNode;
+}) {
+  const { open, setOpen, close, menuId, trigger, menu } = useBotSidebarMenu();
 
   return <>
     <button ref={trigger} type="button" className={`icon-btn${pinnedOnly || sort !== 'pinned' ? ' on' : ''}`}
@@ -495,6 +541,53 @@ function BotRailOrganize({ pinnedOnly, sort, onShow, onSort, panelLink }: {
       {panelLink && <div className="bt-rail-organize-link" onClick={() => setOpen(false)}>{panelLink}</div>}
     </div>}
   </>;
+}
+
+function AdvancedBotRow({ bot, current, opening, onOpen, onUpdate }: {
+  bot: BotView; current: boolean; opening: boolean; onOpen(): void; onUpdate(): Promise<void>;
+}) {
+  const navigate = useZccNavigate();
+  const { open, setOpen, close, menuId, trigger, menu } = useBotSidebarMenu();
+  const { busy, feedback, run } = useAction(bot.id);
+  const state = botState(bot);
+  const pinned = bot.pinnedAt != null;
+  const label = `Actions for ${bot.name}`;
+
+  async function togglePinned() {
+    close();
+    if (await run('update', { patch: { pinned: !pinned } })) await onUpdate();
+  }
+
+  return <div>
+    <div className="project-thread-row-wrap" onContextMenu={event => {
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(true);
+    }}>
+      <button type="button" className={`project-terminal-row is-thread${current ? ' active' : ''}`}
+        aria-current={current ? 'true' : undefined} title={bot.name} disabled={opening} onClick={onOpen}>
+        <span className="tab-profile-icon" aria-hidden="true"><BotAvatar bot={bot} size={14} live={current} /></span>
+        <span className="project-terminal-text">
+          <span className="project-terminal-name">{bot.name}</span>
+          <span className="project-terminal-detail">{state === 'asleep' ? 'Idle' : STATE_LABEL[state]} · Thread</span>
+        </span>
+      </button>
+      <button ref={trigger} type="button" className="project-terminal-more" aria-label={label} title={label}
+        aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? menuId : undefined}
+        onClick={() => setOpen(value => !value)}>
+        <MoreHorizontal size={13} aria-hidden="true" />
+      </button>
+      {open && <div id={menuId} ref={menu} className="sidebar-projects-organize-menu bt-rail-organize"
+        role="dialog" aria-label={label} onKeyDown={event => {
+          if (event.key === 'Escape') { event.stopPropagation(); close(); }
+        }}>
+        <button type="button" disabled={opening} onClick={() => { close(); onOpen(); }}>Open chat</button>
+        <button type="button" onClick={() => { close(); navigate.toPluginPanel('bots', { subPath: bot.id }); }}>Open bot profile</button>
+        <button type="button" disabled={busy} onClick={() => void togglePinned()}>{pinned ? 'Unpin bot' : 'Pin bot'}</button>
+      </div>}
+    </div>
+    {feedback}
+  </div>;
 }
 
 export function AdvancedBots({ activeThreadId, openThread, panelLink, dragHandle, onNavigate }: PluginSidebarSectionProps) {
@@ -529,7 +622,7 @@ export function AdvancedBots({ activeThreadId, openThread, panelLink, dragHandle
     const target = pendingFocus.current;
     pendingFocus.current = null;
     if (target === 'more') moreRef.current?.focus();
-    else if (target !== null) listRef.current?.querySelectorAll('button')[target]?.focus();
+    else if (target !== null) listRef.current?.querySelectorAll<HTMLButtonElement>('.project-terminal-row')[target]?.focus();
   }, [limit]);
 
   return <section className="bt-rail" aria-label="Bots">
@@ -567,19 +660,9 @@ export function AdvancedBots({ activeThreadId, openThread, panelLink, dragHandle
       {openError && <p className="bt-rail-note" role="alert">{openError}</p>}
       {!error && !matches.length && <p className="bt-rail-note">{!loaded ? 'Loading bots…' : pinnedOnly ? 'No pinned bots.' : 'No bots yet.'}</p>}
       <div id={listId} className="bt-rail-list" ref={listRef}>
-        {visible.map(bot => {
-          const state = botState(bot);
-          const current = !!activeThreadId && activeThreadId === bot.mainThreadId;
-          return <button key={bot.id} type="button" className={`project-terminal-row is-thread${current ? ' active' : ''}`}
-            aria-current={current ? 'true' : undefined} title={bot.name} disabled={opening === bot.id}
-            onClick={() => void openBot(bot.id)}>
-            <span className="tab-profile-icon" aria-hidden="true"><BotAvatar bot={bot} size={14} live={current} /></span>
-            <span className="project-terminal-text">
-              <span className="project-terminal-name">{bot.name}</span>
-              <span className="project-terminal-detail">{state === 'asleep' ? 'Idle' : STATE_LABEL[state]} · Thread</span>
-            </span>
-          </button>;
-        })}
+        {expanded && visible.map(bot => <AdvancedBotRow key={bot.id} bot={bot}
+          current={!!activeThreadId && activeThreadId === bot.mainThreadId} opening={opening === bot.id}
+          onOpen={() => void openBot(bot.id)} onUpdate={refresh} />)}
       </div>
       {remaining > 0 && <button ref={moreRef} type="button" className="sidebar-projects-heading bt-rail-more"
         aria-controls={listId} onClick={() => {
@@ -599,9 +682,13 @@ export function AdvancedBots({ activeThreadId, openThread, panelLink, dragHandle
   </section>;
 }
 
-export function BotsPanel() {
+export function BotsPanel({ subPath = '' }: { subPath?: string } = {}) {
+  return <BotsPanelView key={subPath} initialBotId={subPath || null} />;
+}
+
+function BotsPanelView({ initialBotId }: { initialBotId: string | null }) {
   const { bots, loaded, error, refresh } = useBotList();
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState(initialBotId);
   const [creating, setCreating] = useState(false);
   const bot = bots.find((row) => row.id === selected) ?? bots[0] ?? null;
   const showCreate = creating || (loaded && bots.length === 0);

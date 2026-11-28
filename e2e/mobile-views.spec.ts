@@ -804,7 +804,7 @@ test('Main views and populated Inbox fit phone and tablet screens', async ({ app
 });
 
 
-test('Basic mobile Filters switch between Quiet list and By project', async ({ app }) => {
+test('Basic mobile navigation collapses conversations, filters projects and aligns the chat header', async ({ app }) => {
   const threadId = await app.window.evaluate(async () => {
     const response = await fetch('/api/v1/threads', {
       method: 'POST', headers: { 'content-type': 'application/json' },
@@ -834,13 +834,50 @@ test('Basic mobile Filters switch between Quiet list and By project', async ({ a
         headers: { authorization: `Bearer ${credential}` }
       })).ok()).toBe(true);
       const page = await context.newPage();
+      await page.route(url => url.pathname === '/api/v1/threads', async route => {
+        const response = await route.fetch();
+        const body = await response.json();
+        body.threads = body.threads.map((thread: { id: string }) => thread.id === threadId
+          ? { ...thread, status: 'idle', lastReadSeq: 1, maxSeq: 2 }
+          : thread);
+        await route.fulfill({ response, json: body });
+      });
       await page.goto(`${url}/?ui=basic`);
-      await page.getByRole('button', { name: 'Open conversations', exact: true }).click();
+      const launcher = page.getByRole('button', { name: 'Open conversations', exact: true });
+      await launcher.click();
       const chats = page.getByRole('navigation', { name: 'Recent conversations' });
+      const toggle = chats.getByRole('button', { name: 'Conversations', exact: true });
       const row = chats.getByTestId(`basic-chat-row-${threadId}`);
       const filters = page.getByRole('button', { name: 'Filters', exact: true });
       const menu = page.getByRole('menu', { name: 'Conversation view options' });
-      await expect(row.locator('.basic-ui-chat-project')).toHaveText('Mobile interface verification');
+      const projectName = row.locator('.basic-ui-chat-project');
+      const unread = row.getByText('Unread', { exact: true });
+      await expect(projectName).toHaveText('Mobile interface verification');
+      await expect(unread).toBeVisible();
+      await expect(row).toHaveAccessibleName('Review the responsive layout, Mobile interface verification, unread');
+      for (const width of [320, 390, 430]) {
+        await page.setViewportSize({ width, height: 844 });
+        const [status, project, title] = await Promise.all([
+          row.locator('.basic-ui-chat-statuses').boundingBox(), projectName.boundingBox(),
+          row.locator('.basic-ui-chat-name').boundingBox()
+        ]);
+        expect(status!.x).toBeCloseTo(title!.x, 0);
+        expect(status!.x + status!.width).toBeLessThan(project!.x);
+      }
+      await page.setViewportSize({ width: 390, height: 844 });
+      await toggle.tap();
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      await expect(row).toHaveCount(0);
+      await page.getByRole('dialog', { name: 'Navigation' }).getByRole('button', { name: 'Close navigation' }).tap();
+      await launcher.tap();
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      const search = page.getByRole('searchbox', { name: 'Search chats' });
+      await search.fill('responsive');
+      await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      await expect(row).toBeVisible();
+      await search.clear();
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      await toggle.tap();
       await filters.click();
       await menu.getByRole('menuitem', { name: /^Layout/ }).click();
       await menu.getByRole('menuitemradio', { name: 'By project' }).click();
@@ -853,6 +890,20 @@ test('Basic mobile Filters switch between Quiet list and By project', async ({ a
       await menu.getByRole('menuitemradio', { name: 'Quiet list' }).click();
       await expect(project).toHaveCount(0);
       await expect(row.locator('.basic-ui-chat-project')).toHaveText('Mobile interface verification');
+      await row.tap();
+      const title = page.locator('.mobile-thread-title-slot h1');
+      await expect(title).toBeVisible();
+      for (const width of [320, 390, 430]) {
+        await page.setViewportSize({ width, height: 844 });
+        const [leading, heading] = await Promise.all([launcher.boundingBox(), title.boundingBox()]);
+        expect(leading).not.toBeNull();
+        expect(heading).not.toBeNull();
+        expect(leading!.x).toBeLessThanOrEqual(8);
+        expect(leading!.width).toBeGreaterThanOrEqual(44);
+        expect(heading!.x).toBeGreaterThanOrEqual(leading!.x + leading!.width);
+        expect(heading!.width).toBeGreaterThan(60);
+        expect(Math.abs(leading!.y + leading!.height / 2 - heading!.y - heading!.height / 2)).toBeLessThanOrEqual(1);
+      }
     } finally {
       await browser.close();
     }

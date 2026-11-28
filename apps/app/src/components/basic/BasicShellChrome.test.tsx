@@ -48,7 +48,7 @@ function sidebar(path = '/') {
   render(<MemoryRouter initialEntries={[path]}><BasicConversationSidebar onNavigate={onNavigate} /><RouteProbe /></MemoryRouter>);
   return onNavigate;
 }
-afterEach(() => { cleanup(); useBasicConversationView.setState({ view: { ...DEFAULT_BASIC_CONVERSATION_VIEW } }); archive.history.mockReset(); archive.listeners.clear(); slots.panels = []; data.threads = []; data.loading = false; data.scoped = null; data.ensure.mockClear(); setBasicUiMode('advanced'); });
+afterEach(() => { cleanup(); useBasicConversationView.setState({ view: { ...DEFAULT_BASIC_CONVERSATION_VIEW }, conversationsCollapsed: false }); archive.history.mockReset(); archive.listeners.clear(); slots.panels = []; data.threads = []; data.loading = false; data.scoped = null; data.ensure.mockClear(); setBasicUiMode('advanced'); });
 
 it('shows the current interface view in mobile navigation and dismisses it after a change', () => {
   const onChange = vi.fn();
@@ -70,6 +70,34 @@ it('shows the current interface view in mobile navigation and dismisses it after
 });
 
 describe('Basic conversation navigation', () => {
+  it('keeps conversations collapsed after reopening the drawer and shows results during search', () => {
+    data.threads = [thread('one'), thread('two', { title: 'Website outline' })];
+    const drawer = (open: boolean) => <MemoryRouter><MobileNavDismiss.Provider value={() => {}}>
+      {open && <BasicConversationSidebar onNavigate={() => {}} />}
+    </MobileNavDismiss.Provider></MemoryRouter>;
+    const view = render(drawer(true));
+    const toggle = () => screen.getByRole('button', { name: 'Conversations', exact: true });
+    const list = () => document.getElementById(toggle().getAttribute('aria-controls')!)!;
+    expect(toggle().getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(toggle());
+    expect(list().hidden).toBe(true);
+    expect(screen.queryByRole('link', { name: /Website outline/ })).toBeNull();
+    view.rerender(drawer(false));
+    view.rerender(drawer(true));
+    expect(toggle().getAttribute('aria-expanded')).toBe('false');
+
+    const search = screen.getByRole('searchbox', { name: 'Search chats' });
+    fireEvent.change(search, { target: { value: 'website' } });
+    expect(list().hidden).toBe(false);
+    expect(toggle().getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('link', { name: /Website outline/ })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: /Chat one/ })).toBeNull();
+    fireEvent.change(search, { target: { value: ' ' } });
+    expect(list().hidden).toBe(true);
+    fireEvent.click(toggle());
+    expect(screen.getByRole('link', { name: /Chat one/ })).toBeTruthy();
+  });
+
   it('omits New Window from the Basic desktop sidebar', () => {
     vi.stubGlobal('cc', {});
     try {
@@ -150,6 +178,7 @@ describe('Basic conversation navigation', () => {
     expect(screen.getByText('New conversation')).toBeTruthy();
     expect(screen.getByText('Project unavailable')).toBeTruthy();
     expect(screen.getByText('Needs review')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'New conversation, Project unavailable, Needs review' })).toBeTruthy();
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'absent' } });
     expect(screen.getByRole('status').textContent).toBe('No matching conversations.');
   });
@@ -164,15 +193,18 @@ describe('Basic conversation navigation', () => {
     ];
     sidebar('/threads/open');
     const row = screen.getByTestId('basic-chat-row-new');
+    expect(row.dataset.rowStatus).toBe('Unread');
     expect(row.className).toContain('is-unread');
     expect(row.getAttribute('aria-label')).toBe('Chat new, Personal, unread');
     expect(within(row).getByText('Unread')).toBeTruthy();
     for (const id of ['read', 'never', 'open']) {
       expect(screen.queryByTestId(`basic-chat-unread-${id}`)).toBeNull();
       expect(screen.getByTestId(`basic-chat-row-${id}`).className).not.toContain('is-unread');
+      expect(screen.getByTestId(`basic-chat-row-${id}`).dataset.rowStatus).toBe('Idle');
     }
     expect(screen.queryByTestId('basic-chat-unread-live')).toBeNull();
-    expect(within(screen.getByTestId('basic-chat-row-live')).getByText('Working')).toBeTruthy();
+    expect(within(screen.getByRole('link', { name: 'Chat live, Personal, Working' })).getByText('Working')).toBeTruthy();
+    expect(screen.getByTestId('basic-chat-row-live').dataset.rowStatus).toBe('Working');
   });
 
   it('shows Unread even inside a project window where no project label is rendered', () => {
@@ -203,7 +235,7 @@ describe('Basic conversation navigation', () => {
     expect(screen.queryByRole('region')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Website' })).toBeNull();
     const rows = screen.getAllByRole('link').filter(link => link.dataset.testid?.startsWith('basic-chat-row-'));
-    expect(rows.map(link => link.getAttribute('aria-label'))).toEqual(['Chat one, Personal', 'Design a homepage, Website', 'Chat three, Website']);
+    expect(rows.map(link => link.getAttribute('aria-label'))).toEqual(['Chat one, Personal', 'Design a homepage, Website, Working', 'Chat three, Website']);
     const personal = within(rows[0]!).getByText('Personal');
     const website = within(rows[1]!).getByText('Website');
     expect(personal.style.getPropertyValue('--basic-chat-project-color')).toBe('');
@@ -297,7 +329,7 @@ describe('Basic shell controls', () => {
     view.rerender(<BasicShellHeading compact collapsed onToggleNavigation={onToggleNavigation} />);
     const menu = screen.getByRole('button', { name: 'Open conversations' });
     expect(menu.querySelector('.lucide-menu')).toBeTruthy();
-    expect(menu.closest('.sidebar-trigger-overlay')).toBeNull();
+    expect(menu.closest('.sidebar-trigger-overlay')).toBeTruthy();
     fireEvent.click(menu);
     expect(onToggleNavigation).toHaveBeenCalledTimes(3);
   });
@@ -433,15 +465,15 @@ describe('Basic conversation view menu', () => {
     expect(archive.history).not.toHaveBeenCalled();
     open();
     pick('Status', 'All');
-    await waitFor(() => expect(screen.getByRole('link', { name: 'Archived plan, Website' })).toBeTruthy());
-    expect(within(screen.getByRole('link', { name: 'Archived plan, Website' })).getByText('Archived')).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Archived plan, Website, Archived' })).toBeTruthy());
+    expect(within(screen.getByRole('link', { name: 'Archived plan, Website, Archived' })).getByText('Archived')).toBeTruthy();
     expect(archive.history).toHaveBeenNthCalledWith(1, { archived: 'archived', offset: 0 });
     expect(archive.history).toHaveBeenNthCalledWith(2, { archived: 'archived', offset: 40 });
     expect(screen.getByRole('link', { name: 'Chat one, Personal' })).toBeTruthy();
     expect(screen.queryByText('Stale copy')).toBeNull();
     expect(screen.getByTestId('basic-conversation-filter').textContent).toBe('All');
     pick('Status', 'Archived');
-    expect(screen.getByRole('link', { name: 'Archived plan, Website' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Archived plan, Website, Archived' })).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'Chat one, Personal' })).toBeNull();
     const calls = archive.history.mock.calls.length;
     act(() => { for (const listener of archive.listeners) listener(); });

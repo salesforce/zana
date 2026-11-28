@@ -201,6 +201,31 @@ describe('generic bot guidelines', () => {
     expect(main.indexOf('Be chatty.')).toBeLessThan(main.indexOf('Bot guidelines'));
   });
 
+  it('gives every bot role the concise response and verification defaults', () => {
+    for (const text of [mainThreadInstructions(base()), jobThreadInstructions(base()), routineThreadInstructions(base())]) {
+      expect(text).toContain('one or two sentences for a simple request');
+      expect(text).toContain('return the requested text directly');
+      expect(text).toContain('exactly one piece of information and stop there');
+      expect(text).toContain('when it adds information the app does not already show');
+      expect(text).toContain('only after confirming the result');
+      expect(text).toContain('name what remains unverified');
+      expect(text).toContain('requests to skip calendar checks');
+      expect(text).toContain('deliver the preview or draft without carrying out the underlying action');
+    }
+  });
+
+  it('keeps interactive work in the main thread and scopes background assignments', () => {
+    const main = mainThreadInstructions(base());
+    expect(main).toContain('work that can run independently');
+    expect(main).toContain('relevant authorized context, constraints, and expected deliverable');
+    expect(main).toContain('work that depends on the current chat’s attachments here');
+    expect(main).toContain('lead with the confirmed result or artifact when it comes back');
+    expect(toolInstructions.bot_job_start).toContain('self-contained work');
+    for (const text of [jobThreadInstructions(base()), routineThreadInstructions(base())]) {
+      expect(text).not.toContain('bot_job_start');
+    }
+  });
+
   it('never routes bot-to-bot work to a person', () => {
     expect(guidelinesBlock()).toContain('Never involve a person in work that comes from another bot');
     expect(mainThreadInstructions(base())).toContain('never waits on a person');

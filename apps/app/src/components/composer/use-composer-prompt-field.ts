@@ -1,6 +1,6 @@
 import { closeHistory } from '@tiptap/pm/history';
 import { NodeSelection, TextSelection } from '@tiptap/pm/state';
-import { parseEditorSelection, contextReferenceFromEditorSelection, type EditorSelection, contextReferenceFromClipboard, parseContextReferences, parseContextReference, type ContextReference } from '@zana-ai/zcc-plugin-sdk/app';
+import { CONTEXT_REFERENCE_MIME, parseEditorSelection, contextReferenceFromEditorSelection, type EditorSelection, contextReferenceFromClipboard, parseContextReferences, parseContextReference, type ContextReference } from '@zana-ai/zcc-plugin-sdk/app';
 import { nativeCapabilities } from '../../lib/native-capabilities.js';
 import { canAutomaticallyFocus } from '../../lib/automatic-focus.js';
 import { promptEditorDocument } from './restore-prompt-editor.js';
@@ -153,7 +153,7 @@ export function useComposerPromptField({
     move: (_delta: number) => {},
     dismiss: () => {}
   });
-  const insertDroppedMentionsRef = useRef<(event: DragEvent) => boolean>(() => false);
+  const handleDropRef = useRef<(event: DragEvent, atDropPoint: boolean) => boolean>(() => false);
   const attachImagesRef = useRef<(files: File[]) => boolean>(() => false);
   const restoreFocusAfterSubmitRef = useRef(false);
   const pastePlainTextRef = useRef(false);
@@ -161,6 +161,18 @@ export function useComposerPromptField({
   const [, setEditorRevision] = useState(0);
   const dropOverRef = useRef(false);
   dropOverRef.current = dropOver;
+  function onComposerDragOver(event: DragEvent | ReactDragEvent) {
+    const data = event.dataTransfer;
+    if (disabled || !data) return;
+    const types = Array.from(data.types);
+    if (!types.includes(CONTEXT_REFERENCE_MIME) && !types.includes(PROJECT_DRAG_MIME) && !isComposerPathDrag(types)) return;
+    event.preventDefault();
+    data.dropEffect = 'copy';
+    if (!dropOverRef.current) {
+      dropOverRef.current = true;
+      setDropOver(true);
+    }
+  }
   const images = snapshot.images;
   const setImages = useCallback((next: SetStateAction<ComposerImageAttachment[]>) => {
     draft.setContent({ images: typeof next === 'function' ? next(draft.getSnapshot().images) : next });
@@ -275,7 +287,7 @@ export function useComposerPromptField({
         ...(ariaLabel ? { 'aria-label': ariaLabel } : {})
       },
       handleDrop: (_view, event) => {
-        if (!insertDroppedMentionsRef.current(event)) return false;
+        if (!handleDropRef.current(event, true)) return false;
         event.stopPropagation();
         return true;
       },
@@ -304,14 +316,7 @@ export function useComposerPromptField({
       handleDOMEvents: {
         keyup: () => { pastePlainTextRef.current = false; return false; },
         dragover: (_view, event) => {
-          const types = Array.from(event.dataTransfer?.types ?? []);
-          if (!types.includes(PROJECT_DRAG_MIME) && !isComposerPathDrag(types)) return false;
-          event.preventDefault();
-          if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
-          if (!dropOverRef.current) {
-            dropOverRef.current = true;
-            setDropOver(true);
-          }
+          onComposerDragOver(event);
           return false;
         }
       },
@@ -570,41 +575,7 @@ export function useComposerPromptField({
     });
   }, [canAttach, editor, projectRoot]);
 
-  insertDroppedMentionsRef.current = (event) => {
-    const inserted = insertDroppedMentions(event, true);
-    if (inserted) {
-      dropOverRef.current = false;
-      setDropOver(false);
-    }
-    return inserted;
-  };
-
-  const dropHandlers = {
-    onDragOver: (event: ReactDragEvent) => {
-      const types = Array.from(event.dataTransfer.types);
-      if (disabled || (!types.includes(PROJECT_DRAG_MIME) && !isComposerPathDrag(types))) return;
-      event.preventDefault();
-      event.dataTransfer.dropEffect = 'copy';
-      if (!dropOverRef.current) {
-        dropOverRef.current = true;
-        setDropOver(true);
-      }
-    },
-    onDragLeave: (event: ReactDragEvent) => {
-      if (event.currentTarget === event.target) {
-        dropOverRef.current = false;
-        setDropOver(false);
-      }
-    },
-    onDrop: (event: ReactDragEvent) => {
-      if (!insertDroppedMentions(event.nativeEvent, false)) return;
-      event.preventDefault();
-      dropOverRef.current = false;
-      setDropOver(false);
-    }
-  };
-
-  const insertContextReference = useCallback((value: ContextReference): boolean => {
+  const insertContextReference = useCallback((value: ContextReference, position?: number): boolean => {
     const reference = parseContextReference(value);
     if (!editor || disabled || !reference) return false;
     const current = serializePromptEditor(editor.getJSON()).references?.map(ref => ref.reference) ?? [];
@@ -614,14 +585,51 @@ export function useComposerPromptField({
     }
     const node = editor.state.schema.nodes.editorSelection!.create({ reference });
     const tr = closeHistory(editor.state.tr);
-    // Inspecting an inline badge can select its atom. A source toolbar adds
-    // context after that badge instead of replacing the inspected snapshot.
-    if (tr.selection instanceof NodeSelection) tr.setSelection(TextSelection.near(tr.doc.resolve(tr.selection.to)));
+    if (position !== undefined) {
+      tr.setSelection(TextSelection.near(tr.doc.resolve(position)));
+    } else if (tr.selection instanceof NodeSelection) {
+      // Add after an inspected badge when inserting at the current selection.
+      tr.setSelection(TextSelection.near(tr.doc.resolve(tr.selection.to)));
+    }
     editor.view.dispatch(tr.replaceSelectionWith(node).scrollIntoView());
     editor.view.dispatch(closeHistory(editor.state.tr));
     editor.commands.focus();
     return true;
   }, [editor, disabled]);
+
+  handleDropRef.current = (event, atDropPoint) => {
+    if (!editor || disabled) return false;
+    const data = event.dataTransfer;
+    if (Array.from(data?.types ?? []).includes(CONTEXT_REFERENCE_MIME)) {
+      dropOverRef.current = false;
+      setDropOver(false);
+      const reference = contextReferenceFromClipboard(data);
+      if (!reference) return false;
+      event.preventDefault();
+      const position = atDropPoint
+        ? editor.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos
+        : undefined;
+      insertContextReference(reference, position);
+      return true;
+    }
+    if (!insertDroppedMentions(event, atDropPoint)) return false;
+    dropOverRef.current = false;
+    setDropOver(false);
+    return true;
+  };
+
+  const dropHandlers = {
+    onDragOver: onComposerDragOver,
+    onDragLeave: (event: ReactDragEvent) => {
+      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+        dropOverRef.current = false;
+        setDropOver(false);
+      }
+    },
+    onDrop: (event: ReactDragEvent) => {
+      if (handleDropRef.current(event.nativeEvent, false)) event.preventDefault();
+    }
+  };
 
   const updateContextReference = useCallback((pluginId:string,resourceId:string,value:ContextReference|null):boolean => {
     const reference=value===null ? null : parseContextReference(value);
