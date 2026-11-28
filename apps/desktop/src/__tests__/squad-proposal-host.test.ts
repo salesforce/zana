@@ -332,6 +332,56 @@ describe('squadProposalMcpDeps', () => {
       await expect(host.resolveSquadComposerPreview({ teamId: 'team1', projectId: 'p1', goal: 'go', worktree: true }, { kind: 'window', windowId: 7 })).rejects.toThrow();
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
+  describe('refuses worktree, push and checks on a checkout without a branch, naming the cause and the fix', () => {
+    const input = { teamId: 'team1', projectId: 'p1', goal: 'go', coordinationMode: 'freeform' as const };
+    const caller = { kind: 'window' as const, windowId: 7 };
+    const makeCheckout = (kind: 'detached' | 'nonGit' | 'quick' | 'noCommit' | 'emptyCommit') => {
+      const dir = mkdtempSync(join(tmpdir(), 'no-branch-preview-'));
+      if (kind === 'noCommit') execFileSync('git', ['init', '-b', 'main', dir]);
+      else if (kind !== 'nonGit') initializeRepo(dir);
+      if (kind === 'detached') execFileSync('git', ['-C', dir, 'checkout', '--detach']);
+      h.projects = [{ id: 'p1', path: dir, name: 'Repo', ...(kind === 'quick' ? { quickAgent: true } : {}) }];
+      return dir;
+    };
+    it.each([
+      ['detached', { worktree: true }, 'Worktree isolation needs a checked-out branch, but this repository is on a detached HEAD. Turn it off for this launch, or check out a branch.'],
+      ['detached', { push: true }, 'Push needs a checked-out branch, but this repository is on a detached HEAD. Turn it off for this launch, or check out a branch.'],
+      ['nonGit', { worktree: true, push: true }, 'Worktree isolation, push needs a checked-out branch, but this folder is not a git repository. Turn it off for this launch, or run git init and make a first commit (a project whose repository is in a subfolder needs that folder added as the project).'],
+      ['quick', { worktree: true }, 'Worktree isolation needs a checked-out branch, but this is a quick-agent project. Turn it off for this launch, or use a regular project.']
+    ] as const)('%s checkout with %j', async (kind, options, message) => {
+      const dir = makeCheckout(kind);
+      try {
+        const error = await host.resolveSquadComposerPreview({ ...input, ...options }, caller).catch(cause => cause);
+        expect(error).toMatchObject({ name: 'SquadPreviewFixableError', message });
+        expect(error.message).not.toContain('TARGET_UNAVAILABLE');
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+    it('names checks when a detached checkout is asked to run them', () => {
+      expect(host.notEligibleMessage('named checks', false, true, true)).toContain('Named checks needs a checked-out branch');
+      expect(host.notEligibleMessage('push', false, false, true)).toContain('no checked-out branch');
+    });
+    it('keeps previewing a detached or empty-commit checkout when nothing needs a branch', async () => {
+      for (const kind of ['detached', 'emptyCommit'] as const) {
+        const dir = makeCheckout(kind);
+        try {
+          await expect(host.resolveSquadComposerPreview(input, caller)).resolves.toMatchObject({ location: { kind: 'project-root' }, path: realpathSync(dir) });
+        } finally { rmSync(dir, { recursive: true, force: true }); }
+      }
+    });
+    it('previews a checkout with an initial empty commit as a new worktree', async () => {
+      const dir = makeCheckout('emptyCommit');
+      try {
+        await expect(host.resolveSquadComposerPreview({ ...input, worktree: true }, caller)).resolves.toMatchObject({ location: { kind: 'new-worktree', baseBranch: 'main' } });
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+    it('records what a repository with no commit does today when a worktree is requested', async () => {
+      const dir = makeCheckout('noCommit');
+      try {
+        const outcome = await host.resolveSquadComposerPreview({ ...input, worktree: true }, caller).then(() => 'preview', cause => String(cause.message));
+        expect(outcome).toBe('Worktree isolation needs a commit to branch from, and this repository has none yet. Make an initial commit or turn worktree isolation off.');
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+  });
   it('projects implicit isolation on a non-Git checkout as the project root', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'nongit-isolation-preview-'));
     try {

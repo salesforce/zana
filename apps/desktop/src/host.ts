@@ -374,7 +374,7 @@ import { canAuthorAndRegisterPlan, planAuthoringTransportOf, resolveLaunchApprov
 import { buildPlanFindings, hardFindingCounts, planBindings } from '@zana-ai/zcc-server/services/launch/plan-findings';
 import { createSquadProposalStore } from './squad-proposals/store.js';
 import { createStagingStore, SQUAD_STAGING_DIR_NAME, SQUAD_STAGING_PARENT_DIR_NAME } from './squad-proposals/staging.js';
-import { createSquadProposalService, SQUAD_LAUNCH_PROPOSAL_ACTION, SquadPreviewAdmissionError, type SquadProposalServiceDeps } from './squad-proposals/service.js';
+import { createSquadProposalService, SQUAD_LAUNCH_PROPOSAL_ACTION, SquadPreviewAdmissionError, SquadPreviewFixableError, type SquadProposalServiceDeps } from './squad-proposals/service.js';
 import { createSquadProposalNotifier } from './squad-proposals/notifier.js';
 import { goalMentionPaths } from './squad-proposals/sources.js';
 import { parseSshConfig } from '@zana-ai/zcc-server/services/projects/ssh-config';
@@ -3946,6 +3946,16 @@ async function claimSquadComposerPreview(
   return entry.preview;
 }
 
+/** Plain-text reason a project checkout cannot take worktree, push or check settings, with the fix. */
+export function notEligibleMessage(needs: string, quickAgent: boolean, detached: boolean, isRepo: boolean): string {
+  const cause = quickAgent ? 'this is a quick-agent project'
+    : !isRepo ? 'this folder is not a git repository'
+      : detached ? 'this repository is on a detached HEAD'
+        : 'this repository has no checked-out branch';
+  const fix = quickAgent ? 'use a regular project' : !isRepo ? 'run git init and make a first commit (a project whose repository is in a subfolder needs that folder added as the project)' : 'check out a branch';
+  return `${needs[0]!.toUpperCase()}${needs.slice(1)} needs a checked-out branch, but ${cause}. Turn it off for this launch, or ${fix}.`;
+}
+
 async function resolveSquadLocationPreview(project: Project, launchOptions: LaunchOptions, resolvedLaunch: Awaited<ReturnType<typeof resolveSquadLaunchOptions>>): Promise<SquadLaunchPreview> {
   let location: SquadLaunchLocation;
   let path: string | undefined;
@@ -3974,15 +3984,24 @@ async function resolveSquadLocationPreview(project: Project, launchOptions: Laun
     const root = await realpath(project.path);
     const status = await getGitStatus(root);
     const eligible = !project.quickAgent && await isGitRepo(root) && !!status?.branch && !status.detached;
-    if (!eligible && (launchOptions.worktree === true || resolvedLaunch.worktree.source === 'plan' && resolvedLaunch.worktree.value || resolvedLaunch.push.value || resolvedLaunch.checks.value.length)) throw new Error('TARGET_UNAVAILABLE');
+    if (!eligible) {
+      const needs = [
+        launchOptions.worktree === true || resolvedLaunch.worktree.source === 'plan' && resolvedLaunch.worktree.value ? 'worktree isolation' : '',
+        resolvedLaunch.push.value ? 'push' : '',
+        resolvedLaunch.checks.value.length ? 'named checks' : ''
+      ].filter(Boolean);
+      if (needs.length) throw new SquadPreviewFixableError(notEligibleMessage(needs.join(', '), project.quickAgent === true, status?.detached === true, await isGitRepo(root)));
+    }
     location = resolvedLaunch.worktree.value && eligible
       ? { kind: 'new-worktree', projectId: project.id, baseBranch: status!.branch!, isolationSource: resolvedLaunch.worktree.source }
       : { kind: 'project-root', projectId: project.id };
     if (location.kind === 'project-root') { path = root; branch = status?.detached ? undefined : status?.branch ?? undefined; }
   }
   const checkout = path ?? await realpath(project.path);
-  head = (await listWorktrees(checkout)).find(entry => entry.path === checkout)?.head ?? undefined;
-  if (location.kind === 'new-worktree' && !head) throw new Error('TARGET_UNAVAILABLE');
+  // A repository with no commit reports an all-zero HEAD; it is not a commit to branch from.
+  const reportedHead = (await listWorktrees(checkout)).find(entry => entry.path === checkout)?.head;
+  head = reportedHead && !/^0+$/.test(reportedHead) ? reportedHead : undefined;
+  if (location.kind === 'new-worktree' && !head) throw new SquadPreviewFixableError('Worktree isolation needs a commit to branch from, and this repository has none yet. Make an initial commit or turn worktree isolation off.');
   const projection = { launchOptions, resolvedLaunch, location, ...(path ? { path, ...(branch ? { branch } : {}) } : {}), ...(head ? { head } : {}) };
   return squadLaunchPreviewSchema.parse({ ...projection, fingerprint: createHash('sha256').update(JSON.stringify(projection)).digest('hex') });
 }
