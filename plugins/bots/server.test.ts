@@ -612,6 +612,46 @@ describe('zcc bots CLI', () => {
     expect(await host.harness.callRpc('catalog', { providerId: 'boom' })).toMatchObject({ models: [], modelError: 'host down' });
   });
 
+  it('loads models from the selected project machine and rejects a machine from another project', async () => {
+    const primary = { id: 'primary', name: 'Primary', connected: true, isDefault: true };
+    const remote = { id: 'remote', name: 'Docker', connected: true, isDefault: false };
+    const foreign = { id: 'foreign', name: 'Other machine', connected: true, isDefault: true };
+    const loadProviderModels = vi.fn(async ({ hostId }: { hostId?: string }) => ({
+      models: [{ id: 'codex', model: `codex-${hostId}`, supportedReasoningEfforts: [] }],
+      selectedOnlyModels: [],
+      modelLoadError: null
+    }));
+    const { harness } = await load({
+      listProjects: async () => [
+        { id: 'proj-a', name: 'A', executionMachines: [remote, primary] },
+        { id: 'proj-b', name: 'B', executionMachines: [foreign] }
+      ],
+      loadProviderModels
+    });
+    const args = { projectId: 'proj-a', providerId: 'codex' };
+    expect(await harness.callRpc('catalog', args)).toMatchObject({ models: ['codex-primary'], modelError: null });
+    expect(await harness.callRpc('catalog', { ...args, hostId: 'remote' })).toMatchObject({
+      models: ['codex-remote'], modelError: null
+    });
+    expect(await harness.callRpc('catalog', { ...args, hostId: 'foreign' })).toMatchObject({
+      models: [], modelError: null
+    });
+    expect(loadProviderModels.mock.calls).toEqual([[{ providerId: 'codex', hostId: 'primary' }], [{ providerId: 'codex', hostId: 'remote' }]]);
+  });
+
+  it('lists only the requested project machines and falls back to an empty list', async () => {
+    const machines = [{ id: 'remote', name: 'Docker', connected: false, isDefault: true }];
+    const { harness } = await load({
+      listProjects: async () => [
+        { id: 'proj-a', name: 'A', executionMachines: machines },
+        { id: 'proj-b', name: 'B' }
+      ]
+    });
+    expect(await harness.callRpc('machines', { projectId: 'proj-a' })).toEqual(machines);
+    expect(await harness.callRpc('machines', { projectId: 'proj-b' })).toEqual([]);
+    expect(await harness.callRpc('machines', { projectId: 'missing' })).toEqual([]);
+  });
+
   it('degrades the catalog when the host cannot list providers or projects', async () => {
     const w = world();
     const host = createFakePluginHost({ ...w.options, listProjects: async () => { throw new Error('no'); }, listProviders: async () => { throw new Error('no'); } } as never);
