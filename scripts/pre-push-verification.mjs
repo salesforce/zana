@@ -105,8 +105,29 @@ function inertDocs(paths) {
  * Pure selection policy. `hasObject`, `mergeBase`, and `isAncestor` are injected
  * so tests can exercise force/new-branch behavior without a network or repo.
  */
-export function selectPush({ tuples, remoteUrl, aliases = {}, hasObject, mergeBase, isAncestor, changed }) {
+export function selectPush({ tuples, remoteUrl, aliases = {}, hasObject, mergeBase, isAncestor, changed, windows = false }) {
   if (!tuples?.length) return { action: 'abort', reason: 'missing or malformed pre-push ref tuples' };
+  // A deletion sends no commits, so it never needs tests, whatever the remote is.
+  if (tuples.every((tuple) => ZERO_OID.test(tuple.localOid))) return { action: 'skip', reason: 'ref deletion only', paths: [] };
+  const selection = selectByPolicy({ tuples, remoteUrl, aliases, hasObject, mergeBase, isAncestor, changed });
+  return windows && selection.action === 'full' ? windowsFastSelection(selection, { tuples, hasObject, mergeBase, changed }) : selection;
+}
+
+/**
+ * Windows cannot pass verify:full (hundreds of POSIX-only tests), so a push the
+ * policy would send to full verification gets the change-aware fast path against
+ * origin/main instead. Anything it cannot select safely stays on the full path.
+ */
+function windowsFastSelection(full, { tuples, hasObject, mergeBase, changed }) {
+  const oids = [...new Set(tuples.filter((tuple) => !ZERO_OID.test(tuple.localOid)).map((tuple) => tuple.localOid))];
+  if (oids.length !== 1 || !hasObject('origin/main')) return full;
+  const base = mergeBase('origin/main', oids[0]);
+  const paths = base ? [...new Set(changed(base, oids[0]))].sort() : [];
+  if (!paths.length) return full;
+  return { action: 'fast', reason: `windows change-aware verification (${full.reason})`, paths, oid: oids[0], base };
+}
+
+function selectByPolicy({ tuples, remoteUrl, aliases, hasObject, mergeBase, isAncestor, changed }) {
   if (!githubRepository(remoteUrl, aliases)) return { action: 'full', reason: 'remote is not verified GitHub salesforce/zana' };
   const paths = new Set();
   const oids = new Set();
@@ -129,7 +150,6 @@ export function selectPush({ tuples, remoteUrl, aliases = {}, hasObject, mergeBa
     }
     oids.add(tuple.localOid);
   }
-  if (!oids.size) return { action: 'skip', reason: 'ref deletion only', paths: [] };
   if (oids.size !== 1) return { action: 'full', reason: 'multiple distinct pushed commits require separate snapshots', oids: [...oids] };
   if (bases.size !== 1) return { action: 'full', reason: 'multiple remote bases require full verification', oids: [...oids] };
   const resultPaths = [...paths].sort();
@@ -496,7 +516,50 @@ function verifyInSlot(slot, { oid, prepare, log }, verify) {
   }
 }
 
+const STALE_CLONE_MS = 6 * 60 * 60 * 1000;
+const TEMP_CLONE = /^zana-pre-push-(?:hooks-)?[A-Za-z0-9]{6}$/;
+
+// Newest mtime of a clone folder and its direct children. A directory's own
+// mtime only moves when an entry is added or removed directly inside it, so a
+// run that is busy deeper down (node_modules) would otherwise look idle.
+function newestActivity(path, { list, stat }) {
+  let newest = stat(path).mtimeMs;
+  for (const name of list(path)) {
+    try { newest = Math.max(newest, stat(join(path, name)).mtimeMs); } catch { /* entry vanished */ }
+  }
+  return newest;
+}
+
+/**
+ * A hook killed mid-run (agent timeout, Ctrl+C) leaves its temp clone, about
+ * 2 GB with node_modules. Drop clones with no activity for six hours, far longer
+ * than any single verification. Strictly best effort: a clone that vanishes
+ * (a concurrent hook cleaning up), cannot be read or cannot be removed is
+ * logged or skipped, and never fails the push.
+ */
+export function sweepStaleTempClones({ dir = tmpdir(), now = Date.now(), log = console.log, fs = {} } = {}) {
+  const { list = readdirSync, stat = statSync, remove = rmSync } = fs;
+  let removed = 0;
+  try {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !TEMP_CLONE.test(entry.name)) continue;
+      const path = join(dir, entry.name);
+      try {
+        if (now - newestActivity(path, { list, stat }) < STALE_CLONE_MS) continue;
+        remove(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+        removed += 1;
+      } catch (cause) {
+        if (cause.code !== 'ENOENT') log(`pre-push: could not sweep stale temp clone ${entry.name}: ${cause.message}`);
+      }
+    }
+  } catch (cause) {
+    log(`pre-push: could not list ${dir} for stale temp clones: ${cause.message}`);
+  }
+  return removed;
+}
+
 function verifyFresh({ oid, prepare, log }, verify) {
+  sweepStaleTempClones({ log });
   const snapshot = mkdtempSync(join(tmpdir(), 'zana-pre-push-'));
   try {
     log(`pre-push: snapshot ${oid.slice(0, 12)} in ${snapshot}`);
@@ -813,7 +876,7 @@ function createReviewSession({ a, target, root, common, lock, developerOrigin, e
   };
 }
 
-export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, root = process.cwd(), log = console.log, error = console.error, select = selectPush, verify = runFullVerification, fastVerify = runFastVerification, run = spawnCommand, review = () => null } = {}) {
+export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, platform = process.platform, root = process.cwd(), log = console.log, error = console.error, select = selectPush, verify = runFullVerification, fastVerify = runFastVerification, run = spawnCommand, review = () => null } = {}) {
   if (!remoteUrl) {
     error('pre-push: Git did not provide remote URL; aborting push.');
     return 1;
@@ -832,6 +895,7 @@ export function runPrePush({ input = readFileSync(0, 'utf8'), remoteUrl, root = 
     aliases,
     ...checks,
     changed: (base, oid) => changedPaths(base, oid, runGit),
+    windows: platform === 'win32',
   });
   log(`pre-push: ${selection.action}; ${selection.reason}`);
   if (selection.paths?.length) log(`pre-push: selected paths:\n${selection.paths.map((path) => `  ${path}`).join('\n')}`);

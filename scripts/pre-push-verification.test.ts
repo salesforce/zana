@@ -1,9 +1,9 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { acquireSnapshotSlot, changedPaths, configuredAliases, createPhaseTimer, githubRepository, parseTuples, prepareTinynodReview, runFastVerification, runFullVerification, runPrePush, runPrePushWithReview, selectPush, selectedTestFiles, snapshotCacheRoot, snapshotKey, spawnCommand, windowsPnpm, withSnapshot, withTestTimeoutScale } from './pre-push-verification.mjs';
+import { acquireSnapshotSlot, changedPaths, configuredAliases, createPhaseTimer, githubRepository, parseTuples, prepareTinynodReview, runFastVerification, runFullVerification, runPrePush, runPrePushWithReview, selectPush, selectedTestFiles, snapshotCacheRoot, snapshotKey, spawnCommand, sweepStaleTempClones, windowsPnpm, withSnapshot, withTestTimeoutScale } from './pre-push-verification.mjs';
 
 // Spy on spawnSync while keeping real spawning, so tests can check what the hook starts.
 vi.mock('node:child_process', async (importOriginal) => {
@@ -101,6 +101,138 @@ it('handles new branches and deletion-only pushes conservatively', () => {
   expect(selectPush({ tuples: [fresh], remoteUrl: 'https://github.com/salesforce/zana', ...services(['docs/readme.md']) })).toMatchObject({ action: 'skip' });
   expect(selectPush({ tuples: [fresh], remoteUrl: 'https://github.com/salesforce/zana', ...services(), hasObject: () => false })).toMatchObject({ action: 'full', reason: expect.stringContaining('origin/main') });
   expect(selectPush({ tuples: [{ ...feature, localOid: '0'.repeat(40) }], remoteUrl: 'https://github.com/salesforce/zana', ...services() })).toMatchObject({ action: 'skip', reason: 'ref deletion only' });
+});
+
+const FORK = 'https://github.com/example-fork/zana';
+const UPSTREAM = 'https://github.com/salesforce/zana';
+const ZERO = '0'.repeat(40);
+
+it('skips deletion-only pushes for any remote, including a fork', () => {
+  const deletion = { localRef: '(delete)', localOid: ZERO, remoteRef: 'refs/heads/feature', remoteOid: BASE };
+  expect(selectPush({ tuples: [deletion], remoteUrl: FORK, ...services() })).toMatchObject({ action: 'skip', reason: 'ref deletion only' });
+  expect(selectPush({ tuples: [deletion], remoteUrl: FORK, ...services(), windows: true })).toMatchObject({ action: 'skip' });
+  expect(selectPush({ tuples: [{ ...deletion, remoteRef: 'refs/heads/main' }], remoteUrl: UPSTREAM, ...services() })).toMatchObject({ action: 'skip' });
+});
+
+describe('windows pushes use the change-aware fast path', () => {
+  const win = (overrides = {}, tuples = [feature]) => selectPush({ tuples, remoteUrl: FORK, ...services(['apps/server/src/a.ts', 'apps/server/src/a.ts']), windows: true, ...overrides });
+
+  it('keeps full verification off Windows and selects fast against origin/main on Windows', () => {
+    expect(selectPush({ tuples: [feature], remoteUrl: FORK, ...services() })).toMatchObject({ action: 'full' });
+    expect(win()).toEqual({ action: 'fast', reason: expect.stringContaining('not verified GitHub'), paths: ['apps/server/src/a.ts'], oid: OID, base: BASE });
+  });
+
+  it('covers protected refs and unknown refs, and records why full was chosen', () => {
+    expect(win({ remoteUrl: UPSTREAM }, [{ ...feature, remoteRef: 'refs/heads/main' }])).toMatchObject({ action: 'fast', reason: expect.stringContaining('protected ref') });
+    expect(win({ remoteUrl: UPSTREAM }, [{ ...feature, remoteRef: 'refs/changes/1' }])).toMatchObject({ action: 'fast', reason: expect.stringContaining('unknown ref') });
+  });
+
+  it('ignores a deletion that rides along with one pushed commit', () => {
+    const deletion = { localRef: '(delete)', localOid: ZERO, remoteRef: 'refs/heads/old', remoteOid: BASE };
+    expect(win({}, [feature, deletion])).toMatchObject({ action: 'fast', oid: OID });
+  });
+
+  it('stays on full verification when no safe selection exists', () => {
+    const other = { ...feature, localOid: 'c'.repeat(40), remoteRef: 'refs/heads/other' };
+    expect(win({ remoteUrl: UPSTREAM }, [feature, other])).toMatchObject({ action: 'full', reason: expect.stringContaining('multiple') });
+    expect(win({ hasObject: () => false })).toMatchObject({ action: 'full' });
+    expect(win({ mergeBase: () => null })).toMatchObject({ action: 'full' });
+    expect(win({ changed: () => [] })).toMatchObject({ action: 'full' });
+  });
+
+  it('is chosen from the platform passed to runPrePush', () => {
+    const select = vi.fn(() => ({ action: 'skip', reason: 'x' }));
+    const input = `refs/heads/feature ${OID} refs/heads/feature ${BASE}
+`;
+    runPrePush({ input, remoteUrl: FORK, root: process.cwd(), log: () => {}, error: () => {}, select, platform: 'win32' });
+    runPrePush({ input, remoteUrl: FORK, root: process.cwd(), log: () => {}, error: () => {}, select, platform: 'linux' });
+    expect(select.mock.calls.map(([args]) => (args as { windows: boolean }).windows)).toEqual([true, false]);
+  });
+});
+
+describe('sweepStaleTempClones', () => {
+  const HOUR = 60 * 60 * 1000;
+  const OLD = 7 * HOUR;
+  const age = (path: string, ageMs: number) => {
+    const when = new Date(Date.now() - ageMs);
+    utimesSync(path, when, when);
+  };
+  const tempDir = () => mkdtempSync(join(tmpdir(), 'sweep-test-'));
+  const clone = (dir: string, name: string, ageMs: number) => {
+    mkdirSync(join(dir, name));
+    age(join(dir, name), ageMs);
+  };
+
+  it('removes only old pre-push clones and leaves other temp folders alone', () => {
+    const dir = tempDir();
+    clone(dir, 'zana-pre-push-AbC123', OLD);
+    clone(dir, 'zana-pre-push-hooks-xYz789', OLD);
+    clone(dir, 'zana-pre-push-fresh1', 60_000);
+    clone(dir, 'zana-pre-push-keep', OLD);
+    clone(dir, 'unrelated-folder', OLD);
+    writeFileSync(join(dir, 'zana-pre-push-file12'), 'x');
+    expect(sweepStaleTempClones({ dir, log: () => {} })).toBe(2);
+    expect(readdirSync(dir).sort()).toEqual(['unrelated-folder', 'zana-pre-push-file12', 'zana-pre-push-fresh1', 'zana-pre-push-keep']);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('keeps a clone whose folder looks old but whose contents were touched recently', () => {
+    const dir = tempDir();
+    clone(dir, 'zana-pre-push-Busy12', OLD);
+    mkdirSync(join(dir, 'zana-pre-push-Busy12', 'node_modules'));
+    age(join(dir, 'zana-pre-push-Busy12'), OLD);
+    clone(dir, 'zana-pre-push-Idle12', OLD);
+    mkdirSync(join(dir, 'zana-pre-push-Idle12', 'node_modules'));
+    age(join(dir, 'zana-pre-push-Idle12', 'node_modules'), OLD);
+    age(join(dir, 'zana-pre-push-Idle12'), OLD);
+    expect(sweepStaleTempClones({ dir, log: () => {} })).toBe(1);
+    expect(readdirSync(dir)).toEqual(['zana-pre-push-Busy12']);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('never throws: an unreadable temp dir is logged', () => {
+    const log = vi.fn();
+    expect(sweepStaleTempClones({ dir: join(tmpdir(), 'sweep-test-missing-dir'), log })).toBe(0);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('could not list'));
+  });
+
+  it('never throws when a clone vanishes between listing and stat, and stays silent about it', () => {
+    const dir = tempDir();
+    clone(dir, 'zana-pre-push-Gone12', OLD);
+    clone(dir, 'zana-pre-push-Next12', OLD);
+    const gone = Object.assign(new Error('gone'), { code: 'ENOENT' });
+    const stat = vi.fn((path: string) => {
+      if (path.endsWith('Gone12')) throw gone;
+      return statSync(path);
+    });
+    const log = vi.fn();
+    expect(sweepStaleTempClones({ dir, log, fs: { stat } })).toBe(1);
+    expect(log).not.toHaveBeenCalled();
+    expect(readdirSync(dir)).toEqual(['zana-pre-push-Gone12']);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('logs and continues when a stat is denied or a clone cannot be removed', () => {
+    const dir = tempDir();
+    clone(dir, 'zana-pre-push-Deny12', OLD);
+    clone(dir, 'zana-pre-push-Lock12', OLD);
+    clone(dir, 'zana-pre-push-Done12', OLD);
+    const denied = Object.assign(new Error('EPERM'), { code: 'EPERM' });
+    const stat = vi.fn((path: string) => {
+      if (path.endsWith('Deny12')) throw denied;
+      return statSync(path);
+    });
+    const remove = vi.fn((path: string, options: object) => {
+      if (path.endsWith('Lock12')) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' });
+      rmSync(path, options);
+    });
+    const log = vi.fn();
+    expect(sweepStaleTempClones({ dir, log, fs: { stat, remove } })).toBe(1);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Deny12'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Lock12'));
+    expect(readdirSync(dir).sort()).toEqual(['zana-pre-push-Deny12', 'zana-pre-push-Lock12']);
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 it('runs snapshot verification once per selected pushed oid and surfaces failures', () => {
