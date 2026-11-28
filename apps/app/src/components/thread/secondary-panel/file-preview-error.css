@@ -146,3 +146,13 @@
   font-size: 12px;
   line-height: 1.5;
 }
+
+/* The app chrome is user-select: none (styles/global.css). The previewed file's
+   name is something people copy, so the header path and the binary/too-large
+   fallback title opt back in. Neither is a click or drag target. */
+.thread-file-preview-path,
+.thread-file-preview-fallback h2 {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
