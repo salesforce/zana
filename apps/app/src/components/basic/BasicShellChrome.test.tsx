@@ -235,7 +235,7 @@ describe('Basic conversation navigation', () => {
     expect(screen.queryByRole('region')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Website' })).toBeNull();
     const rows = screen.getAllByRole('link').filter(link => link.dataset.testid?.startsWith('basic-chat-row-'));
-    expect(rows.map(link => link.getAttribute('aria-label'))).toEqual(['Chat one, Personal', 'Design a homepage, Website', 'Chat three, Website']);
+    expect(rows.map(link => link.getAttribute('aria-label'))).toEqual(['Chat one, Personal', 'Design a homepage, Website, Working', 'Chat three, Website']);
     const personal = within(rows[0]!).getByText('Personal');
     const website = within(rows[1]!).getByText('Website');
     expect(personal.style.getPropertyValue('--basic-chat-project-color')).toBe('');
