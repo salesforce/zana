@@ -723,7 +723,7 @@ export function TeamComposer({
       ) : null}
       <div className="launch-job-details" role="group" aria-label="Squad details">
         {reviewedBound ? <p role="note">Reviewed launch policies and target are fixed. Prepare a new proposal to change them.</p> : null}
-        <div aria-label="Effective launch settings" role="status">
+        <div className="team-launch-settings-status" aria-label="Effective launch settings" role="status">
           {selectedTeam && (launchPick === 'MODERN' && projectIsRemote ? <p className="team-launch-mode-note" role="alert" data-testid="team-launch-mode-note">Modern Squads need a local Project</p> : transportView.fallbackReason ? <p className="team-launch-mode-note" data-testid="team-launch-mode-note">{transportView.fallbackReason}</p> : null)}
           {currentPreview?.preview ? <p>Location: {launchLocationLabel(currentPreview.preview)}</p> : null}
           {resolved?.push.value ? <p>Push allowed ({resolved.push.source})</p> : null}
