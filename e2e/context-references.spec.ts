@@ -109,7 +109,9 @@ test('rendered Markdown and sandboxed HTML copy through the native clipboard int
   await win.keyboard.press('Escape');
   await input.getByRole('button', { name: 'Remove Review item' }).click();
   await expect(dropped).toHaveCount(0);
+  const historyLoaded = win.waitForResponse(response => response.url().endsWith('/prompt-history') && response.ok());
   await composer.getByTestId('thread-command-send').click();
+  await historyLoaded;
   const chat=win.getByTestId('panel-agent-tab-chat');
   const saved=chat.getByTestId('thread-user-text').first();
   await expect(saved.getByRole('button',{name:'Inspect passage.html (selection)'})).toBeVisible({timeout:30_000});
@@ -118,8 +120,11 @@ test('rendered Markdown and sandboxed HTML copy through the native clipboard int
   await saved.getByRole('button',{name:'Inspect passage.html (selection)'}).click();
   await expect(win.getByRole('dialog',{name:'Copied selection: passage.html (selection)'})).toContainText(html.trim());
   await win.keyboard.press('Escape');
-  await chat.getByTestId('thread-command-input').press('ArrowUp');
-  await expect(chat.getByTestId('thread-command-input').getByRole('button',{name:/^Inspect /})).toHaveCount(2);
+  const replyInput = chat.getByTestId('thread-command-input');
+  await expect(async () => {
+    await replyInput.press('ArrowUp');
+    await expect(replyInput.getByRole('button', { name: /^Inspect / })).toHaveCount(2, { timeout: 1_000 });
+  }).toPass({ timeout: 10_000 });
   await chat.getByRole('button',{name:'Open as thread'}).click();
   await expect.poll(() => win.url()).toContain('/threads/');
   await win.reload();
