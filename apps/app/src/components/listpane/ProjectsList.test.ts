@@ -252,7 +252,7 @@ describe('workspace move up/down', () => {
   it('opts into manual order instead of disabling Move up/down on Recents', () => {
     const source = readSourceText(new URL('./ProjectsList.tsx', import.meta.url));
     expect(source).toContain("if (inSidebar && sidebarProjectSort !== 'manual') setSidebarSort('manual')");
-    expect(source).toContain('const canReorder = !scopedProjectId && !filter.trim() && !hideIdleProjects;');
+    expect(source).toContain('const canReorder = !scopedProjectId && !filter.trim() && !hideIdleProjects && !filteringEmptyProjects;');
     expect(source).not.toContain("hideIdleProjects && (!inSidebar || sidebarProjectSort === 'manual')");
   });
 

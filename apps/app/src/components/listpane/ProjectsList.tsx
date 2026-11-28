@@ -127,6 +127,7 @@ type SidebarProjectSort = 'manual' | 'recent' | 'created' | 'alphabetical';
 const SIDEBAR_PROJECT_SORT_KEY = 'zcc.sidebarProjectSort';
 const SIDEBAR_PROJECTS_SECTION_KEY = 'sidebar:projects';
 const SIDEBAR_PROJECT_VIEW_KEY = 'zcc.sidebarProjectView';
+const SIDEBAR_HIDE_EMPTY_PROJECTS_KEY = 'zcc.sidebarHideEmptyProjects';
 
 /** `projects` nests sessions under each project; `agents` hides the project
  *  rows and lists every thread / CLI agent flat, tagged with its project. */
@@ -311,6 +312,9 @@ export function ProjectsList({
   const sidebarOrganizeRef = useRef<HTMLDivElement | null>(null);
   const [sidebarProjectSort, setSidebarProjectSort] = useState<SidebarProjectSort>(readSidebarProjectSort);
   const [sidebarProjectView, setSidebarProjectViewState] = useState<SidebarProjectView>(readSidebarProjectView);
+  const [hideEmptyProjects, setHideEmptyProjects] = useState(
+    () => typeof localStorage !== 'undefined' && localStorage.getItem(SIDEBAR_HIDE_EMPTY_PROJECTS_KEY) === 'true'
+  );
   const [refreshing, setRefreshing] = useState(false);
   const launchCreateProjectAction = (action: (typeof createProjectActions)[number]) => {
     runCreateProjectAction(
@@ -483,6 +487,13 @@ export function ProjectsList({
 
   // "Agents only" is a sidebar presentation; a scoped window keeps its tree.
   const agentsOnly = inSidebar && !scopedProjectId && sidebarProjectView === 'agents';
+  const canHideEmptyProjects = inSidebar && !scopedProjectId && !agentsOnly;
+  const filteringEmptyProjects = canHideEmptyProjects && hideEmptyProjects;
+  const toggleHideEmptyProjects = () => {
+    const next = !hideEmptyProjects;
+    setHideEmptyProjects(next);
+    localStorage.setItem(SIDEBAR_HIDE_EMPTY_PROJECTS_KEY, String(next));
+  };
   const setSidebarView = (view: SidebarProjectView) => {
     setSidebarProjectViewState(view);
     localStorage.setItem(SIDEBAR_PROJECT_VIEW_KEY, view);
@@ -544,9 +555,11 @@ export function ProjectsList({
     if (!inSidebar || scopedProjectId) return [{ projects: visibleProjects }];
     return machineGroups.map(machine => ({ machine, projects: machine.projects.filter(project =>
       (!hideIdleProjects || project.id === selectedId || (!isScratchWorkspaceProject(project) ? projectHasRunningAgents(project) : (liveThreadsByProject.get(project.id) ?? []).some(thread => thread.hostId === machine.hostId || (machine.primary && !thread.hostId)) || (machine.primary && projectRailTerminals(terminals[project.id]).length > 0)))
+      && (!filteringEmptyProjects || project.id === selectedId || isScratchWorkspaceProject(project)
+        || (railThreadsByProject.get(project.id)?.length ?? 0) > 0 || projectRailTerminals(terminals[project.id]).length > 0)
       && (machineProjectMatches(machine, project, filter) || titleMatches.get(project.id)?.some(thread => threadOnMachine(thread, project, machine)))
     ) })).filter(group => !filter.trim() || group.projects.length > 0);
-  }, [inSidebar, scopedProjectId, visibleProjects, machineGroups, filter, hideIdleProjects, selectedId, terminals, liveThreadsByProject, titleMatches]);
+  }, [inSidebar, scopedProjectId, visibleProjects, machineGroups, filter, hideIdleProjects, filteringEmptyProjects, selectedId, terminals, liveThreadsByProject, railThreadsByProject, titleMatches]);
   const openMachineThread = (group: MachineProjectGroup, project: Project) => {
     navigate(newThreadLocationPath({ projectId: project.id, hostId: group.hostId }));
     dismissMobileNav?.();
@@ -555,7 +568,7 @@ export function ProjectsList({
   // Reorder is allowed whenever the full unfiltered list is on screen. A
   // Recents/Created/A–Z sort still shows Move up/down — using them (or a
   // drag) switches the rail to Manual so the new order is what you see.
-  const canReorder = !scopedProjectId && !filter.trim() && !hideIdleProjects;
+  const canReorder = !scopedProjectId && !filter.trim() && !hideIdleProjects && !filteringEmptyProjects;
   const setSidebarSort = (sort: SidebarProjectSort) => {
     setSidebarProjectSort(sort);
     localStorage.setItem(SIDEBAR_PROJECT_SORT_KEY, sort);
@@ -635,6 +648,9 @@ export function ProjectsList({
     };
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (sidebarOrganizeOpen && sidebarOrganizeRef.current?.contains(document.activeElement)) {
+          sidebarOrganizeRef.current.querySelector('button')?.focus();
+        }
             setSidebarOrganizeOpen(false);
       }
     };
@@ -1015,7 +1031,7 @@ export function ProjectsList({
             <>
               <div className="sidebar-projects-menu-wrap" ref={sidebarOrganizeRef}>
                 <button
-                  className={`icon-btn ${hideIdleProjects || agentsOnly ? 'on' : ''}`}
+                  className={`icon-btn ${hideIdleProjects || agentsOnly || filteringEmptyProjects ? 'on' : ''}`}
                   aria-label="Organize projects"
                   aria-haspopup="menu"
                   aria-expanded={sidebarOrganizeOpen}
@@ -1045,6 +1061,12 @@ export function ProjectsList({
                         {sidebarProjectView === view && <Check size={14} aria-hidden="true" />}
                       </button>
                     ))}
+                    {canHideEmptyProjects && (
+                      <button type="button" role="menuitemcheckbox" aria-checked={hideEmptyProjects} onClick={toggleHideEmptyProjects}>
+                        <span>Hide empty projects</span>
+                        {hideEmptyProjects && <Check size={14} aria-hidden="true" />}
+                      </button>
+                    )}
                     <span className="sidebar-projects-menu-label">Sort by</span>
                     {([
                       ['manual', 'Manual order'],
@@ -1325,7 +1347,7 @@ export function ProjectsList({
                     {group.machine.primary ? <Laptop size={15} /> : <Server size={15} />}
                     <span>{group.machine.name}</span>
                     <span className={`machine-project-status${group.machine.host?.status === 'connected' ? ' online' : ''}`} title={group.machine.host?.status === 'connected' ? 'Online' : group.machine.host ? 'Offline' : group.machine.hostId ? 'Unavailable' : group.machine.remote ? 'Setup needed' : 'Local'} />
-                    <small>{group.machine.projects.length}</small>
+                    <small>{filteringEmptyProjects ? group.projects.length : group.machine.projects.length}</small>
                   </button>
                   <MachineProjectAddMenu name={group.machine.name}
                     note={group.machine.host && group.machine.host.status !== 'connected' ? 'This machine is offline. Reconnect it to add a project.' : undefined}
