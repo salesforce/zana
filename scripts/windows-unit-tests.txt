@@ -1,0 +1,38 @@
+# Test files run by the informational `unit-windows` CI job on windows-2025.
+# One repo-relative path per line; blank lines and # comments are ignored.
+# Keep this list conservative: add a file only after it passed on a Windows
+# runner in several consecutive repeats. See docs in the PR that added the job.
+apps/app/src/components/reveal-label.windows.test.tsx
+apps/app/src/components/windowsShortcutTitles.test.tsx
+apps/app/src/lib/__tests__/windowScope.test.ts
+apps/app/src/lib/thread-view-windows.test.ts
+apps/app/src/plugins/plugin-view-windows.test.ts
+apps/app/src/views/project/ExplorerView.windows-git.test.tsx
+apps/desktop/src/extensions/__tests__/broker-caps-windows-hide.test.ts
+apps/desktop/src/ipc/windows.plugin-view.test.ts
+apps/desktop/src/ipc/windows.thread-view.test.ts
+apps/desktop/src/modules/__tests__/builtin-exec-windows-hide.test.ts
+apps/desktop/src/window/plugin-view-windows.test.ts
+apps/desktop/src/window/thread-view-windows.test.ts
+apps/host-daemon/src/__tests__/pty-windows-cmd-shim.test.ts
+apps/host-daemon/src/harness/__tests__/model-catalog-windows-hide.test.ts
+apps/host-daemon/src/harness/__tests__/windows-command.test.ts
+apps/host-daemon/src/harness/__tests__/windows-npm-shim.test.ts
+apps/host-daemon/src/harness/opencode/__tests__/windows-hide.test.ts
+apps/host-daemon/src/windows-harness.test.ts
+apps/host-daemon/src/zana/__tests__/mcp-pool-windows-hide.test.ts
+apps/server/src/plugins/marketplace-source-windows-hide.test.ts
+apps/server/src/plugins/plugin-source-command-windows-hide.test.ts
+apps/server/src/services/peers/peer-storage-windows.test.ts
+apps/server/src/services/projects/__tests__/child-process-windows-hide.guard.test.ts
+apps/server/src/services/projects/__tests__/git-windows-hide.test.ts
+apps/server/src/services/projects/__tests__/opencode-sessions-windows-hide.test.ts
+apps/server/src/services/projects/editor-windows.test.ts
+apps/server/src/services/projects/git-clone-windows-hide.test.ts
+packages/agent-process-utils/test/remove-tree.windows-junction.test.ts
+packages/agent-process-utils/test/windows-hide.test.ts
+packages/agent-process-utils/test/windows-process-tree.test.ts
+packages/host-watcher/test/fork-channel-windows-hide.test.ts
+packages/host-workspace/src/git-windows-hide.test.ts
+packages/plugin-sdk/src/automated-config-lifecycle.windows-junction.test.ts
+plugins/provider-claude-code/src/bridge/__tests__/skill-plugins.windows-junction.test.ts
