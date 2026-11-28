@@ -878,6 +878,7 @@ export interface PluginSdkProjectMachine {
 declare module '@zana-ai/zcc-plugin-sdk/app' {
   export interface BasicSidebarSectionProps {
     searchQuery: string;
+    compact?: boolean;
     activeThreadId: string | null;
     projectIds: readonly string[];
     openThread(threadId: string): void;

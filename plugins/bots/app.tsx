@@ -311,6 +311,18 @@ const basicListCss = `
   position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
 }
 [data-mobile='false'] .bt-basic-more { min-height: 24px; padding: 2px 8px 2px 36px; font-size: 11px; }
+[data-mobile='true'] .bt-basic { margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+[data-mobile='true'] .bt-basic .bt-list-head { padding: 0 0 0 6px; }
+[data-mobile='true'] .bt-basic .bt-list-head h2 { flex: 1; font-size: 14px; }
+[data-mobile='true'] .bt-basic-toggle { width: 100%; }
+[data-mobile='true'] .bt-basic-toggle svg { width: 14px; height: 14px; }
+[data-mobile='true'] .bt-basic :is(.bt-basic-toggle, .bt-basic-row, .bt-list-head .bt-btn, .bt-basic-more) { min-height: 44px; }
+[data-mobile='true'] .bt-basic .bt-basic-row { padding: 4px 8px; gap: 8px; }
+[data-mobile='true'] .bt-basic-row .bt-av svg { width: 24px; height: 24px; }
+[data-mobile='true'] .bt-basic-row .bt-av + span { display: flex; align-items: baseline; gap: 8px; }
+[data-mobile='true'] .bt-basic-row small { flex: none; }
+[data-mobile='true'] .bt-basic-actions { width: 44px; height: 44px; opacity: 1; pointer-events: auto; }
+[data-mobile='true'] .bt-basic-more { padding: 0 8px; color: var(--accent-blue); }
 .bt-basic-dialog { box-sizing: border-box; width: min(500px, calc(100vw - 32px)); max-height: calc(100dvh - 32px);
   padding: 0; margin: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-panel); }
 .bt-basic-dialog::backdrop { background: rgb(0 0 0 / 45%); }
@@ -389,11 +401,12 @@ function useOpenBotThread(activeThreadId: string | null, openThread: (threadId: 
   return { openBot, opening, openError };
 }
 
-export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread, registerThreads }: BasicSidebarSectionProps) {
+export function BasicBots({ searchQuery, compact = false, activeThreadId, projectIds, openThread, registerThreads }: BasicSidebarSectionProps) {
   const { bots, loaded, error, refresh } = useBotList();
   const [creating, setCreating] = useState(false);
   const [showAll, setShowAll] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapseOverride, setCollapsed] = useState<boolean>();
+  const collapsed = collapseOverride ?? compact;
   const listId = useId();
   const { openBot, opening, openError } = useOpenBotThread(activeThreadId, openThread);
   const eligible = useMemo(() => bots.filter(bot => projectIds.includes(bot.projectId)), [bots, projectIds]);
@@ -412,7 +425,7 @@ export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread,
     <style>{CSS + basicListCss}</style>
     <div className="bt-list-head">
       <h2><button type="button" className="bt-basic-toggle" aria-expanded={expanded} aria-controls={`${listId}-section`}
-        disabled={Boolean(query)} onClick={() => setCollapsed(value => !value)}><ChevronDown size={12} aria-hidden="true" />Bots</button></h2>
+        disabled={Boolean(query)} onClick={() => setCollapsed(!collapsed)}><ChevronDown size={12} aria-hidden="true" />Bots</button></h2>
       <button type="button" className="bt-btn is-ghost is-sm" aria-label="New bot" title="New bot" aria-haspopup="dialog"
         onClick={() => setCreating(true)}><Plus size={14} aria-hidden="true" /><span>New bot</span></button>
     </div>
@@ -433,7 +446,7 @@ export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread,
       </div>
       {!query && matches.length > BASIC_BOT_LIMIT && <button type="button" className="bt-basic-more"
         aria-expanded={showAll} aria-controls={listId} onClick={() => setShowAll(!showAll)}>
-        {showAll ? 'Show less' : 'Show more'}
+        {showAll ? (compact ? 'Show fewer bots' : 'Show less') : (compact ? 'Show more bots' : 'Show more')}
       </button>}
     </div>
   </section>;

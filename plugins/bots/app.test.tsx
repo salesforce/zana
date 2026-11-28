@@ -776,6 +776,26 @@ it('shows five bots, puts the newest pins first, and searches beyond the collaps
   expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull();
 });
 
+it('starts compact Bots collapsed, keeps New bot accessible, and reveals search matches', async () => {
+  route({ list: () => [scout] });
+  const props = { compact: true, searchQuery: '', activeThreadId: null, projectIds: ['p1'], openThread: vi.fn(), registerThreads: vi.fn() };
+  const view = render(<BasicBots {...props} />);
+  const toggle = await screen.findByRole('button', { name: 'Bots', exact: true });
+  const bot = () => screen.queryByRole('button', { name: 'Scout', exact: true });
+  expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  expect(screen.getByRole('button', { name: 'New bot' })).toBeTruthy();
+  expect(bot()).toBeNull();
+  view.rerender(<BasicBots {...props} searchQuery="scout" />);
+  expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  expect(bot()).toBeTruthy();
+  view.rerender(<BasicBots {...props} />);
+  expect(bot()).toBeNull();
+  fireEvent.click(toggle);
+  expect(bot()).toBeTruthy();
+  fireEvent.click(toggle);
+  expect(bot()).toBeNull();
+});
+
 it('reports failed pin updates without opening a chat or changing the pin', async () => {
   route({ list: () => [scout], update: () => { throw Error('Cannot save pin'); }, openThread: () => ({ threadId: 't1' }) });
   const props = { searchQuery: '', activeThreadId: null, projectIds: ['p1'], openThread: vi.fn(), registerThreads: vi.fn() };

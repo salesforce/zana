@@ -82,7 +82,7 @@ export function MobileInterfaceView({ onChange }: { onChange: () => void }) {
 export function BasicShellHeading({ compact, collapsed, onToggleNavigation }: { compact: boolean; collapsed: boolean; onToggleNavigation(): void }) {
   const label = compact ? 'Open conversations' : collapsed ? 'Expand sidebar' : 'Collapse sidebar';
   return <div className="basic-ui-shell-heading">
-    <div className={compact ? undefined : 'sidebar-trigger-overlay'}>
+    <div className="sidebar-trigger-overlay">
       <button type="button" className="sidebar-expand-control" aria-label={label} title={label}
         aria-expanded={!collapsed} aria-controls="basic-conversation-sidebar" onClick={onToggleNavigation}>
         {compact ? <Menu size={18} aria-hidden="true" /> : collapsed ? <PanelLeft size={18} aria-hidden="true" /> : <PanelLeftClose size={18} aria-hidden="true" />}
@@ -139,6 +139,9 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
     onNavigate();
   };
   const searchRef = useRef<HTMLInputElement>(null);
+  const conversationsId = useId();
+  const conversationsCollapsed = useBasicConversationView(s => s.conversationsCollapsed);
+  const toggleConversations = useBasicConversationView(s => s.toggleConversations);
   const [limit, setLimit] = useState(PAGE);
   const [collapsedProjects, setCollapsedProjects] = useState<ReadonlySet<string>>(() => new Set());
   const updateQuery = (value: string) => {
@@ -177,6 +180,7 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
   const showProject = !scopedProjectId;
   const grouped = view.layout === 'project';
   const searching = Boolean(query.trim());
+  const conversationsExpanded = searching || !conversationsCollapsed;
   const toggleProject = (id: string) => setCollapsedProjects(previous => {
     const next = new Set(previous);
     if (next.has(id)) next.delete(id);
@@ -189,9 +193,10 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
     // A live status already signals new activity. The unread dot covers finished, unseen replies.
     const unread = status === 'Idle' && activeId !== thread.id && !thread.archivedAt && isUnreadThread(thread);
     const pinned = !thread.archivedAt && thread.pinnedAt != null;
-    const label = [title, showProject ? projectName : null, pinned ? 'pinned' : null, unread ? 'unread' : null].filter(Boolean).join(', ');
+    const liveStatus = status === 'Needs you' ? 'Needs review' : status === 'Idle' ? null : status;
+    const label = [title, showProject ? projectName : null, pinned ? 'pinned' : null, thread.archivedAt ? 'Archived' : null, unread ? 'unread' : liveStatus].filter(Boolean).join(', ');
     const showProjectLabel = showProject && !grouped;
-    const hasStatus = status !== 'Idle' || thread.archivedAt || unread;
+    const hasStatus = liveStatus || thread.archivedAt || unread;
     return <BasicConversationRowActions key={thread.id} thread={thread} title={title} onArchive={archiveConversation}>
       <Link className={`basic-ui-chat-row${activeId === thread.id ? ' is-active' : ''}${unread ? ' is-unread' : ''}`}
         to={getThreadRoutePath(thread.id, scopedProjectId)} onClick={onNavigate} aria-current={activeId === thread.id ? 'page' : undefined}
@@ -199,13 +204,13 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
         data-testid={`basic-chat-row-${thread.id}`}>
         <span className="basic-ui-chat-title">{pinned && <Pin size={12} aria-hidden="true" />}<span className="basic-ui-chat-name" title={title}>{title}</span></span>
         {(showProjectLabel || hasStatus) && <span className="basic-ui-chat-meta">
-          {showProjectLabel && <span className="basic-ui-chat-project" title={projectName}
-            style={{ '--basic-chat-project-color': projectColor } as CSSProperties}>{projectName}</span>}
           {hasStatus && <span className="basic-ui-chat-statuses">
             {thread.archivedAt ? <span className="basic-ui-chat-status">Archived</span> : null}
             {unread && <span className="basic-ui-chat-status status-unread" data-testid={`basic-chat-unread-${thread.id}`}><span>Unread</span></span>}
-            {status !== 'Idle' && <span className={`basic-ui-chat-status status-${status === 'Working' ? 'working' : 'attention'}`}>{status === 'Needs you' ? 'Needs review' : status}</span>}
+            {liveStatus && <span className={`basic-ui-chat-status status-${status === 'Working' ? 'working' : 'attention'}`}>{liveStatus}</span>}
           </span>}
+          {showProjectLabel && <span className="basic-ui-chat-project" title={projectName}
+            style={{ '--basic-chat-project-color': projectColor } as CSSProperties}>{projectName}</span>}
         </span>}
       </Link>
     </BasicConversationRowActions>;
@@ -223,29 +228,38 @@ export function BasicConversationSidebar({ hidden = false, onNavigate }: { hidde
       </div>
       {dismissMobileNav && <BasicConversationMenu compact />}
     </div>
-    <nav className="basic-ui-conversations" aria-label="Recent conversations" aria-busy={listLoading}>
+    <div className="basic-ui-conversations">
       {panels.map(panel => {
         const Section = panel.experimental_basicSidebarSection;
         return Section && <PluginSlotBoundary key={`${panel.pluginId}:${panel.id}:${panel.generation}`}
           pluginId={panel.pluginId} generation={panel.generation}>
-          <Section searchQuery={query} activeThreadId={activeId} projectIds={eligibleProjectIds}
+          <Section searchQuery={query} compact={Boolean(dismissMobileNav)} activeThreadId={activeId} projectIds={eligibleProjectIds}
             openThread={openThread} registerThreads={registerThreads} />
         </PluginSlotBoundary>;
       })}
-      <div className="basic-ui-conversations-heading">
-        <h2>Conversations</h2>
-        {viewSummary && <span className="basic-ui-conversations-filter" data-testid="basic-conversation-filter">{viewSummary}</span>}
-        {!dismissMobileNav && <BasicConversationMenu />}
-      </div>
-      {archived.error && <p className="basic-ui-sidebar-empty" role="alert">Archived conversations could not be loaded.</p>}
-      {grouped ? [...groupBasicConversationRows(visible)].map(([projectId, rows]) =>
-        <BasicConversationProjectGroup key={projectId} name={rows[0].projectName} searching={searching}
-          expanded={searching || !collapsedProjects.has(projectId)} onToggle={() => toggleProject(projectId)}>
-          {rows.map(renderRow)}
-        </BasicConversationProjectGroup>) : visible.map(renderRow)}
-      {!conversations.length && <p className="basic-ui-sidebar-empty" role="status">{listLoading ? 'Loading conversations…' : query.trim() || viewSummary ? 'No matching conversations.' : 'Your conversations will appear here.'}</p>}
-      {conversations.length > visible.length && <button type="button" className="basic-ui-more-chats" onClick={() => setLimit(value => value + PAGE)}>Show more conversations</button>}
-    </nav>
+      <nav aria-label="Recent conversations" aria-busy={listLoading}>
+        <div className="basic-ui-conversations-heading">
+          <h2><button type="button" className="basic-ui-conversations-toggle" aria-expanded={conversationsExpanded}
+            aria-controls={conversationsId} disabled={searching} onClick={toggleConversations}>
+            <ChevronRight size={14} aria-hidden="true" />Conversations
+          </button></h2>
+          {viewSummary && <span className="basic-ui-conversations-filter" data-testid="basic-conversation-filter">{viewSummary}</span>}
+          {!dismissMobileNav && <BasicConversationMenu />}
+        </div>
+        <div id={conversationsId} className="basic-ui-conversation-list" hidden={!conversationsExpanded}>
+          {conversationsExpanded && <>
+            {archived.error && <p className="basic-ui-sidebar-empty" role="alert">Archived conversations could not be loaded.</p>}
+            {grouped ? [...groupBasicConversationRows(visible)].map(([projectId, rows]) =>
+              <BasicConversationProjectGroup key={projectId} name={rows[0].projectName} searching={searching}
+                expanded={searching || !collapsedProjects.has(projectId)} onToggle={() => toggleProject(projectId)}>
+                {rows.map(renderRow)}
+              </BasicConversationProjectGroup>) : visible.map(renderRow)}
+            {!conversations.length && <p className="basic-ui-sidebar-empty" role="status">{listLoading ? 'Loading conversations…' : searching || viewSummary ? 'No matching conversations.' : 'Your conversations will appear here.'}</p>}
+            {conversations.length > visible.length && <button type="button" className="basic-ui-more-chats" onClick={() => setLimit(value => value + PAGE)}>Show more conversations</button>}
+          </>}
+        </div>
+      </nav>
+    </div>
     <SidebarFooterSlot />
     <p className="basic-ui-sidebar-note">More tools are available in Advanced.</p>
     {!dismissMobileNav && <SidebarResizer />}
