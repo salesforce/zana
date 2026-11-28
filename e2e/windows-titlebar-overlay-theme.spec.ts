@@ -107,3 +107,48 @@ test('Windows caption buttons follow the Theme setting and the OS appearance in 
     }, { pid: projectId, theme: initialTheme });
   }
 });
+
+/** The backdrop (rgba(0, 0, 0, 0.45)) laid over a `#rrggbb` colour. */
+function underBackdrop(color: string): string {
+  const channels = color.match(/[0-9a-f]{2}/gi)!.map((part) => Math.round(parseInt(part, 16) * 0.55));
+  return `#${channels.map((value) => value.toString(16).padStart(2, '0')).join('')}`;
+}
+
+test('Windows caption buttons dim under a modal backdrop and come back when it closes', async ({ app }) => {
+  test.skip(process.platform !== 'win32', 'The title bar overlay exists only on Windows');
+  const { electron, window: main } = app;
+
+  await electron.evaluate(({ BrowserWindow }) => {
+    const prior = BrowserWindow.prototype.setTitleBarOverlay;
+    const calls: Record<number, Overlay[]> = {};
+    (globalThis as any).__modalOverlayCheck = { calls, restore: () => { BrowserWindow.prototype.setTitleBarOverlay = prior; } };
+    BrowserWindow.prototype.setTitleBarOverlay = function (this: Electron.BrowserWindow, options: Electron.TitleBarOverlayOptions) {
+      (calls[this.id] ??= []).push(options as Overlay);
+      return prior.call(this, options);
+    };
+  });
+  const lastOverlay = () =>
+    electron.evaluate(({ BrowserWindow }) => {
+      const calls = (globalThis as any).__modalOverlayCheck.calls as Record<number, Overlay[]>;
+      const ids = BrowserWindow.getAllWindows().map((win) => win.id).filter((id) => calls[id]);
+      return ids.map((id) => calls[id].at(-1)!);
+    });
+
+  try {
+    await main.waitForSelector('.titlebar', { timeout: 30_000 });
+    const painted = await paintedTitleBar(main, '.titlebar');
+    // A real dialog: Ctrl+/ opens the keyboard shortcuts help, which draws a palette backdrop.
+    await main.locator('body').click({ position: { x: 5, y: 5 } });
+    await main.keyboard.press('Control+/');
+    await expect(main.getByRole('dialog', { name: 'Keyboard Shortcuts' })).toBeVisible();
+    await expect.poll(async () => (await lastOverlay()).at(-1)?.color).toBe(underBackdrop(painted.color));
+    await main.keyboard.press('Escape');
+    await expect(main.getByRole('dialog', { name: 'Keyboard Shortcuts' })).toHaveCount(0);
+    await expect.poll(async () => (await lastOverlay()).at(-1)).toEqual({ ...painted, height: 44 });
+  } finally {
+    await electron.evaluate(() => {
+      (globalThis as any).__modalOverlayCheck?.restore();
+      delete (globalThis as any).__modalOverlayCheck;
+    });
+  }
+});

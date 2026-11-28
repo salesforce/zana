@@ -6,6 +6,9 @@ import {
   WINDOWS_TITLEBAR_HEIGHT,
   WINDOWS_TITLEBAR_OVERLAY_COLORS,
   applyWindowsTitleBarOverlay,
+  dimmedTitleBarOverlay,
+  DEFAULT_BACKDROP_ALPHA,
+  clampBackdropAlpha,
   createWindowsTitleBarOverlays,
   highContrastOverlayColors,
   titleBarSurface,
@@ -303,5 +306,105 @@ describe('createWindowsTitleBarOverlays', () => {
     platform = 'win32';
     overlays.refresh();
     expect(main.applied).toEqual([windowsTitleBarOverlay('inset-chrome', 'light')]);
+  });
+
+  it('dims only the window whose page shows a modal, and restores it on close', () => {
+    const { overlays, main, project } = setup('win32');
+    const base = windowsTitleBarOverlay('inset-chrome', 'dark');
+    overlays.setModalOpen(1, true);
+    expect(main.applied).toEqual([dimmedTitleBarOverlay(base)]);
+    expect(project.applied).toEqual([]);
+    overlays.setModalOpen(1, false);
+    expect(main.applied.at(-1)).toEqual(base);
+  });
+
+  it('keeps a modal window dimmed through a theme refresh', () => {
+    const { overlays, state, main, project } = setup('win32');
+    overlays.setModalOpen(1, true);
+    state.theme = 'light';
+    overlays.refresh();
+    expect(main.applied.at(-1)).toEqual(dimmedTitleBarOverlay(windowsTitleBarOverlay('inset-chrome', 'light')));
+    expect(project.applied.at(-1)).toEqual(windowsTitleBarOverlay('inset-chrome', 'light'));
+  });
+
+  it('dims by the alpha the page reports, bounded, and falls back to the default', () => {
+    const { overlays, main } = setup('win32');
+    const base = windowsTitleBarOverlay('inset-chrome', 'dark');
+    overlays.setModalOpen(1, true, 0.55);
+    expect(main.applied.at(-1)).toEqual(dimmedTitleBarOverlay(base, 0.55));
+    overlays.setModalOpen(1, true, 'dark');
+    expect(main.applied.at(-1)).toEqual(dimmedTitleBarOverlay(base, DEFAULT_BACKDROP_ALPHA));
+  });
+
+  it('leaves a contrast theme alone under a modal', () => {
+    const { overlays, nativeTheme, main } = setup('win32');
+    nativeTheme.shouldUseHighContrastColors = true;
+    overlays.setModalOpen(1, true);
+    overlays.refresh();
+    expect(main.applied).toEqual([{ ...HIGH_CONTRAST, height: 44 }, { ...HIGH_CONTRAST, height: 44 }]);
+  });
+
+  it('skips a destroyed window under a modal', () => {
+    const gone = fakeWindow(7, true);
+    const overlays = createWindowsTitleBarOverlays({
+      platform: 'win32',
+      windows: new Map([[7, { win: gone.win }]]),
+      repairing: () => false,
+      theme: () => 'dark',
+      electron: () => ({ nativeTheme: Object.assign(new EventEmitter(), { shouldUseHighContrastColors: false }), systemPreferences: { getColor: () => '' } }),
+      logError: vi.fn()
+    });
+    overlays.setModalOpen(7, true);
+    overlays.refresh();
+    expect(gone.applied).toEqual([]);
+  });
+
+  it('forgets modal state when a window closes or disappears from the registry', () => {
+    const { overlays, windows, main, project } = setup('win32');
+    overlays.setModalOpen(1, true);
+    overlays.setModalOpen(2, true);
+    overlays.forgetWindow(1);
+    windows.delete(2);
+    overlays.refresh();
+    expect(main.applied.at(-1)).toEqual(windowsTitleBarOverlay('inset-chrome', 'dark'));
+    windows.set(2, { win: project.win, projectId: 'p-1' });
+    overlays.refresh();
+    expect(project.applied.at(-1)).toEqual(windowsTitleBarOverlay('inset-chrome', 'dark'));
+  });
+
+  it('ignores a modal report off Windows and for an unknown window', () => {
+    const off = setup('linux');
+    off.overlays.setModalOpen(1, true);
+    expect(off.main.applied).toEqual([]);
+    const win = setup('win32');
+    win.overlays.setModalOpen(99, true);
+    expect([win.main, win.project, win.thread, win.plugin].flatMap((w) => w.applied)).toEqual([]);
+  });
+});
+
+describe('dimmedTitleBarOverlay', () => {
+  it('blends both colours toward black by the backdrop alpha and keeps the height', () => {
+    const dimmed = dimmedTitleBarOverlay({ color: '#ffffff', symbolColor: '#000000', height: 44 });
+    const channel = Math.round(255 * (1 - DEFAULT_BACKDROP_ALPHA)).toString(16);
+    expect(dimmed).toEqual({ color: `#${channel}${channel}${channel}`, symbolColor: '#000000', height: 44 });
+  });
+
+  it('keeps the alpha byte of #rrggbbaa and dims by the given alpha', () => {
+    const dimmed = dimmedTitleBarOverlay({ color: '#ffffff80', symbolColor: '#000000', height: 44 }, 0.5);
+    expect(dimmed.color).toBe('#80808080');
+  });
+
+  it('bounds a renderer-supplied alpha', () => {
+    expect(clampBackdropAlpha(0.55)).toBe(0.55);
+    expect(clampBackdropAlpha(5)).toBe(0.9);
+    for (const bad of [0, -1, Number.NaN, '0.5', undefined]) expect(clampBackdropAlpha(bad)).toBe(DEFAULT_BACKDROP_ALPHA);
+  });
+
+  it('leaves a colour it cannot parse unchanged', () => {
+    expect(dimmedTitleBarOverlay({ color: 'red', symbolColor: 'white', height: 44 }).color).toBe('red');
+  });
+
+  it('matches the backdrop alpha in global.css', () => {
+    expect(css).toMatch(new RegExp(String.raw`\n\.palette-backdrop \{[^}]*rgba\(0, 0, 0, ${DEFAULT_BACKDROP_ALPHA}\)`));
   });
 });

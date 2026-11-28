@@ -563,6 +563,7 @@ export const IPC = {
     onLink: 'deepLinks:onLink',
   },
   app: {
+    setModalOpen: 'app:setModalOpen',
     previewAgentSound: 'app:previewAgentSound',
     getAgentSoundFiles: 'app:getAgentSoundFiles',
     chooseAgentSoundFile: 'app:chooseAgentSoundFile',
