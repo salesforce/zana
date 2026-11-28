@@ -31,7 +31,7 @@ export function projectAgentActivity(threads: readonly ThreadListItem[], session
 }
 
 export function observeAgentActivity(listener: (snapshot: PluginAgentActivitySnapshot) => void): () => void {
-  if (isScopedWindow() || isThreadViewSurface() || getPluginViewTarget()) {
+  if (isScopedWindow() || isThreadViewSurface() || getPluginViewTarget() || globalThis.window?.cc?.windows?.secondary) {
     listener({ ready: false, agents: [] });
     return () => undefined;
   }

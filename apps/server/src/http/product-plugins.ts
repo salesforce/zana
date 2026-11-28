@@ -41,6 +41,8 @@ import { readLastThreadExecution } from '../services/threads/thread-last-executi
 import { asControlResult, callControlAsProductServer } from './cli-agent-ops.js';
 import type { Persona, PersonaInput, TeamInput } from '@zana-ai/zcc-domain/product';
 import { isProjectColor } from '@zana-ai/zcc-domain/project-colors';
+import { projectSources } from '@zana-ai/zcc-domain/project';
+import { listPublicHosts } from '../services/hosts/host-public.js';
 import { harnessEffectiveDefault, harnessVerifyBundle } from './harness-via-rpc.js';
 import { listJsonFiles } from './disk-json.js';
 import {
@@ -75,10 +77,24 @@ export async function productPushInbox(
 }
 
 export function productListProjects(
-  ctx: Pick<ProductHttpContext, 'projects'> & Partial<Pick<ProductHttpContext, 'db'>>
+  ctx: Pick<ProductHttpContext, 'projects'> & Partial<Pick<ProductHttpContext, 'db' | 'hostHub'>>
 ): PluginSdkProject[] {
   const localHostId = ctx.db ? getPrimaryHost(ctx.db)?.id : undefined;
-  return ctx.projects.list().map((row) => ({ id: row.id, name: row.name, path: row.path, local: !row.remote && (!row.hostId || row.hostId === localHostId), ...(row.icon ? { icon: row.icon } : {}), ...(isProjectColor(row.color) ? { color: row.color } : {}), ...(row.quickAgent === true ? { quickAgent: true } : {}) }));
+  const hosts = ctx.db && ctx.hostHub ? new Map(listPublicHosts(ctx.db, ctx.hostHub).map(host => [host.id, host])) : null;
+  return ctx.projects.list().map((row) => {
+    const defaultHostId = row.hostId ?? (row.remote ? undefined : localHostId);
+    const sourceIds = row.remote ? (defaultHostId ? [defaultHostId] : [])
+      : projectSources({ ...row, remote: undefined }, localHostId).map(source => source.hostId);
+    const executionMachines = hosts ? [...new Set(sourceIds)].flatMap(id => {
+      const host = hosts.get(id);
+      return host ? [{ id, name: host.name, connected: host.status === 'connected', isDefault: id === defaultHostId }] : [];
+    }) : undefined;
+    return {
+      id: row.id, name: row.name, path: row.path, local: !row.remote && (!row.hostId || row.hostId === localHostId),
+      ...(row.icon ? { icon: row.icon } : {}), ...(isProjectColor(row.color) ? { color: row.color } : {}),
+      ...(row.quickAgent === true ? { quickAgent: true } : {}), ...(executionMachines ? { executionMachines } : {})
+    };
+  });
 }
 
 /**

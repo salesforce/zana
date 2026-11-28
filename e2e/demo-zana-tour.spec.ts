@@ -249,7 +249,7 @@ test('demo: a tour of Zana', async ({ app }) => {
       await phone.getByRole('button', { name: 'Expand sidebar', exact: true }).tap();
       const drawer = phone.getByRole('dialog', { name: 'Navigation', exact: true });
       const gusItem = drawer.getByText('GUS', { exact: true });
-      if (!(await gusItem.isVisible())) await drawer.getByRole('button', { name: 'More', exact: true }).tap();
+      if (!(await gusItem.isVisible())) await drawer.getByRole('button', { name: 'Tools', exact: true }).tap();
       await gusItem.tap();
       await expect(phone.locator('.gus-panel')).toBeVisible();
       await phone.addStyleTag({ content: '.statusbar { display: none !important; }' });

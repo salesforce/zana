@@ -7,6 +7,7 @@ import {
   isNoChange,
   routineRunDelivery,
   jobDelivery,
+  patchBot,
   roleChangeNotice,
   replyDelivery,
   routineDelivery,
@@ -137,29 +138,69 @@ export class BotService {
   }
 
   async update(ref: string, input: BotPatch): Promise<Bot> {
-    await this.checkTargets(input);
-    const bot = await this.store.update(ref, input);
-    this.changed(bot.id);
-    return bot;
+    const target = await this.requireBot(ref);
+    return this.serialize(target.id, async () => {
+      const bot = await this.requireBot(target.id);
+      const next = patchBot(bot, input, this.now());
+      const routeChanged = bot.hostId !== next.hostId || (bot.projectId !== next.projectId && Boolean(bot.hostId || next.hostId));
+      const project = await this.checkTargets(input, routeChanged || input.hostId !== undefined ? next : undefined);
+      let detachMainThread = false;
+      if (routeChanged) {
+        const main = bot.mainThreadId ? await this.thread(bot.mainThreadId) : null;
+        const nextHostId = next.hostId ?? project?.executionMachines?.find(machine => machine.isDefault)?.id;
+        if (!main || main.hostId !== nextHostId || main.projectId !== next.projectId) {
+          const activeJobs = (await this.allJobs(bot.id)).some(job => !job.archived && (ACTIVE_STATUSES.has(job.status) || job.status === 'unknown'));
+          if (activeJobs || (main && ACTIVE_STATUSES.has(main.status))) {
+            throw new BotValidationError('Wait for the bot’s active work to finish before changing its machine.');
+          }
+          detachMainThread = Boolean(bot.mainThreadId);
+        }
+      }
+      const updated = await this.store.update(bot.id, input, { detachMainThread });
+      this.changed(bot.id);
+      return updated;
+    });
   }
 
   /** Projects and providers must be registered on this host: they decide where a full-permission bot runs. */
-  private async checkTargets(input: BotInput): Promise<void> {
-    const projectId = typeof input.projectId === 'string' ? input.projectId.trim() : '';
+  private async checkTargets(input: BotInput, target?: Pick<Bot, 'projectId' | 'hostId'>) {
+    const hostId = input.hostId === undefined ? undefined : this.parseHostId(input.hostId);
+    const projectId = typeof input.projectId === 'string' ? input.projectId.trim() : target?.projectId;
+    let project;
     if (projectId) {
       const projects = await this.zcc.sdk.projects.list();
-      if (!projects.some((row) => row.id === projectId)) throw new BotValidationError(`unknown project "${projectId}"`);
+      project = projects.find(row => row.id === projectId);
+      if (!project && (input.projectId !== undefined || input.hostId !== undefined)) throw new BotValidationError(`unknown project "${projectId}"`);
+    }
+    if (hostId && !project?.executionMachines?.some(machine => machine.id === hostId)) {
+      throw new BotValidationError('Choose a machine with a registered checkout for this project.');
     }
     const providerId = typeof input.providerId === 'string' ? input.providerId.trim() : '';
     if (providerId) {
       const providers = await this.zcc.sdk.providers.list();
       if (!providers.some((row) => row.id === providerId)) throw new BotValidationError(`unknown provider "${providerId}"`);
     }
+    return project;
+  }
+
+  private parseHostId(value: unknown): string {
+    if (typeof value !== 'string' || value.length > 256) throw new BotValidationError('Invalid machine ID.');
+    return value.trim();
+  }
+
+  private async executionTarget(bot: Bot): Promise<{ projectId: string; hostId?: string }> {
+    const { projectId, hostId } = bot;
+    if (!hostId) return { projectId };
+    const project = (await this.zcc.sdk.projects.list()).find(row => row.id === projectId);
+    const machine = project?.executionMachines?.find(row => row.id === hostId);
+    if (!machine) throw new BotValidationError('The bot’s machine or project checkout is unavailable. Check its Machine setting.');
+    if (!machine.connected) throw new BotValidationError(`${machine.name} is offline. Try again when it reconnects.`);
+    return { projectId, hostId };
   }
 
   async remove(ref: string, options: { archiveThreads?: boolean } = {}): Promise<Bot> {
     const bot = await this.requireBot(ref);
-    return this.serialize(`routines:${bot.id}`, () => this.removeBot(bot.id, options));
+    return this.serialize(`routines:${bot.id}`, () => this.serialize(bot.id, () => this.removeBot(bot.id, options)));
   }
 
   private async removeBot(id: string, options: { archiveThreads?: boolean }): Promise<Bot> {
@@ -228,6 +269,7 @@ export class BotService {
     if (existing && existing.deletedAt == null) {
       if (existing.archivedAt != null) await this.zcc.sdk.threads.unarchive({ threadId: existing.id });
       if (delivery) {
+        await this.executionTarget(bot);
         const message = bot.roleChanged ? { ...delivery, agentContext: `${roleChangeNotice(bot)}\n${delivery.agentContext}` } : delivery;
         await this.zcc.sdk.threads.send({ threadId: existing.id, ...this.wire(message), mode: 'queue-if-active' });
         if (bot.roleChanged) return { bot: await this.store.clearRoleChanged(bot.id), threadId: existing.id, created: false };
@@ -235,7 +277,7 @@ export class BotService {
       return { bot, threadId: existing.id, created: false };
     }
     const spawned = await this.zcc.sdk.threads.spawn({
-      projectId: bot.projectId,
+      ...await this.executionTarget(bot),
       ...(delivery ? this.wire(delivery) : { deferFirstTurn: true }),
       title: bot.name,
       permissionMode: 'full',
@@ -340,7 +382,7 @@ export class BotService {
    * main thread. Serialized per bot so parallel calls cannot overshoot the cap.
    */
   async startJob(fromThreadId: string, input: { prompt?: unknown; title?: unknown }): Promise<{ threadId: string }> {
-    const key = `jobs:${this.botForMainThread(fromThreadId)?.id ?? fromThreadId}`;
+    const key = this.botForMainThread(fromThreadId)?.id ?? fromThreadId;
     return this.serialize(key, () => this.startJobNow(fromThreadId, input));
   }
 
@@ -358,7 +400,7 @@ export class BotService {
     }
     const title = typeof input.title === 'string' && input.title.trim() ? input.title.trim().slice(0, 80) : prompt.split('\n')[0]!.slice(0, 80);
     const spawned = await this.zcc.sdk.threads.spawn({
-      projectId: bot.projectId,
+      ...await this.executionTarget(bot),
       ...this.wire(jobDelivery(bot, prompt)),
       title: `${bot.name} · ${title}`,
       parentThreadId: bot.mainThreadId,
@@ -441,7 +483,7 @@ export class BotService {
     }
     try {
       if (quiet) {
-        threadId = await this.spawnRoutineRun(bot!, routine, at);
+        threadId = await this.serialize(botId, async () => this.spawnRoutineRun(await this.requireBot(botId), routine, at));
       } else if (usesModel) {
         const main = await this.openMainThread(botId, routineDelivery(routine));
         threadId = main.threadId;
@@ -482,7 +524,7 @@ export class BotService {
   /** Hidden and unparented, so the host does not wake the main thread with the run's output. */
   private async spawnRoutineRun(bot: Bot, routine: BotRoutine, at: number): Promise<string> {
     const spawned = await this.zcc.sdk.threads.spawn({
-      projectId: bot.projectId,
+      ...await this.executionTarget(bot),
       ...this.wire(routineRunDelivery(routine)),
       title: `${bot.name} · ${routine.name}`,
       permissionMode: 'full',

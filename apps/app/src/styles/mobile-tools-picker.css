@@ -3,20 +3,18 @@
 .mobile-tools-heading h2 { margin: 0; color: var(--text-primary); font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
 .mobile-tools-heading .mobile-agent-search { margin-top: 12px; }
 .mobile-tools-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 16px 16px; }
-.mobile-tools-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.mobile-tools-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .app-shell[data-mobile='true'] .mobile-nav-dialog .sidebar .mobile-tools-grid .nav-item,
 .mobile-tools-section-tile {
   position: relative;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
-  min-height: 94px;
+  min-height: 72px;
   width: 100%;
   margin: 0;
-  padding: 14px 6px;
+  padding: 12px 10px;
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--bg-input);
@@ -24,15 +22,15 @@
   font: inherit;
   font-size: 13px;
   line-height: 1.35;
-  text-align: center;
+  text-align: left;
   text-decoration: none;
   cursor: pointer;
 }
-.app-shell[data-mobile='true'] .mobile-nav-dialog .sidebar .mobile-tools-grid .nav-item-icon svg { width: 24px; height: 24px; }
+.app-shell[data-mobile='true'] .mobile-nav-dialog .sidebar .mobile-tools-grid .nav-item-icon svg { width: 20px; height: 20px; }
 .mobile-tools-grid .nav-item-icon { flex: 0 0 auto; color: var(--text-muted); }
-.mobile-tools-section-tile > svg { flex-shrink: 0; color: var(--text-muted); }
+.mobile-tools-section-tile > svg { width: 20px; height: 20px; flex-shrink: 0; color: var(--text-muted); }
 .app-shell[data-mobile='true'] .mobile-nav-dialog .sidebar .mobile-tools-grid .nav-item-label,
-.mobile-tools-section-tile > span { flex: none; max-width: 100%; white-space: normal; overflow-wrap: anywhere; font-size: 13px; }
+.mobile-tools-section-tile > span { flex: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; font-size: 13px; }
 .app-shell[data-mobile='true'] .mobile-nav-dialog .sidebar .mobile-tools-grid .nav-item.active {
   border-color: color-mix(in srgb, var(--accent-blue) 40%, var(--border));
   background: color-mix(in srgb, var(--accent-blue) 9%, var(--bg-input));
@@ -56,5 +54,5 @@
   .mobile-tools-section-tile:hover { background: var(--bg-hover); }
 }
 @media (min-width: 600px) {
-  .mobile-tools-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .mobile-tools-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }

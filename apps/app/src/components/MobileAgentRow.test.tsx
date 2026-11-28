@@ -29,6 +29,23 @@ function mount(onClose = vi.fn().mockResolvedValue(undefined)) {
 beforeEach(() => vi.clearAllMocks());
 afterEach(cleanup);
 
+it.each([
+  ['Idle', true, false, 'Unread'],
+  ['Idle', true, true, 'Idle'],
+  ['Idle', false, false, 'Idle'],
+  ['Working', true, false, 'Working'],
+  ['Needs you', true, false, 'Needs you'],
+  ['Error', true, false, 'Error']
+] as const)('shows %s with unread=%s and active=%s as %s', (status, unread, active, expected) => {
+  render(<MemoryRouter><ul><MobileAgentRow item={{ ...item, status, unread }} active={active}
+    onOpen={vi.fn()} onClose={vi.fn()} /></ul></MemoryRouter>);
+  const row = screen.getByRole('link', { name: new RegExp(expected) });
+  expect(row.dataset.rowStatus).toBe(expected);
+  const indicator = row.querySelector('.mobile-agent-status')!;
+  expect(indicator.textContent).toBe(expected);
+  expect(indicator.classList.contains('sr-only')).toBe(expected === 'Idle');
+});
+
 it('follows a long left swipe, closes on release and suppresses the resulting link click', async () => {
   const { row, pointer, onClose, onOpen } = mount();
   pointer('pointerDown', 220);

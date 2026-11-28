@@ -142,7 +142,7 @@ test('mobile customization stays above the drawer and Escape closes the popup fi
     await page.goto(`${serverUrl}/agents`);
     await page.getByRole('button', { name: 'Expand sidebar', exact: true }).click();
     const drawer = page.getByRole('dialog', { name: 'Navigation', exact: true });
-    await drawer.getByRole('button', { name: 'More', exact: true }).click();
+    await drawer.getByRole('button', { name: 'Tools', exact: true }).click();
     await expect(drawer.getByRole('searchbox', { name: 'Search plugins and tools' })).toBeVisible();
     await drawer.getByRole('button', { name: 'More', exact: true }).click();
     await drawer.getByRole('menuitem', { name: 'Customize navigation', exact: true }).click();

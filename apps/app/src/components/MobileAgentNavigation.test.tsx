@@ -91,7 +91,7 @@ it.each([undefined, 'p'])('opens the global Agents overview and closes the menu 
   expect(agents.getAttribute('href')).toBe('/agents');
   expect(agents.getAttribute('aria-current')).toBeNull();
   expect(agents.parentElement).toBe(screen.getByTestId('mobile-nav-inbox').parentElement);
-  expect(agents.parentElement).toBe(screen.getByRole('button', { name: 'More' }).parentElement);
+  expect(agents.parentElement).toBe(screen.getByRole('button', { name: 'Tools' }).parentElement);
   fireEvent.click(agents);
   expect(screen.getByTestId('location').textContent).toBe('/agents');
   expect(agents.getAttribute('aria-current')).toBe('page');
@@ -134,11 +134,11 @@ it("opens the project's Inbox route in a project window", () => {
 it('opens and leaves More without losing focus or the search', () => {
   mount();
   fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'menu' } });
-  fireEvent.click(screen.getByRole('button', { name: 'More' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Tools' }));
   expect(screen.getByText('Full navigation')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'All agents' })).toBe(document.activeElement);
   fireEvent.click(screen.getByRole('button', { name: 'All agents' }));
-  expect(screen.getByRole('button', { name: 'More' })).toBe(document.activeElement);
+  expect(screen.getByRole('button', { name: 'Tools' })).toBe(document.activeElement);
   expect((screen.getByRole('searchbox') as HTMLInputElement).value).toBe('menu');
 });
 

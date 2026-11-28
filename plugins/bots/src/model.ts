@@ -64,6 +64,8 @@ export interface Bot {
   personality: string;
   /** Project the bot's threads run in. Bots are global; this is only an execution anchor. */
   projectId: string;
+  /** Optional pin to a registered checkout on this machine. */
+  hostId?: string;
   providerId?: string;
   model?: string;
   /** The single visible thread that is the bot. Absent until first contact. */
@@ -80,6 +82,7 @@ export interface BotInput {
   color?: unknown;
   personality?: unknown;
   projectId?: unknown;
+  hostId?: unknown;
   providerId?: unknown;
   model?: unknown;
 }
@@ -325,6 +328,7 @@ export function newBot(input: BotInput, id: string, now: number): Bot {
     ...(validateColor(input.color) ? { color: validateColor(input.color) } : {}),
     personality: validatePersonality(input.personality),
     projectId,
+    ...(optionalText(input.hostId) ? { hostId: optionalText(input.hostId) } : {}),
     ...(optionalText(input.providerId) ? { providerId: optionalText(input.providerId) } : {}),
     ...(optionalText(input.model) ? { model: optionalText(input.model) } : {}),
     routines: [],
@@ -350,9 +354,10 @@ export function patchBot(bot: Bot, input: BotPatch, now: number): Bot {
   if (input.projectId !== undefined) {
     const projectId = text(input.projectId);
     if (!projectId) throw new BotValidationError('projectId cannot be empty');
+    if (projectId !== bot.projectId) delete next.hostId;
     next.projectId = projectId;
   }
-  for (const key of ['providerId', 'model'] as const) {
+  for (const key of ['hostId', 'providerId', 'model'] as const) {
     if (input[key] === undefined) continue;
     const value = optionalText(input[key]);
     if (value) next[key] = value;

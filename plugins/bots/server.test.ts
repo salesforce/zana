@@ -27,7 +27,7 @@ function world() {
       spawns.push(args);
       const id = `t${++seq}`;
       threads.set(id, {
-        id, projectId: String(args.projectId), hostId: 'h', environmentId: null, providerId: 'codex', status: 'active',
+        id, projectId: String(args.projectId), hostId: String(args.hostId ?? 'h'), environmentId: null, providerId: 'codex', status: 'active',
         visibility: String(args.visibility), archivedAt: null, deletedAt: null,
         parentThreadId: (args.parentThreadId as string | undefined) ?? null
       });
@@ -70,6 +70,69 @@ async function load(extra: Record<string, unknown> = {}) {
 }
 
 describe('bots plugin', () => {
+  it('pins all bot launches to the same registered machine and preserves the pin through disconnects', async () => {
+    const machines = [
+      { id: 'h', name: 'Primary', connected: true, isDefault: true },
+      { id: 'remote', name: 'Docker Linux', connected: true, isDefault: false }
+    ];
+    const { harness, call, spawns, sends, threads } = await load({
+      listProjects: async () => [{ id: 'proj-a', name: 'A', executionMachines: machines }]
+    });
+    const create = (hostId: unknown) => harness.callRpc('create', { name: 'Scout', projectId: 'proj-a', hostId });
+    await expect(create('foreign')).rejects.toThrow('registered checkout');
+    await expect(create(1)).rejects.toThrow('Invalid machine ID');
+    await create('remote');
+    await expect(harness.callRpc('machines', { projectId: 'proj-a' })).resolves.toEqual(machines);
+    const main = await harness.callRpc('openThread', { bot: 'scout' }) as { threadId: string };
+    const job = await call('bot_job_start', { prompt: 'Inspect checkout' }, main.threadId) as { threadId: string };
+    const bot = await harness.callRpc('addRoutine', { bot: 'scout', routine: { kind: 'agent', name: 'Digest', cron: '0 * * * *', prompt: 'Review changes' } }) as { routines: Array<{ id: string }> };
+    const routineId = bot.routines[0]!.id;
+    const run = await harness.callRpc('runRoutine', { bot: 'scout', routineId }) as { threadId: string };
+    expect(spawns.map(row => row.hostId)).toEqual(['remote', 'remote', 'remote']);
+    threads.get(run.threadId)!.status = 'idle';
+    await expect(harness.callRpc('update', { bot: 'scout', patch: { hostId: '' } })).rejects.toThrow('active work');
+    machines[1]!.connected = false;
+    await expect(harness.callRpc('openThread', { bot: 'scout' })).resolves.toEqual(main);
+    await expect(harness.callRpc('send', { bot: 'scout', message: 'Hello' })).rejects.toThrow('Docker Linux is offline');
+    await expect(harness.callRpc('runRoutine', { bot: 'scout', routineId })).rejects.toThrow('Docker Linux is offline');
+    expect(sends).toHaveLength(0);
+    expect(spawns).toHaveLength(3);
+    machines[1]!.connected = true;
+    await expect(harness.callRpc('send', { bot: 'scout', message: 'Retry' })).resolves.toMatchObject(main);
+    machines.pop();
+    await expect(harness.callRpc('send', { bot: 'scout', message: 'Lost checkout' })).rejects.toThrow('checkout is unavailable');
+    threads.get(main.threadId)!.status = 'idle';
+    threads.get(job.threadId)!.status = 'idle';
+    await harness.callRpc('update', { bot: 'scout', patch: { hostId: '' } });
+    expect(threads.get(main.threadId)!.archivedAt).toBeNull();
+    await expect(harness.callRpc('openThread', { bot: 'scout' })).resolves.toEqual({ threadId: 't4' });
+    expect(spawns[3]).not.toHaveProperty('hostId');
+  });
+
+  it('sets and clears a machine pin through the owner CLI', async () => {
+    const { harness } = await load({ listProjects: async () => [{
+      id: 'proj-a', name: 'A', executionMachines: [{ id: 'remote', name: 'Docker', connected: false, isDefault: false }]
+    }] });
+    const run = (...args: string[]) => harness.runCli(args, { threadId: undefined });
+    expect((await run('create', 'Scout', '--project', 'proj-a', '--machine', 'remote')).exitCode).toBe(0);
+    expect(await harness.callRpc('get', { bot: 'scout' })).toMatchObject({ bot: { hostId: 'remote' } });
+    expect((await run('update', 'scout', '--machine', 'default')).exitCode).toBe(0);
+    expect((await harness.callRpc('get', { bot: 'scout' }) as { bot: unknown }).bot).not.toHaveProperty('hostId');
+  });
+
+  it('keeps the target of a running routine before the bot has a main thread', async () => {
+    const { harness, spawns } = await load({ listProjects: async () => [{
+      id: 'proj-a', name: 'A', executionMachines: [{ id: 'remote', name: 'Docker', connected: true, isDefault: false }]
+    }] });
+    const bot = 'scout';
+    await harness.callRpc('create', { name: 'Scout', projectId: 'proj-a', hostId: 'remote' });
+    const saved = await harness.callRpc('addRoutine', { bot, routine: { kind: 'agent', name: 'Digest', cron: '0 * * * *', prompt: 'Inspect checkout' } }) as { routines: Array<{ id: string }> };
+    await harness.callRpc('runRoutine', { bot, routineId: saved.routines[0]!.id });
+    expect(spawns).toEqual([expect.objectContaining({ hostId: 'remote', visibility: 'hidden' })]);
+    await expect(harness.callRpc('update', { bot, patch: { hostId: '' } })).rejects.toThrow('active work');
+    expect(await harness.callRpc('get', { bot })).toMatchObject({ bot: { hostId: 'remote' } });
+  });
+
   it('creates one empty main thread across clicks and routine deliveries, restoring or recreating it as needed', async () => {
     const { harness, spawns, sends, threads, options } = await load();
     await harness.callRpc('create', { name: 'Scout', providerId: 'codex', model: 'chosen' });
@@ -547,6 +610,46 @@ describe('zcc bots CLI', () => {
     expect(await host.harness.callRpc('catalog', { providerId: 'claude-code' })).toMatchObject({ models: ['opus', 'm2'], modelError: null });
     expect(await host.harness.callRpc('catalog', { providerId: 'codex' })).toMatchObject({ modelError: 'auth_required' });
     expect(await host.harness.callRpc('catalog', { providerId: 'boom' })).toMatchObject({ models: [], modelError: 'host down' });
+  });
+
+  it('loads models from the selected project machine and rejects a machine from another project', async () => {
+    const primary = { id: 'primary', name: 'Primary', connected: true, isDefault: true };
+    const remote = { id: 'remote', name: 'Docker', connected: true, isDefault: false };
+    const foreign = { id: 'foreign', name: 'Other machine', connected: true, isDefault: true };
+    const loadProviderModels = vi.fn(async ({ hostId }: { hostId?: string }) => ({
+      models: [{ id: 'codex', model: `codex-${hostId}`, supportedReasoningEfforts: [] }],
+      selectedOnlyModels: [],
+      modelLoadError: null
+    }));
+    const { harness } = await load({
+      listProjects: async () => [
+        { id: 'proj-a', name: 'A', executionMachines: [remote, primary] },
+        { id: 'proj-b', name: 'B', executionMachines: [foreign] }
+      ],
+      loadProviderModels
+    });
+    const args = { projectId: 'proj-a', providerId: 'codex' };
+    expect(await harness.callRpc('catalog', args)).toMatchObject({ models: ['codex-primary'], modelError: null });
+    expect(await harness.callRpc('catalog', { ...args, hostId: 'remote' })).toMatchObject({
+      models: ['codex-remote'], modelError: null
+    });
+    expect(await harness.callRpc('catalog', { ...args, hostId: 'foreign' })).toMatchObject({
+      models: [], modelError: null
+    });
+    expect(loadProviderModels.mock.calls).toEqual([[{ providerId: 'codex', hostId: 'primary' }], [{ providerId: 'codex', hostId: 'remote' }]]);
+  });
+
+  it('lists only the requested project machines and falls back to an empty list', async () => {
+    const machines = [{ id: 'remote', name: 'Docker', connected: false, isDefault: true }];
+    const { harness } = await load({
+      listProjects: async () => [
+        { id: 'proj-a', name: 'A', executionMachines: machines },
+        { id: 'proj-b', name: 'B' }
+      ]
+    });
+    expect(await harness.callRpc('machines', { projectId: 'proj-a' })).toEqual(machines);
+    expect(await harness.callRpc('machines', { projectId: 'proj-b' })).toEqual([]);
+    expect(await harness.callRpc('machines', { projectId: 'missing' })).toEqual([]);
   });
 
   it('degrades the catalog when the host cannot list providers or projects', async () => {

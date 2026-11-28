@@ -263,6 +263,13 @@ export interface PluginSdkAssistant {
 export type PluginSdk = ZccPluginApi['sdk'];
 export type PluginSdkInbox = PluginSdk['inbox'];
 
+export interface PluginSdkProjectMachine {
+  id: string;
+  name: string;
+  connected: boolean;
+  isDefault: boolean;
+}
+
   export { PROJECT_ICONS, type ProjectIcon } from '@zana-ai/zcc-plugin-sdk';
   export const PLUGIN_CLI_OUTPUT_MAX_BYTES: number;
   export function enforcePluginCliOutputLimit(result: {
@@ -846,7 +853,7 @@ export type PluginSdkInbox = PluginSdk['inbox'];
       };
       capabilities: PluginCapabilityIntrospection;
       projects: {
-        list(): Promise<Array<{ id: string; name: string; path?: string; icon?: import('@zana-ai/zcc-plugin-sdk').ProjectIcon; color?: '#2f81f7' | '#3fb950' | '#d4a017' | '#bc8cff' | '#39c5cf' | '#f85149' | '#ff7b72' | '#8b949e' }>>;
+        list(): Promise<Array<{ id: string; name: string; path?: string; icon?: import('@zana-ai/zcc-plugin-sdk').ProjectIcon; color?: '#2f81f7' | '#3fb950' | '#d4a017' | '#bc8cff' | '#39c5cf' | '#f85149' | '#ff7b72' | '#8b949e'; executionMachines?: PluginSdkProjectMachine[] }>>;
         setIcon(args: { projectId: string; icon: import('@zana-ai/zcc-plugin-sdk').ProjectIcon }): Promise<void>;
       };
     };

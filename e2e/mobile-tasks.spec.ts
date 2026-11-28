@@ -39,7 +39,7 @@ test('Tasks mobile uses full-width list, projects, filters and details with a pr
     await page.goto(url);
     await page.getByRole('button', { name: 'Expand sidebar', exact: true }).click();
     const drawer = page.getByRole('dialog', { name: 'Navigation', exact: true });
-    await drawer.getByRole('button', { name: 'More', exact: true }).click();
+    await drawer.getByRole('button', { name: 'Tools', exact: true }).click();
     await drawer.getByText('Tasks', { exact: true }).click();
     await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
     const panel = page.locator('.tasks-panel');

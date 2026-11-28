@@ -6,14 +6,14 @@ import { botSummary } from './tools.js';
 export const CLI_COMMANDS: PluginCliCommandInfo[] = [
   { name: 'list', summary: 'List bots', usage: 'zcc bots list [--json]' },
   { name: 'show', summary: 'Show one bot with routines and jobs', usage: 'zcc bots show <bot> [--json]' },
-  { name: 'create', summary: 'Create a bot', usage: 'zcc bots create <name> [--color #3b82f6] [--personality "..."] [--project <id>] [--provider <id>] [--model <id>]' },
-  { name: 'update', summary: 'Update a bot', usage: 'zcc bots update <bot> [--name ..] [--color ..] [--personality ..] [--project ..] [--provider ..] [--model ..]' },
+  { name: 'create', summary: 'Create a bot', usage: 'zcc bots create <name> [--color #3b82f6] [--personality "..."] [--project <id>] [--machine <host-id>] [--provider <id>] [--model <id>]' },
+  { name: 'update', summary: 'Update a bot', usage: 'zcc bots update <bot> [--name ..] [--color ..] [--personality ..] [--project ..] [--machine <host-id|default>] [--provider ..] [--model ..]' },
   { name: 'delete', summary: 'Delete a bot', usage: 'zcc bots delete <bot> [--archive-threads]' },
   { name: 'send', summary: 'Message or assign a task to a bot', usage: 'zcc bots send <bot> <message...>' },
   { name: 'routine', summary: 'Manage routines', usage: 'zcc bots routine add <bot> --name <n> --cron "<cron>" [--kind agent|reminder --prompt "<text>" | --kind price --asset BTC --currencies USD,CHF] | update <bot> <routine> [...] | remove <bot> <routine> | run <bot> <routine>' }
 ];
 
-const FLAG_NAMES = new Set(['color', 'personality', 'project', 'provider', 'model', 'name', 'cron', 'prompt', 'enabled', 'kind', 'asset', 'currencies']);
+const FLAG_NAMES = new Set(['color', 'personality', 'project', 'machine', 'provider', 'model', 'name', 'cron', 'prompt', 'enabled', 'kind', 'asset', 'currencies']);
 const BOOLEAN_FLAGS = new Set(['json', 'archive-threads']);
 
 export interface ParsedArgs {
@@ -61,6 +61,7 @@ function botInput(flags: Map<string, string>) {
     ...(flags.has('color') ? { color: flags.get('color') } : {}),
     ...(flags.has('personality') ? { personality: flags.get('personality') } : {}),
     ...(flags.has('project') ? { projectId: flags.get('project') } : {}),
+    ...(flags.has('machine') ? { hostId: flags.get('machine') === 'default' ? '' : flags.get('machine') } : {}),
     ...(flags.has('provider') ? { providerId: flags.get('provider') } : {}),
     ...(flags.has('model') ? { model: flags.get('model') } : {})
   };

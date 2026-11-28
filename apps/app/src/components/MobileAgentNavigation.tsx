@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Ellipsis, Inbox, LayoutGrid, MessageSquare, Search, SquarePen, X } from 'lucide-react';
+import { ArrowLeft, Briefcase, Inbox, LayoutGrid, MessageSquare, Search, SquarePen, X } from 'lucide-react';
 import { useAgentStatus, useData, useUnreadInboxCount } from '../store';
 import { useThreads } from '../thread-store';
 import { useEnsureThreads } from '../hooks/useEnsureThreads';
@@ -12,7 +12,7 @@ import { product } from '../lib/product-client';
 import { useSplitWorkspace } from '../lib/split-layout/store';
 import '../styles/mobile-agent-navigation.css';
 
-/** Everyday phone navigation is agents first; More opens the live tool picker. */
+/** Everyday phone navigation is agents first; Tools opens the live tool picker. */
 export function MobileAgentNavigation({ enabled, projectId, children }: {
   enabled: boolean;
   projectId?: string;
@@ -22,10 +22,10 @@ export function MobileAgentNavigation({ enabled, projectId, children }: {
 }
 
 function AgentNavigation({ projectId, children }: { projectId?: string; children: ReactNode }) {
-  const [advanced, setAdvanced] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [search, setSearch] = useState('');
   const back = useRef<HTMLButtonElement>(null);
-  const advancedButton = useRef<HTMLButtonElement>(null);
+  const toolsButton = useRef<HTMLButtonElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const switched = useRef(false);
   const dismiss = useMobileNavDismiss();
@@ -67,13 +67,13 @@ function AgentNavigation({ projectId, children }: { projectId?: string; children
 
   useEffect(() => {
     // Switching rails removes the focused button. Keep keyboard focus in the drawer.
-    if (switched.current) (advanced ? back.current : advancedButton.current)?.focus();
+    if (switched.current) (toolsOpen ? back.current : toolsButton.current)?.focus();
     switched.current = true;
-  }, [advanced]);
+  }, [toolsOpen]);
 
-  if (advanced) return (
+  if (toolsOpen) return (
     <div className="mobile-advanced-navigation">
-      <button ref={back} type="button" className="mobile-agents-back" onClick={() => setAdvanced(false)}>
+      <button ref={back} type="button" className="mobile-agents-back" onClick={() => setToolsOpen(false)}>
         <ArrowLeft size={18} aria-hidden="true" /> All agents
       </button>
       {children}
@@ -99,9 +99,9 @@ function AgentNavigation({ projectId, children }: { projectId?: string; children
               {unreadInbox > 99 ? '99+' : unreadInbox}
             </span>}
           </Link>
-          <button ref={advancedButton} type="button" className="mobile-agent-shortcut" onClick={() => setAdvanced(true)}
-            title="More: plugins, history, projects and other tools">
-            <Ellipsis size={20} aria-hidden="true" /><span>More</span>
+          <button ref={toolsButton} type="button" className="mobile-agent-shortcut" onClick={() => setToolsOpen(true)}
+            title="Plugins, history, projects and other tools">
+            <Briefcase size={20} aria-hidden="true" /><span>Tools</span>
           </button>
         </div>
         <div className="mobile-agent-search">

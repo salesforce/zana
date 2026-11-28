@@ -91,4 +91,13 @@ describe('mobile agent history', () => {
       thread('b', { hasPendingInteraction: true }), thread('c', { status: 'active' })] });
     expect(items.map((item) => item.status)).toEqual(['Error', 'Needs you', 'Working']);
   });
+
+  it('passes unread reply state for conversations using their read sequence', () => {
+    const items = mobileAgentItems({ ...empty, threads: [
+      thread('unread', { lastReadSeq: 2, maxSeq: 3 }),
+      thread('read', { lastReadSeq: 3, maxSeq: 3 })
+    ] });
+    expect(items.find(item => item.id === 'unread')?.unread).toBe(true);
+    expect(items.find(item => item.id === 'read')?.unread).toBe(false);
+  });
 });

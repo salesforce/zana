@@ -7,6 +7,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import { definePluginApp, Markdown, useRealtime, useRpc, useZccNavigate, type BasicSidebarSectionProps, type PluginOwnedThreadIconProps, type PluginOwnedThreadTitleProps, type PluginSidebarSectionProps, type PluginThreadPanelProps } from '@zana-ai/zcc-plugin-sdk/app';
 import { BOT_COLORS, DIRECT_INTERVAL_MINUTES, MIN_ROUTINE_INTERVAL_MINUTES, ROUTINE_KINDS, type RoutineKind, botMemoryTag, defaultBotColor, defaultBotShape, describeCron, type BotRoutine, type BotShape } from './src/model.js';
 import type { BotJobView, BotView } from './src/service.js';
+import type { PluginSdkProjectMachine } from '@zana-ai/zcc-plugin-sdk/server';
 
 const CHANNEL = 'bots:changed';
 type BotState = 'new' | 'working' | 'asleep' | 'missing' | 'unknown';
@@ -271,6 +272,9 @@ const basicListCss = `
 .bt-basic { margin-bottom: 18px; font-size: 13px; line-height: 1.5; color: var(--text-primary); }
 .bt-basic .bt-list-head h2 { margin: 0; font-size: 13px; font-weight: 600; color: inherit; }
 .bt-basic .bt-list-head button { color: inherit; font-family: inherit; }
+.bt-basic-toggle { display: flex; align-items: center; gap: 5px; padding: 3px 0; border: 0; background: transparent; cursor: pointer; }
+.bt-basic-toggle:disabled { cursor: default; }
+.bt-basic-toggle[aria-expanded="false"] svg { transform: rotate(-90deg); }
 .bt-basic-list { display: grid; gap: 2px; }
 .bt-basic-item { position: relative; display: flex; align-items: center; border-radius: 8px; }
 .bt-basic-item:is(:hover, :focus-within) { background: var(--bg-hover); }
@@ -287,6 +291,22 @@ const basicListCss = `
   color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer; }
 .bt-basic-more:hover, .bt-basic-more:focus-visible { color: var(--text-primary); }
 .bt-basic .bt-basic-row { flex: 1; min-width: 0; font: inherit; color: inherit; background: transparent; }
+[data-mobile='false'] .bt-basic { margin-bottom: 5px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+[data-mobile='false'] .bt-basic .bt-list-head { min-height: 24px; padding: 0 6px; }
+[data-mobile='false'] .bt-basic .bt-list-head h2 { font-size: 11px; color: var(--text-muted); }
+[data-mobile='false'] .bt-basic .bt-list-head .bt-btn { min-height: 24px; width: 24px; padding: 0; color: var(--text-muted); }
+[data-mobile='false'] .bt-basic .bt-list-head .bt-btn span { display: none; }
+[data-mobile='false'] .bt-basic-list { gap: 0; }
+[data-mobile='false'] .bt-basic .bt-basic-row { min-height: 36px; padding: 3px 6px; gap: 6px; font-size: 12px; line-height: 15px; }
+[data-mobile='false'] .bt-basic-row .bt-av svg { width: 24px; height: 24px; }
+[data-mobile='false'] .bt-basic-row small { display: block; font-size: 10px; line-height: 14px; }
+[data-mobile='false'] .bt-basic-row small:has(.bt-dot[data-state="asleep"]) {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+[data-mobile='false'] .bt-basic-item:has([aria-current="page"]) {
+  background: color-mix(in srgb, var(--accent-blue) 13%, transparent); box-shadow: inset 2px 0 var(--accent-blue);
+}
+[data-mobile='false'] .bt-basic-more { min-height: 24px; padding: 2px 8px 2px 36px; font-size: 11px; }
 .bt-basic-dialog { box-sizing: border-box; width: min(500px, calc(100vw - 32px)); max-height: calc(100dvh - 32px);
   padding: 0; margin: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-panel); }
 .bt-basic-dialog::backdrop { background: rgb(0 0 0 / 45%); }
@@ -349,6 +369,7 @@ export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread,
   const { bots, loaded, error, refresh } = useBotList();
   const [creating, setCreating] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const listId = useId();
   const { openBot, opening, openError } = useOpenBotThread(activeThreadId, openThread);
   const eligible = useMemo(() => bots.filter(bot => projectIds.includes(bot.projectId)), [bots, projectIds]);
@@ -361,30 +382,36 @@ export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread,
     .sort((a, b) => (b.pinnedAt ?? -1) - (a.pinnedAt ?? -1));
   // Search the whole roster, including the bots behind Show more.
   const visible = showAll || query ? matches : matches.slice(0, BASIC_BOT_LIMIT);
+  const expanded = Boolean(query) || !collapsed;
   if (!matches.length && !error && (!loaded || query || !projectIds.length)) return null;
   return <section className="bt-basic" aria-label="Bots">
     <style>{CSS + basicListCss}</style>
     <div className="bt-list-head">
-      <h2>Bots</h2>
-      <button type="button" className="bt-btn is-ghost is-sm" aria-haspopup="dialog" onClick={() => setCreating(true)}>＋ New bot</button>
+      <h2><button type="button" className="bt-basic-toggle" aria-expanded={expanded} aria-controls={`${listId}-section`}
+        disabled={Boolean(query)} onClick={() => setCollapsed(value => !value)}><ChevronDown size={12} aria-hidden="true" />Bots</button></h2>
+      <button type="button" className="bt-btn is-ghost is-sm" aria-label="New bot" title="New bot" aria-haspopup="dialog"
+        onClick={() => setCreating(true)}><Plus size={14} aria-hidden="true" /><span>New bot</span></button>
     </div>
     {creating && <CreateBotDialog projectId={projectIds.length === 1 ? projectIds[0] : undefined}
       onCancel={() => setCreating(false)} onCreated={id => {
         setCreating(false);
         setShowAll(true);
+        setCollapsed(false);
         void openBot(id);
         void refresh();
       }} />}
     {error && <p role="alert">Couldn’t load bots. <button type="button" onClick={() => void refresh()}>Retry</button></p>}
     {openError && <p role="alert" className="bt-alert">{openError}</p>}
-    <div id={listId} className="bt-basic-list">
-      {visible.map(bot => <BasicBotRow key={bot.id} bot={bot} activeThreadId={activeThreadId} opening={opening === bot.id}
-        onOpen={() => void openBot(bot.id)} />)}
+    <div id={`${listId}-section`} hidden={!expanded}>
+      <div id={listId} className="bt-basic-list">
+        {visible.map(bot => <BasicBotRow key={bot.id} bot={bot} activeThreadId={activeThreadId} opening={opening === bot.id}
+          onOpen={() => void openBot(bot.id)} />)}
+      </div>
+      {!query && matches.length > BASIC_BOT_LIMIT && <button type="button" className="bt-basic-more"
+        aria-expanded={showAll} aria-controls={listId} onClick={() => setShowAll(!showAll)}>
+        {showAll ? 'Show less' : 'Show more'}
+      </button>}
     </div>
-    {!query && matches.length > BASIC_BOT_LIMIT && <button type="button" className="bt-basic-more"
-      aria-expanded={showAll} aria-controls={listId} onClick={() => setShowAll(!showAll)}>
-      {showAll ? 'Show less' : 'Show more'}
-    </button>}
   </section>;
 }
 
@@ -817,7 +844,11 @@ function BotPage({ bot, onDeleted, profile = false, active = true }: {
   const [tab, setTab] = useState<Tab>('details');
   const openChat = useOpenChat();
   const wake = useAction(bot.id);
-  const catalog = useCatalog(bot.providerId ?? '');
+  const catalog = useCatalog('');
+  const machines = useMachines(bot.projectId, active);
+  const machine = machines?.find(row => bot.hostId ? row.id === bot.hostId : row.isDefault);
+  const machineLabel = machine ? machine.name + (machine.connected ? '' : ' · Offline')
+    : bot.hostId && machines ? 'Machine unavailable' : null;
   const jobs = useJobs(bot.id, active);
   const state = botState(bot);
   const hasThread = Boolean(bot.mainThreadId) && (state === 'working' || state === 'asleep');
@@ -833,7 +864,7 @@ function BotPage({ bot, onDeleted, profile = false, active = true }: {
             <span className="bt-chip"><span className="bt-dot" data-state={state} />{STATE_LABEL[state]}
               {bot.activeJobs ? ` · ${bot.activeJobs} background job${bot.activeJobs === 1 ? '' : 's'}` : ''}</span>
           </div>
-          <span className="bt-meta">{projectName} · <span className="bt-chip is-warn" title="Bots run without asking for approval">Full access</span></span>
+          <span className="bt-meta">{projectName}{machineLabel && ` · ${machineLabel}`} · <span className="bt-chip is-warn" title="Bots run without asking for approval">Full access</span></span>
         </div>
         {!profile && <div className="bt-actions">
           {hasThread && (
@@ -1124,19 +1155,42 @@ interface Catalog {
 }
 
 /** Host projects, providers and the provider's models; reloaded when the provider changes. */
-function useCatalog(providerId: string) {
+function useCatalog(providerId: string, projectId?: string, hostId?: string) {
   const rpc = useRpc();
   const [data, setData] = useState<Catalog | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
     let live = true;
     setData((current) => (current ? { ...current, models: [], modelError: null } : current));
-    rpc.call('catalog', { providerId })
+    rpc.call('catalog', { providerId, projectId, hostId })
       .then((next) => { if (live) { setData(next as Catalog); setError(''); } })
       .catch((err: unknown) => { if (live) { setData(null); setError(message(err)); } });
     return () => { live = false; };
-  }, [rpc, providerId]);
+  }, [rpc, providerId, projectId, hostId]);
   return { data, error };
+}
+
+function useMachines(projectId: string, active: boolean) {
+  const rpc = useRpc();
+  const [snapshot, setSnapshot] = useState<{ projectId: string; rows: PluginSdkProjectMachine[] }>();
+  useEffect(() => {
+    if (!active) return;
+    let live = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = async () => {
+      try {
+        const rows = await rpc.call('machines', { projectId }) as PluginSdkProjectMachine[];
+        if (live) setSnapshot({ projectId, rows });
+      } catch {
+        if (live) setSnapshot(undefined);
+      } finally {
+        if (live) timer = setTimeout(refresh, 5000);
+      }
+    };
+    void refresh();
+    return () => { live = false; clearTimeout(timer); };
+  }, [rpc, projectId, active]);
+  return snapshot?.projectId === projectId ? snapshot.rows : undefined;
 }
 
 /** Keep the current value selectable even when the host no longer lists it. */
@@ -1144,10 +1198,10 @@ function withCurrent(options: Array<{ id: string; name: string }>, current: stri
   return current && !options.some((row) => row.id === current) ? [...options, { id: current, name: `${current} (unavailable)` }] : options;
 }
 
-type SettingsForm = { color: string; name: string; personality: string; projectId: string; providerId: string; model: string };
+type SettingsForm = { color: string; name: string; personality: string; projectId: string; hostId: string; providerId: string; model: string };
 
 function settingsOf(bot: BotView): SettingsForm {
-  return { color: bot.color ?? defaultBotColor(bot.id), name: bot.name, personality: bot.personality, projectId: bot.projectId, providerId: bot.providerId ?? '', model: bot.model ?? '' };
+  return { color: bot.color ?? defaultBotColor(bot.id), name: bot.name, personality: bot.personality, projectId: bot.projectId, hostId: bot.hostId ?? '', providerId: bot.providerId ?? '', model: bot.model ?? '' };
 }
 
 function Settings({ bot, onDeleted, visible }: { bot: BotView; onDeleted(): void; visible: boolean }) {
@@ -1156,7 +1210,8 @@ function Settings({ bot, onDeleted, visible }: { bot: BotView; onDeleted(): void
   const saved = settingsOf(bot);
   const [form, setForm] = useState<SettingsForm>(saved);
   const [dirty, setDirty] = useState<ReadonlySet<keyof SettingsForm>>(new Set());
-  const catalog = useCatalog(form.providerId);
+  const catalog = useCatalog(form.providerId, form.projectId, form.hostId);
+  const machines = useMachines(form.projectId, visible);
   const [editingModel, setEditingModel] = useState(false);
 
   // A change saved elsewhere (CLI, another agent, a realtime refresh) re-seeds every field the user has not touched.
@@ -1196,7 +1251,7 @@ function Settings({ bot, onDeleted, visible }: { bot: BotView; onDeleted(): void
     if (action.busy || changed.length === 0 || !form.name.trim()) return;
     const patch = Object.fromEntries(changed.map((key) => [key, form[key]]));
     const runtime = changed.some((key) => key === 'providerId' || key === 'model' || key === 'projectId');
-    const done = runtime
+    const done = changed.includes('hostId') ? 'Machine settings saved.' : runtime
       ? 'Saved. Runtime settings apply when a new main thread is created.'
       : changed.includes('personality') ? 'Saved. Applies from the next turn.' : 'Changes saved.';
     if (await action.run('update', { patch }, done)) setDirty(new Set());
@@ -1206,6 +1261,9 @@ function Settings({ bot, onDeleted, visible }: { bot: BotView; onDeleted(): void
   const providers = withCurrent(data?.providers ?? [], form.providerId);
   const models = withCurrent((data?.models ?? []).map((id) => ({ id, name: id })), form.model);
   const projects = withCurrent(data?.projects ?? [], form.projectId);
+  const defaultMachine = machines?.find(row => row.isDefault);
+  const machineOptions = withCurrent((machines ?? []).filter(row => !row.isDefault || row.id === form.hostId)
+    .map(row => ({ id: row.id, name: row.name + (row.connected ? '' : ' · Offline') })), form.hostId);
   return (
     <>
       <form id={formId} className="settings-field" onSubmit={(event) => void save(event)} aria-label="Bot settings">
@@ -1260,13 +1318,24 @@ function Settings({ bot, onDeleted, visible }: { bot: BotView; onDeleted(): void
                 className="bt-picker"
                 value={form.projectId}
                 options={projects.map(project => ({ value: project.id, label: project.name }))}
-                onChange={projectId => update({ projectId })}
+                onChange={projectId => update({ projectId, hostId: '' })}
                 searchable
                 searchPlaceholder="Search projects"
                 emptyHint="No matching projects"
               />
             </div>
             <div className="bt-form-row"><span className="bt-grow">Access</span><span className="bt-chip is-warn">Full · runs without asking</span></div>
+            {(machineOptions.length > 0 || defaultMachine) && <div className="bt-form-row">
+              <span className="bt-grow">Machine<span className="bt-sub">For chat, background jobs and AI routines</span></span>
+              {machineOptions.length > 0 ? <PopoverPicklist ariaLabel="Machine" className="bt-picker" value={form.hostId}
+                options={[{ value: '', label: defaultMachine ? `Project default · ${defaultMachine.name}${defaultMachine.connected ? '' : ' · Offline'}` : 'Project default' },
+                  ...machineOptions.map(row => ({ value: row.id, label: row.name }))]}
+                onChange={hostId => update({ hostId })} searchPlaceholder="Search machines" />
+                : <span>{defaultMachine!.name}{defaultMachine!.connected ? '' : ' · Offline'}</span>}
+            </div>}
+            {bot.mainThreadId && changed.includes('hostId') && <p className="bt-empty-line">
+              Changing machines starts a new bot chat. The previous chat stays in history.
+            </p>}
           </Section>
         </fieldset>
       </form>

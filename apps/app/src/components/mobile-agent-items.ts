@@ -1,6 +1,7 @@
 import type { AgentState, Project, TerminalSession } from '@zana-ai/zcc-domain/product';
 import type { ThreadListItem } from '../thread-store';
 import { getAgentSessionRoutePath, getThreadRoutePath } from '../lib/route-paths';
+import { isUnreadThread } from '../lib/unread-threads';
 import { isVisibleThread, threadRailStatus, threadTitle } from './fleet-item';
 
 export interface MobileAgentItem {
@@ -12,6 +13,7 @@ export interface MobileAgentItem {
   projectName: string;
   to: string;
   status: 'Needs you' | 'Working' | 'Idle' | 'Error' | 'Finished' | 'Waiting';
+  unread?: boolean;
   createdAt: number;
 }
 
@@ -44,6 +46,7 @@ export function mobileAgentItems({ projects, threads, terminals, states, project
       projectName: names.get(thread.projectId) ?? 'Unknown project',
       to: getThreadRoutePath(thread.id, projectId),
       status: threadRailStatus(thread),
+      unread: isUnreadThread(thread),
       createdAt: thread.createdAt
     }));
   for (const project of projects) {

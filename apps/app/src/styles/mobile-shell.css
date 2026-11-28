@@ -79,8 +79,8 @@ body:has(.app-shell[data-mobile='true']) .thread-detail-overflow-menu > button {
   gap: 10px;
   font-size: 14px;
 }
-.mobile-nav-header-actions { display: flex; align-items: center; gap: 8px; }
-.mobile-device-actions { position: relative; flex-shrink: 0; }
+.mobile-nav-header-actions { position: relative; display: flex; align-items: center; gap: 8px; }
+.mobile-device-actions { flex-shrink: 0; }
 .mobile-device-options {
   display: grid;
   place-items: center;
@@ -98,7 +98,7 @@ body:has(.app-shell[data-mobile='true']) .thread-detail-overflow-menu > button {
   top: calc(100% + 8px);
   right: 0;
   z-index: 10;
-  width: min(224px, calc(100vw - 88px));
+  width: min(224px, calc(100vw - 32px));
   padding: 6px;
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -246,6 +246,49 @@ body:has(.app-shell[data-mobile='true']) .thread-detail-overflow-menu > button {
   color: var(--text-muted);
   background: var(--bg-hover);
   font: inherit;
+}
+
+.mobile-nav-dialog [data-row-status='Unread'] { --mobile-row-accent: var(--accent-blue); }
+.mobile-nav-dialog [data-row-status='Working'] { --mobile-row-accent: var(--accent-gold); }
+.mobile-nav-dialog [data-row-status='Needs you'] { --mobile-row-accent: var(--accent-purple, #a371f7); }
+.mobile-nav-dialog [data-row-status='Error'] { --mobile-row-accent: var(--danger); }
+.mobile-nav-dialog :is(.basic-ui-chat-item, .mobile-agent-row-surface):has(> [data-row-status='Unread']),
+.mobile-nav-dialog .basic-ui-conversations > .basic-ui-chat-row[data-row-status='Unread'] {
+  /* Keep the swipe surface opaque as it slides over the close action. */
+  --unread-tint: color-mix(in srgb, var(--accent-blue) 8%, transparent);
+  background-image: linear-gradient(var(--unread-tint), var(--unread-tint));
+}
+.mobile-nav-dialog .mobile-agent-row-surface:has(> [aria-current='page']) { background-color: var(--sidebar-hover); }
+.mobile-nav-dialog [data-row-status='Unread'] :is(.basic-ui-chat-name, .mobile-agent-row-title) { font-weight: 650; }
+.mobile-nav-dialog :is(.mobile-agent-status:not(.sr-only), .basic-ui-chat-status:is(.status-unread, .status-working, .status-attention)) {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+  animation: none;
+}
+.mobile-nav-dialog [data-row-status='Unread'] :is(.mobile-agent-status, .status-unread) {
+  color: var(--accent-blue);
+  font-weight: 650;
+}
+.mobile-nav-dialog :is(.mobile-agent-row-detail, .basic-ui-chat-statuses) >
+  :is(.mobile-agent-status:not(.sr-only), .basic-ui-chat-status:is(.status-unread, .status-working, .status-attention))::before {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin: 0;
+  border-radius: 50%;
+  background: var(--mobile-row-accent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .mobile-nav-dialog [data-row-status='Working'] :is(.mobile-agent-status, .status-working)::before {
+    animation: agent-dot-pulse 1.1s ease-in-out infinite;
+  }
 }
 .mobile-sidebar-nav {
   --mobile-sticky-search-bg: var(--sidebar-bg);

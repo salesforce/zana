@@ -235,6 +235,27 @@ describe('listen.ts', () => {
 });
 
 describe('product plugin sdk confinement', () => {
+  it('lists only registered execution machines for each project, with the current connection state', async () => {
+    server = await startProductServer({ dataDir: tempDir(), origins: { serverPort: 0, devAppPort: 5173 } });
+    const { upsertHost } = await import('@zana-ai/zcc-db');
+    const db = server.ctx.db;
+    const primary = upsertHost(db, { name: 'Primary', hostKeyHash: 'primary', isPrimary: true });
+    const remote = upsertHost(db, { name: 'Docker', hostKeyHash: 'docker', isPrimary: false });
+    const unrelated = upsertHost(db, { name: 'Unrelated', hostKeyHash: 'unrelated', isPrimary: false });
+    const sources = [{ id: 'remote-source', path: '/remote', hostId: remote.id, createdAt: 1 }];
+    const projects = { list: () => [
+      { id: 'shared', name: 'Shared', path: '/primary', sources },
+      { id: 'bound', name: 'Bound SSH', path: '/local', remote: { host: 'docker', remotePath: '/remote' }, hostId: remote.id, sources: [{ id: 'wrong', path: '/wrong', hostId: unrelated.id }] },
+      { id: 'unbound', name: 'Unbound SSH', path: '/local', remote: { host: 'docker' }, sources }
+    ] } as any;
+    const hostHub = { connectedHostIds: () => [primary.id] } as typeof server.ctx.hostHub;
+    expect(productListProjects({ projects, db, hostHub }).map(row => row.executionMachines)).toEqual([
+      [{ id: primary.id, name: 'Primary', connected: true, isDefault: true }, { id: remote.id, name: 'Docker', connected: false, isDefault: false }],
+      [{ id: remote.id, name: 'Docker', connected: false, isDefault: true }],
+      []
+    ]);
+  });
+
   it('marks SSH and secondary-host projects unavailable to local SDK execution', () => {
     const projects = { list: () => [
       { id: 'local', name: 'Local', path: '/tmp/local', local: true },
