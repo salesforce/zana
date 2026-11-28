@@ -17,7 +17,7 @@
  *                     close() shuts the listener.
  */
 
-import { createServer, type Server } from 'node:http';
+import { createServer, Server } from 'node:http';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -1360,6 +1360,8 @@ describe('startMcpServer bind recovery', () => {
   let handle: McpServerHandle | null = null;
 
   afterEach(async () => {
+    // Undo any Server.prototype.listen spy even when a test failed or rejected mid-way.
+    vi.restoreAllMocks();
     if (handle) {
       await handle.close();
       handle = null;
@@ -1391,7 +1393,47 @@ describe('startMcpServer bind recovery', () => {
       log: (msg) => logs.push(msg)
     });
     expect(handle.port).not.toBe(taken);
-    expect(logs.some((line) => line.includes(`port ${taken} is in use`))).toBe(true);
+    expect(logs.some((line) => line.includes(`preferred port ${taken} is unavailable (EADDRINUSE`))).toBe(true);
     expect(logs.some((line) => line.includes(`[mcp] listening on ${handle!.url}`))).toBe(true);
+  });
+
+  it('falls back to an ephemeral port when the preferred port is in a reserved range (EACCES)', async () => {
+    // Windows reserves port ranges (Hyper-V/WSL); listen on one fails with EACCES, not EADDRINUSE.
+    const reservedPort = 57836;
+    const realListen = Server.prototype.listen;
+    vi.spyOn(Server.prototype, 'listen').mockImplementation(function (this: Server, ...args: unknown[]) {
+      if (args[0] === reservedPort) {
+        setImmediate(() => this.emit('error', Object.assign(new Error('listen EACCES'), { code: 'EACCES' })));
+        return this;
+      }
+      return (realListen as (...a: unknown[]) => Server).apply(this, args);
+    } as typeof Server.prototype.listen);
+    const logs: string[] = [];
+    handle = await startMcpServer({
+      port: reservedPort,
+      inboxStore: createMemoryInboxStore(),
+      suggestionsStore: createMemorySuggestionsStore(),
+      projects: { get: () => null },
+      log: (msg) => logs.push(msg)
+    });
+    expect(handle.port).not.toBe(reservedPort);
+    expect(logs.some((line) => line.includes(`preferred port ${reservedPort} is unavailable (EACCES`) && line.includes('falling back to an ephemeral port'))).toBe(true);
+  });
+
+  it('does not swallow other listen errors on the preferred port', async () => {
+    const realListen = Server.prototype.listen;
+    vi.spyOn(Server.prototype, 'listen').mockImplementation(function (this: Server, ...args: unknown[]) {
+      if (args[0] === 4242) {
+        setImmediate(() => this.emit('error', Object.assign(new Error('listen EINVAL'), { code: 'EINVAL' })));
+        return this;
+      }
+      return (realListen as (...a: unknown[]) => Server).apply(this, args);
+    } as typeof Server.prototype.listen);
+    await expect(startMcpServer({
+      port: 4242,
+      inboxStore: createMemoryInboxStore(),
+      suggestionsStore: createMemorySuggestionsStore(),
+      projects: { get: () => null }
+    })).rejects.toThrow('listen EINVAL');
   });
 });

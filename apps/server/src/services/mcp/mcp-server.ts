@@ -1437,8 +1437,14 @@ export function extractSubagentIdentity(body: string): {
   }
 }
 
-function isAddrInUse(error: unknown): boolean {
-  return Boolean(error && typeof error === 'object' && 'code' in error && (error as NodeJS.ErrnoException).code === 'EADDRINUSE');
+/**
+ * The preferred port cannot be used: bound by someone else (EADDRINUSE), or, on Windows, inside a
+ * reserved range (Hyper-V/WSL "excluded port range"), where listen fails with EACCES instead.
+ */
+function isPreferredPortUnavailable(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || !('code' in error)) return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === 'EADDRINUSE' || code === 'EACCES';
 }
 
 function listenLoopback(server: Server, port: number): Promise<void> {
@@ -1468,8 +1474,8 @@ export async function startMcpServer(opts: McpServerOptions): Promise<McpServerH
   } catch (error) {
     // electron-vite HMR (and a slow before-quit close) can leave the persisted
     // port bound for a beat. Keep serving rather than leaving MCP down.
-    if (preferredPort !== 0 && isAddrInUse(error)) {
-      log(`[mcp] port ${preferredPort} is in use; falling back to an ephemeral port`);
+    if (preferredPort !== 0 && isPreferredPortUnavailable(error)) {
+      log(`[mcp] preferred port ${preferredPort} is unavailable (${(error as NodeJS.ErrnoException).code}: in use, reserved by the OS, or not permitted); falling back to an ephemeral port`);
       await listenLoopback(httpServer, 0);
     } else {
       throw error;
