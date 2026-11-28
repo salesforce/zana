@@ -12,6 +12,8 @@ const h = vi.hoisted(() => ({
   terminals: {} as Record<string, TerminalSession[]>,
   threads: [] as ThreadListItem[],
   hideIdleProjects: false,
+  selectedProjectId: null as string | null,
+  scopedProjectId: null as string | null,
   projectExpanded: {} as Record<string, boolean>,
   collapsedSections: {} as Record<string, boolean>,
   setProjectExpanded: vi.fn((id: string, expanded: boolean) => { h.projectExpanded = { ...h.projectExpanded, [id]: expanded }; }),
@@ -30,7 +32,7 @@ vi.mock('../../store.js', () => ({
     addProjectByPath: h.addProjectByPath
   }),
   useUi: (select: (state: unknown) => unknown) => select({
-    selectedProjectId: null, focusedProjectId: null, selectedTabId: {}, unread: {}, projectExpanded: h.projectExpanded,
+    selectedProjectId: h.selectedProjectId, focusedProjectId: null, selectedTabId: {}, unread: {}, projectExpanded: h.projectExpanded,
      setProjectExpanded: h.setProjectExpanded,
     hideIdleProjects: h.hideIdleProjects, collapsedSections: h.collapsedSections, enterProjectFocus: h.enterProjectFocus,
     selectProject: h.selectProject, toggleSection: h.toggleSection, migrateSectionKey: h.migrateSectionKey
@@ -44,7 +46,7 @@ vi.mock('../../store.js', () => ({
 }));
 vi.mock('../../thread-store.js', () => ({ useThreads: (select: (state: unknown) => unknown) => select({ threads: h.threads }) }));
 vi.mock('../../hooks/useEnsureThreads.js', () => ({ useEnsureThreads: () => undefined }));
-vi.mock('../../lib/windowScope.js', () => ({ getScopedProjectId: () => null }));
+vi.mock('../../lib/windowScope.js', () => ({ getScopedProjectId: () => h.scopedProjectId }));
 vi.mock('../../plugins/plugin-slots.js', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   subscribePluginSlots: () => () => undefined,
@@ -111,6 +113,8 @@ beforeEach(() => {
   h.projectExpanded = {};
   h.collapsedSections = {};
   h.setProjectExpanded.mockClear();
+  h.selectedProjectId = null;
+  h.scopedProjectId = null;
   h.projects = [project('p1', 'local-core'), project('p2', 'zana-builder'), project('p3', 'empty-one')];
   h.threads = [
     thread('t1', 'p1', 'Check my ticket', 1_000),
@@ -272,6 +276,77 @@ describe('ProjectsList agents-only view', () => {
     chooseView('Projects');
     expect(screen.queryByRole('list', { name: 'Agents' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Open zana-builder' })).toBeTruthy();
+  });
+});
+
+describe('ProjectsList empty project filter', () => {
+  const getFilter = () => screen.getByRole('menuitemcheckbox', { name: 'Hide empty projects' });
+  const getOrganize = () => screen.getByRole('button', { name: 'Organize projects' });
+  const getProject = (name: string) => screen.queryByRole('button', { name: `Open ${name}` });
+
+  it('hides empty projects, persists the choice, and restores rows when unchecked', () => {
+    h.projects.push(project('p4', 'archived-only'), { ...project('p5', 'Default Project'), quickAgent: true });
+    h.threads = [h.threads[0], { ...thread('t4', 'p4', 'Archived task', 4_000), archivedAt: 5_000 }];
+    renderList();
+    expect(getProject('empty-one')).toBeTruthy();
+    fireEvent.click(getOrganize());
+    expect(getFilter().getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(getFilter());
+    expect(getFilter().getAttribute('aria-checked')).toBe('true');
+    expect(getOrganize().classList.contains('on')).toBe(true);
+    expect(getProject('local-core')).toBeTruthy(); // Idle conversation.
+    expect(getProject('zana-builder')).toBeTruthy(); // CLI agent only.
+    expect(getProject('Default Project')).toBeTruthy();
+    expect(getProject('empty-one')).toBeNull();
+    expect(getProject('archived-only')).toBeNull();
+    expect(document.querySelector('.machine-project-name small')?.textContent).toBe('3');
+
+    getFilter().focus();
+    fireEvent.keyDown(getFilter(), { key: 'Escape' });
+    expect(document.activeElement).toBe(getOrganize());
+    cleanup();
+    renderList();
+    expect(getProject('empty-one')).toBeNull();
+    fireEvent.click(getOrganize());
+    expect(getFilter().getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(getFilter());
+    expect(getOrganize().classList.contains('on')).toBe(false);
+    expect(getProject('empty-one')).toBeTruthy();
+    expect(getProject('archived-only')).toBeTruthy();
+    expect(document.querySelector('.machine-project-name small')?.textContent).toBe('5');
+  });
+
+  it('keeps selected projects and machine actions available, and combines with search', () => {
+    h.hosts = [{ id: 'remote', name: 'Devbox', status: 'connected' }] as typeof h.hosts;
+    h.projects.push({ ...project('p4', 'remote-empty'), hostId: 'remote' });
+    h.selectedProjectId = 'p3';
+    localStorage.setItem('zcc.sidebarHideEmptyProjects', 'true');
+    renderList();
+    expect(getProject('empty-one')).toBeTruthy();
+    expect(getProject('remote-empty')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Devbox', exact: true })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add project on Devbox' })).toBeTruthy();
+    const search = screen.getByRole('textbox', { name: 'Filter machines, projects or chats' });
+    fireEvent.change(search, { target: { value: 'local-core' } });
+    expect(getProject('local-core')).toBeTruthy();
+    expect(getProject('empty-one')).toBeNull();
+  });
+
+  it('keeps the scoped project visible and omits the filter in modes without a project list', () => {
+    localStorage.setItem('zcc.sidebarHideEmptyProjects', 'true');
+    h.scopedProjectId = 'p3';
+    renderList();
+    expect(getProject('empty-one')).toBeTruthy();
+    fireEvent.click(getOrganize());
+    expect(screen.queryByRole('menuitemcheckbox', { name: 'Hide empty projects' })).toBeNull();
+
+    cleanup();
+    h.scopedProjectId = null;
+    localStorage.setItem('zcc.sidebarProjectView', 'agents');
+    renderList();
+    expect(screen.getByRole('list', { name: 'Agents' })).toBeTruthy();
+    fireEvent.click(getOrganize());
+    expect(screen.queryByRole('menuitemcheckbox', { name: 'Hide empty projects' })).toBeNull();
   });
 });
 

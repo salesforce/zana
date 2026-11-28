@@ -9,6 +9,11 @@ surfaces) → a **list pane** (what's inside the selected surface) → the
 **main pane** (threads, terminals, and panels). Everything below is reachable
 from the sidebar.
 
+In the **Machines** sidebar, open **Organize projects** and turn on **Hide empty
+projects** to hide projects with no visible threads or CLI agents. Zana remembers
+your choice and keeps machine headings, Default Project, and your selected
+project visible.
+
 ---
 
 ## New Chat
