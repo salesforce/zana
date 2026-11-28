@@ -1,5 +1,5 @@
 import { placePopoverMenu, PopoverPicklist, useExclusivePopover } from '@zana-ai/zcc-ui/popover-picklist';
-import { Check, ChevronDown, ChevronRight, ListFilter, Pin, Plus, RefreshCw } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, ListFilter, MoreHorizontal, Pin, Plus, RefreshCw } from 'lucide-react';
 import { VaultPanel } from './src/vault/VaultPanel.js';
 import { Section, botSectionCss } from './src/BotSection.js';
 import { BotMemory } from './src/BotMemory.js';
@@ -276,17 +276,24 @@ const basicListCss = `
 .bt-basic-toggle:disabled { cursor: default; }
 .bt-basic-toggle[aria-expanded="false"] svg { transform: rotate(-90deg); }
 .bt-basic-list { display: grid; gap: 2px; }
-.bt-basic-item { position: relative; display: flex; align-items: center; border-radius: 8px; }
-.bt-basic-item:is(:hover, :focus-within) { background: var(--bg-hover); }
-.bt-basic-item:has([aria-current="page"]) { background: var(--bg-elevated); }
-.bt-basic-pin { display: grid; place-items: center; flex: 0 0 30px; height: 30px; border-radius: 6px;
+.bt-basic-item { display: flex; align-items: center; border-radius: 8px; }
+.bt-basic-item:is(:hover, :has(:focus-visible, [aria-expanded="true"])) { background: var(--sidebar-hover); }
+.bt-basic-item:has([aria-current="page"]) { background: var(--sidebar-active); }
+.bt-basic-row[aria-current="page"] .bt-name { font-weight: 650; }
+.bt-basic-pinned { flex: none; color: var(--text-muted); transform: rotate(35deg); }
+.bt-basic-actions { display: grid; place-items: center; flex: none; width: 28px; height: 28px; border-radius: 5px;
   padding: 0; margin-right: 4px; background: transparent; border: 0; color: var(--text-muted); cursor: pointer; }
-.bt-basic-pin:hover, .bt-basic-pin:focus-visible { color: var(--text-primary); background: var(--bg-hover); }
-.bt-basic-pin svg { transform: rotate(35deg); }
-.bt-basic-pin[aria-pressed="true"] svg { fill: currentColor; }
+.bt-basic-actions:is(:hover, [aria-expanded="true"]) { color: var(--text-primary); background: var(--sidebar-hover); }
+.bt-basic .bt-basic-actions:focus-visible, .bt-basic .bt-basic-row:focus-visible { outline-offset: -2px; }
 @media (hover: hover) and (pointer: fine) {
-  .bt-basic-item:not(:hover):not(:focus-within) .bt-basic-pin[aria-pressed="false"] { position: absolute; right: 0; opacity: 0; }
+  .bt-basic-actions { opacity: 0; pointer-events: none; }
+  .bt-basic-item:is(:hover, :has(:focus-visible)) .bt-basic-actions,
+  .bt-basic-actions[aria-expanded="true"] { opacity: 1; pointer-events: auto; }
 }
+@media (pointer: coarse) { .bt-basic-actions { width: 44px; height: 44px; } }
+.bt-basic .bt-basic-menu { inset: auto; min-width: 0; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; }
+.bt-basic-menu button { border: 0; background: transparent; cursor: pointer; }
+.bt-basic-menu button:disabled { opacity: .5; cursor: default; }
 .bt-basic-more { display: block; padding: 8px 10px 8px 48px; border: 0; background: transparent;
   color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer; }
 .bt-basic-more:hover, .bt-basic-more:focus-visible { color: var(--text-primary); }
@@ -303,9 +310,6 @@ const basicListCss = `
 [data-mobile='false'] .bt-basic-row small:has(.bt-dot[data-state="asleep"]) {
   position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
 }
-[data-mobile='false'] .bt-basic-item:has([aria-current="page"]) {
-  background: color-mix(in srgb, var(--accent-blue) 13%, transparent); box-shadow: inset 2px 0 var(--accent-blue);
-}
 [data-mobile='false'] .bt-basic-more { min-height: 24px; padding: 2px 8px 2px 36px; font-size: 11px; }
 .bt-basic-dialog { box-sizing: border-box; width: min(500px, calc(100vw - 32px)); max-height: calc(100dvh - 32px);
   padding: 0; margin: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-panel); }
@@ -315,25 +319,45 @@ const basicListCss = `
 .bt-basic .bt-note, .bt-basic [role="alert"] { color: var(--text-muted); font-size: 11px; }
 `;
 
-function BasicBotRow({ bot, activeThreadId, opening, onOpen }: {
-  bot: BotView; activeThreadId: string | null; opening: boolean; onOpen(): void;
+function BasicBotRow({ bot, activeThreadId, opening, onOpen, onUpdate }: {
+  bot: BotView; activeThreadId: string | null; opening: boolean; onOpen(): void; onUpdate(): Promise<void>;
 }) {
   const current = Boolean(activeThreadId && bot.mainThreadId === activeThreadId);
   const statusId = useId();
   const pinned = bot.pinnedAt != null;
   const { busy, feedback, run } = useAction(bot.id);
+  const { open, setOpen, close, menuId, trigger, menu } = useBotSidebarMenu();
+  const label = `Actions for ${bot.name}`;
+
+  async function togglePinned() {
+    close();
+    if (await run('update', { patch: { pinned: !pinned } })) await onUpdate();
+  }
+
   return <>
-    <div className="bt-basic-item">
+    <div className="bt-basic-item" onContextMenu={event => {
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(true);
+    }}>
       <button type="button" className="bt-item bt-basic-row" title={bot.name} aria-label={bot.name} aria-describedby={statusId}
         aria-current={current ? 'page' : undefined}
         aria-busy={opening} disabled={opening} onClick={onOpen}>
         <BotListIdentity bot={bot} live={current} statusId={statusId} />
+        {pinned && <Pin className="bt-basic-pinned" size={12} aria-hidden="true" />}
       </button>
-      <button type="button" className="bt-basic-pin" aria-label={`${pinned ? 'Unpin' : 'Pin'} ${bot.name}`}
-        title={pinned ? 'Unpin bot' : 'Pin bot'} aria-pressed={pinned} disabled={busy}
-        onClick={() => void run('update', { patch: { pinned: !pinned } })}>
-        <Pin size={15} aria-hidden="true" />
+      <button ref={trigger} type="button" className="bt-basic-actions" aria-label={label} title={label}
+        aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? menuId : undefined}
+        onClick={() => setOpen(value => !value)}>
+        <MoreHorizontal size={16} aria-hidden="true" />
       </button>
+      {open && <div id={menuId} ref={menu} className="sidebar-projects-organize-menu bt-basic-menu"
+        role="dialog" aria-label={label} onKeyDown={event => {
+          if (event.key === 'Escape') { event.stopPropagation(); close(); }
+        }}>
+        <button type="button" disabled={opening} onClick={() => { close(); onOpen(); }}>Open chat</button>
+        <button type="button" disabled={busy} onClick={() => void togglePinned()}>{pinned ? 'Unpin bot' : 'Pin bot'}</button>
+      </div>}
     </div>
     {feedback}
   </>;
@@ -404,8 +428,8 @@ export function BasicBots({ searchQuery, activeThreadId, projectIds, openThread,
     {openError && <p role="alert" className="bt-alert">{openError}</p>}
     <div id={`${listId}-section`} hidden={!expanded}>
       <div id={listId} className="bt-basic-list">
-        {visible.map(bot => <BasicBotRow key={bot.id} bot={bot} activeThreadId={activeThreadId} opening={opening === bot.id}
-          onOpen={() => void openBot(bot.id)} />)}
+        {expanded && visible.map(bot => <BasicBotRow key={bot.id} bot={bot} activeThreadId={activeThreadId} opening={opening === bot.id}
+          onOpen={() => void openBot(bot.id)} onUpdate={refresh} />)}
       </div>
       {!query && matches.length > BASIC_BOT_LIMIT && <button type="button" className="bt-basic-more"
         aria-expanded={showAll} aria-controls={listId} onClick={() => setShowAll(!showAll)}>
@@ -597,6 +621,41 @@ export function AdvancedBots({ activeThreadId, openThread, panelLink, dragHandle
       </button>}
     </div>
   </section>;
+}
+
+function useBotSidebarMenu() {
+  const [open, setOpen] = useExclusivePopover();
+  const menuId = useId();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => { setOpen(false); trigger.current?.focus(); }, [setOpen]);
+  useLayoutEffect(() => {
+    const element = menu.current;
+    const button = trigger.current;
+    if (!open || !element || !button) return;
+    const position = () => {
+      const { left, width, maxHeight, top, bottom } = placePopoverMenu(button.getBoundingClientRect(),
+        { width: window.innerWidth, height: window.innerHeight }, 180);
+      Object.assign(element.style, { left: left + 'px', width: width + 'px', maxHeight: maxHeight + 'px',
+        top: top === undefined ? 'auto' : top + 'px', bottom: bottom === undefined ? 'auto' : bottom + 'px' });
+    };
+    position();
+    (element.querySelector<HTMLButtonElement>('button[aria-pressed="true"]') ??
+      element.querySelector<HTMLButtonElement>('button:not(:disabled)'))?.focus();
+    const outside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !element.contains(event.target) && !button.contains(event.target)) setOpen(false);
+    };
+    window.addEventListener('resize', position);
+    window.addEventListener('scroll', position, true);
+    document.addEventListener('pointerdown', outside);
+    return () => {
+      window.removeEventListener('resize', position);
+      window.removeEventListener('scroll', position, true);
+      document.removeEventListener('pointerdown', outside);
+    };
+  }, [open, setOpen]);
+
+  return { open, setOpen, close, menuId, trigger, menu };
 }
 
 export function BotsPanel() {
