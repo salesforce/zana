@@ -99,6 +99,14 @@ export function squadTransportClass(transport: SquadTransport): string {
   return transport === 'MODERN' ? 'is-modern' : '';
 }
 
+/** Plain-language name for the dotted Modern marker, so it never relies on the outline alone. */
+export const MODERN_SQUAD_MEMBER_LABEL = 'Modern squad member';
+
+/** Appends the Modern marker explanation to a row tooltip or accessible name. */
+export function withModernSquadLabel(text: string, modern: boolean, separator = ' · '): string {
+  return modern ? `${text}${separator}${MODERN_SQUAD_MEMBER_LABEL}` : text;
+}
+
 export function isModernSquadThread(thread: { originPluginId?: string | null }): boolean {
   return thread.originPluginId === MODERN_SQUAD_THREAD_ORIGIN;
 }

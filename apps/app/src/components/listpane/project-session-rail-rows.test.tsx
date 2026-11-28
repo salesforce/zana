@@ -54,6 +54,15 @@ describe('ProjectThreadRailRow', () => {
     expect(html).toContain(' · Thread');
     expect(render(thread)).not.toContain('is-modern');
   });
+
+  it('explains the dotted marker in the tooltip and accessible name, not by outline alone', () => {
+    const html = render({ ...thread, originPluginId: 'host-modern-squad' });
+    expect(html).toContain('aria-label="Dev server, Modern squad member"');
+    expect(html).toContain('title="Dev server · idle · Modern squad member"');
+    const plain = render(thread);
+    expect(plain).toContain('aria-label="Dev server"');
+    expect(plain).not.toContain('Modern squad member');
+  });
 });
 
 describe('ProjectAgentRailRow squad titles', () => {

@@ -54,7 +54,7 @@ import { FleetKindChip } from './FleetKindChip.js';
 import { ProviderIcon } from './thread/pickers/ProviderIcon.js';
 import { fleetMatchesLane, resolveMonitorSelection, type FleetItem } from './fleet-item.js';
 import { ThreadDetail } from '../views/threads/ThreadDetailView.js';
-import { isModernSquadThread } from '../lib/squad-transport.js';
+import { isModernSquadThread, withModernSquadLabel } from '../lib/squad-transport.js';
 import { openScheduleFromAgents } from './scheduler/openScheduledLive.js';
 import { groupSessionsByTeamRun } from '../lib/teamRunOrganization.js';
 import { PaneEmptyState } from './PaneEmptyState.js';
@@ -482,7 +482,7 @@ function AgentMonitorRow({ item, laneKey, active, showProject, onSelect, onConte
         onClick={onSelect}
         onContextMenu={onContextMenu}
         aria-current={active ? 'true' : undefined}
-        title={`${item.title} · ${item.projectName} · ${item.thread.status}`}
+        title={withModernSquadLabel(`${item.title} · ${item.projectName} · ${item.thread.status}`, isModernSquadThread(item.thread))}
       >
         <span className="agent-monitor-row-lead">
           {unread ? <span className="thread-unread-dot" data-testid="thread-unread-indicator" title="New activity" role="img" aria-label="New activity" /> : null}
