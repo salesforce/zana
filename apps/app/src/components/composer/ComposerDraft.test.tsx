@@ -24,12 +24,15 @@ vi.mock('./use-composer-suggestions.js', () => ({
 }));
 
 let field: ReturnType<typeof useComposerPromptField>;
-function Probe({ initialText, initialReferences, initialSelection }: { initialText?: string; initialReferences?: ContextReference[]; initialSelection?: EditorSelection }) {
+function Probe({ initialText, initialReferences, initialSelection, disabled, onError }: {
+  initialText?: string; initialReferences?: ContextReference[]; initialSelection?: EditorSelection;
+  disabled?: boolean; onError?: (message: string | null) => void;
+}) {
   field = useComposerPromptField({
     placeholder: 'Prompt', testId: 'prompt', projectId: 'project', projects: [],
-    initialText, initialReferences, initialSelection, slashCatalog: { kind: 'cli' }, onSubmit: () => {}
+    initialText, initialReferences, initialSelection, disabled, onError, slashCatalog: { kind: 'cli' }, onSubmit: () => {}
   });
-  return <EditorContent editor={field.editor} />;
+  return <div data-testid="composer-drop-area" {...field.dropHandlers}><EditorContent editor={field.editor} /></div>;
 }
 function Surface({ mode, initialText, initialSelection, sessionKey }: { mode: string; initialText?: string; initialSelection?: EditorSelection; sessionKey?: string }) {
   return <ComposerDraftProvider sessionKey={sessionKey}><Probe key={mode} initialText={initialText} initialSelection={initialSelection} /></ComposerDraftProvider>;
@@ -420,6 +423,82 @@ it('accepts generic clipboard packets and bounds aggregate insertion',async()=>{
  expect(overflow.defaultPrevented).toBe(true);
  expect(field.serialize().references).toHaveLength(24);
 });
+
+const dropReference: ContextReference = { version: 1, label: 'Work item', text: 'W-42 · Capture run history' };
+function referenceTransfer(text = dropReference.text) {
+  return {
+    types: [CONTEXT_REFERENCE_MIME, 'text/plain'],
+    files: [],
+    dropEffect: 'none',
+    getData: (type: string) => type === CONTEXT_REFERENCE_MIME ? JSON.stringify(dropReference) : text
+  };
+}
+
+it('inserts a dropped reference at the pointer and undoes it separately from existing text', async () => {
+  render(<Probe initialText="Before after" />);
+  await ready();
+  const view = field.editor!.view;
+  const dataTransfer = referenceTransfer();
+  fireEvent.dragOver(screen.getByTestId('composer-drop-area'), { dataTransfer });
+  expect(field.dropOver).toBe(true);
+  vi.spyOn(view, 'posAtCoords').mockReturnValue({ pos: 8, inside: 0 });
+  const event = new Event('drop', { bubbles: true, cancelable: true }) as DragEvent;
+  Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+  act(() => { expect(view.someProp('handleDrop', handle => handle(view, event, view.state.selection.content(), false))).toBe(true); });
+  expect(field.serialize().references?.[0]).toMatchObject({ start: 7, reference: dropReference });
+  expect(field.serialize().text).toMatch(/^Before [\s\S]*after$/);
+  expect(field.dropOver).toBe(false);
+  act(() => { field.editor!.commands.undo(); });
+  expect(field.serialize().text).toBe('Before after');
+});
+
+it('ignores malformed context metadata and clears the composer highlight', async () => {
+  render(<Probe />);
+  await ready();
+  const chrome = screen.getByTestId('composer-drop-area');
+  const dataTransfer = referenceTransfer('A different plain text fallback');
+  fireEvent.dragOver(chrome, { dataTransfer });
+  expect(field.dropOver).toBe(true);
+  expect(fireEvent.drop(chrome, { dataTransfer })).toBe(true);
+  expect(field.dropOver).toBe(false);
+  expect(field.serialize().references).toBeUndefined();
+});
+
+it('clears the drop highlight only when leaving the composer', async () => {
+  render(<Probe />);
+  await ready();
+  const chrome = screen.getByTestId('composer-drop-area');
+  fireEvent.dragOver(chrome, { dataTransfer: referenceTransfer() });
+  const leave = new Event('dragleave', { bubbles: true });
+  Object.defineProperty(leave, 'relatedTarget', { value: field.editor!.view.dom });
+  fireEvent(chrome, leave);
+  expect(field.dropOver).toBe(true);
+  fireEvent.dragLeave(chrome, { relatedTarget: document.body });
+  expect(field.dropOver).toBe(false);
+});
+
+it('preserves the caret for chrome drops, enforces the limit and honors disabled state', async () => {
+  const onError = vi.fn();
+  const view = render(<Probe initialText="Before after" onError={onError} />);
+  await ready();
+  act(() => { field.editor!.commands.setTextSelection(8); });
+  const chrome = screen.getByTestId('composer-drop-area');
+  const dataTransfer = referenceTransfer();
+  expect(fireEvent.drop(chrome, { dataTransfer })).toBe(false);
+  expect(field.serialize().references?.[0]).toMatchObject({ start: 7, reference: dropReference });
+  act(() => {
+    for (let i = 1; i < 24; i++) field.insertContextReference(dropReference);
+  });
+  expect(fireEvent.drop(chrome, { dataTransfer })).toBe(false);
+  expect(onError).toHaveBeenCalledWith(expect.stringContaining('Too much copied context'));
+  expect(field.serialize().references).toHaveLength(24);
+  view.rerender(<Probe disabled />);
+  fireEvent.dragOver(chrome, { dataTransfer });
+  expect(field.dropOver).toBe(false);
+  expect(fireEvent.drop(chrome, { dataTransfer })).toBe(true);
+  expect(field.serialize().references).toHaveLength(24);
+});
+
 it('seeds a panel draft with compact references once',async()=>{
  const reference:ContextReference={version:1,label:'Passage',text:'exact paragraph'};
  const view=render(<Probe initialText="Explain " initialReferences={[reference]} />);await ready();

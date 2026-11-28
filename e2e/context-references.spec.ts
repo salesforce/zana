@@ -80,6 +80,35 @@ test('rendered Markdown and sandboxed HTML copy through the native clipboard int
   // Remove just that text insertion while retaining both badges.
   await input.press('ControlOrMeta+z');
   await expect(input.getByRole('button',{name:/^Inspect /})).toHaveCount(2);
+  await win.getByRole('button',{name:/files/}).first().click();
+  await win.getByRole('button',{name:/^README\.md\b/}).click();
+  await expect(passage).toBeVisible();
+  // Model a plugin row transmitting a snapshot through Chromium's native drag.
+  await passage.evaluate(element => {
+    element.setAttribute('draggable', 'true');
+    element.addEventListener('dragstart', e => {
+      const data = (e as DragEvent).dataTransfer!;
+      const text = element.textContent!.trimEnd();
+      data.effectAllowed = 'copy';
+      data.setData('application/x-zcc-context-reference', JSON.stringify({
+        version: 1, label: 'Review item', text,
+        source: { kind: 'plugin', pluginId: 'design-docs', resourceId: 'review-item' }
+      }));
+      data.setData('text/plain', text);
+    }, { once: true });
+    element.addEventListener('dragend', () => element.removeAttribute('draggable'), { once: true });
+  });
+  await passage.dragTo(input);
+  const dropped = input.getByRole('button', { name: 'Inspect Review item' });
+  await expect(dropped).toHaveCount(1);
+  await expect(input).toContainText('Compare these passages:');
+  await expect(input).not.toContainText('Every employee');
+  await expect(win.getByTestId('thread-user-text')).toHaveCount(0);
+  await dropped.click();
+  await expect(win.getByRole('dialog', { name: 'Copied selection: Review item' })).toContainText(markdown.trim());
+  await win.keyboard.press('Escape');
+  await input.getByRole('button', { name: 'Remove Review item' }).click();
+  await expect(dropped).toHaveCount(0);
   await composer.getByTestId('thread-command-send').click();
   const chat=win.getByTestId('panel-agent-tab-chat');
   const saved=chat.getByTestId('thread-user-text').first();
