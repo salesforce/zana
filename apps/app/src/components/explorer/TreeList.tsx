@@ -2,6 +2,7 @@ import React from 'react';
 import { ChevronRight, ChevronDown } from 'lucide-react';
 import type { FsEntry, GitFileCode } from '@zana-ai/zcc-domain/product';
 import { FileIcon, FolderIcon } from '../FileIcon.js';
+import { compactChain } from './compact-chain.js';
 import { beginFsEntryDrag, consumeFsEntryDragClick, endFsEntryDrag } from '../../lib/fs-entry-drag.js';
 
 interface TreeListProps {
@@ -15,6 +16,8 @@ interface TreeListProps {
   activeFile: string | undefined;
   gitFiles: Record<string, GitFileCode> | undefined;
   dirtyDirs: Set<string>;
+  /** Render single-child folder chains as one row. */
+  compact?: boolean;
   onToggleDir: (entry: FsEntry) => void;
   onFileClick: (entry: FsEntry) => void;
   onContext: (e: React.MouseEvent, entry: FsEntry) => void;
@@ -40,13 +43,19 @@ export const TreeList = React.memo(function TreeList({
   activeFile,
   gitFiles,
   dirtyDirs,
+  compact = false,
   onToggleDir,
   onFileClick,
   onContext
 }: TreeListProps) {
   return (
     <>
-      {list.map((entry) => {
+      {list.map((head) => {
+        // With compact folders the row stands for the whole chain and every
+        // action (toggle, drag, context menu, reveal) targets its last folder.
+        const chain = compact ? compactChain(head, entries, expanded) : [head];
+        const entry = chain[chain.length - 1]!;
+        const label = chain.map((segment) => segment.name).join('/');
         const isDir = entry.kind === 'dir';
         const isOpen = isDir && expanded.get(entry.path) === true;
         const children = isOpen ? entries.get(entry.path) : undefined;
@@ -64,7 +73,7 @@ export const TreeList = React.memo(function TreeList({
             ? 'Contains changes'
             : '';
         return (
-          <div key={entry.path}>
+          <div key={head.path}>
             <div
               className={`tree-row ${isDir ? 'dir' : 'file'} ${isActive ? 'active' : ''} ${gitClass}`}
               style={{ paddingLeft: 6 + depth * 12 }}
@@ -90,8 +99,8 @@ export const TreeList = React.memo(function TreeList({
               <span className="tree-icon">
                 {isDir ? <FolderIcon open={isOpen} /> : <FileIcon name={entry.name} />}
               </span>
-              <span className="tree-name" title={entry.name}>
-                {entry.name}
+              <span className="tree-name" title={label}>
+                {label}
               </span>
               {fileCode && <span className="tree-git-badge">{fileCode}</span>}
             </div>
@@ -118,6 +127,7 @@ export const TreeList = React.memo(function TreeList({
                   activeFile={activeFile}
                   gitFiles={gitFiles}
                   dirtyDirs={dirtyDirs}
+                  compact={compact}
                   onToggleDir={onToggleDir}
                   onFileClick={onFileClick}
                   onContext={onContext}

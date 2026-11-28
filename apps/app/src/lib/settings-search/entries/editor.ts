@@ -243,5 +243,14 @@ export const entries: readonly SettingsSearchEntry[] = [
     keywords: ['icons', 'file icons', 'seti', 'vscode', 'vs code', 'explorer', 'tree'],
     kind: 'setting',
     value: (s) => EXPLORER_FILE_ICON_THEME_LABELS[resolveExplorerFileIconTheme(s.config)]
+  },
+  {
+    id: 'editor.explorer-compact-folders',
+    section: 'editor',
+    anchor: 'editor-explorer-files',
+    label: 'Compact folders',
+    help: 'Show a chain of folders that each hold only one folder as a single row, like src/main/java.',
+    keywords: ['compact', 'folders', 'single child', 'chain', 'explorer', 'tree', 'collapse'],
+    kind: 'setting'
   }
 ];

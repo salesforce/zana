@@ -4,6 +4,9 @@ import { useHosts } from '../../hooks/useHosts.js';
 import { hasDesktopBridge } from '../../lib/app-surface.js';
 import { product } from '../../lib/product-client.js';
 import { parentPath, relativeUnder } from '../../lib/path.js';
+import { useBooleanPreference } from '../../lib/use-boolean-preference.js';
+import { EXPLORER_COMPACT_FOLDERS_DEFAULT, EXPLORER_COMPACT_FOLDERS_KEY } from '../../lib/explorer-compact-folders-preference.js';
+import { compactAutoExpand } from '../../components/explorer/compact-chain.js';
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import type { FsEntry, GitBranch as GitBranchInfo, GitFileCode, GitShowResult, GitStatus, OpenTarget, FsReadResult, Project, Worktree } from '@zana-ai/zcc-domain/product';
 import { useData, useUi } from '@/store';
@@ -260,6 +263,21 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
     : product.fs.listDir(path, scope), [isRemote, project.id, scope]);
   const { entries, loading, slow, errors, loadDir, reset: resetDirectories } = useDirectoryLoader(readDirectory);
   const directoryError = errors.get(viewRoot);
+  const [compactFolders] = useBooleanPreference(EXPLORER_COMPACT_FOLDERS_KEY, EXPLORER_COMPACT_FOLDERS_DEFAULT);
+  // Compact folders need to know a folder's only child is a folder, so once a
+  // folder is open its sole subfolder is opened too (one level per pass, which
+  // walks the chain). A folder the user already toggled is left alone.
+  useEffect(() => {
+    if (!compactFolders) return;
+    const next = compactAutoExpand(entries, expanded, loading);
+    if (next.length === 0) return;
+    setExpanded((prev) => {
+      const map = new Map(prev);
+      for (const path of next) map.set(path, true);
+      return map;
+    });
+    for (const path of next) void loadDir(path);
+  }, [compactFolders, entries, expanded, loading, loadDir]);
   const [menu, setMenu] = useState<ContextMenu | null>(null);
   const [prompt, setPrompt] = useState<PromptState | null>(null);
   const [fileResult, setFileResult] = useState<FsReadResult | null>(null);
@@ -996,6 +1014,7 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
               activeFile={explorerFile}
               gitFiles={gitFiles}
               dirtyDirs={dirtyDirs}
+              compact={compactFolders}
               onToggleDir={toggleDir}
               onFileClick={onFileClick}
               onContext={onContext}

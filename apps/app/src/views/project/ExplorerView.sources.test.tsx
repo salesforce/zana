@@ -39,6 +39,7 @@ vi.mock('@/components/explorer', () => ({
   </div>
 }));
 import { ExplorerView } from './ExplorerView.js';
+import { EXPLORER_COMPACT_FOLDERS_KEY } from '../../lib/explorer-compact-folders-preference.js';
 import { useUi } from '@/store';
 const project: any = { id: 'p', name: 'Shared', path: '/a', hostId: 'a', sources: [{ id: 'source-b', hostId: 'b', path: '/b', createdAt: 1 }] };
 beforeEach(() => {
@@ -58,7 +59,7 @@ beforeEach(() => {
   window.confirm = vi.fn().mockReturnValue(false);
   Element.prototype.scrollIntoView = vi.fn();
 });
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); window.localStorage.removeItem(EXPLORER_COMPACT_FOLDERS_KEY); });
 it('edits only the thread-pinned checkout with its read revision, without a machine selector', async () => {
   render(<ExplorerView project={project} embedded scope={{ projectId: 'p', hostId: 'b' }} />);
   fireEvent.click(await screen.findByRole('button', { name: 'owner.txt' }));
@@ -575,6 +576,32 @@ it('loads open subfolders when viewRoot changes', async () => {
   await screen.findByText('Checkouts ready');
   fireEvent.click(screen.getByRole('button', { name: 'Switch to /a/worktree-sub' }));
   await screen.findByRole('button', { name: 'item.txt' });
+});
+
+it('opens each sole subfolder of an expanded folder when compact folders is on', async () => {
+  window.localStorage.setItem(EXPLORER_COMPACT_FOLDERS_KEY, '1');
+  mocks.list.mockImplementation(async (path: string) => {
+    if (path === '/a') return [{ name: 'src', path: '/a/src', kind: 'dir' }];
+    if (path === '/a/src') return [{ name: 'main', path: '/a/src/main', kind: 'dir' }];
+    if (path === '/a/src/main') return [{ name: 'java', path: '/a/src/main/java', kind: 'dir' }];
+    return [{ name: 'App.java', path: `${path}/App.java`, kind: 'file' }];
+  });
+  render(<ExplorerView project={project} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'src' }));
+  await waitFor(() => expect(mocks.list.mock.calls.map(([path]) => path)).toContain('/a/src/main/java'));
+});
+
+it('leaves a sole subfolder closed when compact folders is off', async () => {
+  window.localStorage.setItem(EXPLORER_COMPACT_FOLDERS_KEY, '0');
+  mocks.list.mockImplementation(async (path: string) => {
+    if (path === '/a') return [{ name: 'src', path: '/a/src', kind: 'dir' }];
+    if (path === '/a/src') return [{ name: 'main', path: '/a/src/main', kind: 'dir' }];
+    return [];
+  });
+  render(<ExplorerView project={project} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'src' }));
+  await screen.findByRole('button', { name: 'main' });
+  expect(mocks.list.mock.calls.map(([path]) => path)).not.toContain('/a/src/main');
 });
 
 it('ignores checkout metadata failures that finish after the menu closes', async () => {

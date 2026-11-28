@@ -30,6 +30,7 @@ vi.mock('@/components/explorer', async () => ({
 }));
 import { ExplorerView } from './ExplorerView.js';
 import { useUi } from '@/store';
+import { EXPLORER_COMPACT_FOLDERS_KEY } from '../../lib/explorer-compact-folders-preference.js';
 
 const project: any = { id: 'p', name: 'Project', path: '/a', hostId: 'a', sources: [] };
 const open = (path: string) => act(async () => { useUi.getState().setExplorerFile('p', path); });
@@ -45,6 +46,8 @@ function fakeListDir(path: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // These cases assert the plain nested tree; compact folders have their own specs.
+  window.localStorage.setItem(EXPLORER_COMPACT_FOLDERS_KEY, 'false');
   useUi.setState({ explorerFile: {}, explorerGoto: {}, explorerTreeMode: {} });
   mocks.tree = {
     // listDir never returns denied folders such as node_modules.
