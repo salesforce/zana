@@ -1,5 +1,6 @@
 import { copyText } from '../../lib/copy-text.js';
 import { product } from '../../lib/product-client.js';
+import { relativeUnder } from '../../lib/path.js';
 import { useCallback } from 'react';
 import type { OpenTarget } from '@zana-ai/zcc-domain/product';
 
@@ -54,6 +55,18 @@ export function useFileOperations({ viewRoot, isRemote, projectId, hostId, prima
     }
   }, [pushToast]);
 
+  // Root-relative path for pasting into commits, chat or docs. Falls back to
+  // the absolute path when the entry is outside the root, and `.` for the root.
+  const copyRelativePath = useCallback(async (path: string) => {
+    const rel = relativeUnder(viewRoot, path) ?? (path === viewRoot ? '.' : path);
+    try {
+      await copyText(rel);
+      pushToast('Relative path copied');
+    } catch {
+      pushToast('Failed to copy path', 'error');
+    }
+  }, [viewRoot, pushToast]);
+
   const openInExternal = useCallback(async (target: OpenTarget, path: string) => {
     const r = await product.openers.openIn(target, path);
     if (!r.ok) pushToast(r.message ?? `Failed to open in ${target}`, 'error');
@@ -93,6 +106,7 @@ export function useFileOperations({ viewRoot, isRemote, projectId, hostId, prima
   return {
     sendPathToTerminal,
     copyPath,
+    copyRelativePath,
     openInExternal,
     downloadRemoteFile,
     uploadLocalFiles

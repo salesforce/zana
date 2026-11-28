@@ -19,6 +19,7 @@ interface ExplorerContextMenuProps {
   onOpenShellHere?: () => void;
   onOpenInTerminal?: () => void;
   onCopyPath: () => void;
+  onCopyRelativePath?: () => void;
   onRename: () => void;
   onDiscardChanges?: () => void;
   onDelete: () => void;
@@ -41,6 +42,7 @@ export function ExplorerContextMenu({
   onOpenShellHere,
   onOpenInTerminal,
   onCopyPath,
+  onCopyRelativePath,
   onRename,
   onDiscardChanges,
   onDelete
@@ -119,6 +121,11 @@ export function ExplorerContextMenu({
       <button onClick={onCopyPath}>
         Copy path
       </button>
+      {onCopyRelativePath && (
+        <button onClick={onCopyRelativePath}>
+          Copy relative path
+        </button>
+      )}
       <button onClick={onRename}>
         Rename / move…
       </button>

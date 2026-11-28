@@ -235,7 +235,7 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
     [project.path, project.id, viewRoot, pushToast, reloadWorktrees, baseScope]
   );
 
-  const { sendPathToTerminal, copyPath, openInExternal, downloadRemoteFile, uploadLocalFiles } = useFileOperations({
+  const { sendPathToTerminal, copyPath, copyRelativePath, openInExternal, downloadRemoteFile, uploadLocalFiles } = useFileOperations({
     viewRoot,
     isRemote,
     projectId: project.id,
@@ -951,6 +951,7 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
           onCreateFile={() => createEntry(viewRoot, 'file')}
           onCreateFolder={() => createEntry(viewRoot, 'dir')}
           onRefresh={refresh}
+          onCollapseAll={() => setExpanded(new Map())}
         />
         <div
           className={`explorer-tree-body ${isRemote && treeDropOver ? 'drop-over' : ''}`}
@@ -1112,6 +1113,7 @@ function CheckoutExplorerView({ project, embedded = false, scope: baseScope, nat
           onOpenShellHere={!isRemote && menu.entry.kind === 'dir' ? () => { openShellHere(menu.entry.path); setMenu(null); } : undefined}
           onOpenInTerminal={!isRemote && nativeFiles && menu.entry.kind === 'dir' ? () => { openInExternal('terminal', menu.entry.path); setMenu(null); } : undefined}
           onCopyPath={() => { copyPath(menu.entry.path); setMenu(null); }}
+          onCopyRelativePath={() => { copyRelativePath(menu.entry.path); setMenu(null); }}
           onRename={() => { renameEntry(menu.entry.path); setMenu(null); }}
           onDiscardChanges={!isRemote && menu.entry.kind === 'file' && gitFiles?.[menu.entry.path] ? () => { discardFile(menu.entry.path); setMenu(null); } : undefined}
           onDelete={() => { deleteEntry(menu.entry.path, menu.entry.kind); setMenu(null); }}

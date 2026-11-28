@@ -1,5 +1,5 @@
 import React from 'react';
-import { RefreshCw, GitBranch, ListTree, FilePlus, FolderPlus } from 'lucide-react';
+import { RefreshCw, GitBranch, ListTree, FilePlus, FolderPlus, ChevronsDownUp } from 'lucide-react';
 import type { Project } from '@zana-ai/zcc-domain/product';
 
 interface ExplorerTreeHeaderProps {
@@ -11,6 +11,7 @@ interface ExplorerTreeHeaderProps {
   onCreateFile: () => void;
   onCreateFolder: () => void;
   onRefresh: () => void;
+  onCollapseAll?: () => void;
 }
 
 export function ExplorerTreeHeader({
@@ -21,7 +22,8 @@ export function ExplorerTreeHeader({
   onTreeModeToggle,
   onCreateFile,
   onCreateFolder,
-  onRefresh
+  onRefresh,
+  onCollapseAll
 }: ExplorerTreeHeaderProps) {
   return (
     <div className="explorer-tree-header">
@@ -66,6 +68,11 @@ export function ExplorerTreeHeader({
       >
         <FolderPlus size={13} />
       </button>
+      {onCollapseAll && (
+        <button type="button" className="opener-btn" title="Collapse all folders" aria-label="Collapse all folders" onClick={onCollapseAll}>
+          <ChevronsDownUp size={13} />
+        </button>
+      )}
       <button type="button" className="opener-btn" title="Refresh" onClick={onRefresh}>
         <RefreshCw size={13} />
       </button>
